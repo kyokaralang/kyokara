@@ -1,0 +1,310 @@
+# Kyokara
+
+> Kyokara is an AI-first programming language and runtime. It is designed for machine generation, machine verification, and machine refactoring — with humans as reviewers and operators. The compiler is an API that emits structured JSON (diagnostics, typed ASTs, symbol graphs, hole specs, fix patches). The runtime enforces capability-based sandboxing and deterministic replay. Written in Rust.
+
+## Motivation
+
+Most languages are built for humans who happen to use tools. Kyokara is built for AI agents that happen to have human reviewers. Every design decision optimizes for machine generation, machine verification, and machine refactoring, while producing code that humans can audit at a glance.
+
+Problems Kyokara solves:
+
+1. Generated code is hard to trust — you can't tell what it does to your filesystem, network, or database until it's too late.
+2. Compilers talk to humans, not machines — error messages are prose, fixes require interpretation, AI wastes tokens guessing.
+3. Refactoring is fragile — AI does regex-level find-and-replace on code that deserves semantic transformations.
+4. "It worked once" isn't good enough — no way to deterministically replay what happened or prove correctness.
+
+## Language Syntax and Semantics
+
+### Modules and Imports
+
+```kyokara
+module finance.payments
+
+import std.list as List
+import std.time as Time
+import net.http as Http
+```
+
+Importing a module does not grant its capability. Capabilities are separate from libraries.
+
+### Types
+
+Records:
+
+```kyokara
+type Money = { amount: Int, currency: Currency }
+```
+
+ADTs (tagged unions):
+
+```kyokara
+type Currency =
+  | USD
+  | IDR
+  | EUR
+
+type Result[T, E] =
+  | Ok(value: T)
+  | Err(error: E)
+
+type Option[T] =
+  | Some(value: T)
+  | None
+```
+
+No `null` in the language — use `Option[T]`.
+
+### Functions
+
+Functions are pure by default:
+
+```kyokara
+fn add_fee(x: Money, fee_bps: Int) -> Money =
+  let fee = { amount = x.amount * fee_bps / 10_000, currency = x.currency }
+  { amount = x.amount + fee.amount, currency = x.currency }
+```
+
+### Capabilities and Effects
+
+Declare capabilities:
+
+```kyokara
+cap Net
+cap Clock
+cap Db
+cap Secrets
+```
+
+Annotate effect requirements:
+
+```kyokara
+fn fetch_rate(base: Currency, quote: Currency) -> Result[Float, HttpError] with Net =
+  Http.get(url = "...") |> parse_rate(base=base, quote=quote)
+```
+
+A function without `with ...` is pure and cannot invoke effectful operations. Callers must inherit required capabilities.
+
+### Pattern Matching
+
+```kyokara
+fn currency_symbol(c: Currency) -> String =
+  match c:
+    | USD -> "$"
+    | IDR -> "Rp"
+    | EUR -> "€"
+```
+
+Compiler enforces exhaustiveness.
+
+### Contracts
+
+```kyokara
+fn withdraw(acct: Account, amt: Money) -> Result[Account, WithdrawError]
+  requires amt.amount > 0
+  requires amt.currency == acct.balance.currency
+  ensures  match result:
+             | Ok(a2) -> a2.balance.amount == old(acct.balance.amount) - amt.amount
+             | Err(_) -> true
+=
+  ...
+```
+
+`old(expr)` refers to pre-state. Contracts are runtime-checked by default. `--verify` flag attempts SMT proofs.
+
+### Property-Based Tests
+
+```kyokara
+property "sort is idempotent" for all xs: List[Int] =
+  List.sort(List.sort(xs)) == List.sort(xs)
+```
+
+First-class syntax, not a library — integrated with the type checker and contract system.
+
+### Typed Holes and Partial Compilation
+
+```kyokara
+fn normalize_email(s: String) -> String =
+  let trimmed = String.trim(s)
+  let lowered = ?lowercase(trimmed)   // expression hole
+  lowered
+```
+
+Holes carry an expected type from context. The compiler emits machine-readable hole specs including: expected type, purity/effect constraints, input variables with types, and contract obligations. Programs with holes compile to partial artifacts (typed AST + partial IR) but are not runnable.
+
+### Pipeline Operator
+
+```kyokara
+x |> f(a=1, b=2)
+```
+
+Desugars to `f(x, a=1, b=2)`. Pipeline feeds the first parameter positionally. Functions can declare an explicit pipe parameter:
+
+```kyokara
+fn split(text: String, sep: String) -> List[String] pipe text = ...
+```
+
+### Error Propagation
+
+```kyokara
+let body = Http.get(url=...)?
+```
+
+`?` postfix desugars to a `match` returning early on `Err`.
+
+### Error Model
+
+`Result[T, E]` is the sole error channel. No exceptions. Panics exist only for unrecoverable programmer errors (contract violations in strict mode, integer overflow in debug). Panics are not catchable. Capability violations produce structured `CapabilityDenied` errors that propagate through the normal `Result` channel.
+
+## Type System
+
+- Strong static typing with local inference
+- Explicit types required at module/public API boundaries
+- No implicit coercions — explicit casts only
+- ADTs with exhaustive pattern matching (unless `_` wildcard is present)
+- Optional refinement types: `type PositiveInt = Int where x > 0` — statically discharged when provable, else runtime check
+
+## Compiler as API
+
+The compiler emits structured JSON, not human-readable error messages:
+
+- `diagnostics.json`: structured errors with spans, expected vs actual types/effects, and suggested patches
+- `typed_ast.json`: full typed abstract syntax tree
+- `symbol_graph.json`: call graph, type graph, effect graph
+- `hole_specs.json`: each hole's expected type, constraints, available variables, and effect requirements
+- `patches.json`: machine-applicable edits for common fixes
+
+## Runtime
+
+### Capability Sandbox
+
+Runtime enforces capabilities with an explicit manifest, deny-by-default:
+
+```json
+{
+  "caps": {
+    "Net": { "allow_domains": ["rates.example", "api.partner.com"] },
+    "Db":  { "allow_tables": ["payments", "users"] },
+    "Secrets": { "allow_keys": ["PAYMENTS_API_KEY"] },
+    "Clock": {}
+  }
+}
+```
+
+### Deterministic Replay
+
+Runtime logs all effectful interactions (network requests/responses, time reads, randomness, database reads/writes). Execution modes:
+
+```sh
+kyokara run job.ky --caps caps.json    # produces run.log
+kyokara replay run.log                 # reproduces behavior deterministically
+kyokara replay run.log --mode=verify   # compares live results against log
+```
+
+Replay mode is read-only by default — all write effects become no-ops returning the logged result.
+
+### Execution Target
+
+Compiles to WASM with host functions implementing capabilities. All I/O goes through the host function capability layer. Single-threaded for determinism.
+
+## Refactor Transactions
+
+Semantic refactors as compiler operations:
+
+- Rename symbol
+- Extract/inline function
+- Move module
+- Add missing match cases
+- Add missing capability annotations
+- Convert positional args to named args
+
+Each returns a patch and verification status (`typechecked`, `verified_level_1`, `tests_updated`).
+
+## Compiler Architecture
+
+The compiler follows rust-analyzer's proven architecture:
+
+```
+Source → Lexer (logos) → Parser (tree-agnostic events) → CST (rowan, lossless)
+     → HIR (def/ty/facade) → Type Inference → Effect Checking
+     → API (structured JSON output)
+```
+
+### Crate Dependency DAG
+
+```
+stdx            (leaf — no kyokara deps)
+ ↑
+span            (depends: stdx)
+ ↑
+intern          (depends: stdx, lasso)
+ ↑
+diagnostics     (depends: stdx, span)
+ ↑
+parser          (depends: stdx, span, intern, diagnostics)
+ ↑              SyntaxKind enum + Event stream. Tree-agnostic (no rowan).
+syntax          (depends: stdx, span, intern, parser, rowan, logos)
+ ↑              Lexer → parser events → rowan green tree. Typed AST wrappers.
+hir-def         (depends: stdx, span, intern, syntax, diagnostics)
+ ↑              HIR data structures. CST→HIR lowering in body/lower.rs.
+hir-ty          (depends: stdx, span, intern, hir-def, diagnostics)
+ ↑              Type inference, exhaustiveness, effect checking.
+hir             (depends: stdx, span, intern, hir-def, hir-ty, syntax, diagnostics)
+ ↑              Facade API for semantic queries.
+api             (depends: stdx, span, intern, diagnostics, hir-def, hir, syntax, serde)
+ ↑              Serializes diagnostics.json, typed_ast.json, symbol_graph.json.
+cli             (depends: api, hir, syntax, diagnostics, clap)
+                Binary: kyokara check / run / replay / fmt
+```
+
+### Key Architectural Decisions
+
+1. **Parser is tree-agnostic**: defines `SyntaxKind` enum and emits `Event` stream. The `syntax` crate converts events to rowan green tree. Enables testing the parser without rowan.
+2. **HIR split into def/ty/facade**: `hir-def` has data types only. `hir-ty` has checking logic. `hir` is the facade. The interpreter (v0.1) depends on `hir-def` without pulling in the checker.
+3. **API crate owns serialization**: internal types stay `serde`-free. `api` defines its own DTO types for JSON output.
+4. **No salsa for v0.0**: full recompute per invocation. Salsa added when the LSP (v0.3) needs incrementality.
+5. **Desugaring at HIR level**: pipeline `|>` and `?` are desugared during CST→HIR lowering, keeping the CST lossless.
+
+### External Dependencies
+
+- rowan 0.16: lossless green/red tree CST
+- logos 0.14: DFA-based lexer
+- lasso 0.7: string interning
+- la-arena 0.3: typed index arenas
+- serde + serde_json: JSON serialization (api crate only)
+- clap 4: CLI arg parsing
+- thiserror 2: error derive macro
+- rustc-hash 2: fast hash maps
+- smol_str 0.3: small string optimization
+- tracing 0.1: structured logging
+- text-size 1.1: TextRange/TextSize
+
+## Standard Library (Planned)
+
+- `std.option` — `Option[T]` and combinators
+- `std.result` — `Result[T, E]` and combinators
+- `std.list` — `List[T]` (immutable linked list)
+- `std.map` — `Map[K, V]` (immutable ordered map)
+- `std.string` — string operations
+- `std.int` / `std.float` — numeric operations
+- `std.io` — basic text I/O (requires `IO` cap)
+- `std.test` — property test generators and assertions
+
+## Roadmap
+
+- **v0.0** (in progress): Parser with error recovery (lossless CST), type checker (ADTs, generics, exhaustiveness), effect/capability checking, typed holes, structured diagnostics + hole specs + symbol graph + patch suggestions
+- **v0.1**: Tree-walking interpreter, runtime contract checks, core stdlib, pipeline and error propagation desugaring
+- **v0.2**: KyokaraIR (SSA-based), WASM code generation, capability sandbox runtime, deterministic replay
+- **v0.3**: Property-based test harness, SMT contract verification, semantic refactor engine, LSP server, canonical formatter
+
+## Building
+
+```sh
+cargo build           # build the workspace
+cargo test            # run tests
+cargo clippy          # lint
+cargo run -p kyokara-cli -- check <file.ky>   # run the compiler
+```
+
+## License
+
+MIT
