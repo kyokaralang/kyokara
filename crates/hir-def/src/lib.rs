@@ -1,0 +1,12 @@
+//! `kyokara-hir-def` — HIR data definitions.
+//!
+//! This crate defines the **data types** for the High-level Intermediate
+//! Representation: items, bodies, expressions, patterns, types, effects,
+//! and holes. It also contains the CST → HIR lowering pass
+//! (`body::lower`).
+//!
+//! The type checker lives in `kyokara-hir-ty`; this crate is data-only
+//! so that the interpreter (v0.1) can depend on it without pulling in
+//! the checker.
+
+pub mod body;

@@ -1,0 +1,10 @@
+[package]
+name = "kyokara-diagnostics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+kyokara-stdx.workspace = true
+kyokara-span.workspace = true
+thiserror.workspace = true
