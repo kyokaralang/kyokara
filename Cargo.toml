@@ -1,0 +1,49 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/stdx",
+    "crates/span",
+    "crates/intern",
+    "crates/diagnostics",
+    "crates/parser",
+    "crates/syntax",
+    "crates/hir-def",
+    "crates/hir-ty",
+    "crates/hir",
+    "crates/api",
+    "crates/cli",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/kyokara-lang/kyokara"
+
+[workspace.dependencies]
+# Internal crates
+kyokara-stdx = { path = "crates/stdx" }
+kyokara-span = { path = "crates/span" }
+kyokara-intern = { path = "crates/intern" }
+kyokara-diagnostics = { path = "crates/diagnostics" }
+kyokara-parser = { path = "crates/parser" }
+kyokara-syntax = { path = "crates/syntax" }
+kyokara-hir-def = { path = "crates/hir-def" }
+kyokara-hir-ty = { path = "crates/hir-ty" }
+kyokara-hir = { path = "crates/hir" }
+kyokara-api = { path = "crates/api" }
+
+# External dependencies
+rowan = "0.16"
+logos = "0.14"
+lasso = "0.7"
+la-arena = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+thiserror = "2"
+rustc-hash = "2"
+smol_str = "0.3"
+tracing = "0.1"
+text-size = "1.1"

@@ -1,0 +1,17 @@
+[package]
+name = "kyokara-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kyokara"
+path = "src/main.rs"
+
+[dependencies]
+kyokara-api.workspace = true
+kyokara-hir.workspace = true
+kyokara-syntax.workspace = true
+kyokara-diagnostics.workspace = true
+clap.workspace = true
+tracing.workspace = true

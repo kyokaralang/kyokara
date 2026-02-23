@@ -1,0 +1,9 @@
+[package]
+name = "kyokara-stdx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustc-hash.workspace = true
+tracing.workspace = true

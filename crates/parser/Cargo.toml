@@ -1,0 +1,11 @@
+[package]
+name = "kyokara-parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+kyokara-stdx.workspace = true
+kyokara-span.workspace = true
+kyokara-intern.workspace = true
+kyokara-diagnostics.workspace = true
