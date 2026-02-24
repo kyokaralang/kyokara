@@ -148,6 +148,8 @@ pub enum SyntaxKind {
     Amp,
     /// `?`
     Question,
+    /// `_` (text-agnostic wildcard / hole token).
+    Underscore,
 
     // ── Nodes (interior) ─────────────────────────────────────────────
 
