@@ -12,7 +12,7 @@
 - Pure by default: functions without `with` clauses cannot perform side effects
 - Explicit capabilities: `with Net`, `with Db`, `with Clock`, `with Secrets` — deny-by-default, manifest-enforced
 - ADTs and exhaustive pattern matching: `type Result[T, E] = | Ok(value: T) | Err(error: E)`
-- Contracts: `requires`, `ensures`, `old()` — checked at runtime, optionally verified by SMT
+- Contracts: `requires`, `ensures`, `old()` — checked at runtime, optionally verified by SMT (restricted fragment, best-effort)
 - Property-based tests: `property "name" for all x: T = ...` as first-class syntax
 - Typed holes: `?name(args)` compiles to structured hole specs with expected type, effects, and constraints
 - Pipeline operator: `x |> f(a=1)` desugars to `f(x, a=1)`
