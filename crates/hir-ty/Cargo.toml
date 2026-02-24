@@ -10,5 +10,6 @@ kyokara-span.workspace = true
 kyokara-intern.workspace = true
 kyokara-hir-def.workspace = true
 kyokara-diagnostics.workspace = true
+kyokara-syntax.workspace = true
 la-arena.workspace = true
 rustc-hash.workspace = true

@@ -1,0 +1,472 @@
+//! End-to-end type inference tests: parse → collect item tree → lower → type check → assert.
+
+use kyokara_hir_def::item_tree::lower::collect_item_tree;
+use kyokara_hir_ty::ty::Ty;
+use kyokara_hir_ty::{TypeCheckResult, check_module};
+use kyokara_intern::Interner;
+use kyokara_span::FileId;
+use kyokara_syntax::SyntaxNode;
+use kyokara_syntax::ast::AstNode;
+use kyokara_syntax::ast::nodes::SourceFile;
+
+fn file_id() -> FileId {
+    FileId(0)
+}
+
+fn parse_source(src: &str) -> SyntaxNode {
+    let parse = kyokara_syntax::parse(src);
+    SyntaxNode::new_root(parse.green)
+}
+
+/// Parse, collect, and type-check, returning the result.
+fn check(src: &str) -> (TypeCheckResult, Interner) {
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root.clone()).unwrap();
+    let mut interner = Interner::new();
+    let item_result = collect_item_tree(&sf, file_id(), &mut interner);
+    let result = check_module(
+        &root,
+        &item_result.tree,
+        &item_result.module_scope,
+        file_id(),
+        &mut interner,
+    );
+    (result, interner)
+}
+
+/// Assert type-checking produces no diagnostics.
+fn check_ok(src: &str) -> (TypeCheckResult, Interner) {
+    let (result, interner) = check(src);
+    let ty_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| !d.message.contains("unresolved name"))
+        .collect();
+    assert!(
+        ty_diags.is_empty(),
+        "expected no type diagnostics, got: {ty_diags:#?}\nsource:\n{src}"
+    );
+    (result, interner)
+}
+
+/// Assert type-checking produces at least one diagnostic containing `needle`.
+fn check_err(src: &str, needle: &str) {
+    let (result, _) = check(src);
+    let has = result
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains(needle));
+    assert!(
+        has,
+        "expected diagnostic containing `{needle}`, got: {:?}\nsource:\n{src}",
+        result
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+// ── Basic inference tests ────────────────────────────────────────────
+
+#[test]
+fn infer_int_literal() {
+    check_ok("fn foo() -> Int { 42 }");
+}
+
+#[test]
+fn infer_bool_literal() {
+    check_ok("fn foo() -> Bool { true }");
+}
+
+#[test]
+fn infer_string_literal() {
+    check_ok("fn foo() -> String { \"hello\" }");
+}
+
+#[test]
+fn infer_float_literal() {
+    check_ok("fn foo() -> Float { 3.14 }");
+}
+
+#[test]
+fn infer_char_literal() {
+    check_ok("fn foo() -> Char { 'a' }");
+}
+
+#[test]
+fn infer_unit_return() {
+    check_ok("fn foo() { }");
+}
+
+#[test]
+fn infer_let_binding() {
+    check_ok("fn foo() -> Int { let x = 42\n x }");
+}
+
+#[test]
+fn infer_let_with_annotation() {
+    check_ok("fn foo() -> Int { let x: Int = 42\n x }");
+}
+
+#[test]
+fn infer_binary_add() {
+    check_ok("fn foo() -> Int { 1 + 2 }");
+}
+
+#[test]
+fn infer_binary_comparison() {
+    check_ok("fn foo() -> Bool { 1 < 2 }");
+}
+
+#[test]
+fn infer_binary_equality() {
+    check_ok("fn foo() -> Bool { 1 == 2 }");
+}
+
+#[test]
+fn infer_unary_neg() {
+    check_ok("fn foo() -> Int { -42 }");
+}
+
+#[test]
+fn infer_unary_not() {
+    check_ok("fn foo() -> Bool { !true }");
+}
+
+#[test]
+fn infer_if_else() {
+    check_ok("fn foo() -> Int { if true { 1 } else { 2 } }");
+}
+
+#[test]
+fn infer_if_no_else_is_unit() {
+    check_ok("fn foo() { if true { 1 } }");
+}
+
+#[test]
+fn infer_function_call() {
+    check_ok("fn bar(x: Int) -> Int { x }\nfn foo() -> Int { bar(42) }");
+}
+
+#[test]
+fn infer_function_call_multi_args() {
+    check_ok("fn add(x: Int, y: Int) -> Int { x + y }\nfn foo() -> Int { add(1, 2) }");
+}
+
+#[test]
+fn infer_return_expr() {
+    check_ok("fn foo() -> Int { return 42 }");
+}
+
+#[test]
+fn infer_param_types() {
+    check_ok("fn foo(x: Int, y: Bool) -> Int { x }");
+}
+
+#[test]
+fn infer_block_with_stmts() {
+    check_ok(
+        "fn foo() -> Int {
+            let a = 1
+            let b = 2
+            a + b
+        }",
+    );
+}
+
+// ── Type error tests ─────────────────────────────────────────────────
+
+#[test]
+fn err_type_mismatch_return() {
+    check_err("fn foo() -> Int { true }", "type mismatch");
+}
+
+#[test]
+fn err_type_mismatch_if_condition() {
+    check_err("fn foo() { if 42 { 1 } else { 2 } }", "type mismatch");
+}
+
+#[test]
+fn err_type_mismatch_if_branches() {
+    check_err(
+        "fn foo() -> Int { if true { 1 } else { true } }",
+        "type mismatch",
+    );
+}
+
+#[test]
+fn err_arithmetic_on_bool() {
+    check_err("fn foo() -> Bool { true + false }", "arithmetic");
+}
+
+#[test]
+fn err_not_on_int() {
+    check_err("fn foo() -> Bool { !42 }", "logical not requires");
+}
+
+#[test]
+fn err_not_a_function() {
+    check_err("fn foo() -> Int { let x = 42\n x(1) }", "not a function");
+}
+
+#[test]
+fn err_wrong_arg_count() {
+    check_err(
+        "fn bar(x: Int) -> Int { x }\nfn foo() -> Int { bar(1, 2) }",
+        "expected 1 argument",
+    );
+}
+
+#[test]
+fn err_negation_on_bool() {
+    check_err("fn foo() -> Bool { -true }", "negation requires");
+}
+
+// ── ADT / constructor tests ──────────────────────────────────────────
+
+#[test]
+fn infer_adt_constructor_call() {
+    check_ok(
+        "type Option<T> = | Some(T) | None
+         fn foo() -> Option<Int> { Some(42) }",
+    );
+}
+
+#[test]
+fn infer_adt_nullary_constructor() {
+    check_ok(
+        "type Option<T> = | Some(T) | None
+         fn foo() -> Option<Int> { None }",
+    );
+}
+
+#[test]
+fn infer_match_basic() {
+    check_ok(
+        "type Bool2 = | True | False
+         fn foo(x: Bool2) -> Int {
+             match x {
+                 True => 1
+                 False => 0
+             }
+         }",
+    );
+}
+
+#[test]
+fn infer_match_with_bind() {
+    check_ok(
+        "type Option<T> = | Some(T) | None
+         fn foo(x: Option<Int>) -> Int {
+             match x {
+                 Some(v) => v
+                 None => 0
+             }
+         }",
+    );
+}
+
+// ── Exhaustiveness tests ─────────────────────────────────────────────
+
+#[test]
+fn err_non_exhaustive_match() {
+    check_err(
+        "type Color = | Red | Green | Blue
+         fn foo(c: Color) -> Int {
+             match c {
+                 Red => 1
+                 Green => 2
+             }
+         }",
+        "non-exhaustive",
+    );
+}
+
+#[test]
+fn exhaustive_with_wildcard() {
+    check_ok(
+        "type Color = | Red | Green | Blue
+         fn foo(c: Color) -> Int {
+             match c {
+                 Red => 1
+                 _ => 0
+             }
+         }",
+    );
+}
+
+#[test]
+fn err_redundant_arm() {
+    check_err(
+        "type Bool2 = | True | False
+         fn foo(x: Bool2) -> Int {
+             match x {
+                 True => 1
+                 False => 0
+                 True => 2
+             }
+         }",
+        "redundant",
+    );
+}
+
+#[test]
+fn err_redundant_arm_after_wildcard() {
+    check_err(
+        "type Bool2 = | True | False
+         fn foo(x: Bool2) -> Int {
+             match x {
+                 _ => 0
+                 True => 1
+             }
+         }",
+        "redundant",
+    );
+}
+
+// ── Effect checking tests ────────────────────────────────────────────
+
+#[test]
+fn effect_pure_calling_pure_ok() {
+    check_ok(
+        "fn pure_fn(x: Int) -> Int { x }
+         fn foo() -> Int { pure_fn(42) }",
+    );
+}
+
+#[test]
+fn effect_with_cap_calling_effectful_ok() {
+    check_ok(
+        "cap Console {
+             fn print(msg: String) -> Unit {}
+         }
+         fn effectful() -> Unit with Console { }
+         fn foo() -> Unit with Console { effectful() }",
+    );
+}
+
+#[test]
+fn err_effect_violation() {
+    check_err(
+        "cap Console {
+             fn print(msg: String) -> Unit {}
+         }
+         fn effectful() -> Unit with Console { }
+         fn foo() -> Unit { effectful() }",
+        "effect violation",
+    );
+}
+
+// ── Hole tests ───────────────────────────────────────────────────────
+
+#[test]
+fn hole_infers_expected_type() {
+    let (result, _interner) = check("fn foo() -> Int { _ }");
+    // Should have a hole recorded.
+    let has_hole = result.fn_results.values().any(|r| !r.holes.is_empty());
+    assert!(has_hole, "expected at least one hole to be recorded");
+}
+
+#[test]
+fn hole_records_expected_type() {
+    let (result, _interner) = check("fn foo() -> Int { _ }");
+    for r in result.fn_results.values() {
+        for hole in &r.holes {
+            if let Some(ty) = &hole.expected_type {
+                assert_eq!(*ty, Ty::Int);
+                return;
+            }
+        }
+    }
+    panic!("expected hole with expected_type = Int");
+}
+
+// ── Record tests ─────────────────────────────────────────────────────
+
+#[test]
+fn infer_record_literal() {
+    check_ok(
+        "type Point = { x: Int, y: Int }
+         fn foo() -> Point { Point { x: 1, y: 2 } }",
+    );
+}
+
+#[test]
+fn infer_structural_record() {
+    // Structural record without a named type — just returns Unit (since
+    // we can't express the return type for anonymous records yet).
+    check_ok("fn foo() { let r = { x: 1, y: 2 }\n r }");
+}
+
+// ── Lambda tests ─────────────────────────────────────────────────────
+
+#[test]
+fn infer_lambda_with_annotation() {
+    check_ok("fn foo() -> fn(Int) -> Int { fn(x: Int) => x }");
+}
+
+// ── Pipeline desugaring + type check ─────────────────────────────────
+
+#[test]
+fn infer_pipeline() {
+    check_ok(
+        "fn double(x: Int) -> Int { x + x }
+         fn foo() -> Int { 21 |> double }",
+    );
+}
+
+#[test]
+fn infer_pipeline_with_args() {
+    check_ok(
+        "fn add(x: Int, y: Int) -> Int { x + y }
+         fn foo() -> Int { 1 |> add(2) }",
+    );
+}
+
+// ── Edge cases ───────────────────────────────────────────────────────
+
+#[test]
+fn error_propagation_no_cascade() {
+    // A type error in one place shouldn't cause cascading errors.
+    // The function has a return type mismatch but the inner expressions
+    // should still get consistent types.
+    let (result, _) = check("fn foo() -> Int { true }");
+    // Should get exactly one type mismatch, not multiple.
+    let type_mismatches: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("type mismatch"))
+        .collect();
+    assert_eq!(
+        type_mismatches.len(),
+        1,
+        "expected exactly 1 type mismatch, got: {type_mismatches:?}"
+    );
+}
+
+#[test]
+fn missing_expr_produces_error_type() {
+    // Functions with parse errors should not panic.
+    let (result, _) = check("fn foo() -> Int { }");
+    // Should get a mismatch since empty block returns Unit.
+    let has_mismatch = result
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("type mismatch"));
+    assert!(has_mismatch);
+}
+
+#[test]
+fn multiple_functions_checked() {
+    check_ok(
+        "fn a() -> Int { 1 }
+         fn b() -> Bool { true }
+         fn c() -> Int { a() }",
+    );
+}
+
+#[test]
+fn comparison_returns_bool() {
+    check_ok("fn foo() -> Bool { 1 >= 2 }");
+}
