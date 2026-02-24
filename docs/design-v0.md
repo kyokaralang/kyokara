@@ -477,9 +477,10 @@ v0 stdlib provides:
 * Patch suggestions (machine-applicable fixes for E0009 MissingMatchArms, E0011 EffectViolation) ✓
 
 **v0.1 — Tooling Foundation + Interpreter**
+* Tree-walking interpreter (`kyokara run <file>`, `kyokara-eval` crate) ✓
+* Intrinsic functions (print, println, int_to_string, string_concat) ✓
 * Canonical formatter + deterministic pretty-printer
 * Stable symbol IDs (across edits)
-* Tree-walking interpreter or bytecode VM
 * Runtime contract checks (requires/ensures/old)
 * Core stdlib (List, Map, String, Result, Option)
 

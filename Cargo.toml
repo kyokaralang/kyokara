@@ -10,6 +10,7 @@ members = [
     "crates/hir-def",
     "crates/hir-ty",
     "crates/hir",
+    "crates/eval",
     "crates/api",
     "crates/cli",
     "xtask",
@@ -32,6 +33,7 @@ kyokara-syntax = { path = "crates/syntax" }
 kyokara-hir-def = { path = "crates/hir-def" }
 kyokara-hir-ty = { path = "crates/hir-ty" }
 kyokara-hir = { path = "crates/hir" }
+kyokara-eval = { path = "crates/eval" }
 kyokara-api = { path = "crates/api" }
 
 # External dependencies

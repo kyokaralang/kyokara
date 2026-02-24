@@ -206,6 +206,7 @@ dependencies = [
  "clap",
  "kyokara-api",
  "kyokara-diagnostics",
+ "kyokara-eval",
  "kyokara-hir",
  "kyokara-syntax",
  "serde_json",
@@ -218,6 +219,22 @@ version = "0.0.0"
 dependencies = [
  "kyokara-span",
  "kyokara-stdx",
+ "thiserror",
+]
+
+[[package]]
+name = "kyokara-eval"
+version = "0.0.0"
+dependencies = [
+ "kyokara-diagnostics",
+ "kyokara-hir",
+ "kyokara-hir-def",
+ "kyokara-intern",
+ "kyokara-span",
+ "kyokara-stdx",
+ "kyokara-syntax",
+ "la-arena",
+ "rustc-hash 2.1.1",
  "thiserror",
 ]
 

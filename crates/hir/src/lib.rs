@@ -6,10 +6,13 @@
 //!
 //! When salsa lands (v0.3), the incremental database will live here.
 
+pub use kyokara_hir_def::body::Body;
+pub use kyokara_hir_def::item_tree::lower::collect_item_tree;
 pub use kyokara_hir_def::item_tree::{
-    CapItem, FnItem, ItemTree, TypeDefKind, TypeItem, VariantDef,
+    CapItem, FnItem, FnParam, ItemTree, TypeDefKind, TypeItem, VariantDef,
 };
 pub use kyokara_hir_def::name::Name;
+pub use kyokara_hir_def::path::Path;
 pub use kyokara_hir_def::resolver::ModuleScope;
 pub use kyokara_hir_def::type_ref::TypeRef;
 pub use kyokara_hir_ty::diagnostics::TyDiagnosticData;
@@ -18,7 +21,6 @@ pub use kyokara_hir_ty::infer::InferenceResult;
 pub use kyokara_hir_ty::ty::{Ty, display_ty};
 pub use kyokara_hir_ty::{TypeCheckResult, check_module};
 
-use kyokara_hir_def::item_tree::lower::collect_item_tree;
 use kyokara_intern::Interner;
 use kyokara_parser::ParseError;
 use kyokara_span::FileId;
