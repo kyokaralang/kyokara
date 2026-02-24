@@ -51,6 +51,8 @@ pub struct InferenceResult {
     pub diagnostics: Vec<Diagnostic>,
     /// Raw diagnostic data with spans, preserved for structured JSON output.
     pub raw_diagnostics: Vec<(TyDiagnosticData, Span)>,
+    /// Names of functions called from this function body.
+    pub calls: Vec<Name>,
 }
 
 /// Mutable inference context, threaded through expression/pattern inference.
@@ -60,6 +62,8 @@ pub(crate) struct InferenceCtx<'a> {
     pub pat_types: ArenaMap<la_arena::Idx<Pat>, Ty>,
     pub holes: Vec<HoleInfo>,
     pub diags: Vec<TyDiagnosticData>,
+    /// Names of functions called from this body (for symbol graph edges).
+    pub calls: Vec<Name>,
 
     pub body: &'a Body,
     pub item_tree: &'a ItemTree,
@@ -176,6 +180,7 @@ pub fn infer_body(
         pat_types: ArenaMap::default(),
         holes: Vec::new(),
         diags: Vec::new(),
+        calls: Vec::new(),
         body,
         item_tree,
         module_scope,
@@ -238,5 +243,6 @@ pub fn infer_body(
         holes: ctx.holes,
         diagnostics,
         raw_diagnostics,
+        calls: ctx.calls,
     }
 }

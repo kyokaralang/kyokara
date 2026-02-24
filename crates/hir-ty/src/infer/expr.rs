@@ -392,6 +392,8 @@ impl<'a> InferenceCtx<'a> {
             && path.is_single()
         {
             let name = path.segments[0];
+            // Record callee for symbol graph call edges.
+            self.calls.push(name);
             if let Some(&fn_idx) = self.module_scope.functions.get(&name) {
                 let fn_item = &self.item_tree.functions[fn_idx];
                 let env = Self::make_env(
