@@ -36,6 +36,40 @@ pub enum TyDiagnosticData {
 }
 
 impl TyDiagnosticData {
+    /// Stable error code for this diagnostic variant.
+    pub fn code(&self) -> &'static str {
+        match self {
+            TyDiagnosticData::TypeMismatch { .. } => "E0001",
+            TyDiagnosticData::InvalidArithmeticOperand { .. } => "E0002",
+            TyDiagnosticData::InvalidComparisonOperand { .. } => "E0003",
+            TyDiagnosticData::InvalidNegationOperand { .. } => "E0004",
+            TyDiagnosticData::InvalidNotOperand { .. } => "E0005",
+            TyDiagnosticData::NotAFunction { .. } => "E0006",
+            TyDiagnosticData::ArgCountMismatch { .. } => "E0007",
+            TyDiagnosticData::NoSuchField { .. } => "E0008",
+            TyDiagnosticData::MissingMatchArms { .. } => "E0009",
+            TyDiagnosticData::RedundantMatchArm => "E0010",
+            TyDiagnosticData::EffectViolation { .. } => "E0011",
+            TyDiagnosticData::UnresolvedType { .. } => "E0012",
+        }
+    }
+
+    /// The expected type, if this diagnostic carries one.
+    pub fn expected_ty(&self) -> Option<&Ty> {
+        match self {
+            TyDiagnosticData::TypeMismatch { expected, .. } => Some(expected),
+            _ => None,
+        }
+    }
+
+    /// The actual type, if this diagnostic carries one.
+    pub fn actual_ty(&self) -> Option<&Ty> {
+        match self {
+            TyDiagnosticData::TypeMismatch { actual, .. } => Some(actual),
+            _ => None,
+        }
+    }
+
     /// Convert to a [`Diagnostic`] at the given span.
     pub fn into_diagnostic(self, span: Span, interner: &Interner) -> Diagnostic {
         let message = match &self {

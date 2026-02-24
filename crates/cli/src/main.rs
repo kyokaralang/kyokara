@@ -21,6 +21,9 @@ enum Command {
     Check {
         /// Path to the .ky source file.
         file: String,
+        /// Output format: "human" (default) or "json".
+        #[arg(long, default_value = "human")]
+        format: String,
     },
 }
 
@@ -28,9 +31,43 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Check { file } => {
-            eprintln!("kyokara check: not yet implemented (file: {file})");
-            std::process::exit(1);
+        Command::Check { file, format } => {
+            let source = match std::fs::read_to_string(&file) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: cannot read `{file}`: {e}");
+                    std::process::exit(1);
+                }
+            };
+
+            let output = kyokara_api::check(&source, &file);
+
+            match format.as_str() {
+                "json" => {
+                    let json =
+                        serde_json::to_string_pretty(&output).expect("failed to serialize output");
+                    println!("{json}");
+                }
+                _ => {
+                    for diag in &output.diagnostics {
+                        eprintln!(
+                            "{file}:{start}: error[{code}]: {msg}",
+                            file = diag.span.file,
+                            start = diag.span.start,
+                            code = diag.code,
+                            msg = diag.message,
+                        );
+                    }
+                    if output.diagnostics.is_empty() {
+                        eprintln!("no errors found.");
+                    }
+                }
+            }
+
+            let has_errors = output.diagnostics.iter().any(|d| d.severity == "error");
+            if has_errors {
+                std::process::exit(1);
+            }
         }
     }
 }

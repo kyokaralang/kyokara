@@ -49,6 +49,8 @@ pub struct InferenceResult {
     pub pat_types: ArenaMap<la_arena::Idx<Pat>, Ty>,
     pub holes: Vec<HoleInfo>,
     pub diagnostics: Vec<Diagnostic>,
+    /// Raw diagnostic data with spans, preserved for structured JSON output.
+    pub raw_diagnostics: Vec<(TyDiagnosticData, Span)>,
 }
 
 /// Mutable inference context, threaded through expression/pattern inference.
@@ -73,6 +75,8 @@ pub(crate) struct InferenceCtx<'a> {
     pub type_params: Vec<(Name, Ty)>,
     /// Parameter types by index (for ScopeDef::Param(i) lookups).
     pub param_types: Vec<Ty>,
+    /// Parameter names by index (for locals collection in holes).
+    pub param_names: Vec<Name>,
     /// Local variable types: PatIdx → Ty (for looking up bound names).
     pub local_types: ArenaMap<la_arena::Idx<Pat>, Ty>,
 }
@@ -181,6 +185,7 @@ pub fn infer_body(
         caller_effects,
         type_params,
         param_types: param_tys.clone(),
+        param_names: fn_item.params.iter().map(|p| p.name).collect(),
         local_types: ArenaMap::default(),
     };
 
@@ -216,6 +221,10 @@ pub fn infer_body(
         pat_types.insert(idx, ctx.table.resolve_deep(&ty));
     }
 
+    // Build raw diagnostics (data + span) for structured output.
+    let raw_diagnostics: Vec<(TyDiagnosticData, Span)> =
+        ctx.diags.iter().map(|d| (d.clone(), fn_span)).collect();
+
     // Convert diagnostics.
     let diagnostics: Vec<Diagnostic> = ctx
         .diags
@@ -228,5 +237,6 @@ pub fn infer_body(
         pat_types,
         holes: ctx.holes,
         diagnostics,
+        raw_diagnostics,
     }
 }

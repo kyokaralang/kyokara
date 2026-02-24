@@ -10,7 +10,11 @@ kyokara-span.workspace = true
 kyokara-intern.workspace = true
 kyokara-diagnostics.workspace = true
 kyokara-hir-def.workspace = true
+kyokara-hir-ty.workspace = true
 kyokara-hir.workspace = true
 kyokara-syntax.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
 serde_json.workspace = true

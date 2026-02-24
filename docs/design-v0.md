@@ -470,8 +470,10 @@ v0 stdlib provides:
 * Duplicate definition and unresolved name diagnostics ✓
 * Type checker (ADTs, generics, pattern matching exhaustiveness) ✓
 * Effect/capability checking ✓
-* Typed holes + partial compilation
-* Structured diagnostics, hole specs, symbol graph, patch suggestions
+* Typed holes + partial compilation ✓
+* Structured diagnostics (`diagnostics.json` with error codes, spans, expected/actual types) ✓
+* Typed hole specs (`hole_specs.json` with expected type, available variables, effect constraints) ✓
+* Symbol graph, patch suggestions
 
 **v0.1 — Tooling Foundation + Interpreter**
 * Canonical formatter + deterministic pretty-printer
@@ -557,10 +559,11 @@ Rust is recommended for:
 3. ~~Implement typed AST wrappers + CST→HIR lowering + name resolution.~~ ✓
 4. ~~Implement type checker (ADTs, generics, exhaustiveness, unification).~~ ✓
 5. ~~Implement effect/capability checking.~~ ✓
-6. Implement typed holes + partial compilation.
-7. Emit structured diagnostics + patch suggestions.
-8. Implement tree-walking interpreter for rapid iteration.
-9. Add contracts as runtime checks.
-10. Implement WASM runtime host functions for capabilities + replay log.
-11. Add property test runner and basic generators.
-12. Integrate SMT solver for opt-in static verification.
+6. ~~Implement typed holes + partial compilation.~~ ✓
+7. ~~Emit structured diagnostics + hole specs.~~ ✓
+8. Emit patch suggestions + symbol graph.
+9. Implement tree-walking interpreter for rapid iteration.
+10. Add contracts as runtime checks.
+11. Implement WASM runtime host functions for capabilities + replay log.
+12. Add property test runner and basic generators.
+13. Integrate SMT solver for opt-in static verification.
