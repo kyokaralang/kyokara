@@ -154,6 +154,28 @@ crates/
 | **v0.2** | Refactor engine, LSP server, capability enforcement, module/package system | Planned |
 | **v0.3** | Property testing, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay | Planned |
 
+## FAQ
+
+**Why build the compiler frontend before an interpreter? Most new languages start with "make something run."**
+
+Kyokara's primary user is an AI agent, not a human at a REPL. The agent's workflow is: write code, ask the compiler what's wrong, read structured JSON, apply fixes, repeat. That feedback loop doesn't need execution — it needs analysis. So we built the part that *thinks about* programs first (type checking, effect checking, exhaustiveness, hole specs, symbol graph, fix suggestions). The interpreter comes next in v0.1 and it'll be a straightforward tree-walker over the HIR that already exists.
+
+**Can I run Kyokara programs right now?**
+
+Not yet. Right now you can write `.ky` files and check them: `kyokara check file.ky --format json`. You get back structured diagnostics, typed hole specifications, a symbol graph, and machine-applicable fix patches. Execution arrives in v0.1 with a tree-walking interpreter.
+
+**Why Rust?**
+
+WASM target alignment (the compiler can eventually compile to WASM itself), performance for compiler tooling, strong ecosystem for parsers and WASM runtimes, and memory safety without GC overhead.
+
+**Why not use salsa/incremental computation from the start?**
+
+Full recompute per invocation is fine for v0.0. Salsa gets added when the LSP (v0.2+) needs incrementality. Premature incrementality would complicate the codebase without a user who benefits from it yet.
+
+**How is this different from just using TypeScript/Rust/etc. with an AI?**
+
+Those languages weren't designed for machine authorship. Their error messages are prose that AI has to interpret. Their type systems don't track side effects. Their compilers don't emit structured fix patches. Kyokara makes the compiler-to-agent interface a first-class design concern — not an afterthought.
+
 ## Building
 
 ```sh
@@ -162,6 +184,9 @@ cargo build
 
 # Run the compiler
 cargo run -p kyokara-cli -- check <file.ky>
+
+# JSON output (for AI agents)
+cargo run -p kyokara-cli -- check <file.ky> --format json
 ```
 
 ## License
