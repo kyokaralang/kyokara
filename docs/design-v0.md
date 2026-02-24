@@ -133,6 +133,12 @@ Rules:
 * a function without `with ...` is pure and cannot invoke effectful operations.
 * callers must "inherit" required caps unless the cap is introduced explicitly via scoped blocks (optional v0 feature).
 
+Open design questions (to resolve before hir-ty):
+* **Effect polymorphism**: higher-order functions need effect-polymorphic signatures, e.g. `fn map(f: fn(A) -> B with e, xs: List[A]) -> List[B] with e`. Without this, the stdlib will be painful.
+* **Subeffecting**: is `Pure` a subeffect of every capability set? Can `with Net` call a `Pure` function? (Yes — effects are an upper bound, "may do", not "must do".)
+* **Scoped capabilities**: can a caller restrict a capability before passing it? e.g. `with caps.restrict(domain="rates.example")`.
+* **Async**: if concurrency is added later, effect tracking must compose with async. Deferring concurrency to post-v0 avoids this for now.
+
 ### 2.6 Pattern matching
 
 ```kyokara
@@ -226,10 +232,11 @@ Desugars to a `match` returning early on `Err`.
 * `requires`: pre-state checks
 * `ensures`: post-state obligations referencing saved `old(...)` values
 
-Verification policy (v0):
-* default to runtime checks for all contracts
-* `--verify` flag attempts SMT proofs and reports what it could/couldn't discharge
-* compilation is never blocked on verification results
+Verification policy:
+* v0.1: contracts are runtime assertions + property tests (QuickCheck-style)
+* v0.3: `--verify` flag attempts best-effort SMT proofs for a **restricted fragment** (linear arithmetic + uninterpreted functions, no heap reasoning). Reports what it could/couldn't discharge.
+* compilation is **never** blocked on verification results
+* "verified" means "SMT discharged proof obligation" — sound within the modeled fragment, incomplete by design
 
 Capturable expressions in `old(...)`:
 * function parameters and any pure expression in scope at function entry
@@ -381,7 +388,7 @@ Example manifest concept:
 
 ### 8.2 Deterministic replay
 
-Runtime logs all effectful interactions:
+Runtime logs all effectful interactions through a single effect handler interface:
 * network requests/responses
 * time reads
 * randomness
@@ -394,6 +401,11 @@ Execution modes:
 Replay policy:
 * replay mode is **read-only by default** — all write effects become no-ops that return the logged result.
 * `--replay-mode=verify` compares what *would* have been written against the log and reports mismatches.
+
+Determinism boundary:
+* determinism guarantee holds for **the language runtime + recorded effects** under **single-threaded execution**, with **captured inputs** (time, network responses, database results).
+* anything outside the recorded boundary (external state changes, concurrent processes) is not covered.
+* concurrency scheduling replay is deferred — v0 is single-threaded by design.
 
 ### 8.3 Sandboxed execution target
 
@@ -454,24 +466,26 @@ v0 stdlib provides:
 * Typed holes + partial compilation
 * Structured diagnostics, hole specs, symbol graph, patch suggestions
 
-**v0.1 — Interpreter + Runtime Contracts**
+**v0.1 — Tooling Foundation + Interpreter**
+* Canonical formatter + deterministic pretty-printer
+* Stable symbol IDs (across edits)
+* Pipeline and error propagation desugaring
 * Tree-walking interpreter or bytecode VM
 * Runtime contract checks (requires/ensures/old)
 * Core stdlib (List, Map, String, Result, Option)
-* Pipeline and error propagation desugaring
 
-**v0.2 — WASM Codegen + Sandbox + Replay**
-* KyokaraIR (SSA-based)
-* IR lowering from typed AST
-* WASM code generation
-* Capability sandbox runtime (host functions + manifest)
-* Deterministic replay logging and execution
-
-**v0.3 — Verification + Property Testing + Refactoring**
-* Property-based test harness + stdlib generators
-* SMT integration for contract verification (opt-in)
-* Refactor engine (rename, extract, inline, move)
+**v0.2 — Refactoring + LSP + Capabilities**
+* Refactor engine (rename, extract, inline, move) with verification status
 * LSP server
+* Capability enforcement at type level
+* Module/package system
+
+**v0.3 — Verification + Codegen + Replay**
+* Property-based test harness + stdlib generators
+* SMT integration for contract verification (restricted fragment: linear arithmetic + uninterpreted functions, best-effort, never blocks compilation)
+* KyokaraIR (SSA-based) + WASM code generation
+* Capability sandbox runtime (host functions + manifest)
+* Deterministic replay logging and execution (single-threaded, recorded effects)
 
 ### 11.2 Cut from v0 (defer)
 

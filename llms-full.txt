@@ -4,14 +4,16 @@
 
 ## Motivation
 
-Most languages are built for humans who happen to use tools. Kyokara is built for AI agents that happen to have human reviewers. Every design decision optimizes for machine generation, machine verification, and machine refactoring, while producing code that humans can audit at a glance.
+AI-assisted coding is becoming dominant in many workflows. Kyokara assumes the primary author may be an agent. Every design decision optimizes for machine generation, machine verification, and machine refactoring, while producing code that humans can audit at a glance.
+
+North star: Given a diff, a reviewer can identify all side effects from types alone. Compiler refactors never break typechecking. Most fixes are machine-applicable — no natural-language parsing needed.
 
 Problems Kyokara solves:
 
 1. Generated code is hard to trust — you can't tell what it does to your filesystem, network, or database until it's too late.
 2. Compilers talk to humans, not machines — error messages are prose, fixes require interpretation, AI wastes tokens guessing.
 3. Refactoring is fragile — AI does regex-level find-and-replace on code that deserves semantic transformations.
-4. "It worked once" isn't good enough — no way to deterministically replay what happened or prove correctness.
+4. "It worked once" isn't good enough — no way to replay what happened or systematically verify behavior.
 
 ## Language Syntax and Semantics
 
@@ -109,7 +111,7 @@ fn withdraw(acct: Account, amt: Money) -> Result[Account, WithdrawError]
   ...
 ```
 
-`old(expr)` refers to pre-state. Contracts are runtime-checked by default. `--verify` flag attempts SMT proofs.
+`old(expr)` refers to pre-state. Contracts are runtime-checked by default. `--verify` flag attempts best-effort SMT proofs for a restricted fragment (linear arithmetic + uninterpreted functions); compilation is never blocked on verification results.
 
 ### Property-Based Tests
 
@@ -192,7 +194,7 @@ Runtime enforces capabilities with an explicit manifest, deny-by-default:
 
 ### Deterministic Replay
 
-Runtime logs all effectful interactions (network requests/responses, time reads, randomness, database reads/writes). Execution modes:
+Runtime logs all effectful interactions (network requests/responses, time reads, randomness, database reads/writes) through a single effect handler interface. Determinism is guaranteed for the language runtime plus recorded effects under single-threaded execution, with captured inputs. Execution modes:
 
 ```sh
 kyokara run job.ky --caps caps.json    # produces run.log
@@ -292,9 +294,9 @@ cli             (depends: api, hir, syntax, diagnostics, clap)
 ## Roadmap
 
 - **v0.0** (in progress): Parser with error recovery (lossless CST), type checker (ADTs, generics, exhaustiveness), effect/capability checking, typed holes, structured diagnostics + hole specs + symbol graph + patch suggestions
-- **v0.1**: Tree-walking interpreter, runtime contract checks, core stdlib, pipeline and error propagation desugaring
-- **v0.2**: KyokaraIR (SSA-based), WASM code generation, capability sandbox runtime, deterministic replay
-- **v0.3**: Property-based test harness, SMT contract verification, semantic refactor engine, LSP server, canonical formatter
+- **v0.1**: Canonical formatter, stable symbol IDs, desugaring, tree-walking interpreter, runtime contracts, core stdlib
+- **v0.2**: Refactor engine, LSP server, capability enforcement, module/package system
+- **v0.3**: Property-based test harness, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay
 
 ## Building
 
