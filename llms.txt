@@ -30,6 +30,7 @@
 - [hir-def](https://github.com/kyokaralang/kyokara/tree/main/crates/hir-def): HIR data types (items, bodies, exprs, patterns, types, effects, holes) + CST-to-HIR lowering
 - [hir-ty](https://github.com/kyokaralang/kyokara/tree/main/crates/hir-ty): Type inference, unification, exhaustiveness checking, effect checking
 - [hir](https://github.com/kyokaralang/kyokara/tree/main/crates/hir): High-level facade for semantic queries
+- [eval](https://github.com/kyokaralang/kyokara/tree/main/crates/eval): Tree-walking interpreter with scoped environments and intrinsics (print, int_to_string, string_concat)
 - [api](https://github.com/kyokaralang/kyokara/tree/main/crates/api): JSON serialization of all compiler outputs (diagnostics, typed AST, symbol graph, patches)
 - [cli](https://github.com/kyokaralang/kyokara/tree/main/crates/cli): `kyokara check`, `kyokara run`, `kyokara replay`, `kyokara fmt`
 

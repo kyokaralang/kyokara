@@ -19,6 +19,7 @@ pub mod ty;
 pub mod unify;
 
 use kyokara_diagnostics::Diagnostic;
+use kyokara_hir_def::body::Body;
 use kyokara_hir_def::body::lower::lower_body;
 use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree};
 use kyokara_hir_def::resolver::ModuleScope;
@@ -40,6 +41,8 @@ use crate::infer::InferenceResult;
 pub struct TypeCheckResult {
     /// Per-function inference results, keyed by function item index.
     pub fn_results: FxHashMap<FnItemIdx, InferenceResult>,
+    /// Lowered bodies for each function, keyed by function item index.
+    pub fn_bodies: FxHashMap<FnItemIdx, Body>,
     /// All diagnostics from type checking.
     pub diagnostics: Vec<Diagnostic>,
     /// Raw diagnostic data with spans for structured output.
@@ -60,6 +63,7 @@ pub fn check_module(
     interner: &mut Interner,
 ) -> TypeCheckResult {
     let mut fn_results = FxHashMap::default();
+    let mut fn_bodies = FxHashMap::default();
     let mut all_diagnostics = Vec::new();
     let mut all_raw_diagnostics = Vec::new();
     let mut fn_calls = Vec::new();
@@ -102,10 +106,12 @@ pub fn check_module(
         all_raw_diagnostics.extend(result.raw_diagnostics.iter().cloned());
         fn_calls.push((fn_item.name, result.calls.clone()));
         fn_results.insert(fn_idx, result);
+        fn_bodies.insert(fn_idx, body_result.body);
     }
 
     TypeCheckResult {
         fn_results,
+        fn_bodies,
         diagnostics: all_diagnostics,
         raw_diagnostics: all_raw_diagnostics,
         fn_calls,

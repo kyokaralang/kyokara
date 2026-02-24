@@ -150,7 +150,7 @@ crates/
 | Version | What ships | Status |
 |---------|-----------|--------|
 | **v0.0** | Parser ✓, name resolution ✓, CST→HIR lowering ✓, type checker ✓, effect checking ✓, typed holes ✓, structured diagnostics ✓, hole specs ✓, symbol graph ✓, patch suggestions ✓ | **Complete** |
-| **v0.1** | Canonical formatter, stable symbol IDs, desugaring, tree-walking interpreter, runtime contracts, core stdlib | Planned |
+| **v0.1** | Tree-walking interpreter ✓, intrinsics ✓, canonical formatter, stable symbol IDs, runtime contracts, core stdlib | **In Progress** |
 | **v0.2** | Refactor engine, LSP server, capability enforcement, module/package system | Planned |
 | **v0.3** | Property testing, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay | Planned |
 

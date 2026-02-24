@@ -255,10 +255,12 @@ hir-ty          (depends: stdx, span, intern, hir-def, diagnostics, syntax)
  ↑              Bidirectional type inference (Hindley-Milner + unification), exhaustiveness checking, effect/capability checking, typed holes. Ty enum, UnificationTable, TypeRef→Ty resolution, per-function InferenceResult with ArenaMap<ExprIdx,Ty>.
 hir             (depends: stdx, span, intern, hir-def, hir-ty, syntax, diagnostics, parser, rowan)
  ↑              Facade API: check_file(source) → CheckResult (parse + lower + type-check). Re-exports key types.
+eval            (depends: stdx, span, intern, diagnostics, syntax, hir-def, hir, la-arena, rustc-hash, thiserror)
+ ↑              Tree-walking interpreter. Walks HIR Body expression trees with scoped Env. Value enum (Int, Float, String, Bool, Unit, Adt, Record, Fn). Intrinsics: print, println, int_to_string, string_concat. Custom compilation pipeline injects intrinsic signatures before type-checking. Entry point: run(source) → Result<RunResult, RuntimeError>.
 api             (depends: stdx, span, intern, diagnostics, hir-def, hir-ty, hir, syntax, serde)
  ↑              Compiler-as-API: check(source, file_name) → CheckOutput. DTO types (DiagnosticDto, HoleSpecDto, SymbolGraphDto, SpanDto, FixDto) with serde. Structured JSON with error codes (E0001–E0012 type, E0100 parse, E0101–E0102 lowering), expected/actual types, hole specs with available variables and effect constraints, symbol graph (function/type/capability nodes with call edges and effect annotations), and machine-applicable patch suggestions for E0009 (MissingMatchArms) and E0011 (EffectViolation).
-cli             (depends: api, hir, syntax, diagnostics, clap, serde_json)
-                Binary: kyokara check <file> [--format human|json]. Human-readable (default) or JSON output.
+cli             (depends: api, eval, hir, syntax, diagnostics, clap, serde_json)
+                Binary: kyokara check <file> [--format human|json], kyokara run <file>. Human-readable (default) or JSON output for check; interpreter execution for run.
 ```
 
 ### Key Architectural Decisions
@@ -297,7 +299,7 @@ cli             (depends: api, hir, syntax, diagnostics, clap, serde_json)
 ## Roadmap
 
 - **v0.0** (complete): Parser with error recovery (lossless CST) ✓, name resolution with scope chains ✓, item tree collection + body lowering with desugaring ✓, type checker (ADTs, generics, exhaustiveness) ✓, effect/capability checking ✓, typed holes ✓, structured diagnostics ✓, hole specs ✓, symbol graph ✓, patch suggestions ✓
-- **v0.1**: Canonical formatter, stable symbol IDs, desugaring, tree-walking interpreter, runtime contracts, core stdlib
+- **v0.1** (in progress): Tree-walking interpreter ✓, intrinsics ✓, canonical formatter, stable symbol IDs, runtime contracts, core stdlib
 - **v0.2**: Refactor engine, LSP server, capability enforcement, module/package system
 - **v0.3**: Property-based test harness, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay
 
@@ -307,7 +309,8 @@ cli             (depends: api, hir, syntax, diagnostics, clap, serde_json)
 cargo build           # build the workspace
 cargo test            # run tests
 cargo clippy          # lint
-cargo run -p kyokara-cli -- check <file.ky>   # run the compiler
+cargo run -p kyokara-cli -- check <file.ky>   # type-check a file
+cargo run -p kyokara-cli -- run <file.ky>     # execute a file (needs a main function)
 ```
 
 ## License

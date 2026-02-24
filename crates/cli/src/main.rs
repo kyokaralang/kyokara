@@ -25,6 +25,11 @@ enum Command {
         #[arg(long, default_value = "human")]
         format: String,
     },
+    /// Run a Kyokara source file.
+    Run {
+        /// Path to the .ky source file.
+        file: String,
+    },
 }
 
 fn main() {
@@ -67,6 +72,27 @@ fn main() {
             let has_errors = output.diagnostics.iter().any(|d| d.severity == "error");
             if has_errors {
                 std::process::exit(1);
+            }
+        }
+        Command::Run { file } => {
+            let source = match std::fs::read_to_string(&file) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: cannot read `{file}`: {e}");
+                    std::process::exit(1);
+                }
+            };
+
+            match kyokara_eval::run(&source) {
+                Ok(result) => {
+                    if !matches!(result.value, kyokara_eval::value::Value::Unit) {
+                        println!("{}", result.value.display(&result.interner));
+                    }
+                }
+                Err(e) => {
+                    eprintln!("runtime error: {e}");
+                    std::process::exit(1);
+                }
             }
         }
     }

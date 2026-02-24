@@ -1,0 +1,19 @@
+[package]
+name = "kyokara-eval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+kyokara-stdx.workspace = true
+kyokara-span.workspace = true
+kyokara-intern.workspace = true
+kyokara-diagnostics.workspace = true
+kyokara-syntax.workspace = true
+kyokara-hir-def.workspace = true
+kyokara-hir.workspace = true
+la-arena.workspace = true
+thiserror.workspace = true
+rustc-hash.workspace = true
+
+[dev-dependencies]
