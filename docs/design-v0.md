@@ -460,7 +460,12 @@ v0 stdlib provides:
 ### 11.1 Implementation milestones
 
 **v0.0 — AI-Facing Compiler**
-* Parser with error recovery (lossless CST)
+* Parser with error recovery (lossless CST) ✓
+* Typed AST wrappers over CST (AstNode trait, typed accessors) ✓
+* Name resolution with scope chains (local → type params → module → constructors → imports) ✓
+* CST→HIR lowering: item tree collection (Pass 1) + body lowering (Pass 2) ✓
+* Pipeline `|>` and propagation `?` desugaring at HIR level ✓
+* Duplicate definition and unresolved name diagnostics ✓
 * Type checker (ADTs, generics, pattern matching exhaustiveness)
 * Effect/capability checking
 * Typed holes + partial compilation
@@ -469,7 +474,6 @@ v0 stdlib provides:
 **v0.1 — Tooling Foundation + Interpreter**
 * Canonical formatter + deterministic pretty-printer
 * Stable symbol IDs (across edits)
-* Pipeline and error propagation desugaring
 * Tree-walking interpreter or bytecode VM
 * Runtime contract checks (requires/ensures/old)
 * Core stdlib (List, Map, String, Result, Option)
@@ -499,20 +503,27 @@ v0 stdlib provides:
 
 ## 12. Repository structure
 
-One monorepo for early velocity:
+One monorepo for early velocity. Rust workspace with fine-grained crates:
 
 ```
 kyokara/
-  compiler/        # parser, typechecker, IR, codegen
-  runtime/         # WASM host, capability sandbox, replay engine
-  stdlib/          # standard library modules
-  spec/            # formal grammar, IR spec
-  tools/           # formatter, LSP, fuzz harness
-  examples/        # example programs
-  docs/            # design docs, guides
+  crates/
+    stdx/          # shared utilities (leaf, no kyokara deps)
+    span/          # FileId, Span, TextRange
+    intern/        # string interning (lasso)
+    diagnostics/   # Diagnostic, Severity, Fix
+    parser/        # tree-agnostic recursive-descent parser (SyntaxKind + Events)
+    syntax/        # lossless CST (rowan + logos) + typed AST wrappers
+    hir-def/       # HIR data types, CST→HIR lowering, name resolution
+    hir-ty/        # type inference, exhaustiveness, effect checking
+    hir/           # semantic query facade
+    api/           # compiler-as-API, JSON serialization DTOs
+    cli/           # kyokara binary (check / run / replay / fmt)
+  docs/            # design docs
+  spec/            # formal grammar
 ```
 
-Split into multi-repo only after interfaces stabilize.
+Crate dependency DAG follows rust-analyzer's layered pattern: parser is tree-agnostic (no rowan), HIR is split into def/ty/facade, API crate owns all serde.
 
 ---
 
@@ -539,12 +550,15 @@ Rust is recommended for:
 
 ## 15. Immediate next steps
 
-1. Define exact grammar (PEG/LL(k)) with recoverable parsing.
-2. Implement lexer + parser -> lossless CST.
-3. Implement typed AST + effect inference/checking.
-4. Emit structured diagnostics + patch suggestions.
-5. Implement tree-walking interpreter for rapid iteration.
-6. Add contracts as runtime checks.
-7. Implement WASM runtime host functions for capabilities + replay log.
-8. Add property test runner and basic generators.
-9. Integrate SMT solver for opt-in static verification.
+1. ~~Define exact grammar (PEG/LL(k)) with recoverable parsing.~~ ✓
+2. ~~Implement lexer + parser -> lossless CST.~~ ✓
+3. ~~Implement typed AST wrappers + CST→HIR lowering + name resolution.~~ ✓
+4. Implement type checker (ADTs, generics, exhaustiveness, unification).
+5. Implement effect/capability checking.
+6. Implement typed holes + partial compilation.
+7. Emit structured diagnostics + patch suggestions.
+8. Implement tree-walking interpreter for rapid iteration.
+9. Add contracts as runtime checks.
+10. Implement WASM runtime host functions for capabilities + replay log.
+11. Add property test runner and basic generators.
+12. Integrate SMT solver for opt-in static verification.
