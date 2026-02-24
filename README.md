@@ -134,8 +134,8 @@ crates/
   intern        # string interning
   diagnostics   # error types
   parser        # tree-agnostic recursive-descent parser
-  syntax        # lossless CST (rowan + logos)
-  hir-def       # HIR data types + CST→HIR lowering
+  syntax        # lossless CST (rowan + logos) + typed AST wrappers
+  hir-def       # HIR data types + CST→HIR lowering + name resolution
   hir-ty        # type inference + effect checking
   hir           # semantic query facade
   api           # JSON serialization of all compiler outputs
@@ -146,7 +146,7 @@ crates/
 
 | Version | What ships | Status |
 |---------|-----------|--------|
-| **v0.0** | Parser, type checker, effect checking, typed holes, structured diagnostics | In progress |
+| **v0.0** | Parser, name resolution, CST→HIR lowering, type checker, effect checking, typed holes, structured diagnostics | In progress |
 | **v0.1** | Canonical formatter, stable symbol IDs, desugaring, tree-walking interpreter, runtime contracts, core stdlib | Planned |
 | **v0.2** | Refactor engine, LSP server, capability enforcement, module/package system | Planned |
 | **v0.3** | Property testing, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay | Planned |

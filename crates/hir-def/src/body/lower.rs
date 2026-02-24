@@ -1,7 +1,773 @@
-//! CST → HIR lowering.
+//! Pass 2: CST → HIR body lowering.
 //!
-//! This module walks the typed AST from `kyokara-syntax` and produces
-//! HIR data structures. Desugaring of `|>` (pipeline) and `?`
-//! (propagation) happens here, keeping the CST fully lossless.
+//! Walks typed AST expressions and patterns to produce HIR `Body`.
+//! Desugars `|>` (pipeline) and `?` (propagation) here.
 
-// TODO: implement lowering
+use la_arena::Arena;
+
+use kyokara_diagnostics::Diagnostic;
+use kyokara_intern::Interner;
+use kyokara_span::{FileId, Span};
+use kyokara_syntax::SyntaxKind;
+use kyokara_syntax::ast::AstNode;
+use kyokara_syntax::ast::nodes::{
+    self, ArgList, BinaryExpr, BlockExpr, BlockItem, CallExpr, ElseBranch, FieldExpr, FnDef,
+    IfExpr, LambdaExpr, LiteralExpr, MatchExpr, NamedArg, OldExpr, PathExpr, PipelineExpr,
+    PropagateExpr, RecordExpr, ReturnExpr, TypeExpr, UnaryExpr,
+};
+use kyokara_syntax::ast::traits::{HasName, HasTypeParams};
+
+use crate::body::Body;
+use crate::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, PatIdx, Stmt, UnaryOp};
+use crate::name::Name;
+use crate::pat;
+use crate::path;
+use crate::resolver::ModuleScope;
+use crate::scope::{ScopeDef, ScopeIdx, ScopeTree};
+use crate::type_ref::TypeRef;
+
+/// Result of body lowering.
+pub struct BodyLowerResult {
+    pub body: Body,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Lower a function body from CST to HIR.
+pub fn lower_body(
+    fn_def: &FnDef,
+    module_scope: &ModuleScope,
+    file_id: FileId,
+    interner: &mut Interner,
+) -> BodyLowerResult {
+    let mut ctx = BodyLowerCtx {
+        exprs: Arena::new(),
+        pats: Arena::new(),
+        scopes: ScopeTree::default(),
+        pat_scopes: Vec::new(),
+        diagnostics: Vec::new(),
+        file_id,
+        interner,
+        module_scope,
+        current_scope: None,
+    };
+
+    // Create root scope
+    let root_scope = ctx.scopes.new_root();
+    ctx.current_scope = Some(root_scope);
+
+    // Register function parameters in scope
+    if let Some(param_list) = fn_def.param_list() {
+        for (i, param) in param_list.params().enumerate() {
+            if let Some(tok) = param.name_token() {
+                let name = Name::new(ctx.interner, tok.text());
+                ctx.scopes.define(root_scope, name, ScopeDef::Param(i));
+            }
+        }
+    }
+
+    // Register type parameters in scope
+    if let Some(tpl) = HasTypeParams::type_param_list(fn_def) {
+        for tp in tpl.type_params() {
+            if let Some(tok) = tp.name_token() {
+                let name = Name::new(ctx.interner, tok.text());
+                // Type params are registered as types
+                // For now, just put them in scope so they're resolvable
+                ctx.scopes.define(root_scope, name, ScopeDef::Param(0));
+            }
+        }
+    }
+
+    // Lower contract clauses
+    let requires = fn_def
+        .requires_clause()
+        .and_then(|rc| rc.expr())
+        .map(|e| ctx.lower_expr(&e));
+
+    let ensures = fn_def
+        .ensures_clause()
+        .and_then(|ec| ec.expr())
+        .map(|e| ctx.lower_expr(&e));
+
+    let invariant = fn_def
+        .invariant_clause()
+        .and_then(|ic| ic.expr())
+        .map(|e| ctx.lower_expr(&e));
+
+    // Lower body
+    let root = if let Some(body) = fn_def.body() {
+        ctx.lower_block(&body)
+    } else {
+        ctx.alloc_expr(Expr::Missing)
+    };
+
+    BodyLowerResult {
+        body: Body {
+            exprs: ctx.exprs,
+            pats: ctx.pats,
+            root,
+            requires,
+            ensures,
+            invariant,
+            scopes: ctx.scopes,
+            pat_scopes: ctx.pat_scopes,
+        },
+        diagnostics: ctx.diagnostics,
+    }
+}
+
+struct BodyLowerCtx<'a> {
+    exprs: Arena<Expr>,
+    pats: Arena<pat::Pat>,
+    scopes: ScopeTree,
+    pat_scopes: Vec<(PatIdx, ScopeIdx)>,
+    diagnostics: Vec<Diagnostic>,
+    file_id: FileId,
+    interner: &'a mut Interner,
+    module_scope: &'a ModuleScope,
+    current_scope: Option<ScopeIdx>,
+}
+
+impl BodyLowerCtx<'_> {
+    fn alloc_expr(&mut self, expr: Expr) -> ExprIdx {
+        self.exprs.alloc(expr)
+    }
+
+    fn alloc_pat(&mut self, pat: pat::Pat) -> PatIdx {
+        self.pats.alloc(pat)
+    }
+
+    fn push_scope(&mut self) -> ScopeIdx {
+        let parent = self.current_scope.expect("push_scope without root");
+        let new = self.scopes.new_child(parent);
+        self.current_scope = Some(new);
+        new
+    }
+
+    fn pop_scope(&mut self) {
+        let current = self.current_scope.expect("pop_scope without scope");
+        self.current_scope = self.scopes.scopes[current].parent;
+    }
+
+    fn node_span(&self, node: &kyokara_syntax::SyntaxNode) -> Span {
+        Span {
+            file: self.file_id,
+            range: node.text_range(),
+        }
+    }
+
+    // ── Expression lowering ────────────────────────────────────────
+
+    fn lower_expr(&mut self, expr: &ExprCst) -> ExprIdx {
+        match expr {
+            ExprCst::Literal(lit) => self.lower_literal(lit),
+            ExprCst::Path(pe) => self.lower_path_expr(pe),
+            ExprCst::Binary(be) => self.lower_binary(be),
+            ExprCst::Unary(ue) => self.lower_unary(ue),
+            ExprCst::Call(ce) => self.lower_call(ce),
+            ExprCst::Field(fe) => self.lower_field(fe),
+            ExprCst::Pipeline(pe) => self.lower_pipeline(pe),
+            ExprCst::Propagate(pe) => self.lower_propagate(pe),
+            ExprCst::Match(me) => self.lower_match(me),
+            ExprCst::If(ie) => self.lower_if(ie),
+            ExprCst::Block(be) => self.lower_block(be),
+            ExprCst::Record(re) => self.lower_record(re),
+            ExprCst::Return(re) => self.lower_return(re),
+            ExprCst::Hole(_) => self.alloc_expr(Expr::Hole),
+            ExprCst::Old(oe) => self.lower_old(oe),
+            ExprCst::Paren(pe) => {
+                // Paren expressions are transparent — lower the inner expr.
+                pe.inner()
+                    .map(|e| self.lower_expr(&e))
+                    .unwrap_or_else(|| self.alloc_expr(Expr::Missing))
+            }
+            ExprCst::Lambda(le) => self.lower_lambda(le),
+        }
+    }
+
+    fn lower_literal(&mut self, lit: &LiteralExpr) -> ExprIdx {
+        let literal = lit
+            .token()
+            .map(|tok| match tok.kind() {
+                SyntaxKind::IntLiteral => {
+                    let text = tok.text().replace('_', "");
+                    Literal::Int(text.parse().unwrap_or(0))
+                }
+                SyntaxKind::FloatLiteral => {
+                    let text = tok.text().replace('_', "");
+                    Literal::Float(text.parse().unwrap_or(0.0))
+                }
+                SyntaxKind::StringLiteral => {
+                    let text = tok.text();
+                    // Strip quotes
+                    let inner = &text[1..text.len().saturating_sub(1)];
+                    Literal::String(inner.to_owned())
+                }
+                SyntaxKind::CharLiteral => {
+                    let text = tok.text();
+                    let inner = &text[1..text.len().saturating_sub(1)];
+                    Literal::Char(inner.chars().next().unwrap_or('\0'))
+                }
+                SyntaxKind::TrueKw => Literal::Bool(true),
+                SyntaxKind::FalseKw => Literal::Bool(false),
+                _ => Literal::Bool(false),
+            })
+            .unwrap_or(Literal::Bool(false));
+        self.alloc_expr(Expr::Literal(literal))
+    }
+
+    fn lower_path_expr(&mut self, pe: &PathExpr) -> ExprIdx {
+        let path = pe
+            .path()
+            .map(|p| self.lower_path(&p))
+            .unwrap_or_else(|| path::Path { segments: vec![] });
+
+        // Check if single-segment path resolves
+        if path.is_single()
+            && let Some(name) = path.last()
+            && self.resolve_name(name).is_none()
+        {
+            let span = self.node_span(pe.syntax());
+            self.diagnostics.push(Diagnostic::error(
+                format!("unresolved name `{}`", name.resolve(self.interner)),
+                span,
+            ));
+        }
+
+        self.alloc_expr(Expr::Path(path))
+    }
+
+    fn lower_binary(&mut self, be: &BinaryExpr) -> ExprIdx {
+        let op = be
+            .op_token()
+            .map(|tok| match tok.kind() {
+                SyntaxKind::Plus => BinaryOp::Add,
+                SyntaxKind::Minus => BinaryOp::Sub,
+                SyntaxKind::Star => BinaryOp::Mul,
+                SyntaxKind::Slash => BinaryOp::Div,
+                SyntaxKind::EqEq => BinaryOp::Eq,
+                SyntaxKind::BangEq => BinaryOp::NotEq,
+                SyntaxKind::Lt => BinaryOp::Lt,
+                SyntaxKind::Gt => BinaryOp::Gt,
+                SyntaxKind::LtEq => BinaryOp::LtEq,
+                SyntaxKind::GtEq => BinaryOp::GtEq,
+                _ => BinaryOp::Add,
+            })
+            .unwrap_or(BinaryOp::Add);
+
+        let lhs = be
+            .lhs()
+            .map(|e| self.lower_expr(&e))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+        let rhs = be
+            .rhs()
+            .map(|e| self.lower_expr(&e))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+
+        self.alloc_expr(Expr::Binary { op, lhs, rhs })
+    }
+
+    fn lower_unary(&mut self, ue: &UnaryExpr) -> ExprIdx {
+        let op = ue
+            .op_token()
+            .map(|tok| match tok.kind() {
+                SyntaxKind::Bang => UnaryOp::Not,
+                SyntaxKind::Minus => UnaryOp::Neg,
+                _ => UnaryOp::Not,
+            })
+            .unwrap_or(UnaryOp::Not);
+
+        let operand = ue
+            .operand()
+            .map(|e| self.lower_expr(&e))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+
+        self.alloc_expr(Expr::Unary { op, operand })
+    }
+
+    fn lower_call(&mut self, ce: &CallExpr) -> ExprIdx {
+        let callee = ce
+            .callee()
+            .map(|e| self.lower_expr(&e))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+
+        let args = ce
+            .arg_list()
+            .map(|al| self.lower_arg_list(&al))
+            .unwrap_or_default();
+
+        self.alloc_expr(Expr::Call { callee, args })
+    }
+
+    fn lower_arg_list(&mut self, al: &ArgList) -> Vec<CallArg> {
+        let mut result = Vec::new();
+
+        for child in al.syntax().children() {
+            if let Some(named) = NamedArg::cast(child.clone()) {
+                let name = named
+                    .name_token()
+                    .map(|tok| Name::new(self.interner, tok.text()))
+                    .unwrap_or_else(|| Name::new(self.interner, "_"));
+                let value = named
+                    .value()
+                    .map(|e| self.lower_expr(&e))
+                    .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+                result.push(CallArg::Named { name, value });
+            } else if let Some(expr) = ExprCst::cast(child) {
+                let idx = self.lower_expr(&expr);
+                result.push(CallArg::Positional(idx));
+            }
+        }
+
+        result
+    }
+
+    fn lower_field(&mut self, fe: &FieldExpr) -> ExprIdx {
+        let base = fe
+            .base()
+            .map(|e| self.lower_expr(&e))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+
+        let field = fe
+            .field_token()
+            .map(|tok| Name::new(self.interner, tok.text()))
+            .unwrap_or_else(|| Name::new(self.interner, "_"));
+
+        self.alloc_expr(Expr::Field { base, field })
+    }
+
+    /// Pipeline desugaring: `x |> f(a, b)` → `Call { callee: f, args: [x, a, b] }`
+    /// If RHS is not a call: `x |> f` → `Call { callee: f, args: [x] }`
+    fn lower_pipeline(&mut self, pe: &PipelineExpr) -> ExprIdx {
+        let lhs = pe
+            .lhs()
+            .map(|e| self.lower_expr(&e))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+
+        let rhs = pe.rhs();
+
+        match rhs {
+            Some(ExprCst::Call(ref call_expr)) => {
+                // x |> f(a, b) → Call { callee: f, args: [x, a, b] }
+                let callee = call_expr
+                    .callee()
+                    .map(|e| self.lower_expr(&e))
+                    .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+
+                let mut args = vec![CallArg::Positional(lhs)];
+                if let Some(al) = call_expr.arg_list() {
+                    args.extend(self.lower_arg_list(&al));
+                }
+
+                self.alloc_expr(Expr::Call { callee, args })
+            }
+            Some(ref rhs_expr) => {
+                // x |> f → Call { callee: f, args: [x] }
+                let callee = self.lower_expr(rhs_expr);
+                let args = vec![CallArg::Positional(lhs)];
+                self.alloc_expr(Expr::Call { callee, args })
+            }
+            None => self.alloc_expr(Expr::Missing),
+        }
+    }
+
+    /// Propagation desugaring: `e?` →
+    /// ```text
+    /// Match { scrutinee: e, arms: [
+    ///     MatchArm { pat: Constructor("Ok", [Bind("__v")]), body: Path("__v") },
+    ///     MatchArm { pat: Constructor("Err", [Bind("__e")]), body: Return(Call("Err", [Path("__e")])) }
+    /// ]}
+    /// ```
+    fn lower_propagate(&mut self, pe: &PropagateExpr) -> ExprIdx {
+        let scrutinee = pe
+            .inner()
+            .map(|e| self.lower_expr(&e))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+
+        let ok_name = Name::new(self.interner, "Ok");
+        let err_name = Name::new(self.interner, "Err");
+        let v_name = Name::new(self.interner, "__v");
+        let e_name = Name::new(self.interner, "__e");
+
+        // Ok arm: Constructor("Ok", [Bind("__v")]) => Path("__v")
+        let v_pat = self.alloc_pat(pat::Pat::Bind { name: v_name });
+        let ok_pat = self.alloc_pat(pat::Pat::Constructor {
+            path: path::Path::single(ok_name),
+            args: vec![v_pat],
+        });
+        let ok_body = self.alloc_expr(Expr::Path(path::Path::single(v_name)));
+
+        // Err arm: Constructor("Err", [Bind("__e")]) => Return(Call(Err, [Path("__e")]))
+        let e_pat = self.alloc_pat(pat::Pat::Bind { name: e_name });
+        let err_pat = self.alloc_pat(pat::Pat::Constructor {
+            path: path::Path::single(err_name),
+            args: vec![e_pat],
+        });
+        let e_path = self.alloc_expr(Expr::Path(path::Path::single(e_name)));
+        let err_ctor = self.alloc_expr(Expr::Path(path::Path::single(err_name)));
+        let err_call = self.alloc_expr(Expr::Call {
+            callee: err_ctor,
+            args: vec![CallArg::Positional(e_path)],
+        });
+        let err_body = self.alloc_expr(Expr::Return(Some(err_call)));
+
+        let arms = vec![
+            crate::expr::MatchArm {
+                pat: ok_pat,
+                body: ok_body,
+            },
+            crate::expr::MatchArm {
+                pat: err_pat,
+                body: err_body,
+            },
+        ];
+
+        self.alloc_expr(Expr::Match { scrutinee, arms })
+    }
+
+    fn lower_match(&mut self, me: &MatchExpr) -> ExprIdx {
+        let scrutinee = me
+            .scrutinee()
+            .map(|e| self.lower_expr(&e))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+
+        let arms = me
+            .arm_list()
+            .map(|al| {
+                al.arms()
+                    .map(|arm| {
+                        self.push_scope();
+                        let pat = arm
+                            .pat()
+                            .map(|p| self.lower_pat(&p))
+                            .unwrap_or_else(|| self.alloc_pat(pat::Pat::Missing));
+                        let body = arm
+                            .body()
+                            .map(|e| self.lower_expr(&e))
+                            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+                        self.pop_scope();
+                        crate::expr::MatchArm { pat, body }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        self.alloc_expr(Expr::Match { scrutinee, arms })
+    }
+
+    fn lower_if(&mut self, ie: &IfExpr) -> ExprIdx {
+        let condition = ie
+            .condition()
+            .map(|e| self.lower_expr(&e))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+
+        let then_branch = ie
+            .then_branch()
+            .map(|b| self.lower_block(&b))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+
+        let else_branch = ie.else_branch().map(|eb| match eb {
+            ElseBranch::Block(b) => self.lower_block(&b),
+            ElseBranch::IfExpr(elif) => self.lower_if(&elif),
+        });
+
+        self.alloc_expr(Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        })
+    }
+
+    fn lower_block(&mut self, be: &BlockExpr) -> ExprIdx {
+        self.push_scope();
+
+        let mut stmts = Vec::new();
+        let mut tail = None;
+
+        let items: Vec<BlockItem> = be.stmts().collect();
+        for (i, item) in items.iter().enumerate() {
+            let is_last = i == items.len() - 1;
+            match item {
+                BlockItem::LetBinding(lb) => {
+                    let pat = lb
+                        .pat()
+                        .map(|p| self.lower_pat(&p))
+                        .unwrap_or_else(|| self.alloc_pat(pat::Pat::Missing));
+                    let ty = lb.type_expr().map(|te| self.lower_type_ref(&te));
+                    let init = lb
+                        .value()
+                        .map(|e| self.lower_expr(&e))
+                        .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+                    stmts.push(Stmt::Let { pat, ty, init });
+                }
+                BlockItem::Expr(expr) => {
+                    let idx = self.lower_expr(expr);
+                    if is_last {
+                        tail = Some(idx);
+                    } else {
+                        stmts.push(Stmt::Expr(idx));
+                    }
+                }
+            }
+        }
+
+        self.pop_scope();
+        self.alloc_expr(Expr::Block { stmts, tail })
+    }
+
+    fn lower_record(&mut self, re: &RecordExpr) -> ExprIdx {
+        let path = re.path().map(|p| self.lower_path(&p));
+
+        let fields = re
+            .field_list()
+            .map(|fl| {
+                fl.fields()
+                    .map(|f| {
+                        let name = f
+                            .name_token()
+                            .map(|tok| Name::new(self.interner, tok.text()))
+                            .unwrap_or_else(|| Name::new(self.interner, "_"));
+                        let value = f
+                            .value()
+                            .map(|e| self.lower_expr(&e))
+                            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+                        (name, value)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        self.alloc_expr(Expr::RecordLit { path, fields })
+    }
+
+    fn lower_return(&mut self, re: &ReturnExpr) -> ExprIdx {
+        let value = re.value().map(|e| self.lower_expr(&e));
+        self.alloc_expr(Expr::Return(value))
+    }
+
+    fn lower_old(&mut self, oe: &OldExpr) -> ExprIdx {
+        let inner = oe
+            .inner()
+            .map(|e| self.lower_expr(&e))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+        self.alloc_expr(Expr::Old(inner))
+    }
+
+    fn lower_lambda(&mut self, le: &LambdaExpr) -> ExprIdx {
+        self.push_scope();
+
+        let params: Vec<(PatIdx, Option<TypeRef>)> = le
+            .param_list()
+            .map(|pl| {
+                pl.params()
+                    .map(|p| {
+                        let name = p
+                            .name_token()
+                            .map(|tok| Name::new(self.interner, tok.text()))
+                            .unwrap_or_else(|| Name::new(self.interner, "_"));
+                        let pat_idx = self.alloc_pat(pat::Pat::Bind { name });
+
+                        // Register in scope
+                        if let Some(scope) = self.current_scope {
+                            self.scopes.define(scope, name, ScopeDef::Local(pat_idx));
+                            self.pat_scopes.push((pat_idx, scope));
+                        }
+
+                        let ty = p.type_expr().map(|te| self.lower_type_ref(&te));
+                        (pat_idx, ty)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let body = le
+            .body()
+            .map(|e| self.lower_expr(&e))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+
+        self.pop_scope();
+        self.alloc_expr(Expr::Lambda { params, body })
+    }
+
+    // ── Pattern lowering ───────────────────────────────────────────
+
+    fn lower_pat(&mut self, pat_cst: &PatCst) -> PatIdx {
+        match pat_cst {
+            PatCst::Ident(ip) => {
+                let name = ip
+                    .path()
+                    .and_then(|p| p.segments().next())
+                    .map(|tok| Name::new(self.interner, tok.text()))
+                    .unwrap_or_else(|| Name::new(self.interner, "_"));
+
+                // Check if this is a known constructor (capitalized) or a binding
+                let is_constructor = name
+                    .resolve(self.interner)
+                    .starts_with(|c: char| c.is_uppercase());
+
+                if is_constructor && self.module_scope.constructors.contains_key(&name) {
+                    // Nullary constructor pattern
+
+                    self.alloc_pat(pat::Pat::Constructor {
+                        path: path::Path::single(name),
+                        args: vec![],
+                    })
+                } else {
+                    // Binding pattern — introduces name into scope
+                    let pat_idx = self.alloc_pat(pat::Pat::Bind { name });
+                    if let Some(scope) = self.current_scope {
+                        self.scopes.define(scope, name, ScopeDef::Local(pat_idx));
+                        self.pat_scopes.push((pat_idx, scope));
+                    }
+                    pat_idx
+                }
+            }
+            PatCst::Constructor(cp) => {
+                let path = cp
+                    .path()
+                    .map(|p| self.lower_path(&p))
+                    .unwrap_or_else(|| path::Path { segments: vec![] });
+
+                self.push_scope();
+                let args: Vec<PatIdx> = cp.args().map(|a| self.lower_pat(&a)).collect();
+                self.pop_scope();
+
+                self.alloc_pat(pat::Pat::Constructor { path, args })
+            }
+            PatCst::Wildcard(_) => self.alloc_pat(pat::Pat::Wildcard),
+            PatCst::Literal(lp) => {
+                let literal = lp
+                    .token()
+                    .map(|tok| match tok.kind() {
+                        SyntaxKind::IntLiteral => {
+                            let text = tok.text().replace('_', "");
+                            Literal::Int(text.parse().unwrap_or(0))
+                        }
+                        SyntaxKind::FloatLiteral => {
+                            let text = tok.text().replace('_', "");
+                            Literal::Float(text.parse().unwrap_or(0.0))
+                        }
+                        SyntaxKind::StringLiteral => {
+                            let text = tok.text();
+                            let inner = &text[1..text.len().saturating_sub(1)];
+                            Literal::String(inner.to_owned())
+                        }
+                        SyntaxKind::CharLiteral => {
+                            let text = tok.text();
+                            let inner = &text[1..text.len().saturating_sub(1)];
+                            Literal::Char(inner.chars().next().unwrap_or('\0'))
+                        }
+                        SyntaxKind::TrueKw => Literal::Bool(true),
+                        SyntaxKind::FalseKw => Literal::Bool(false),
+                        _ => Literal::Bool(false),
+                    })
+                    .unwrap_or(Literal::Bool(false));
+                self.alloc_pat(pat::Pat::Literal(literal))
+            }
+            PatCst::Record(rp) => {
+                let path = rp.path().map(|p| self.lower_path(&p));
+                let fields: Vec<Name> = rp
+                    .field_names()
+                    .map(|tok| Name::new(self.interner, tok.text()))
+                    .collect();
+                // Record pattern fields also introduce bindings
+                if let Some(scope) = self.current_scope {
+                    for &field_name in &fields {
+                        let pat_idx = self.alloc_pat(pat::Pat::Bind { name: field_name });
+                        self.scopes
+                            .define(scope, field_name, ScopeDef::Local(pat_idx));
+                        self.pat_scopes.push((pat_idx, scope));
+                    }
+                }
+                self.alloc_pat(pat::Pat::Record { path, fields })
+            }
+        }
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────
+
+    fn lower_path(&mut self, path: &kyokara_syntax::ast::nodes::Path) -> path::Path {
+        let segments = path
+            .segments()
+            .map(|tok| Name::new(self.interner, tok.text()))
+            .collect();
+        path::Path { segments }
+    }
+
+    fn lower_type_ref(&mut self, ty: &TypeExpr) -> TypeRef {
+        match ty {
+            TypeExpr::NameType(nt) => {
+                let path = nt
+                    .path()
+                    .map(|p| self.lower_path(&p))
+                    .unwrap_or_else(|| path::Path { segments: vec![] });
+                let args = nt
+                    .type_arg_list()
+                    .map(|tal| tal.type_args().map(|a| self.lower_type_ref(&a)).collect())
+                    .unwrap_or_default();
+                TypeRef::Path { path, args }
+            }
+            TypeExpr::FnType(ft) => {
+                let all_types: Vec<TypeRef> =
+                    ft.param_types().map(|t| self.lower_type_ref(&t)).collect();
+                if all_types.is_empty() {
+                    TypeRef::Fn {
+                        params: vec![],
+                        ret: Box::new(TypeRef::Error),
+                    }
+                } else {
+                    let (params, ret) = all_types.split_at(all_types.len() - 1);
+                    TypeRef::Fn {
+                        params: params.to_vec(),
+                        ret: Box::new(ret[0].clone()),
+                    }
+                }
+            }
+            TypeExpr::RecordType(rt) => {
+                let fields = rt
+                    .fields()
+                    .map(|f| {
+                        let fname = f
+                            .name_token()
+                            .map(|tok| Name::new(self.interner, tok.text()))
+                            .unwrap_or_else(|| Name::new(self.interner, "_"));
+                        let fty = f
+                            .type_expr()
+                            .map(|te| self.lower_type_ref(&te))
+                            .unwrap_or(TypeRef::Error);
+                        (fname, fty)
+                    })
+                    .collect();
+                TypeRef::Record { fields }
+            }
+            TypeExpr::RefinedType(rt) => {
+                let name = rt
+                    .name_token()
+                    .map(|tok| Name::new(self.interner, tok.text()))
+                    .unwrap_or_else(|| Name::new(self.interner, "_"));
+                let base = rt
+                    .base_type()
+                    .map(|t| self.lower_type_ref(&t))
+                    .unwrap_or(TypeRef::Error);
+                let predicate = rt
+                    .predicate()
+                    .map(|e| self.lower_expr(&e))
+                    .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+                TypeRef::Refined {
+                    name,
+                    base: Box::new(base),
+                    predicate,
+                }
+            }
+        }
+    }
+
+    fn resolve_name(&self, name: Name) -> Option<crate::resolver::ResolvedName> {
+        let resolver =
+            crate::resolver::Resolver::new(self.module_scope, &self.scopes, self.current_scope);
+        resolver.resolve_name(name)
+    }
+}
+
+// Type aliases for CST types to avoid confusion with HIR types.
+type ExprCst = nodes::Expr;
+type PatCst = nodes::Pat;

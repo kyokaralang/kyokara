@@ -11,11 +11,12 @@
 
 pub use kyokara_parser::SyntaxKind;
 
+pub mod ast;
 mod bridge;
 mod language;
 pub mod lexer;
 
-pub use language::KyokaraLanguage;
+pub use language::{KyokaraLanguage, SyntaxNode, SyntaxToken};
 pub use lexer::{LexToken, lex};
 
 /// The result of parsing source text.

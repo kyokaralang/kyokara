@@ -21,7 +21,5 @@ impl rowan::Language for KyokaraLanguage {
 }
 
 /// Convenience aliases.
-#[allow(dead_code)]
 pub type SyntaxNode = rowan::SyntaxNode<KyokaraLanguage>;
-#[allow(dead_code)]
 pub type SyntaxToken = rowan::SyntaxToken<KyokaraLanguage>;
