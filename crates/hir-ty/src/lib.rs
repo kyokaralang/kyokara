@@ -30,6 +30,8 @@ use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::FnDef;
 use kyokara_syntax::ast::traits::HasName;
 
+use kyokara_hir_def::name::Name;
+
 use crate::diagnostics::TyDiagnosticData;
 use crate::infer::InferenceResult;
 
@@ -42,6 +44,8 @@ pub struct TypeCheckResult {
     pub diagnostics: Vec<Diagnostic>,
     /// Raw diagnostic data with spans for structured output.
     pub raw_diagnostics: Vec<(TyDiagnosticData, Span)>,
+    /// Per-function call edges: (caller name, list of callee names).
+    pub fn_calls: Vec<(Name, Vec<Name>)>,
 }
 
 /// Type-check all functions in a module.
@@ -58,6 +62,7 @@ pub fn check_module(
     let mut fn_results = FxHashMap::default();
     let mut all_diagnostics = Vec::new();
     let mut all_raw_diagnostics = Vec::new();
+    let mut fn_calls = Vec::new();
 
     let fn_defs: Vec<FnDef> = root.descendants().filter_map(FnDef::cast).collect();
 
@@ -95,6 +100,7 @@ pub fn check_module(
 
         all_diagnostics.extend(result.diagnostics.iter().cloned());
         all_raw_diagnostics.extend(result.raw_diagnostics.iter().cloned());
+        fn_calls.push((fn_item.name, result.calls.clone()));
         fn_results.insert(fn_idx, result);
     }
 
@@ -102,5 +108,6 @@ pub fn check_module(
         fn_results,
         diagnostics: all_diagnostics,
         raw_diagnostics: all_raw_diagnostics,
+        fn_calls,
     }
 }

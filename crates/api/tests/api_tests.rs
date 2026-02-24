@@ -148,3 +148,206 @@ fn check_hole_effect_constraints() {
         hole.effects
     );
 }
+
+// ── Symbol graph tests ──────────────────────────────────────────────
+
+#[test]
+fn symbol_graph_contains_functions() {
+    let src = r#"
+        fn foo(x: Int) -> Int { x }
+        fn bar(y: Int) -> Int { y }
+    "#;
+    let output = check(src, "test.ky");
+    let names: Vec<&str> = output
+        .symbol_graph
+        .functions
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect();
+    assert_eq!(
+        output.symbol_graph.functions.len(),
+        2,
+        "expected 2 functions, got: {names:?}"
+    );
+    assert!(names.contains(&"foo"), "missing 'foo' in {names:?}");
+    assert!(names.contains(&"bar"), "missing 'bar' in {names:?}");
+}
+
+#[test]
+fn symbol_graph_contains_types() {
+    let src = "type Color = | Red | Green | Blue
+        fn id(x: Int) -> Int { x }";
+    let output = check(src, "test.ky");
+    assert_eq!(output.symbol_graph.types.len(), 1);
+    let ty = &output.symbol_graph.types[0];
+    assert_eq!(ty.name, "Color");
+    assert_eq!(ty.kind, "adt");
+    let variant_names: Vec<&str> = ty.variants.iter().map(|v| v.name.as_str()).collect();
+    assert_eq!(variant_names, vec!["Red", "Green", "Blue"]);
+}
+
+#[test]
+fn symbol_graph_contains_capabilities() {
+    let src = r#"
+        cap IO {
+            fn read() -> String
+            fn write(s: String) -> Unit
+        }
+        fn noop() -> Unit { () }
+    "#;
+    let output = check(src, "test.ky");
+    assert_eq!(output.symbol_graph.capabilities.len(), 1);
+    let cap = &output.symbol_graph.capabilities[0];
+    assert_eq!(cap.name, "IO");
+    assert!(
+        cap.functions.contains(&"read".to_string()),
+        "missing 'read' in {:?}",
+        cap.functions
+    );
+    assert!(
+        cap.functions.contains(&"write".to_string()),
+        "missing 'write' in {:?}",
+        cap.functions
+    );
+}
+
+#[test]
+fn symbol_graph_call_edges() {
+    let src = r#"
+        fn callee() -> Int { 42 }
+        fn caller() -> Int { callee() }
+    "#;
+    let output = check(src, "test.ky");
+    let caller_node = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "caller")
+        .expect("should have 'caller' function node");
+    assert!(
+        caller_node.calls.contains(&"callee".to_string()),
+        "expected caller to call callee, got: {:?}",
+        caller_node.calls
+    );
+}
+
+#[test]
+fn symbol_graph_effect_annotations() {
+    let src = r#"
+        cap IO {
+            fn read() -> String
+        }
+        fn effectful() -> String with IO { read() }
+    "#;
+    let output = check(src, "test.ky");
+    let fn_node = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "effectful")
+        .expect("should have 'effectful' function node");
+    assert!(
+        fn_node.effects.contains(&"IO".to_string()),
+        "expected IO in effects, got: {:?}",
+        fn_node.effects
+    );
+}
+
+// ── Patch suggestion tests ──────────────────────────────────────────
+
+#[test]
+fn patch_missing_match_arm() {
+    let src = "type Color = | Red | Green | Blue
+        fn describe(c: Color) -> Int {
+            match c {
+                Red => 1
+            }
+        }";
+    let output = check(src, "test.ky");
+    let diag = output
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "E0009")
+        .expect("expected E0009 (MissingMatchArms) diagnostic");
+    assert!(!diag.fixes.is_empty(), "expected non-empty fixes for E0009");
+    let fix = &diag.fixes[0];
+    assert!(
+        fix.replacement.contains("Green"),
+        "fix should mention Green: {}",
+        fix.replacement
+    );
+    assert!(
+        fix.replacement.contains("Blue"),
+        "fix should mention Blue: {}",
+        fix.replacement
+    );
+}
+
+#[test]
+fn patch_effect_violation() {
+    let src = r#"
+        cap Console {
+            fn print(s: String) -> Unit
+        }
+        fn effectful() -> Unit with Console { print("hi") }
+        fn pure_caller() -> Unit { effectful() }
+    "#;
+    let output = check(src, "test.ky");
+    let diag = output
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "E0011")
+        .expect("expected E0011 (EffectViolation) diagnostic");
+    assert!(!diag.fixes.is_empty(), "expected non-empty fixes for E0011");
+    let fix = &diag.fixes[0];
+    assert!(
+        fix.replacement.contains("Console"),
+        "fix should mention Console: {}",
+        fix.replacement
+    );
+}
+
+#[test]
+fn patch_apply_missing_arm_fixes_error() {
+    // Source with all arms present should have no E0009 errors.
+    let src = "type Color = | Red | Green | Blue
+        fn describe(c: Color) -> Int {
+            match c {
+                Red => 1
+                Green => 2
+                Blue => 3
+            }
+        }";
+    let output = check(src, "test.ky");
+    let e0009: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0009")
+        .collect();
+    assert!(
+        e0009.is_empty(),
+        "expected no E0009 after adding all arms, got: {e0009:?}"
+    );
+}
+
+#[test]
+fn patch_apply_effect_fix_fixes_error() {
+    // Source with correct `with` clause should have no E0011 errors.
+    let src = r#"
+        cap Console {
+            fn print(s: String) -> Unit
+        }
+        fn effectful() -> Unit with Console { print("hi") }
+        fn caller() -> Unit with Console { effectful() }
+    "#;
+    let output = check(src, "test.ky");
+    let e0011: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0011")
+        .collect();
+    assert!(
+        e0011.is_empty(),
+        "expected no E0011 after adding capability, got: {e0011:?}"
+    );
+}

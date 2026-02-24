@@ -6,8 +6,12 @@
 //!
 //! When salsa lands (v0.3), the incremental database will live here.
 
-pub use kyokara_hir_def::item_tree::ItemTree;
+pub use kyokara_hir_def::item_tree::{
+    CapItem, FnItem, ItemTree, TypeDefKind, TypeItem, VariantDef,
+};
+pub use kyokara_hir_def::name::Name;
 pub use kyokara_hir_def::resolver::ModuleScope;
+pub use kyokara_hir_def::type_ref::TypeRef;
 pub use kyokara_hir_ty::diagnostics::TyDiagnosticData;
 pub use kyokara_hir_ty::holes::HoleInfo;
 pub use kyokara_hir_ty::infer::InferenceResult;

@@ -473,7 +473,8 @@ v0 stdlib provides:
 * Typed holes + partial compilation ✓
 * Structured diagnostics (`diagnostics.json` with error codes, spans, expected/actual types) ✓
 * Typed hole specs (`hole_specs.json` with expected type, available variables, effect constraints) ✓
-* Symbol graph, patch suggestions
+* Symbol graph (function/type/capability nodes, call edges, effect annotations) ✓
+* Patch suggestions (machine-applicable fixes for E0009 MissingMatchArms, E0011 EffectViolation) ✓
 
 **v0.1 — Tooling Foundation + Interpreter**
 * Canonical formatter + deterministic pretty-printer
@@ -561,7 +562,7 @@ Rust is recommended for:
 5. ~~Implement effect/capability checking.~~ ✓
 6. ~~Implement typed holes + partial compilation.~~ ✓
 7. ~~Emit structured diagnostics + hole specs.~~ ✓
-8. Emit patch suggestions + symbol graph.
+8. ~~Emit patch suggestions + symbol graph.~~ ✓
 9. Implement tree-walking interpreter for rapid iteration.
 10. Add contracts as runtime checks.
 11. Implement WASM runtime host functions for capabilities + replay log.
