@@ -12,8 +12,10 @@
 pub use kyokara_parser::SyntaxKind;
 
 mod language;
+pub mod lexer;
 
 pub use language::KyokaraLanguage;
+pub use lexer::{LexToken, lex};
 
 /// Parse source text into a CST.
 ///
