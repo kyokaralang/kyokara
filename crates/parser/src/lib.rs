@@ -9,7 +9,23 @@
 //! parser without pulling in rowan.
 
 mod event;
+mod grammar;
+mod input;
+mod parser;
 mod syntax_kind;
+mod token_set;
 
-pub use event::{Event, TreeSink};
+pub use event::Event;
+pub use input::Input;
+pub use parser::ParseError;
 pub use syntax_kind::SyntaxKind;
+
+/// Parse a pre-processed token input into an event stream.
+///
+/// This is the main entry point. The `syntax` crate calls this after
+/// lexing and building an [`Input`].
+pub fn parse(input: &Input) -> (Vec<Event>, Vec<ParseError>) {
+    let mut p = parser::Parser::new(input);
+    grammar::source_file(&mut p);
+    p.finish()
+}

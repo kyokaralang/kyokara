@@ -156,7 +156,13 @@ impl Token {
             Token::IntLiteral => SyntaxKind::IntLiteral,
             Token::StringLiteral => SyntaxKind::StringLiteral,
             Token::CharLiteral => SyntaxKind::CharLiteral,
-            Token::Ident => SyntaxKind::from_keyword(text).unwrap_or(SyntaxKind::Ident),
+            Token::Ident => {
+                if text == "_" {
+                    SyntaxKind::Underscore
+                } else {
+                    SyntaxKind::from_keyword(text).unwrap_or(SyntaxKind::Ident)
+                }
+            }
             Token::PipeGt => SyntaxKind::PipeGt,
             Token::Arrow => SyntaxKind::Arrow,
             Token::FatArrow => SyntaxKind::FatArrow,
