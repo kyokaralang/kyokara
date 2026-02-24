@@ -122,8 +122,11 @@ Kyokara's compiler follows [rust-analyzer](https://github.com/rust-analyzer/rust
 ```
 Source → Lexer (logos) → Parser (tree-agnostic) → CST (rowan, lossless)
      → HIR (def/ty/facade) → Type Inference → Effect Checking
+     → KyokaraIR (SSA, planned) → Codegen (WASM, planned)
      → API (structured JSON output)
 ```
+
+**Glossary:** **CST** = Concrete Syntax Tree (lossless, preserves whitespace/comments). **HIR** = High-level Intermediate Representation (desugared, typed, used for analysis). **IR** (KyokaraIR) = low-level Intermediate Representation (SSA-based, used for optimization and codegen — planned for v0.3).
 
 The parser emits events, not trees — so it can be tested without a CST library. The HIR is split into data definitions, type checking, and a query facade — so the interpreter can use the data without the checker. The API crate owns all serialization — so internal types stay clean.
 

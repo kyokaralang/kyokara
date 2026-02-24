@@ -131,7 +131,7 @@ fn normalize_email(s: String) -> String =
   lowered
 ```
 
-Holes carry an expected type from context. The compiler emits machine-readable hole specs including: expected type, purity/effect constraints, input variables with types, and contract obligations. Programs with holes compile to partial artifacts (typed AST + partial IR) but are not runnable.
+Holes carry an expected type from context. The compiler emits machine-readable hole specs including: expected type, purity/effect constraints, input variables with types, and contract obligations. Programs with holes compile to partial artifacts (typed AST + partial Intermediate Representation) but are not runnable.
 
 ### Pipeline Operator
 
@@ -225,9 +225,12 @@ Each returns a patch and verification status (`typechecked`, `verified_level_1`,
 
 The compiler follows rust-analyzer's proven architecture:
 
+**Glossary:** CST = Concrete Syntax Tree (lossless, preserves whitespace/comments). HIR = High-level Intermediate Representation (desugared, typed, used for analysis). IR (KyokaraIR) = low-level Intermediate Representation (SSA-based, used for optimization and codegen — planned for v0.3).
+
 ```
 Source → Lexer (logos) → Parser (tree-agnostic events) → CST (rowan, lossless)
      → HIR (def/ty/facade) → Type Inference → Effect Checking
+     → KyokaraIR (SSA, planned) → Codegen (WASM, planned)
      → API (structured JSON output)
 ```
 
