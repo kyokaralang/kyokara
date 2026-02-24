@@ -190,6 +190,7 @@ dependencies = [
  "kyokara-diagnostics",
  "kyokara-hir",
  "kyokara-hir-def",
+ "kyokara-hir-ty",
  "kyokara-intern",
  "kyokara-span",
  "kyokara-stdx",
@@ -207,6 +208,7 @@ dependencies = [
  "kyokara-diagnostics",
  "kyokara-hir",
  "kyokara-syntax",
+ "serde_json",
  "tracing",
 ]
 
@@ -227,9 +229,11 @@ dependencies = [
  "kyokara-hir-def",
  "kyokara-hir-ty",
  "kyokara-intern",
+ "kyokara-parser",
  "kyokara-span",
  "kyokara-stdx",
  "kyokara-syntax",
+ "rowan",
 ]
 
 [[package]]

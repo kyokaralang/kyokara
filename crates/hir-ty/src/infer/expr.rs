@@ -117,6 +117,9 @@ impl<'a> InferenceCtx<'a> {
                 self.holes.push(HoleInfo {
                     expected_type: expected_ty,
                     available_locals: locals,
+                    span: self._fn_span,
+                    effect_constraints: self.caller_effects.clone(),
+                    name: None,
                 });
 
                 ty
@@ -698,6 +701,11 @@ impl<'a> InferenceCtx<'a> {
 
     fn collect_locals_in_scope(&self) -> Vec<(kyokara_hir_def::name::Name, Ty)> {
         let mut locals = Vec::new();
+        // Include function parameters.
+        for (name, ty) in self.param_names.iter().zip(self.param_types.iter()) {
+            locals.push((*name, self.table.resolve_deep(ty)));
+        }
+        // Include let-bound locals.
         for (pat_idx, _) in &self.body.pat_scopes {
             if let Pat::Bind { name } = &self.body.pats[*pat_idx]
                 && let Some(ty) = self.local_types.get(*pat_idx)

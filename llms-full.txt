@@ -253,12 +253,12 @@ hir-def         (depends: stdx, span, intern, syntax, diagnostics)
  ↑              HIR data structures + name resolution. Item tree collection (item_tree/lower.rs), body lowering + desugaring (body/lower.rs), scope chains (scope.rs, resolver.rs).
 hir-ty          (depends: stdx, span, intern, hir-def, diagnostics, syntax)
  ↑              Bidirectional type inference (Hindley-Milner + unification), exhaustiveness checking, effect/capability checking, typed holes. Ty enum, UnificationTable, TypeRef→Ty resolution, per-function InferenceResult with ArenaMap<ExprIdx,Ty>.
-hir             (depends: stdx, span, intern, hir-def, hir-ty, syntax, diagnostics)
- ↑              Facade API for semantic queries.
-api             (depends: stdx, span, intern, diagnostics, hir-def, hir, syntax, serde)
- ↑              Serializes diagnostics.json, typed_ast.json, symbol_graph.json.
-cli             (depends: api, hir, syntax, diagnostics, clap)
-                Binary: kyokara check / run / replay / fmt
+hir             (depends: stdx, span, intern, hir-def, hir-ty, syntax, diagnostics, parser, rowan)
+ ↑              Facade API: check_file(source) → CheckResult (parse + lower + type-check). Re-exports key types.
+api             (depends: stdx, span, intern, diagnostics, hir-def, hir-ty, hir, syntax, serde)
+ ↑              Compiler-as-API: check(source, file_name) → CheckOutput. DTO types (DiagnosticDto, HoleSpecDto, SpanDto) with serde. Structured JSON with error codes (E0001–E0012 type, E0100 parse, E0101–E0102 lowering), expected/actual types, hole specs with available variables and effect constraints.
+cli             (depends: api, hir, syntax, diagnostics, clap, serde_json)
+                Binary: kyokara check <file> [--format human|json]. Human-readable (default) or JSON output.
 ```
 
 ### Key Architectural Decisions
@@ -296,7 +296,7 @@ cli             (depends: api, hir, syntax, diagnostics, clap)
 
 ## Roadmap
 
-- **v0.0** (in progress): Parser with error recovery (lossless CST) ✓, name resolution with scope chains ✓, item tree collection + body lowering with desugaring ✓, type checker (ADTs, generics, exhaustiveness) ✓, effect/capability checking ✓, typed holes, structured diagnostics + hole specs + symbol graph + patch suggestions
+- **v0.0** (in progress): Parser with error recovery (lossless CST) ✓, name resolution with scope chains ✓, item tree collection + body lowering with desugaring ✓, type checker (ADTs, generics, exhaustiveness) ✓, effect/capability checking ✓, typed holes ✓, structured diagnostics ✓, hole specs ✓, symbol graph + patch suggestions
 - **v0.1**: Canonical formatter, stable symbol IDs, desugaring, tree-walking interpreter, runtime contracts, core stdlib
 - **v0.2**: Refactor engine, LSP server, capability enforcement, module/package system
 - **v0.3**: Property-based test harness, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay

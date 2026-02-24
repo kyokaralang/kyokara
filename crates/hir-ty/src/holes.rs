@@ -4,7 +4,9 @@
 //! the expected type and available local variables for IDE/diagnostic use.
 
 use kyokara_hir_def::name::Name;
+use kyokara_span::Span;
 
+use crate::effects::EffectSet;
 use crate::ty::Ty;
 
 /// Information about a typed hole.
@@ -14,4 +16,10 @@ pub struct HoleInfo {
     pub expected_type: Option<Ty>,
     /// Local variables available in scope with their types.
     pub available_locals: Vec<(Name, Ty)>,
+    /// Span of the hole expression.
+    pub span: Span,
+    /// Effect constraints of the enclosing function.
+    pub effect_constraints: EffectSet,
+    /// Optional name from `?name(...)` syntax (future).
+    pub name: Option<String>,
 }
