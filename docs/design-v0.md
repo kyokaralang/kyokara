@@ -281,11 +281,13 @@ Given wedge (automation), start with:
 
 ---
 
-## 6. Core IR (KyokaraIR) — minimal typed core
+## 6. Core Intermediate Representation (KyokaraIR) — minimal typed core
+
+KyokaraIR is the low-level **Intermediate Representation (IR)** — a compiler-internal form of the program that sits between the HIR (High-level IR, used for type checking and analysis) and the final codegen target (WASM). It is fully typed, SSA-based, and designed for optimization and verification.
 
 ### 6.1 Requirements
 
-IR must be:
+KyokaraIR must be:
 * fully typed
 * effect-annotated per function
 * explicit control flow (SSA recommended)
