@@ -468,8 +468,8 @@ v0 stdlib provides:
 * CST→HIR lowering: item tree collection (Pass 1) + body lowering (Pass 2) ✓
 * Pipeline `|>` and propagation `?` desugaring at HIR level ✓
 * Duplicate definition and unresolved name diagnostics ✓
-* Type checker (ADTs, generics, pattern matching exhaustiveness)
-* Effect/capability checking
+* Type checker (ADTs, generics, pattern matching exhaustiveness) ✓
+* Effect/capability checking ✓
 * Typed holes + partial compilation
 * Structured diagnostics, hole specs, symbol graph, patch suggestions
 
@@ -555,8 +555,8 @@ Rust is recommended for:
 1. ~~Define exact grammar (PEG/LL(k)) with recoverable parsing.~~ ✓
 2. ~~Implement lexer + parser -> lossless CST.~~ ✓
 3. ~~Implement typed AST wrappers + CST→HIR lowering + name resolution.~~ ✓
-4. Implement type checker (ADTs, generics, exhaustiveness, unification).
-5. Implement effect/capability checking.
+4. ~~Implement type checker (ADTs, generics, exhaustiveness, unification).~~ ✓
+5. ~~Implement effect/capability checking.~~ ✓
 6. Implement typed holes + partial compilation.
 7. Emit structured diagnostics + patch suggestions.
 8. Implement tree-walking interpreter for rapid iteration.

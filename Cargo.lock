@@ -254,6 +254,7 @@ dependencies = [
  "kyokara-intern",
  "kyokara-span",
  "kyokara-stdx",
+ "kyokara-syntax",
  "la-arena",
  "rustc-hash 2.1.1",
 ]
