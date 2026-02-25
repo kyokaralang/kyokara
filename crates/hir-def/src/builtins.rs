@@ -23,6 +23,8 @@ pub fn register_builtin_types(
 ) {
     register_option(tree, scope, interner);
     register_result(tree, scope, interner);
+    register_list(tree, scope, interner);
+    register_map(tree, scope, interner);
 }
 
 /// `type Option<T> = | Some(T) | None`
@@ -69,6 +71,37 @@ fn register_option(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut 
     if let std::collections::hash_map::Entry::Vacant(e) = scope.constructors.entry(none_name) {
         e.insert((idx, 1));
     }
+}
+
+/// `List<T>` — opaque builtin type (no variants, no pattern matching).
+fn register_list(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
+    let list_name = Name::new(interner, "List");
+    if scope.types.contains_key(&list_name) {
+        return;
+    }
+    let t_name = Name::new(interner, "T");
+    let idx = tree.types.alloc(TypeItem {
+        name: list_name,
+        type_params: vec![t_name],
+        kind: TypeDefKind::Adt { variants: vec![] },
+    });
+    scope.types.insert(list_name, idx);
+}
+
+/// `Map<K, V>` — opaque builtin type (no variants, no pattern matching).
+fn register_map(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
+    let map_name = Name::new(interner, "Map");
+    if scope.types.contains_key(&map_name) {
+        return;
+    }
+    let k_name = Name::new(interner, "K");
+    let v_name = Name::new(interner, "V");
+    let idx = tree.types.alloc(TypeItem {
+        name: map_name,
+        type_params: vec![k_name, v_name],
+        kind: TypeDefKind::Adt { variants: vec![] },
+    });
+    scope.types.insert(map_name, idx);
 }
 
 /// `type Result<T, E> = | Ok(T) | Err(E)`

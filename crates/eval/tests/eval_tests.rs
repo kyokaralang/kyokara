@@ -1061,3 +1061,467 @@ fn eval_user_option_overrides_builtin() {
     );
     assert!(matches!(val, Value::Int(7)));
 }
+
+// ── List tests ──────────────────────────────────────────────────────
+
+#[test]
+fn eval_list_new_and_push() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let xs = list_new()
+           let xs = list_push(xs, 1)
+           let xs = list_push(xs, 2)
+           list_len(xs)
+         }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_list_len_empty() {
+    let val = run_ok(
+        "fn main() -> Int {
+           list_len(list_new())
+         }",
+    );
+    assert!(matches!(val, Value::Int(0)));
+}
+
+#[test]
+fn eval_list_get_some() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let xs = list_push(list_push(list_new(), 10), 20)
+           match list_get(xs, 1) {
+             Some(x) => x
+             None => 0
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(20)));
+}
+
+#[test]
+fn eval_list_get_none() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let xs = list_push(list_new(), 10)
+           match list_get(xs, 5) {
+             Some(x) => x
+             None => -1
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(-1)));
+}
+
+#[test]
+fn eval_list_head_some() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let xs = list_push(list_push(list_new(), 10), 20)
+           match list_head(xs) {
+             Some(x) => x
+             None => 0
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(10)));
+}
+
+#[test]
+fn eval_list_head_none() {
+    let val = run_ok(
+        "fn main() -> Int {
+           match list_head(list_new()) {
+             Some(x) => x
+             None => -1
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(-1)));
+}
+
+#[test]
+fn eval_list_tail() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
+           list_len(list_tail(xs))
+         }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_list_tail_empty() {
+    let val = run_ok(
+        "fn main() -> Int {
+           list_len(list_tail(list_new()))
+         }",
+    );
+    assert!(matches!(val, Value::Int(0)));
+}
+
+#[test]
+fn eval_list_is_empty() {
+    let val = run_ok(
+        "fn main() -> Bool {
+           list_is_empty(list_new())
+         }",
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_list_is_empty_false() {
+    let val = run_ok(
+        "fn main() -> Bool {
+           list_is_empty(list_push(list_new(), 1))
+         }",
+    );
+    assert!(matches!(val, Value::Bool(false)));
+}
+
+#[test]
+fn eval_list_reverse() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
+           let rev = list_reverse(xs)
+           match list_head(rev) {
+             Some(x) => x
+             None => 0
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_list_concat() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let a = list_push(list_push(list_new(), 1), 2)
+           let b = list_push(list_push(list_new(), 3), 4)
+           list_len(list_concat(a, b))
+         }",
+    );
+    assert!(matches!(val, Value::Int(4)));
+}
+
+#[test]
+fn eval_list_map_lambda() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
+           let ys = list_map(xs, fn(x: Int) => x * 2)
+           match list_get(ys, 2) {
+             Some(x) => x
+             None => 0
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(6)));
+}
+
+#[test]
+fn eval_list_map_named_fn() {
+    let val = run_ok(
+        "fn double(x: Int) -> Int { x * 2 }
+         fn main() -> Int {
+           let xs = list_push(list_push(list_new(), 5), 10)
+           let ys = list_map(xs, double)
+           match list_head(ys) {
+             Some(x) => x
+             None => 0
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(10)));
+}
+
+#[test]
+fn eval_list_filter() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let xs = list_push(list_push(list_push(list_push(list_new(), 1), 2), 3), 4)
+           let evens = list_filter(xs, fn(x: Int) => x > 2)
+           list_len(evens)
+         }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_list_fold_sum() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
+           list_fold(xs, 0, fn(acc: Int, x: Int) => acc + x)
+         }",
+    );
+    assert!(matches!(val, Value::Int(6)));
+}
+
+// ── Map tests ───────────────────────────────────────────────────────
+
+#[test]
+fn eval_map_insert_and_get() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+           let m = map_insert(map_new(), "a", 1)
+           match map_get(m, "a") {
+             Some(x) => x
+             None => 0
+           }
+         }"#,
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_map_get_missing() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+           let m = map_insert(map_new(), "a", 1)
+           match map_get(m, "b") {
+             Some(x) => x
+             None => -1
+           }
+         }"#,
+    );
+    assert!(matches!(val, Value::Int(-1)));
+}
+
+#[test]
+fn eval_map_contains() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+           let m = map_insert(map_new(), "key", 42)
+           map_contains(m, "key")
+         }"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_map_remove() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+           let m = map_insert(map_insert(map_new(), "a", 1), "b", 2)
+           let m2 = map_remove(m, "a")
+           map_len(m2)
+         }"#,
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_map_len() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+           let m = map_insert(map_insert(map_new(), "a", 1), "b", 2)
+           map_len(m)
+         }"#,
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_map_keys() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+           let m = map_insert(map_insert(map_new(), "a", 1), "b", 2)
+           list_len(map_keys(m))
+         }"#,
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_map_values() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+           let m = map_insert(map_insert(map_new(), "a", 10), "b", 20)
+           let vals = map_values(m)
+           list_fold(vals, 0, fn(acc: Int, x: Int) => acc + x)
+         }"#,
+    );
+    assert!(matches!(val, Value::Int(30)));
+}
+
+#[test]
+fn eval_map_is_empty() {
+    let val = run_ok(
+        "fn main() -> Bool {
+           map_is_empty(map_new())
+         }",
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_map_insert_overwrite() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+           let m = map_insert(map_new(), "a", 1)
+           let m = map_insert(m, "a", 99)
+           match map_get(m, "a") {
+             Some(x) => x
+             None => 0
+           }
+         }"#,
+    );
+    assert!(matches!(val, Value::Int(99)));
+}
+
+// ── String ops tests ────────────────────────────────────────────────
+
+#[test]
+fn eval_string_len() {
+    let val = run_ok(r#"fn main() -> Int { string_len("hello") }"#);
+    assert!(matches!(val, Value::Int(5)));
+}
+
+#[test]
+fn eval_string_contains() {
+    let val = run_ok(r#"fn main() -> Bool { string_contains("hello world", "world") }"#);
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_string_starts_with() {
+    let val = run_ok(r#"fn main() -> Bool { string_starts_with("hello", "hel") }"#);
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_string_ends_with() {
+    let val = run_ok(r#"fn main() -> Bool { string_ends_with("hello", "llo") }"#);
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_string_trim() {
+    let val = run_ok(r#"fn main() -> Int { string_len(string_trim("  hi  ")) }"#);
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_string_split() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+           let parts = string_split("a,b,c", ",")
+           list_len(parts)
+         }"#,
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_string_substring() {
+    let val = run_ok(r#"fn main() -> String { string_substring("hello world", 0, 5) }"#);
+    match val {
+        Value::String(s) => assert_eq!(s, "hello"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_string_to_upper() {
+    let val = run_ok(r#"fn main() -> String { string_to_upper("hello") }"#);
+    match val {
+        Value::String(s) => assert_eq!(s, "HELLO"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_string_to_lower() {
+    let val = run_ok(r#"fn main() -> String { string_to_lower("HELLO") }"#);
+    match val {
+        Value::String(s) => assert_eq!(s, "hello"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_char_to_string() {
+    let val = run_ok("fn main() -> String { char_to_string('A') }");
+    match val {
+        Value::String(s) => assert_eq!(s, "A"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+// ── Int/Float math tests ────────────────────────────────────────────
+
+#[test]
+fn eval_abs() {
+    let val = run_ok("fn main() -> Int { abs(-5) }");
+    assert!(matches!(val, Value::Int(5)));
+}
+
+#[test]
+fn eval_min() {
+    let val = run_ok("fn main() -> Int { min(3, 7) }");
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_max() {
+    let val = run_ok("fn main() -> Int { max(3, 7) }");
+    assert!(matches!(val, Value::Int(7)));
+}
+
+#[test]
+fn eval_int_to_float() {
+    let val = run_ok("fn main() -> Float { int_to_float(42) }");
+    match val {
+        Value::Float(f) => assert!((f - 42.0).abs() < f64::EPSILON),
+        other => panic!("expected Float, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_float_to_int() {
+    let val = run_ok("fn main() -> Int { float_to_int(3.7) }");
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_float_abs() {
+    let val = run_ok("fn main() -> Float { float_abs(-2.5) }");
+    match val {
+        Value::Float(f) => assert!((f - 2.5).abs() < f64::EPSILON),
+        other => panic!("expected Float, got {other:?}"),
+    }
+}
+
+// ── Integration tests ───────────────────────────────────────────────
+
+#[test]
+fn eval_list_map_fold_composition() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
+           let doubled = list_map(xs, fn(x: Int) => x * 2)
+           list_fold(doubled, 0, fn(acc: Int, x: Int) => acc + x)
+         }",
+    );
+    assert!(matches!(val, Value::Int(12)));
+}
+
+#[test]
+fn eval_map_list_interop() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+           let m = map_insert(map_insert(map_new(), "x", 10), "y", 20)
+           let keys = map_keys(m)
+           let vals = map_values(m)
+           list_len(keys) + list_fold(vals, 0, fn(acc: Int, x: Int) => acc + x)
+         }"#,
+    );
+    assert!(matches!(val, Value::Int(32)));
+}

@@ -178,8 +178,8 @@ fn symbol_graph_contains_types() {
     let src = "type Color = | Red | Green | Blue
         fn id(x: Int) -> Int { x }";
     let output = check(src, "test.ky");
-    // 3 types: Color (user-defined) + Option + Result (builtins)
-    assert_eq!(output.symbol_graph.types.len(), 3);
+    // 5 types: Color (user-defined) + Option + Result + List + Map (builtins)
+    assert_eq!(output.symbol_graph.types.len(), 5);
     let color = output
         .symbol_graph
         .types

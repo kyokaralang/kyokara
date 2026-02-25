@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use kyokara_hir_def::body::Body;
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, MatchArm, Stmt, UnaryOp};
-use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree, TypeDefKind};
+use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree, TypeDefKind, TypeItemIdx};
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::resolver::ModuleScope;
@@ -25,6 +25,10 @@ pub struct Interpreter {
     intrinsics: FxHashMap<Name, IntrinsicFn>,
     /// Snapshot of the environment at function entry, used by `old()` in ensures clauses.
     old_env: Option<Env>,
+    /// Cached Option::Some constructor (type_idx, variant_idx).
+    option_some: Option<(TypeItemIdx, usize)>,
+    /// Cached Option::None constructor (type_idx, variant_idx).
+    option_none: Option<(TypeItemIdx, usize)>,
 }
 
 /// Used to implement early return from functions.
@@ -65,6 +69,12 @@ impl Interpreter {
     ) -> Self {
         let intrinsic_list = intrinsics::all_intrinsics(&mut interner);
         let intrinsics = intrinsic_list.into_iter().collect();
+
+        let some_name = Name::new(&mut interner, "Some");
+        let none_name = Name::new(&mut interner, "None");
+        let option_some = module_scope.constructors.get(&some_name).copied();
+        let option_none = module_scope.constructors.get(&none_name).copied();
+
         Interpreter {
             item_tree,
             module_scope,
@@ -72,6 +82,8 @@ impl Interpreter {
             interner,
             intrinsics,
             old_env: None,
+            option_some,
+            option_none,
         }
     }
 
@@ -433,6 +445,9 @@ impl Interpreter {
     fn call_value(&mut self, callee: Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
         match callee {
             Value::Fn(FnValue::User(fn_idx)) => self.call_fn(fn_idx, args),
+            Value::Fn(FnValue::Intrinsic(intr)) if intr.needs_interpreter() => {
+                self.call_complex_intrinsic(intr, args)
+            }
             Value::Fn(FnValue::Intrinsic(intr)) => intr.call(args),
             Value::Fn(FnValue::Lambda {
                 params,
@@ -460,6 +475,112 @@ impl Interpreter {
             _ => Err(RuntimeError::TypeError(
                 "called value is not a function".into(),
             )),
+        }
+    }
+
+    fn make_some(&self, val: Value) -> Value {
+        let (type_idx, variant) = self.option_some.expect("Option::Some not registered");
+        Value::Adt {
+            type_idx,
+            variant,
+            fields: vec![val],
+        }
+    }
+
+    fn make_none(&self) -> Value {
+        let (type_idx, variant) = self.option_none.expect("Option::None not registered");
+        Value::Adt {
+            type_idx,
+            variant,
+            fields: vec![],
+        }
+    }
+
+    fn call_complex_intrinsic(
+        &mut self,
+        intr: IntrinsicFn,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        match intr {
+            IntrinsicFn::ListGet => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError("list_get expects a List".into()));
+                };
+                let Value::Int(i) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "list_get expects an Int index".into(),
+                    ));
+                };
+                let idx = *i as usize;
+                if let Some(val) = xs.get(idx) {
+                    Ok(self.make_some(val.clone()))
+                } else {
+                    Ok(self.make_none())
+                }
+            }
+            IntrinsicFn::ListHead => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError("list_head expects a List".into()));
+                };
+                if let Some(val) = xs.first() {
+                    Ok(self.make_some(val.clone()))
+                } else {
+                    Ok(self.make_none())
+                }
+            }
+            IntrinsicFn::MapGet => {
+                let Value::Map(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError("map_get expects a Map".into()));
+                };
+                let key = &args[1];
+                for (k, v) in entries {
+                    if k == key {
+                        return Ok(self.make_some(v.clone()));
+                    }
+                }
+                Ok(self.make_none())
+            }
+            IntrinsicFn::ListMap => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError("list_map expects a List".into()));
+                };
+                let f = args[1].clone();
+                let xs = xs.clone();
+                let mut result = Vec::with_capacity(xs.len());
+                for item in xs {
+                    let val = self.call_value(f.clone(), vec![item])?;
+                    result.push(val);
+                }
+                Ok(Value::List(result))
+            }
+            IntrinsicFn::ListFilter => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError("list_filter expects a List".into()));
+                };
+                let f = args[1].clone();
+                let xs = xs.clone();
+                let mut result = Vec::new();
+                for item in xs {
+                    let keep = self.call_value(f.clone(), vec![item.clone()])?;
+                    if matches!(keep, Value::Bool(true)) {
+                        result.push(item);
+                    }
+                }
+                Ok(Value::List(result))
+            }
+            IntrinsicFn::ListFold => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError("list_fold expects a List".into()));
+                };
+                let xs = xs.clone();
+                let mut acc = args[1].clone();
+                let f = args[2].clone();
+                for item in xs {
+                    acc = self.call_value(f.clone(), vec![acc, item])?;
+                }
+                Ok(acc)
+            }
+            _ => Err(RuntimeError::TypeError("unknown complex intrinsic".into())),
         }
     }
 
