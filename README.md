@@ -83,7 +83,11 @@ The compiler doesn't print error messages — it emits structured JSON. Diagnost
 {
   "diagnostics": [{"severity": "error", "span": {...}, "fix": {"patch": "..."}}],
   "holes": [{"id": 0, "expected_type": "String", "effects": [], "inputs": ["trimmed: String"]}],
-  "symbol_graph": {"nodes": [...], "edges": [...]}
+  "symbol_graph": {
+    "functions": [{"id": "fn::add", "name": "add", "calls": ["fn::helper"], ...}],
+    "types": [{"id": "type::Color", "variants": [{"id": "type::Color::Red", ...}], ...}],
+    "capabilities": [{"id": "cap::IO", "functions": ["cap::IO::read"], ...}]
+  }
 }
 ```
 
@@ -152,7 +156,7 @@ crates/
 | Version | What ships | Status |
 |---------|-----------|--------|
 | **v0.0** | Parser ✓, name resolution ✓, CST→HIR lowering ✓, type checker ✓, effect checking ✓, typed holes ✓, structured diagnostics ✓, hole specs ✓, symbol graph ✓, patch suggestions ✓ | **Complete** |
-| **v0.1** | Tree-walking interpreter ✓, intrinsics ✓, builtin Option/Result types ✓, canonical formatter ✓, stable symbol IDs, runtime contracts, core stdlib | **In Progress** |
+| **v0.1** | Tree-walking interpreter ✓, intrinsics ✓, builtin Option/Result types ✓, canonical formatter ✓, stable symbol IDs ✓, runtime contracts, core stdlib | **In Progress** |
 | **v0.2** | Refactor engine, LSP server, capability enforcement, module/package system | Planned |
 | **v0.3** | Property testing, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay | Planned |
 

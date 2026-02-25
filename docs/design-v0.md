@@ -346,7 +346,7 @@ Kyokara's toolchain is a core part of the spec.
 Compiler emits:
 * `diagnostics.json`: structured errors, spans, expected vs actual types/effects, suggested patches
 * `typed_ast.json` or binary form
-* `symbol_graph.json`: call graph, type graph, effect graph
+* `symbol_graph.json`: call graph, type graph, effect graph — each node carries a stable namespaced ID (`fn::name`, `type::Name`, `type::Name::Variant`, `cap::Name`, `cap::Name::method`)
 * `hole_specs.json`: each hole's expected type and constraints
 * `patches.json`: machine-applicable edits for common fixes
 
@@ -481,7 +481,7 @@ v0 stdlib provides:
 * Intrinsic functions (print, println, int_to_string, string_concat) ✓
 * Builtin `Option<T>` and `Result<T, E>` types (injected as synthetic ADTs; `?` works out of the box) ✓
 * Canonical formatter (`kyokara fmt`, `kyokara-fmt` crate, Wadler-Lindig Doc IR) ✓
-* Stable symbol IDs (across edits)
+* Stable symbol IDs (`kind::name` / `kind::parent::child` format, unique across symbol kinds) ✓
 * Runtime contract checks (requires/ensures/old)
 * Core stdlib (List, Map, String, Result, Option)
 

@@ -88,6 +88,7 @@ pub struct SymbolGraphDto {
 /// A function node in the symbol graph.
 #[derive(Debug, Serialize)]
 pub struct FnNodeDto {
+    pub id: String,
     pub name: String,
     pub params: Vec<ParamDto>,
     pub return_type: Option<String>,
@@ -106,6 +107,7 @@ pub struct ParamDto {
 /// A type node in the symbol graph.
 #[derive(Debug, Serialize)]
 pub struct TypeNodeDto {
+    pub id: String,
     pub name: String,
     pub kind: String,
     pub type_params: Vec<String>,
@@ -116,6 +118,7 @@ pub struct TypeNodeDto {
 /// A variant of an ADT in the symbol graph.
 #[derive(Debug, Serialize)]
 pub struct VariantDto {
+    pub id: String,
     pub name: String,
     pub fields: Vec<String>,
 }
@@ -123,6 +126,7 @@ pub struct VariantDto {
 /// A capability node in the symbol graph.
 #[derive(Debug, Serialize)]
 pub struct CapNodeDto {
+    pub id: String,
     pub name: String,
     pub functions: Vec<String>,
 }
@@ -340,20 +344,28 @@ fn convert_hole(
 
 // ── Symbol graph builder ────────────────────────────────────────────
 
+fn symbol_id(kind: &str, name: &str) -> String {
+    format!("{kind}::{name}")
+}
+
+fn nested_symbol_id(parent_kind: &str, parent_name: &str, child_name: &str) -> String {
+    format!("{parent_kind}::{parent_name}::{child_name}")
+}
+
 fn build_symbol_graph(result: &CheckResult) -> SymbolGraphDto {
     let interner = &result.interner;
     let item_tree = &result.item_tree;
 
-    // Build a lookup from function name → list of callee names.
+    // Build a lookup from function name → list of callee IDs (fn::name format).
     let mut call_map: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     for (caller_name, callees) in &result.type_check.fn_calls {
         let caller_str = caller_name.resolve(interner).to_owned();
-        let callee_strs: Vec<String> = callees
+        let callee_ids: Vec<String> = callees
             .iter()
-            .map(|n| n.resolve(interner).to_owned())
+            .map(|n| symbol_id("fn", n.resolve(interner)))
             .collect();
-        call_map.insert(caller_str, callee_strs);
+        call_map.insert(caller_str, callee_ids);
     }
 
     // Functions.
@@ -380,7 +392,9 @@ fn build_symbol_graph(result: &CheckResult) -> SymbolGraphDto {
                 .filter_map(|tr| type_ref_name(tr, interner))
                 .collect();
             let calls = call_map.get(&name).cloned().unwrap_or_default();
+            let id = symbol_id("fn", &name);
             FnNodeDto {
+                id,
                 name,
                 params,
                 return_type,
@@ -416,19 +430,26 @@ fn build_symbol_graph(result: &CheckResult) -> SymbolGraphDto {
                 TypeDefKind::Adt { variants: vs } => {
                     let var_dtos: Vec<VariantDto> = vs
                         .iter()
-                        .map(|v| VariantDto {
-                            name: v.name.resolve(interner).to_owned(),
-                            fields: v
-                                .fields
-                                .iter()
-                                .map(|tr| display_type_ref(tr, interner))
-                                .collect(),
+                        .map(|v| {
+                            let vname = v.name.resolve(interner).to_owned();
+                            let vid = nested_symbol_id("type", &name, &vname);
+                            VariantDto {
+                                id: vid,
+                                name: vname,
+                                fields: v
+                                    .fields
+                                    .iter()
+                                    .map(|tr| display_type_ref(tr, interner))
+                                    .collect(),
+                            }
                         })
                         .collect();
                     ("adt".to_owned(), Vec::new(), var_dtos)
                 }
             };
+            let id = symbol_id("type", &name);
             TypeNodeDto {
+                id,
                 name,
                 kind,
                 type_params,
@@ -448,13 +469,13 @@ fn build_symbol_graph(result: &CheckResult) -> SymbolGraphDto {
                 .functions
                 .iter()
                 .map(|&fn_idx| {
-                    item_tree.functions[fn_idx]
-                        .name
-                        .resolve(interner)
-                        .to_owned()
+                    let fn_name = item_tree.functions[fn_idx].name.resolve(interner);
+                    nested_symbol_id("cap", &name, fn_name)
                 })
                 .collect();
+            let id = symbol_id("cap", &name);
             CapNodeDto {
+                id,
                 name,
                 functions: fns,
             }
