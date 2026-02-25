@@ -88,6 +88,8 @@ pub enum SyntaxKind {
     ElseKw,
     /// `return`
     ReturnKw,
+    /// `pub`
+    PubKw,
 
     // ── Delimiters ───────────────────────────────────────────────────
     /// `(`
@@ -340,6 +342,7 @@ impl SyntaxKind {
                 | Self::IfKw
                 | Self::ElseKw
                 | Self::ReturnKw
+                | Self::PubKw
         )
     }
 
@@ -378,6 +381,7 @@ impl SyntaxKind {
             "if" => Some(Self::IfKw),
             "else" => Some(Self::ElseKw),
             "return" => Some(Self::ReturnKw),
+            "pub" => Some(Self::PubKw),
             _ => None,
         }
     }

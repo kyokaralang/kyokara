@@ -14,7 +14,7 @@ use crate::name::Name;
 pub type ScopeIdx = Idx<ScopeData>;
 
 /// A tree of nested scopes.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ScopeTree {
     pub scopes: Arena<ScopeData>,
     pub root: Option<ScopeIdx>,
@@ -53,7 +53,7 @@ impl ScopeTree {
 }
 
 /// Data for a single scope node.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ScopeData {
     pub parent: Option<ScopeIdx>,
     pub entries: FxHashMap<Name, ScopeDef>,

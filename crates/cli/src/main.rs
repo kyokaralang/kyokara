@@ -83,23 +83,47 @@ fn main() {
             }
         }
         Command::Run { file } => {
-            let source = match std::fs::read_to_string(&file) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("error: cannot read `{file}`: {e}");
-                    std::process::exit(1);
-                }
-            };
+            let path = std::path::Path::new(&file);
 
-            match kyokara_eval::run(&source) {
-                Ok(result) => {
-                    if !matches!(result.value, kyokara_eval::value::Value::Unit) {
-                        println!("{}", result.value.display(&result.interner));
+            // Check if there are sibling .ky files (multi-file project).
+            let is_multi_file = path.is_file()
+                && path
+                    .parent()
+                    .is_some_and(|dir| has_sibling_ky_files(path, dir));
+
+            if is_multi_file {
+                // Multi-file project: use run_project.
+                match kyokara_eval::run_project(path) {
+                    Ok(result) => {
+                        if !matches!(result.value, kyokara_eval::value::Value::Unit) {
+                            println!("{}", result.value.display(&result.interner));
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("runtime error: {e}");
+                        std::process::exit(1);
                     }
                 }
-                Err(e) => {
-                    eprintln!("runtime error: {e}");
-                    std::process::exit(1);
+            } else {
+                // Single file: use existing run.
+                let source = match std::fs::read_to_string(&file) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("error: cannot read `{file}`: {e}");
+                        std::process::exit(1);
+                    }
+                };
+
+                match kyokara_eval::run(&source) {
+                    Ok(result) => {
+                        if !matches!(result.value, kyokara_eval::value::Value::Unit) {
+                            println!("{}", result.value.display(&result.interner));
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("runtime error: {e}");
+                        std::process::exit(1);
+                    }
                 }
             }
         }
@@ -127,4 +151,21 @@ fn main() {
             }
         }
     }
+}
+
+/// Check if there are other `.ky` files alongside the given file.
+fn has_sibling_ky_files(entry: &std::path::Path, dir: &std::path::Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry_result in entries {
+        let Ok(dir_entry) = entry_result else {
+            continue;
+        };
+        let path = dir_entry.path();
+        if path != entry && path.extension().is_some_and(|ext| ext == "ky") {
+            return true;
+        }
+    }
+    false
 }

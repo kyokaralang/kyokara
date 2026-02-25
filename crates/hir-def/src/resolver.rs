@@ -10,7 +10,7 @@ use crate::name::Name;
 use crate::scope::{ScopeDef, ScopeIdx, ScopeTree};
 
 /// Module-level scope: items + constructors + imports.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ModuleScope {
     /// Top-level function definitions.
     pub functions: FxHashMap<Name, FnItemIdx>,

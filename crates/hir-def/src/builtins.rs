@@ -47,6 +47,7 @@ fn register_option(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut 
 
     let idx = tree.types.alloc(TypeItem {
         name: option_name,
+        is_pub: false,
         type_params: vec![t_name],
         kind: TypeDefKind::Adt {
             variants: vec![
@@ -82,6 +83,7 @@ fn register_list(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut In
     let t_name = Name::new(interner, "T");
     let idx = tree.types.alloc(TypeItem {
         name: list_name,
+        is_pub: false,
         type_params: vec![t_name],
         kind: TypeDefKind::Adt { variants: vec![] },
     });
@@ -98,6 +100,7 @@ fn register_map(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Int
     let v_name = Name::new(interner, "V");
     let idx = tree.types.alloc(TypeItem {
         name: map_name,
+        is_pub: false,
         type_params: vec![k_name, v_name],
         kind: TypeDefKind::Adt { variants: vec![] },
     });
@@ -129,6 +132,7 @@ fn register_result(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut 
 
     let idx = tree.types.alloc(TypeItem {
         name: result_name,
+        is_pub: false,
         type_params: vec![t_name, e_name],
         kind: TypeDefKind::Adt {
             variants: vec![

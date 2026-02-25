@@ -61,17 +61,45 @@ First-class specification:
 - support named arguments by default
 
 ### 2.2 Modules and imports
-```kyokara
-module finance.payments
 
-import std.list as List
-import std.time as Time
-import net.http as Http
+**Implemented (v0.2):** Convention-based file layout — the file path determines the module path. No explicit `module` declarations needed.
+
+```
+project/
+  main.ky          → root module (entry point)
+  math.ky          → module "math"
+  math/utils.ky    → module "math.utils"
 ```
 
-Notes:
-* importing a module does **not** grant its capability.
-* capabilities are separate from libraries.
+Visibility is **private by default**. Use the `pub` keyword to export items:
+
+```kyokara
+// math.ky
+pub fn add(x: Int, y: Int) -> Int { x + y }
+pub fn double(x: Int) -> Int { x * 2 }
+fn internal_helper(x: Int) -> Int { x + 1 }  // not visible to importers
+```
+
+Import a module to bring its public names into scope:
+
+```kyokara
+// main.ky
+import math
+
+fn main() -> Int {
+    let x = add(10, 20)   // pub fn from math.ky
+    let y = double(x)     // pub fn from math.ky
+    y
+}
+```
+
+Rules:
+* `import math` brings all `pub` items from `math.ky` into the importing module's scope as flat names (no `math.add()` qualified paths yet).
+* Private items (without `pub`) are not visible across module boundaries.
+* Local definitions shadow imports.
+* Importing a module does **not** grant its capability. Capabilities are separate from libraries.
+
+**Planned:** Qualified access (`math.add()`), aliased imports (`import math as M`), selective imports (`import math { add, double }`).
 
 ### 2.3 Types
 
@@ -496,10 +524,10 @@ injected as synthetic types before type-checking.
 * Core stdlib (List, Map, String, Int/Float — 43 intrinsic functions total) ✓
 
 **v0.2 — Refactoring + LSP + Capabilities**
+* Module system: convention-based file layout, `pub` visibility, flat imports ✓
 * Refactor engine (rename, extract, inline, move) with verification status
 * LSP server
 * Capability enforcement at type level
-* Module/package system
 
 **v0.3 — Verification + Codegen + Replay**
 * Property-based test harness + stdlib generators
@@ -577,8 +605,9 @@ Rust is recommended for:
 6. ~~Implement typed holes + partial compilation.~~ ✓
 7. ~~Emit structured diagnostics + hole specs.~~ ✓
 8. ~~Emit patch suggestions + symbol graph.~~ ✓
-9. Implement tree-walking interpreter for rapid iteration.
-10. Add contracts as runtime checks.
-11. Implement WASM runtime host functions for capabilities + replay log.
-12. Add property test runner and basic generators.
-13. Integrate SMT solver for opt-in static verification.
+9. ~~Implement tree-walking interpreter for rapid iteration.~~ ✓
+10. ~~Add contracts as runtime checks.~~ ✓
+11. ~~Implement module system (convention-based layout, pub visibility, flat imports).~~ ✓
+12. Implement WASM runtime host functions for capabilities + replay log.
+13. Add property test runner and basic generators.
+14. Integrate SMT solver for opt-in static verification.

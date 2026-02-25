@@ -10,10 +10,12 @@ pub mod intrinsics;
 pub mod value;
 
 use kyokara_hir::{
-    FnItem, FnParam, Name, Path, TypeRef, check_module, collect_item_tree, register_builtin_types,
+    FnItem, FnParam, ModulePath, Name, Path, TypeRef, check_module, check_project,
+    collect_item_tree, register_builtin_types,
 };
 use kyokara_intern::Interner;
 use kyokara_span::FileId;
+use kyokara_stdx::FxHashMap;
 use kyokara_syntax::SyntaxNode;
 use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::SourceFile;
@@ -129,6 +131,85 @@ pub fn run(source: &str) -> Result<RunResult, RuntimeError> {
     Ok(RunResult { value, interner })
 }
 
+/// Parse, type-check, and evaluate a multi-file Kyokara project.
+///
+/// `entry_file` is the main `.ky` file. Sibling `.ky` files are
+/// discovered as importable modules.
+pub fn run_project(entry_file: &std::path::Path) -> Result<RunResult, RuntimeError> {
+    let mut project = check_project(entry_file);
+
+    // Find the entry module.
+    let entry_path = ModulePath::root();
+    let entry_info = project
+        .module_graph
+        .get_mut(&entry_path)
+        .ok_or(RuntimeError::NoMainFunction)?;
+
+    // Register intrinsics in the entry module.
+    register_intrinsics(
+        &mut entry_info.item_tree,
+        &mut entry_info.scope,
+        &mut project.interner,
+    );
+
+    // Collect fn bodies: start with the entry module's type check.
+    let entry_tc = project
+        .type_checks
+        .iter()
+        .find(|(p, _)| *p == entry_path)
+        .map(|(_, tc)| tc)
+        .ok_or(RuntimeError::NoMainFunction)?;
+
+    let mut fn_bodies: FxHashMap<
+        kyokara_hir_def::item_tree::FnItemIdx,
+        kyokara_hir_def::body::Body,
+    > = FxHashMap::default();
+    for (k, v) in &entry_tc.fn_bodies {
+        fn_bodies.insert(*k, v.clone());
+    }
+
+    // Also collect bodies from imported modules and map them to entry module indices.
+    let entry_info = project.module_graph.get(&entry_path).unwrap();
+    let entry_tree = &entry_info.item_tree;
+    let entry_scope = &entry_info.scope;
+
+    for (mod_path, tc) in &project.type_checks {
+        if *mod_path == entry_path {
+            continue;
+        }
+        let Some(mod_info) = project.module_graph.get(mod_path) else {
+            continue;
+        };
+
+        // For each body in this module, check if the entry module imported it.
+        for (src_fn_idx, body) in &tc.fn_bodies {
+            let src_fn_item = &mod_info.item_tree.functions[*src_fn_idx];
+            // Find matching function in entry module's tree by name
+            // that doesn't already have a body (from the entry module's own check).
+            for (entry_fn_idx, entry_fn_item) in entry_tree.functions.iter() {
+                if entry_fn_item.name == src_fn_item.name
+                    && !fn_bodies.contains_key(&entry_fn_idx)
+                    && entry_scope.functions.get(&entry_fn_item.name) == Some(&entry_fn_idx)
+                {
+                    fn_bodies.insert(entry_fn_idx, body.clone());
+                }
+            }
+        }
+    }
+
+    let entry_info = project.module_graph.get(&entry_path).unwrap();
+    let mut interp = Interpreter::new(
+        entry_info.item_tree.clone(),
+        entry_info.scope.clone(),
+        fn_bodies,
+        project.interner,
+    );
+
+    let value = interp.run_main()?;
+    let interner = interp.into_interner();
+    Ok(RunResult { value, interner })
+}
+
 /// Register intrinsic functions as bodyless items in the item tree and module scope.
 fn register_intrinsics(
     tree: &mut kyokara_hir::ItemTree,
@@ -163,6 +244,7 @@ fn mk_intrinsic(
         name,
         FnItem {
             name,
+            is_pub: false,
             type_params,
             params: fn_params,
             ret_type: Some(ret),

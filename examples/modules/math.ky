@@ -1,0 +1,13 @@
+// Math module — exports basic arithmetic helpers.
+
+pub fn add(x: Int, y: Int) -> Int {
+    x + y
+}
+
+pub fn double(x: Int) -> Int {
+    x * 2
+}
+
+fn internal_helper(x: Int) -> Int {
+    x + 1
+}

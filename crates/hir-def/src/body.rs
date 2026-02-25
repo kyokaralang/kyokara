@@ -9,7 +9,7 @@ use crate::pat::Pat;
 use crate::scope::ScopeTree;
 
 /// A lowered function body containing arenas of expressions and patterns.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Body {
     pub exprs: Arena<Expr>,
     pub pats: Arena<Pat>,

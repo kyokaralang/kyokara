@@ -98,26 +98,33 @@ Refactors are compiler operations, not text transformations. Rename a symbol acr
 ## Language at a Glance
 
 ```kyokara
-module finance.payments
-
-import std.list as List
-
-type Currency = | USD | IDR | EUR
+// math.ky
+pub type Currency = | USD | IDR | EUR
 
 type Money = { amount: Int, currency: Currency }
 
-fn add_fee(x: Money, fee_bps: Int) -> Money =
+pub fn add_fee(x: Money, fee_bps: Int) -> Money =
   let fee = x.amount * fee_bps / 10_000
   { amount = x.amount + fee, currency = x.currency }
 
-fn currency_symbol(c: Currency) -> String =
+pub fn currency_symbol(c: Currency) -> String =
   match c:
     | USD -> "$"
     | IDR -> "Rp"
     | EUR -> "€"
 ```
 
-Pure by default. No null — use `Option[T]`. No exceptions — use `Result[T, E]`. Exhaustive pattern matching enforced by the compiler. Pipeline operator (`|>`) and error propagation (`?`) for clean data flow.
+```kyokara
+// main.ky
+import math
+
+fn main() -> Int {
+    let result = add_fee({ amount = 1000, currency = USD }, 250)
+    result.amount
+}
+```
+
+Pure by default. Private by default — use `pub` to export. No null — use `Option[T]`. No exceptions — use `Result[T, E]`. Exhaustive pattern matching enforced by the compiler. Pipeline operator (`|>`) and error propagation (`?`) for clean data flow. Convention-based modules — file path determines module path, `import` brings public names into scope.
 
 ## Architecture
 
@@ -157,7 +164,7 @@ crates/
 |---------|-----------|--------|
 | **v0.0** | Parser ✓, name resolution ✓, CST→HIR lowering ✓, type checker ✓, effect checking ✓, typed holes ✓, structured diagnostics ✓, hole specs ✓, symbol graph ✓, patch suggestions ✓ | **Complete** |
 | **v0.1** | Tree-walking interpreter ✓, intrinsics ✓, builtin Option/Result types ✓, canonical formatter ✓, stable symbol IDs ✓, runtime contracts ✓, core stdlib (List, Map, String, Int/Float) ✓ | **Complete** |
-| **v0.2** | Refactor engine, LSP server, capability enforcement, module/package system | Planned |
+| **v0.2** | Module system (convention-based layout, `pub` visibility, flat imports) ✓, refactor engine, LSP server, capability enforcement | In progress |
 | **v0.3** | Property testing, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay | Planned |
 
 ## FAQ
@@ -194,8 +201,11 @@ cargo run -p kyokara-cli -- check <file.ky>
 # JSON output (for AI agents)
 cargo run -p kyokara-cli -- check <file.ky> --format json
 
-# Run a file
+# Run a single file
 cargo run -p kyokara-cli -- run <file.ky>
+
+# Run a multi-file project (auto-detected when sibling .ky files exist)
+cargo run -p kyokara-cli -- run examples/modules/main.ky
 
 # Format a file (writes back)
 cargo run -p kyokara-cli -- fmt <file.ky>

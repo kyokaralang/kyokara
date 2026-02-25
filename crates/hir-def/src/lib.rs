@@ -13,6 +13,7 @@ pub mod body;
 pub mod builtins;
 pub mod expr;
 pub mod item_tree;
+pub mod module_graph;
 pub mod name;
 pub mod pat;
 pub mod path;

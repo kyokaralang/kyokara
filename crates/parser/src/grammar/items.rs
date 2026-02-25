@@ -9,16 +9,37 @@ use crate::parser::{CompletedMarker, Parser};
 use crate::token_set::TokenSet;
 
 /// Tokens that can start an item — used for error recovery.
-pub(super) const ITEM_RECOVERY: TokenSet =
-    TokenSet::new(&[ModuleKw, ImportKw, TypeKw, FnKw, CapKw, PropertyKw, LetKw]);
+pub(super) const ITEM_RECOVERY: TokenSet = TokenSet::new(&[
+    ModuleKw, ImportKw, TypeKw, FnKw, CapKw, PropertyKw, LetKw, PubKw,
+]);
 
 pub(super) fn item(p: &mut Parser<'_>) -> Option<CompletedMarker> {
-    let cm = match p.current() {
-        TypeKw => type_def(p),
-        FnKw => fn_def(p),
-        CapKw => cap_def(p),
-        PropertyKw => property_def(p),
-        LetKw => let_binding(p),
+    // `pub` can precede fn, type, or cap.
+    let is_pub = p.at(PubKw);
+    let start = if is_pub {
+        p.current_after_pub()
+    } else {
+        p.current()
+    };
+
+    let cm = match start {
+        TypeKw => type_def(p, is_pub),
+        FnKw => fn_def(p, is_pub),
+        CapKw => cap_def(p, is_pub),
+        PropertyKw => {
+            if is_pub {
+                p.error_recover("expected item", ITEM_RECOVERY);
+                return None;
+            }
+            property_def(p)
+        }
+        LetKw => {
+            if is_pub {
+                p.error_recover("expected item", ITEM_RECOVERY);
+                return None;
+            }
+            let_binding(p)
+        }
         _ => {
             p.error_recover("expected item", ITEM_RECOVERY);
             return None;
@@ -57,9 +78,12 @@ fn import_alias(p: &mut Parser<'_>) {
 
 // ── Type Definition ─────────────────────────────────────────────────
 
-/// `type Ident TypeParamList? '=' TypeBody`
-fn type_def(p: &mut Parser<'_>) -> CompletedMarker {
+/// `pub? type Ident TypeParamList? '=' TypeBody`
+fn type_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
     let m = p.open();
+    if is_pub {
+        p.bump(); // pub
+    }
     p.bump(); // type
     p.expect(Ident);
     if p.at(Lt) {
@@ -122,9 +146,12 @@ fn variant_field_list(p: &mut Parser<'_>) {
 
 // ── Function Definition ─────────────────────────────────────────────
 
-/// `fn Ident TypeParamList? ParamList ReturnType? FnContract? BlockExpr`
-pub(super) fn fn_def(p: &mut Parser<'_>) -> CompletedMarker {
+/// `pub? fn Ident TypeParamList? ParamList ReturnType? FnContract? BlockExpr`
+pub(super) fn fn_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
     let m = p.open();
+    if is_pub {
+        p.bump(); // pub
+    }
     p.bump(); // fn
     p.expect(Ident);
     if p.at(Lt) {
@@ -241,9 +268,12 @@ fn invariant_clause(p: &mut Parser<'_>) {
 
 // ── Capability Definition ───────────────────────────────────────────
 
-/// `cap Ident TypeParamList? '{' FnDef* '}'`
-fn cap_def(p: &mut Parser<'_>) -> CompletedMarker {
+/// `pub? cap Ident TypeParamList? '{' FnDef* '}'`
+fn cap_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
     let m = p.open();
+    if is_pub {
+        p.bump(); // pub
+    }
     p.bump(); // cap
     p.expect(Ident);
     if p.at(Lt) {
@@ -252,7 +282,9 @@ fn cap_def(p: &mut Parser<'_>) -> CompletedMarker {
     p.expect(LBrace);
     while !p.at(RBrace) && !p.at_eof() {
         if p.at(FnKw) {
-            fn_def(p);
+            fn_def(p, false);
+        } else if p.at(PubKw) && p.current_after_pub() == FnKw {
+            fn_def(p, true);
         } else {
             p.error_recover("expected fn in cap body", TokenSet::new(&[FnKw, RBrace]));
         }

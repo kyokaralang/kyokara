@@ -7,7 +7,7 @@ use kyokara_intern::Interner;
 use kyokara_span::{FileId, Span};
 use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::*;
-use kyokara_syntax::ast::traits::{HasName, HasTypeParams};
+use kyokara_syntax::ast::traits::{HasName, HasTypeParams, HasVisibility};
 
 use crate::item_tree::*;
 use crate::name::Name;
@@ -152,9 +152,11 @@ impl ItemTreeCtx<'_> {
             .unwrap_or_default();
 
         let has_body = f.body().is_some();
+        let is_pub = f.is_pub();
 
         let idx = self.tree.functions.alloc(FnItem {
             name,
+            is_pub,
             type_params,
             params,
             ret_type,
@@ -225,8 +227,10 @@ impl ItemTreeCtx<'_> {
             TypeDefKind::Alias(TypeRef::Error)
         };
 
+        let is_pub = t.is_pub();
         let idx = self.tree.types.alloc(TypeItem {
             name,
+            is_pub,
             type_params,
             kind: kind.clone(),
         });
@@ -270,8 +274,10 @@ impl ItemTreeCtx<'_> {
         let functions: Vec<FnItemIdx> =
             c.functions().map(|f| self.lower_fn_def(&f, true)).collect();
 
+        let is_pub = c.is_pub();
         let idx = self.tree.caps.alloc(CapItem {
             name,
+            is_pub,
             type_params,
             functions,
         });
