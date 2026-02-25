@@ -24,4 +24,13 @@ pub enum RuntimeError {
 
     #[error("missing expression")]
     MissingExpr,
+
+    #[error("precondition failed: {0}")]
+    PreconditionFailed(String),
+
+    #[error("postcondition failed: {0}")]
+    PostconditionFailed(String),
+
+    #[error("invariant violated: {0}")]
+    InvariantViolated(String),
 }
