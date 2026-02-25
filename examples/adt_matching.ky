@@ -1,0 +1,26 @@
+type Color = | Red | Green | Blue
+
+fn color_name(c: Color) -> String {
+  match c {
+    Red => "red"
+    Green => "green"
+    Blue => "blue"
+  }
+}
+
+type Shape =
+  | Circle(Int)
+  | Rect(Int, Int)
+
+fn area(s: Shape) -> Int {
+  match s {
+    Circle(r) => r * r * 3
+    Rect(w, h) => w * h
+  }
+}
+
+fn main() -> Unit {
+  println(color_name(Green))
+  println(string_concat("circle area: ", int_to_string(area(Circle(5)))))
+  println(string_concat("rect area: ", int_to_string(area(Rect(4, 6)))))
+}

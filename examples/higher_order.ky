@@ -1,0 +1,15 @@
+fn apply(f: fn(Int) -> Int, x: Int) -> Int {
+  f(x)
+}
+
+fn double(x: Int) -> Int { x * 2 }
+
+fn compose(x: Int) -> Int {
+  let add_ten = fn(n: Int) => n + 10
+  apply(add_ten, apply(double, x))
+}
+
+fn main() -> Unit {
+  println(string_concat("apply(double, 7) = ", int_to_string(apply(double, 7))))
+  println(string_concat("compose(3) = ", int_to_string(compose(3))))
+}
