@@ -207,6 +207,7 @@ dependencies = [
  "kyokara-api",
  "kyokara-diagnostics",
  "kyokara-eval",
+ "kyokara-fmt",
  "kyokara-hir",
  "kyokara-syntax",
  "serde_json",
@@ -236,6 +237,15 @@ dependencies = [
  "la-arena",
  "rustc-hash 2.1.1",
  "thiserror",
+]
+
+[[package]]
+name = "kyokara-fmt"
+version = "0.0.0"
+dependencies = [
+ "kyokara-parser",
+ "kyokara-syntax",
+ "rowan",
 ]
 
 [[package]]

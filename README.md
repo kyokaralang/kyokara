@@ -141,6 +141,8 @@ crates/
   hir-def       # HIR data types + CST→HIR lowering + name resolution
   hir-ty        # type inference + effect checking
   hir           # semantic query facade
+  eval          # tree-walking interpreter
+  fmt           # canonical code formatter (Wadler-Lindig Doc IR)
   api           # JSON serialization of all compiler outputs
   cli           # kyokara binary
 ```
@@ -150,7 +152,7 @@ crates/
 | Version | What ships | Status |
 |---------|-----------|--------|
 | **v0.0** | Parser ✓, name resolution ✓, CST→HIR lowering ✓, type checker ✓, effect checking ✓, typed holes ✓, structured diagnostics ✓, hole specs ✓, symbol graph ✓, patch suggestions ✓ | **Complete** |
-| **v0.1** | Tree-walking interpreter ✓, intrinsics ✓, canonical formatter, stable symbol IDs, runtime contracts, core stdlib | **In Progress** |
+| **v0.1** | Tree-walking interpreter ✓, intrinsics ✓, canonical formatter ✓, stable symbol IDs, runtime contracts, core stdlib | **In Progress** |
 | **v0.2** | Refactor engine, LSP server, capability enforcement, module/package system | Planned |
 | **v0.3** | Property testing, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay | Planned |
 
@@ -162,7 +164,7 @@ Kyokara's primary user is an AI agent, not a human at a REPL. The agent's workfl
 
 **Can I run Kyokara programs right now?**
 
-Not yet. Right now you can write `.ky` files and check them: `kyokara check file.ky --format json`. You get back structured diagnostics, typed hole specifications, a symbol graph, and machine-applicable fix patches. Execution arrives in v0.1 with a tree-walking interpreter.
+Yes. You can write `.ky` files and: `kyokara check file.ky --format json` (type-check), `kyokara run file.ky` (interpret), or `kyokara fmt file.ky` (format). Check gives you structured diagnostics, typed hole specifications, a symbol graph, and machine-applicable fix patches. Run executes via a tree-walking interpreter. Fmt enforces canonical formatting.
 
 **Why Rust?**
 
@@ -182,11 +184,20 @@ Those languages weren't designed for machine authorship. Their error messages ar
 # Requires Rust (stable)
 cargo build
 
-# Run the compiler
+# Type-check a file
 cargo run -p kyokara-cli -- check <file.ky>
 
 # JSON output (for AI agents)
 cargo run -p kyokara-cli -- check <file.ky> --format json
+
+# Run a file
+cargo run -p kyokara-cli -- run <file.ky>
+
+# Format a file (writes back)
+cargo run -p kyokara-cli -- fmt <file.ky>
+
+# Check formatting without writing (exits 1 if not formatted)
+cargo run -p kyokara-cli -- fmt --check <file.ky>
 ```
 
 ## License
