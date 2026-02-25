@@ -28,6 +28,8 @@ pub enum Value {
     Record {
         fields: Vec<(Name, Value)>,
     },
+    List(Vec<Value>),
+    Map(Vec<(Value, Value)>),
     Fn(FnValue),
 }
 
@@ -49,6 +51,39 @@ pub enum FnValue {
         arity: usize,
     },
 }
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::String(a), Value::String(b)) => a == b,
+            (Value::Char(a), Value::Char(b)) => a == b,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Unit, Value::Unit) => true,
+            (
+                Value::Adt {
+                    type_idx: t1,
+                    variant: v1,
+                    fields: f1,
+                },
+                Value::Adt {
+                    type_idx: t2,
+                    variant: v2,
+                    fields: f2,
+                },
+            ) => t1 == t2 && v1 == v2 && f1 == f2,
+            (Value::Record { fields: f1 }, Value::Record { fields: f2 }) => f1 == f2,
+            (Value::List(a), Value::List(b)) => a == b,
+            (Value::Map(a), Value::Map(b)) => a == b,
+            // Functions are never equal.
+            (Value::Fn(_), Value::Fn(_)) => false,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Value {}
 
 impl Value {
     pub fn display(&self, interner: &Interner) -> String {
@@ -75,6 +110,17 @@ impl Value {
                     .map(|(n, v)| format!("{}: {}", n.resolve(interner), v.display(interner)))
                     .collect();
                 format!("{{ {} }}", fs.join(", "))
+            }
+            Value::List(items) => {
+                let fs: Vec<String> = items.iter().map(|v| v.display(interner)).collect();
+                format!("[{}]", fs.join(", "))
+            }
+            Value::Map(entries) => {
+                let fs: Vec<String> = entries
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k.display(interner), v.display(interner)))
+                    .collect();
+                format!("{{{}}}", fs.join(", "))
             }
             Value::Fn(_) => "<function>".to_string(),
         }
