@@ -4,7 +4,7 @@
 //! - `kyokara check <file>` — type-check a `.ky` file (v0.0)
 //! - `kyokara run <file>` — interpret a `.ky` file (v0.1)
 //! - `kyokara fmt <file>` — format a `.ky` file (v0.1)
-//! - `kyokara replay <file>` — replay execution trace (v0.2)
+//! - `kyokara replay <file>` — replay execution trace (planned v0.3)
 
 use clap::{Parser, Subcommand};
 
@@ -45,15 +45,26 @@ fn main() {
 
     match cli.command {
         Command::Check { file, format } => {
-            let source = match std::fs::read_to_string(&file) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("error: cannot read `{file}`: {e}");
-                    std::process::exit(1);
-                }
-            };
+            let path = std::path::Path::new(&file);
 
-            let output = kyokara_api::check(&source, &file);
+            // Check if there are sibling .ky files (multi-file project).
+            let is_multi_file = path.is_file()
+                && path
+                    .parent()
+                    .is_some_and(|dir| has_sibling_ky_files(path, dir));
+
+            let output = if is_multi_file {
+                kyokara_api::check_project(path)
+            } else {
+                let source = match std::fs::read_to_string(&file) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("error: cannot read `{file}`: {e}");
+                        std::process::exit(1);
+                    }
+                };
+                kyokara_api::check(&source, &file)
+            };
 
             match format.as_str() {
                 "json" => {

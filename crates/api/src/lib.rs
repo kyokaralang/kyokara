@@ -206,13 +206,49 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
         }
     }
 
+    // Collect holes and symbol graphs from all modules.
+    let mut holes = Vec::new();
+    let mut all_functions = Vec::new();
+    let mut all_types = Vec::new();
+    let mut all_capabilities = Vec::new();
+
+    for (mod_path, tc) in &result.type_checks {
+        let file_name = result
+            .module_graph
+            .get(mod_path)
+            .and_then(|i| result.file_map.path(i.file_id))
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<unknown>".into());
+
+        if let Some(info) = result.module_graph.get(mod_path) {
+            // Holes.
+            for fn_result in tc.fn_results.values() {
+                for hole in &fn_result.holes {
+                    holes.push(convert_hole(
+                        holes.len(),
+                        hole,
+                        interner,
+                        &info.item_tree,
+                        &file_name,
+                    ));
+                }
+            }
+
+            // Symbol graph.
+            let graph = build_module_symbol_graph(&info.item_tree, tc, interner);
+            all_functions.extend(graph.functions);
+            all_types.extend(graph.types);
+            all_capabilities.extend(graph.capabilities);
+        }
+    }
+
     CheckOutput {
         diagnostics,
-        holes: Vec::new(),
+        holes,
         symbol_graph: SymbolGraphDto {
-            functions: Vec::new(),
-            types: Vec::new(),
-            capabilities: Vec::new(),
+            functions: all_functions,
+            types: all_types,
+            capabilities: all_capabilities,
         },
     }
 }
@@ -431,13 +467,18 @@ fn nested_symbol_id(parent_kind: &str, parent_name: &str, child_name: &str) -> S
 }
 
 fn build_symbol_graph(result: &CheckResult) -> SymbolGraphDto {
-    let interner = &result.interner;
-    let item_tree = &result.item_tree;
+    build_module_symbol_graph(&result.item_tree, &result.type_check, &result.interner)
+}
 
+fn build_module_symbol_graph(
+    item_tree: &kyokara_hir::ItemTree,
+    type_check: &kyokara_hir::TypeCheckResult,
+    interner: &Interner,
+) -> SymbolGraphDto {
     // Build a lookup from function name → list of callee IDs (fn::name format).
     let mut call_map: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
-    for (caller_name, callees) in &result.type_check.fn_calls {
+    for (caller_name, callees) in &type_check.fn_calls {
         let caller_str = caller_name.resolve(interner).to_owned();
         let callee_ids: Vec<String> = callees
             .iter()
