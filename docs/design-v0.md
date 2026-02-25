@@ -482,7 +482,7 @@ v0 stdlib provides:
 * Builtin `Option<T>` and `Result<T, E>` types (injected as synthetic ADTs; `?` works out of the box) ✓
 * Canonical formatter (`kyokara fmt`, `kyokara-fmt` crate, Wadler-Lindig Doc IR) ✓
 * Stable symbol IDs (`kind::name` / `kind::parent::child` format, unique across symbol kinds) ✓
-* Runtime contract checks (requires/ensures/old)
+* Runtime contract checks (requires/ensures/old) ✓
 * Core stdlib (List, Map, String, Result, Option)
 
 **v0.2 — Refactoring + LSP + Capabilities**

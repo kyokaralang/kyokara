@@ -23,6 +23,8 @@ pub struct Interpreter {
     fn_bodies: FxHashMap<FnItemIdx, Body>,
     interner: Interner,
     intrinsics: FxHashMap<Name, IntrinsicFn>,
+    /// Snapshot of the environment at function entry, used by `old()` in ensures clauses.
+    old_env: Option<Env>,
 }
 
 /// Used to implement early return from functions.
@@ -69,6 +71,7 @@ impl Interpreter {
             fn_bodies,
             interner,
             intrinsics,
+            old_env: None,
         }
     }
 
@@ -97,22 +100,65 @@ impl Interpreter {
             .get(&fn_idx)
             .ok_or_else(|| RuntimeError::UnresolvedName("function body not found".into()))?
             as *const Body;
-        // SAFETY: we hold &mut self but only mutate interner/env, not fn_bodies.
+        // SAFETY: we hold &mut self but only mutate interner/env/old_env, not fn_bodies.
         let body = unsafe { &*body };
 
+        // Extract param names and function name before borrowing self mutably.
         let fn_item = &self.item_tree.functions[fn_idx];
+        let fn_name_str = fn_item.name.resolve(&self.interner).to_string();
+        let param_names: Vec<Name> = fn_item.params.iter().map(|p| p.name).collect();
+
         let mut env = Env::new();
 
         // Bind parameters.
-        for (i, param) in fn_item.params.iter().enumerate() {
+        for (i, name) in param_names.iter().enumerate() {
             if let Some(val) = args.get(i) {
-                env.bind(param.name, val.clone());
+                env.bind(*name, val.clone());
             }
         }
 
-        match self.eval_expr(&mut env, body, body.root)? {
-            ControlFlow::Value(v) | ControlFlow::Return(v) => Ok(v),
+        // Check precondition.
+        if let Some(req_idx) = body.requires {
+            let val = self.eval_expr(&mut env, body, req_idx)?.into_value();
+            if !matches!(val, Value::Bool(true)) {
+                return Err(RuntimeError::PreconditionFailed(fn_name_str));
+            }
         }
+
+        // Snapshot env for old() before evaluating the body.
+        let prev_old_env = self.old_env.take();
+        if body.ensures.is_some() {
+            self.old_env = Some(env.clone());
+        }
+
+        // Evaluate the function body.
+        let return_val = match self.eval_expr(&mut env, body, body.root)? {
+            ControlFlow::Value(v) | ControlFlow::Return(v) => v,
+        };
+
+        // Check invariant.
+        if let Some(inv_idx) = body.invariant {
+            let val = self.eval_expr(&mut env, body, inv_idx)?.into_value();
+            if !matches!(val, Value::Bool(true)) {
+                self.old_env = prev_old_env;
+                return Err(RuntimeError::InvariantViolated(fn_name_str));
+            }
+        }
+
+        // Check postcondition.
+        if let Some(ens_idx) = body.ensures {
+            let result_name = Name::new(&mut self.interner, "result");
+            env.bind(result_name, return_val.clone());
+            let val = self.eval_expr(&mut env, body, ens_idx)?.into_value();
+            self.old_env = prev_old_env;
+            if !matches!(val, Value::Bool(true)) {
+                return Err(RuntimeError::PostconditionFailed(fn_name_str));
+            }
+        } else {
+            self.old_env = prev_old_env;
+        }
+
+        Ok(return_val)
     }
 
     fn eval_expr(
@@ -259,7 +305,14 @@ impl Interpreter {
 
             Expr::Old(inner) => {
                 let inner = *inner;
-                self.eval_expr(env, body, inner)
+                if let Some(mut snapshot) = self.old_env.take() {
+                    let result = self.eval_expr(&mut snapshot, body, inner);
+                    self.old_env = Some(snapshot);
+                    result
+                } else {
+                    // No old_env available — fall back to current env.
+                    self.eval_expr(env, body, inner)
+                }
             }
         }
     }

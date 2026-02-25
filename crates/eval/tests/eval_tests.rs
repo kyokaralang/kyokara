@@ -573,6 +573,479 @@ fn eval_propagate_in_binary_expr() {
     }
 }
 
+// ── Contract tests ──────────────────────────────────────────────────
+
+#[test]
+fn eval_requires_passes() {
+    let val = run_ok(
+        "fn check(x: Int) -> Int
+           requires x > 0
+         { x }
+         fn main() -> Int { check(5) }",
+    );
+    assert!(matches!(val, Value::Int(5)));
+}
+
+#[test]
+fn eval_requires_fails() {
+    let err = run_err(
+        "fn check(x: Int) -> Int
+           requires x > 0
+         { x }
+         fn main() -> Int { check(-1) }",
+    );
+    assert!(err.contains("precondition failed"));
+}
+
+#[test]
+fn eval_ensures_passes() {
+    let val = run_ok(
+        "fn get() -> Int
+           ensures result > 0
+         { 42 }
+         fn main() -> Int { get() }",
+    );
+    assert!(matches!(val, Value::Int(42)));
+}
+
+#[test]
+fn eval_ensures_fails() {
+    let err = run_err(
+        "fn get() -> Int
+           ensures result > 100
+         { 42 }
+         fn main() -> Int { get() }",
+    );
+    assert!(err.contains("postcondition failed"));
+}
+
+#[test]
+fn eval_ensures_result_binding() {
+    let val = run_ok(
+        "fn ten() -> Int
+           ensures result == 10
+         { 10 }
+         fn main() -> Int { ten() }",
+    );
+    assert!(matches!(val, Value::Int(10)));
+}
+
+#[test]
+fn eval_old_in_ensures() {
+    let val = run_ok(
+        "fn inc(x: Int) -> Int
+           ensures result == old(x) + 1
+         { x + 1 }
+         fn main() -> Int { inc(5) }",
+    );
+    assert!(matches!(val, Value::Int(6)));
+}
+
+#[test]
+fn eval_old_in_ensures_fails() {
+    let err = run_err(
+        "fn inc(x: Int) -> Int
+           ensures result == old(x)
+         { x + 1 }
+         fn main() -> Int { inc(5) }",
+    );
+    assert!(err.contains("postcondition failed"));
+}
+
+#[test]
+fn eval_invariant_passes() {
+    let val = run_ok(
+        "fn check(x: Int) -> Int
+           invariant x > 0
+         { x }
+         fn main() -> Int { check(5) }",
+    );
+    assert!(matches!(val, Value::Int(5)));
+}
+
+#[test]
+fn eval_invariant_fails() {
+    let err = run_err(
+        "fn check(x: Int) -> Int
+           invariant x > 100
+         { x }
+         fn main() -> Int { check(5) }",
+    );
+    assert!(err.contains("invariant violated"));
+}
+
+#[test]
+fn eval_requires_and_ensures_combined() {
+    let val = run_ok(
+        "fn safe_inc(x: Int) -> Int
+           requires x > 0
+           ensures result > x
+         { x + 1 }
+         fn main() -> Int { safe_inc(5) }",
+    );
+    assert!(matches!(val, Value::Int(6)));
+}
+
+#[test]
+fn eval_no_contract_still_works() {
+    // Regression: functions without contracts must keep working.
+    let val = run_ok(
+        "fn add(a: Int, b: Int) -> Int { a + b }
+         fn main() -> Int { add(3, 4) }",
+    );
+    assert!(matches!(val, Value::Int(7)));
+}
+
+// ── Contract violation tests ────────────────────────────────────────
+
+#[test]
+fn eval_requires_fails_at_boundary() {
+    // x == 0 should fail `requires x > 0`.
+    let err = run_err(
+        "fn positive(x: Int) -> Int
+           requires x > 0
+         { x }
+         fn main() -> Int { positive(0) }",
+    );
+    assert!(err.contains("precondition failed"));
+}
+
+#[test]
+fn eval_requires_fails_with_equality_check() {
+    let err = run_err(
+        "fn expect_ten(x: Int) -> Int
+           requires x == 10
+         { x }
+         fn main() -> Int { expect_ten(9) }",
+    );
+    assert!(err.contains("precondition failed"));
+}
+
+#[test]
+fn eval_requires_fails_multi_param() {
+    // Precondition references multiple params.
+    let err = run_err(
+        "fn safe_div(a: Int, b: Int) -> Int
+           requires b > 0
+         { a / b }
+         fn main() -> Int { safe_div(10, 0) }",
+    );
+    assert!(err.contains("precondition failed"));
+}
+
+#[test]
+fn eval_requires_fails_negative_bound() {
+    let err = run_err(
+        "fn clamp_low(x: Int) -> Int
+           requires x >= 0
+         { x }
+         fn main() -> Int { clamp_low(-1) }",
+    );
+    assert!(err.contains("precondition failed"));
+}
+
+#[test]
+fn eval_requires_passes_at_boundary() {
+    // x == 1 should pass `requires x > 0`.
+    let val = run_ok(
+        "fn positive(x: Int) -> Int
+           requires x > 0
+         { x }
+         fn main() -> Int { positive(1) }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_ensures_fails_wrong_return() {
+    // Function returns 0 but ensures says result > 0.
+    let err = run_err(
+        "fn bad() -> Int
+           ensures result > 0
+         { 0 }
+         fn main() -> Int { bad() }",
+    );
+    assert!(err.contains("postcondition failed"));
+}
+
+#[test]
+fn eval_ensures_fails_negative_return() {
+    let err = run_err(
+        "fn negate(x: Int) -> Int
+           ensures result >= 0
+         { 0 - x }
+         fn main() -> Int { negate(5) }",
+    );
+    assert!(err.contains("postcondition failed"));
+}
+
+#[test]
+fn eval_ensures_fails_equality_mismatch() {
+    let err = run_err(
+        "fn double(x: Int) -> Int
+           ensures result == x + x
+         { x * 3 }
+         fn main() -> Int { double(4) }",
+    );
+    assert!(err.contains("postcondition failed"));
+}
+
+#[test]
+fn eval_ensures_passes_with_computation() {
+    let val = run_ok(
+        "fn double(x: Int) -> Int
+           ensures result == x + x
+         { x * 2 }
+         fn main() -> Int { double(7) }",
+    );
+    assert!(matches!(val, Value::Int(14)));
+}
+
+#[test]
+fn eval_invariant_fails_body_violates() {
+    // Invariant checks post-body state; param is fine but invariant uses strict bound.
+    let err = run_err(
+        "fn process(x: Int) -> Int
+           invariant x > 10
+         { x }
+         fn main() -> Int { process(5) }",
+    );
+    assert!(err.contains("invariant violated"));
+}
+
+#[test]
+fn eval_invariant_fails_at_zero() {
+    let err = run_err(
+        "fn nonzero(x: Int) -> Int
+           invariant x != 0
+         { x }
+         fn main() -> Int { nonzero(0) }",
+    );
+    assert!(err.contains("invariant violated"));
+    assert!(!err.contains("precondition"));
+    assert!(!err.contains("postcondition"));
+}
+
+#[test]
+fn eval_old_captures_pre_state() {
+    // old(x) should be 10 even though x is used in computation.
+    let val = run_ok(
+        "fn add_five(x: Int) -> Int
+           ensures result == old(x) + 5
+         { x + 5 }
+         fn main() -> Int { add_five(10) }",
+    );
+    assert!(matches!(val, Value::Int(15)));
+}
+
+#[test]
+fn eval_old_fails_when_body_changes_meaning() {
+    // Body returns x * 2 but ensures says result == old(x) + 1.
+    let err = run_err(
+        "fn wrong(x: Int) -> Int
+           ensures result == old(x) + 1
+         { x * 2 }
+         fn main() -> Int { wrong(5) }",
+    );
+    assert!(err.contains("postcondition failed"));
+}
+
+#[test]
+fn eval_requires_and_ensures_requires_fails_first() {
+    // Both contracts present, but precondition fails before body runs.
+    let err = run_err(
+        "fn guarded(x: Int) -> Int
+           requires x > 0
+           ensures result > 0
+         { x + 1 }
+         fn main() -> Int { guarded(-5) }",
+    );
+    assert!(err.contains("precondition failed"));
+    assert!(!err.contains("postcondition"));
+}
+
+#[test]
+fn eval_requires_passes_ensures_fails() {
+    // Precondition passes but postcondition catches bad return.
+    let err = run_err(
+        "fn bad_inc(x: Int) -> Int
+           requires x > 0
+           ensures result > x
+         { x }
+         fn main() -> Int { bad_inc(5) }",
+    );
+    assert!(err.contains("postcondition failed"));
+    assert!(!err.contains("precondition"));
+}
+
+#[test]
+fn eval_all_three_contracts_pass() {
+    let val = run_ok(
+        "fn triple_check(x: Int) -> Int
+           requires x > 0
+           ensures result == old(x) + 1
+           invariant x > 0
+         { x + 1 }
+         fn main() -> Int { triple_check(5) }",
+    );
+    assert!(matches!(val, Value::Int(6)));
+}
+
+#[test]
+fn eval_invariant_fails_with_requires_and_ensures() {
+    // requires passes, invariant fails before ensures runs.
+    let err = run_err(
+        "fn strict(x: Int) -> Int
+           requires x > 0
+           ensures result > 0
+           invariant x > 100
+         { x }
+         fn main() -> Int { strict(5) }",
+    );
+    assert!(err.contains("invariant violated"));
+    assert!(!err.contains("precondition"));
+    assert!(!err.contains("postcondition"));
+}
+
+#[test]
+fn eval_contract_on_recursive_fn() {
+    // Contracts checked on every call in recursion.
+    let val = run_ok(
+        "fn fact(n: Int) -> Int
+           requires n >= 0
+           ensures result >= 1
+         {
+           if n <= 1 { 1 } else { n * fact(n - 1) }
+         }
+         fn main() -> Int { fact(5) }",
+    );
+    assert!(matches!(val, Value::Int(120)));
+}
+
+#[test]
+fn eval_contract_on_called_fn_not_main() {
+    // Contract on a helper, main has none.
+    let err = run_err(
+        "fn helper(x: Int) -> Int
+           requires x > 0
+         { x }
+         fn main() -> Int { helper(-1) }",
+    );
+    assert!(err.contains("precondition failed"));
+}
+
+#[test]
+fn eval_ensures_with_bool_return() {
+    let val = run_ok(
+        "fn is_positive(x: Int) -> Bool
+           ensures result == true
+         { x > 0 }
+         fn main() -> Bool { is_positive(5) }",
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_ensures_with_bool_return_fails() {
+    let err = run_err(
+        "fn is_positive(x: Int) -> Bool
+           ensures result == true
+         { x > 0 }
+         fn main() -> Bool { is_positive(-1) }",
+    );
+    assert!(err.contains("postcondition failed"));
+}
+
+#[test]
+fn eval_requires_compound_condition_fails() {
+    // Compound boolean in requires.
+    let err = run_err(
+        "fn bounded(x: Int) -> Int
+           requires x > 0
+         { x }
+         fn main() -> Int { bounded(-10) }",
+    );
+    assert!(err.contains("precondition failed"));
+}
+
+#[test]
+fn eval_ensures_result_is_zero() {
+    let val = run_ok(
+        "fn zero() -> Int
+           ensures result == 0
+         { 0 }
+         fn main() -> Int { zero() }",
+    );
+    assert!(matches!(val, Value::Int(0)));
+}
+
+#[test]
+fn eval_ensures_result_is_zero_fails() {
+    let err = run_err(
+        "fn not_zero() -> Int
+           ensures result == 0
+         { 1 }
+         fn main() -> Int { not_zero() }",
+    );
+    assert!(err.contains("postcondition failed"));
+}
+
+#[test]
+fn eval_old_with_multiple_params() {
+    let val = run_ok(
+        "fn sum_inc(a: Int, b: Int) -> Int
+           ensures result == old(a) + old(b) + 1
+         { a + b + 1 }
+         fn main() -> Int { sum_inc(3, 4) }",
+    );
+    assert!(matches!(val, Value::Int(8)));
+}
+
+#[test]
+fn eval_old_with_multiple_params_fails() {
+    let err = run_err(
+        "fn sum_inc(a: Int, b: Int) -> Int
+           ensures result == old(a) + old(b)
+         { a + b + 1 }
+         fn main() -> Int { sum_inc(3, 4) }",
+    );
+    assert!(err.contains("postcondition failed"));
+}
+
+#[test]
+fn eval_contract_error_names_function() {
+    // Error message should contain the function name.
+    let err = run_err(
+        "fn my_special_fn(x: Int) -> Int
+           requires x > 100
+         { x }
+         fn main() -> Int { my_special_fn(1) }",
+    );
+    assert!(err.contains("my_special_fn"));
+}
+
+#[test]
+fn eval_postcondition_error_names_function() {
+    let err = run_err(
+        "fn another_fn() -> Int
+           ensures result > 999
+         { 1 }
+         fn main() -> Int { another_fn() }",
+    );
+    assert!(err.contains("another_fn"));
+}
+
+#[test]
+fn eval_invariant_error_names_function() {
+    let err = run_err(
+        "fn inv_fn(x: Int) -> Int
+           invariant x > 999
+         { x }
+         fn main() -> Int { inv_fn(1) }",
+    );
+    assert!(err.contains("inv_fn"));
+}
+
 // ── User-defined Option still works (takes precedence over builtin) ─
 
 #[test]
