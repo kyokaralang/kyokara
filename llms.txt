@@ -17,7 +17,7 @@
 - Typed holes: `?name(args)` compiles to structured hole specs with expected type, effects, and constraints
 - Pipeline operator: `x |> f(a=1)` desugars to `f(x, a=1)`
 - Error propagation: `expr?` desugars to early-return match on `Result`
-- No null, no exceptions: `Option[T]` and `Result[T, E]` only
+- No null, no exceptions: `Option[T]` and `Result[T, E]` only (builtin types, available without imports)
 
 ## Compiler Architecture
 

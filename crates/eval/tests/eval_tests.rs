@@ -435,3 +435,156 @@ fn eval_higher_order_function() {
     );
     assert!(matches!(val, Value::Int(42)));
 }
+
+// ── Builtin Option tests ────────────────────────────────────────────
+
+#[test]
+fn eval_builtin_option_some() {
+    let val = run_ok(
+        "fn main() -> Int {
+           match Some(42) {
+             Some(x) => x
+             None => 0
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(42)));
+}
+
+#[test]
+fn eval_builtin_option_none() {
+    let val = run_ok(
+        "fn main() -> Int {
+           match None {
+             Some(x) => x
+             None => 0
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(0)));
+}
+
+// ── Builtin Result tests ────────────────────────────────────────────
+
+#[test]
+fn eval_builtin_result_ok() {
+    let val = run_ok(
+        "fn main() -> Int {
+           match Ok(1) {
+             Ok(x) => x
+             Err(e) => 0
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_builtin_result_err() {
+    let val = run_ok(
+        "fn main() -> Int {
+           match Err(99) {
+             Ok(x) => x
+             Err(e) => e
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(99)));
+}
+
+// ── Propagation operator with builtins ──────────────────────────────
+
+#[test]
+fn eval_propagate_ok() {
+    let val = run_ok(
+        "fn get() -> Result<Int, Int> { Ok(42) }
+         fn main() -> Result<Int, Int> {
+           let x = get()?
+           Ok(x)
+         }",
+    );
+    match val {
+        Value::Adt {
+            variant: 0,
+            ref fields,
+            ..
+        } => assert!(matches!(fields[0], Value::Int(42))),
+        other => panic!("expected Ok(42), got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_propagate_err() {
+    let val = run_ok(
+        "fn get() -> Result<Int, Int> { Err(1) }
+         fn main() -> Result<Int, Int> {
+           let x = get()?
+           Ok(x)
+         }",
+    );
+    match val {
+        Value::Adt {
+            variant: 1,
+            ref fields,
+            ..
+        } => assert!(matches!(fields[0], Value::Int(1))),
+        other => panic!("expected Err(1), got {other:?}"),
+    }
+}
+
+// ── Propagation in nested expression contexts ──────────────────────
+
+#[test]
+fn eval_propagate_in_call_arg() {
+    // `?` inside a function argument should propagate early return.
+    let val = run_ok(
+        "fn get() -> Result<Int, Int> { Err(5) }
+         fn identity(x: Int) -> Int { x }
+         fn main() -> Result<Int, Int> {
+           Ok(identity(get()?))
+         }",
+    );
+    match val {
+        Value::Adt {
+            variant: 1,
+            ref fields,
+            ..
+        } => assert!(matches!(fields[0], Value::Int(5))),
+        other => panic!("expected Err(5), got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_propagate_in_binary_expr() {
+    // `?` inside a binary expression should propagate early return.
+    let val = run_ok(
+        "fn get() -> Result<Int, Int> { Err(3) }
+         fn main() -> Result<Int, Int> {
+           Ok(get()? + 1)
+         }",
+    );
+    match val {
+        Value::Adt {
+            variant: 1,
+            ref fields,
+            ..
+        } => assert!(matches!(fields[0], Value::Int(3))),
+        other => panic!("expected Err(3), got {other:?}"),
+    }
+}
+
+// ── User-defined Option still works (takes precedence over builtin) ─
+
+#[test]
+fn eval_user_option_overrides_builtin() {
+    let val = run_ok(
+        "type Option<T> = | Some(T) | None
+         fn main() -> Int {
+           match Some(7) {
+             Some(x) => x
+             None => 0
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(7)));
+}

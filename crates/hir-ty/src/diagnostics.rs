@@ -1,10 +1,11 @@
 //! Type-checker diagnostics.
 
 use kyokara_diagnostics::Diagnostic;
+use kyokara_hir_def::item_tree::ItemTree;
 use kyokara_intern::Interner;
 use kyokara_span::Span;
 
-use crate::ty::{Ty, display_ty};
+use crate::ty::{Ty, display_ty_with_tree};
 
 /// Diagnostic data produced by the type checker.
 #[derive(Debug, Clone)]
@@ -71,50 +72,47 @@ impl TyDiagnosticData {
     }
 
     /// Convert to a [`Diagnostic`] at the given span.
-    pub fn into_diagnostic(self, span: Span, interner: &Interner) -> Diagnostic {
+    pub fn into_diagnostic(
+        self,
+        span: Span,
+        interner: &Interner,
+        item_tree: &ItemTree,
+    ) -> Diagnostic {
+        let dt = |ty: &Ty| display_ty_with_tree(ty, interner, item_tree);
         let message = match &self {
             TyDiagnosticData::TypeMismatch { expected, actual } => {
                 format!(
                     "type mismatch: expected `{}`, found `{}`",
-                    display_ty(expected, interner),
-                    display_ty(actual, interner),
+                    dt(expected),
+                    dt(actual),
                 )
             }
             TyDiagnosticData::InvalidArithmeticOperand { ty } => {
                 format!(
                     "arithmetic operator requires `Int` or `Float`, found `{}`",
-                    display_ty(ty, interner),
+                    dt(ty),
                 )
             }
             TyDiagnosticData::InvalidComparisonOperand { ty } => {
                 format!(
                     "comparison operator requires `Int` or `Float`, found `{}`",
-                    display_ty(ty, interner),
+                    dt(ty),
                 )
             }
             TyDiagnosticData::InvalidNegationOperand { ty } => {
-                format!(
-                    "negation requires `Int` or `Float`, found `{}`",
-                    display_ty(ty, interner),
-                )
+                format!("negation requires `Int` or `Float`, found `{}`", dt(ty),)
             }
             TyDiagnosticData::InvalidNotOperand { ty } => {
-                format!(
-                    "logical not requires `Bool`, found `{}`",
-                    display_ty(ty, interner),
-                )
+                format!("logical not requires `Bool`, found `{}`", dt(ty),)
             }
             TyDiagnosticData::NotAFunction { ty } => {
-                format!(
-                    "called expression is not a function: `{}`",
-                    display_ty(ty, interner),
-                )
+                format!("called expression is not a function: `{}`", dt(ty),)
             }
             TyDiagnosticData::ArgCountMismatch { expected, actual } => {
                 format!("expected {expected} argument(s), found {actual}")
             }
             TyDiagnosticData::NoSuchField { field, ty } => {
-                format!("no field `{field}` on type `{}`", display_ty(ty, interner),)
+                format!("no field `{field}` on type `{}`", dt(ty),)
             }
             TyDiagnosticData::MissingMatchArms { missing } => {
                 format!("non-exhaustive match: missing {}", missing.join(", "))

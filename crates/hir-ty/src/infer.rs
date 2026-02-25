@@ -234,7 +234,7 @@ pub fn infer_body(
     let diagnostics: Vec<Diagnostic> = ctx
         .diags
         .into_iter()
-        .map(|d| d.into_diagnostic(fn_span, interner))
+        .map(|d| d.into_diagnostic(fn_span, interner, item_tree))
         .collect();
 
     InferenceResult {

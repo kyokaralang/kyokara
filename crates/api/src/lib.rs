@@ -8,7 +8,9 @@
 //! - `CheckOutput` with structured diagnostics, typed hole specs, and symbol graph
 
 use kyokara_diagnostics::Severity;
-use kyokara_hir::{CheckResult, HoleInfo, TyDiagnosticData, TypeDefKind, TypeRef, display_ty};
+use kyokara_hir::{
+    CheckResult, HoleInfo, TyDiagnosticData, TypeDefKind, TypeRef, display_ty_with_tree,
+};
 use kyokara_intern::Interner;
 use serde::Serialize;
 
@@ -168,14 +170,26 @@ fn convert_result(result: &CheckResult, file_name: &str) -> CheckOutput {
 
     // Type-checker raw diagnostics.
     for (data, span) in &result.type_check.raw_diagnostics {
-        diagnostics.push(convert_ty_diagnostic(data, span, interner, file_name));
+        diagnostics.push(convert_ty_diagnostic(
+            data,
+            span,
+            interner,
+            &result.item_tree,
+            file_name,
+        ));
     }
 
     // Collect hole specs from all function results.
     let mut holes = Vec::new();
     for fn_result in result.type_check.fn_results.values() {
         for hole in &fn_result.holes {
-            holes.push(convert_hole(holes.len(), hole, interner, file_name));
+            holes.push(convert_hole(
+                holes.len(),
+                hole,
+                interner,
+                &result.item_tree,
+                file_name,
+            ));
         }
     }
 
@@ -193,13 +207,18 @@ fn convert_ty_diagnostic(
     data: &TyDiagnosticData,
     span: &kyokara_span::Span,
     interner: &Interner,
+    item_tree: &kyokara_hir::ItemTree,
     file_name: &str,
 ) -> DiagnosticDto {
-    let expected_type = data.expected_ty().map(|t| display_ty(t, interner));
-    let actual_type = data.actual_ty().map(|t| display_ty(t, interner));
+    let expected_type = data
+        .expected_ty()
+        .map(|t| display_ty_with_tree(t, interner, item_tree));
+    let actual_type = data
+        .actual_ty()
+        .map(|t| display_ty_with_tree(t, interner, item_tree));
 
     // Build the message by converting through Diagnostic.
-    let diag = data.clone().into_diagnostic(*span, interner);
+    let diag = data.clone().into_diagnostic(*span, interner, item_tree);
 
     // Generate patch suggestions for fixable error codes.
     let mut fixes: Vec<FixDto> = diag
@@ -281,8 +300,17 @@ fn convert_fix(fix: &kyokara_diagnostics::Fix, file_name: &str) -> FixDto {
     }
 }
 
-fn convert_hole(id: usize, hole: &HoleInfo, interner: &Interner, file_name: &str) -> HoleSpecDto {
-    let expected_type = hole.expected_type.as_ref().map(|t| display_ty(t, interner));
+fn convert_hole(
+    id: usize,
+    hole: &HoleInfo,
+    interner: &Interner,
+    item_tree: &kyokara_hir::ItemTree,
+    file_name: &str,
+) -> HoleSpecDto {
+    let expected_type = hole
+        .expected_type
+        .as_ref()
+        .map(|t| display_ty_with_tree(t, interner, item_tree));
 
     let effects: Vec<String> = hole
         .effect_constraints
@@ -296,7 +324,7 @@ fn convert_hole(id: usize, hole: &HoleInfo, interner: &Interner, file_name: &str
         .iter()
         .map(|(name, ty)| InputVarDto {
             name: name.resolve(interner).to_owned(),
-            ty: display_ty(ty, interner),
+            ty: display_ty_with_tree(ty, interner, item_tree),
         })
         .collect();
 

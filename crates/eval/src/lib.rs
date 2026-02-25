@@ -9,7 +9,9 @@ pub mod interpreter;
 pub mod intrinsics;
 pub mod value;
 
-use kyokara_hir::{FnItem, FnParam, Name, Path, TypeRef, check_module, collect_item_tree};
+use kyokara_hir::{
+    FnItem, FnParam, Name, Path, TypeRef, check_module, collect_item_tree, register_builtin_types,
+};
 use kyokara_intern::Interner;
 use kyokara_span::FileId;
 use kyokara_syntax::SyntaxNode;
@@ -28,8 +30,9 @@ pub struct RunResult {
 
 /// Parse, type-check, and evaluate a Kyokara source file.
 ///
-/// Injects intrinsic function signatures before type-checking so that
-/// calls to `println`, `int_to_string`, etc. resolve correctly.
+/// Injects builtin types (`Option`, `Result`) and intrinsic function
+/// signatures before type-checking so that constructors and calls to
+/// `println`, `int_to_string`, etc. resolve correctly.
 pub fn run(source: &str) -> Result<RunResult, RuntimeError> {
     let file_id = FileId(0);
 
@@ -67,14 +70,21 @@ pub fn run(source: &str) -> Result<RunResult, RuntimeError> {
         )));
     }
 
-    // 4. Register intrinsic function signatures in the item tree + module scope.
+    // 4. Register builtin types (Option, Result) before intrinsics and type-checking.
+    register_builtin_types(
+        &mut item_result.tree,
+        &mut item_result.module_scope,
+        &mut interner,
+    );
+
+    // 5. Register intrinsic function signatures in the item tree + module scope.
     register_intrinsics(
         &mut item_result.tree,
         &mut item_result.module_scope,
         &mut interner,
     );
 
-    // 5. Type-check.
+    // 6. Type-check.
     let type_check = check_module(
         &root,
         &item_result.tree,
@@ -98,6 +108,7 @@ pub fn run(source: &str) -> Result<RunResult, RuntimeError> {
                             range: Default::default(),
                         },
                         &interner,
+                        &item_result.tree,
                     )
                     .message
             })
@@ -105,7 +116,7 @@ pub fn run(source: &str) -> Result<RunResult, RuntimeError> {
         return Err(RuntimeError::TypeError(msgs.join("; ")));
     }
 
-    // 6. Interpret.
+    // 7. Interpret.
     let mut interp = Interpreter::new(
         item_result.tree,
         item_result.module_scope,

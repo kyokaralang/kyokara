@@ -10,6 +10,7 @@
 //! the checker.
 
 pub mod body;
+pub mod builtins;
 pub mod expr;
 pub mod item_tree;
 pub mod name;

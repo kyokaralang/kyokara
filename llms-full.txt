@@ -250,13 +250,13 @@ parser          (depends: stdx, span, intern, diagnostics)
 syntax          (depends: stdx, span, intern, parser, rowan, logos)
  ↑              Lexer → parser events → rowan green tree. Typed AST wrappers (AstNode, support, nodes, traits).
 hir-def         (depends: stdx, span, intern, syntax, diagnostics)
- ↑              HIR data structures + name resolution. Item tree collection (item_tree/lower.rs), body lowering + desugaring (body/lower.rs), scope chains (scope.rs, resolver.rs).
+ ↑              HIR data structures + name resolution. Item tree collection (item_tree/lower.rs), body lowering + desugaring (body/lower.rs), scope chains (scope.rs, resolver.rs). Builtin type injection (builtins.rs): Option<T> and Result<T, E> as synthetic ADTs.
 hir-ty          (depends: stdx, span, intern, hir-def, diagnostics, syntax)
  ↑              Bidirectional type inference (Hindley-Milner + unification), exhaustiveness checking, effect/capability checking, typed holes. Ty enum, UnificationTable, TypeRef→Ty resolution, per-function InferenceResult with ArenaMap<ExprIdx,Ty>.
 hir             (depends: stdx, span, intern, hir-def, hir-ty, syntax, diagnostics, parser, rowan)
  ↑              Facade API: check_file(source) → CheckResult (parse + lower + type-check). Re-exports key types.
 eval            (depends: stdx, span, intern, diagnostics, syntax, hir-def, hir, la-arena, rustc-hash, thiserror)
- ↑              Tree-walking interpreter. Walks HIR Body expression trees with scoped Env. Value enum (Int, Float, String, Bool, Unit, Adt, Record, Fn). Intrinsics: print, println, int_to_string, string_concat. Custom compilation pipeline injects intrinsic signatures before type-checking. Entry point: run(source) → Result<RunResult, RuntimeError>.
+ ↑              Tree-walking interpreter. Walks HIR Body expression trees with scoped Env. Value enum (Int, Float, String, Bool, Unit, Adt, Record, Fn). Intrinsics: print, println, int_to_string, string_concat. Custom compilation pipeline injects builtin types (Option, Result) and intrinsic signatures before type-checking. Entry point: run(source) → Result<RunResult, RuntimeError>.
 fmt             (depends: parser, syntax, rowan)
  ↑              Canonical code formatter. Architecture: CST → Doc IR (Wadler-Lindig) → String. 2-space indent, 100-column width. Features: import sorting, trailing commas in break mode, comment preservation (leading/trailing), verbatim fallback for error/unknown nodes. Modules: doc.rs (Doc enum), print.rs (width-fitting printer), comments.rs (trivia classification), format.rs (CST→Doc dispatcher for all SyntaxKind variants). Entry point: format_source(source: &str) → String.
 api             (depends: stdx, span, intern, diagnostics, hir-def, hir-ty, hir, syntax, serde)
