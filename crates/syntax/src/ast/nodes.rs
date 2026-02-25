@@ -5,7 +5,7 @@
 
 use kyokara_parser::SyntaxKind;
 
-use crate::ast::traits::{HasName, HasTypeParams};
+use crate::ast::traits::{HasName, HasTypeParams, HasVisibility};
 use crate::ast::{AstNode, support};
 use crate::language::{SyntaxNode, SyntaxToken};
 
@@ -121,6 +121,7 @@ define_ast_node!(TypeDef, TypeDef);
 
 impl HasName for TypeDef {}
 impl HasTypeParams for TypeDef {}
+impl HasVisibility for TypeDef {}
 
 impl TypeDef {
     /// The type body — either a variant list, record field list, or a type expression.
@@ -143,6 +144,7 @@ define_ast_node!(FnDef, FnDef);
 
 impl HasName for FnDef {}
 impl HasTypeParams for FnDef {}
+impl HasVisibility for FnDef {}
 
 impl FnDef {
     pub fn param_list(&self) -> Option<ParamList> {
@@ -182,6 +184,7 @@ define_ast_node!(CapDef, CapDef);
 
 impl HasName for CapDef {}
 impl HasTypeParams for CapDef {}
+impl HasVisibility for CapDef {}
 
 impl CapDef {
     pub fn functions(&self) -> impl Iterator<Item = FnDef> + '_ {

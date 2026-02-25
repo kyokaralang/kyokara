@@ -62,6 +62,11 @@ impl<'i> Parser<'i> {
         self.current() == kind
     }
 
+    /// Peek at the token after the current one (used to look past `pub`).
+    pub fn current_after_pub(&self) -> SyntaxKind {
+        self.nth(1)
+    }
+
     /// Returns `true` if the current token is in `set`.
     #[allow(dead_code)]
     pub fn at_set(&self, set: TokenSet) -> bool {

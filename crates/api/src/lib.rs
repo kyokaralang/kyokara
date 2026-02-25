@@ -139,6 +139,84 @@ pub fn check(source: &str, file_name: &str) -> CheckOutput {
     convert_result(&result, file_name)
 }
 
+/// Run the check pipeline on a multi-file project and return structured output.
+pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
+    let result = kyokara_hir::check_project(entry_file);
+    let mut diagnostics = Vec::new();
+    let interner = &result.interner;
+
+    // Aggregate parse errors from all modules.
+    for (mod_path, errors) in &result.parse_errors {
+        let file_name = result
+            .file_map
+            .path(
+                result
+                    .module_graph
+                    .get(mod_path)
+                    .map(|i| i.file_id)
+                    .unwrap_or(kyokara_span::FileId(0)),
+            )
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<unknown>".into());
+
+        for err in errors {
+            diagnostics.push(DiagnosticDto {
+                code: "E0100".into(),
+                severity: "error".into(),
+                message: err.message.clone(),
+                span: SpanDto {
+                    file: file_name.clone(),
+                    start: 0,
+                    end: 0,
+                },
+                expected_type: None,
+                actual_type: None,
+                fixes: Vec::new(),
+            });
+        }
+    }
+
+    // Lowering diagnostics.
+    for diag in &result.lowering_diagnostics {
+        let code = if diag.message.contains("duplicate") {
+            "E0102"
+        } else {
+            "E0101"
+        };
+        diagnostics.push(convert_lowering_diagnostic(diag, code, "<project>"));
+    }
+
+    // Type-check diagnostics from all modules.
+    for (mod_path, tc) in &result.type_checks {
+        let file_name = result
+            .module_graph
+            .get(mod_path)
+            .and_then(|i| result.file_map.path(i.file_id))
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<unknown>".into());
+
+        let item_tree = result.module_graph.get(mod_path).map(|i| &i.item_tree);
+
+        for (data, span) in &tc.raw_diagnostics {
+            if let Some(tree) = item_tree {
+                diagnostics.push(convert_ty_diagnostic(
+                    data, span, interner, tree, &file_name,
+                ));
+            }
+        }
+    }
+
+    CheckOutput {
+        diagnostics,
+        holes: Vec::new(),
+        symbol_graph: SymbolGraphDto {
+            functions: Vec::new(),
+            types: Vec::new(),
+            capabilities: Vec::new(),
+        },
+    }
+}
+
 // ── Conversion helpers ──────────────────────────────────────────────
 
 fn convert_result(result: &CheckResult, file_name: &str) -> CheckOutput {

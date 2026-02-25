@@ -1,0 +1,9 @@
+// Multi-file example: imports math module.
+
+import math
+
+fn main() -> Int {
+    let x = add(10, 20)
+    let y = double(x)
+    y
+}

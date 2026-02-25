@@ -23,7 +23,7 @@ pub type PropertyItemIdx = Idx<PropertyItem>;
 pub type LetItemIdx = Idx<LetItem>;
 
 /// All top-level items in a single module/file.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ItemTree {
     pub module_name: Option<Path>,
     pub imports: Vec<Import>,
@@ -45,6 +45,7 @@ pub struct Import {
 #[derive(Debug, Clone)]
 pub struct FnItem {
     pub name: Name,
+    pub is_pub: bool,
     pub type_params: Vec<Name>,
     pub params: Vec<FnParam>,
     pub ret_type: Option<TypeRef>,
@@ -64,6 +65,7 @@ pub struct FnParam {
 #[derive(Debug, Clone)]
 pub struct TypeItem {
     pub name: Name,
+    pub is_pub: bool,
     pub type_params: Vec<Name>,
     pub kind: TypeDefKind,
 }
@@ -90,6 +92,7 @@ pub struct VariantDef {
 #[derive(Debug, Clone)]
 pub struct CapItem {
     pub name: Name,
+    pub is_pub: bool,
     pub type_params: Vec<Name>,
     pub functions: Vec<FnItemIdx>,
 }

@@ -19,15 +19,34 @@ Problems Kyokara solves:
 
 ### Modules and Imports
 
-```kyokara
-module finance.payments
+**Implemented:** Convention-based file layout — file path determines module path. No explicit `module` declarations.
 
-import std.list as List
-import std.time as Time
-import net.http as Http
+```
+project/
+  main.ky          → root module (entry point)
+  math.ky          → module "math"
+  math/utils.ky    → module "math.utils"
 ```
 
-Importing a module does not grant its capability. Capabilities are separate from libraries.
+Visibility is private by default. Use `pub` to export:
+
+```kyokara
+// math.ky
+pub fn add(x: Int, y: Int) -> Int { x + y }
+fn internal_helper(x: Int) -> Int { x + 1 }  // private
+```
+
+```kyokara
+// main.ky
+import math
+
+fn main() -> Int {
+    add(10, 20)   // pub fn from math.ky — accessible
+    // internal_helper(5)  // ERROR — private
+}
+```
+
+`import math` brings all `pub` items from `math.ky` into scope as flat names. Private items are not visible. Local definitions shadow imports. Importing a module does not grant its capability. Capabilities are separate from libraries.
 
 ### Types
 
@@ -250,19 +269,19 @@ parser          (depends: stdx, span, intern, diagnostics)
 syntax          (depends: stdx, span, intern, parser, rowan, logos)
  ↑              Lexer → parser events → rowan green tree. Typed AST wrappers (AstNode, support, nodes, traits).
 hir-def         (depends: stdx, span, intern, syntax, diagnostics)
- ↑              HIR data structures + name resolution. Item tree collection (item_tree/lower.rs), body lowering + desugaring (body/lower.rs), scope chains (scope.rs, resolver.rs). Builtin type injection (builtins.rs): Option<T> and Result<T, E> as synthetic ADTs.
+ ↑              HIR data structures + name resolution. Item tree collection (item_tree/lower.rs), body lowering + desugaring (body/lower.rs), scope chains (scope.rs, resolver.rs). Builtin type injection (builtins.rs): Option<T> and Result<T, E> as synthetic ADTs. Module graph (module_graph.rs): ModuleGraph, ModulePath, ModuleInfo, convention-based file discovery. Items have `is_pub` visibility field; `pub` keyword controls cross-module export.
 hir-ty          (depends: stdx, span, intern, hir-def, diagnostics, syntax)
  ↑              Bidirectional type inference (Hindley-Milner + unification), exhaustiveness checking, effect/capability checking, typed holes. Ty enum, UnificationTable, TypeRef→Ty resolution, per-function InferenceResult with ArenaMap<ExprIdx,Ty>.
 hir             (depends: stdx, span, intern, hir-def, hir-ty, syntax, diagnostics, parser, rowan)
- ↑              Facade API: check_file(source) → CheckResult (parse + lower + type-check). Re-exports key types.
+ ↑              Facade API: check_file(source) → CheckResult (parse + lower + type-check). check_project(entry_file) → ProjectCheckResult (multi-file: discover modules, build ModuleGraph, resolve imports, type-check all modules). Re-exports key types.
 eval            (depends: stdx, span, intern, diagnostics, syntax, hir-def, hir, la-arena, rustc-hash, thiserror)
- ↑              Tree-walking interpreter. Walks HIR Body expression trees with scoped Env. Value enum (Int, Float, String, Char, Bool, Unit, Adt, Record, List, Map, Fn). Core stdlib as intrinsics: List ops (list_new, list_push, list_len, list_get→Option, list_head→Option, list_tail, list_is_empty, list_reverse, list_concat, list_map, list_filter, list_fold), Map ops (map_new, map_insert, map_get→Option, map_contains, map_remove, map_len, map_keys, map_values, map_is_empty), String ops (string_len, string_contains, string_starts_with, string_ends_with, string_trim, string_split, string_substring, string_to_upper, string_to_lower, char_to_string), Int/Float math (abs, min, max, float_abs, float_min, float_max, int_to_float, float_to_int), I/O (print, println, int_to_string, string_concat). Higher-order intrinsics (list_map, list_filter, list_fold) dispatched through interpreter for closure callbacks. Runtime contract enforcement: evaluates requires (preconditions), ensures (postconditions with `result` binding), and invariant clauses; old() expressions look up the pre-call env snapshot. Custom compilation pipeline injects builtin types (Option, Result, List, Map) and intrinsic signatures before type-checking. Entry point: run(source) → Result<RunResult, RuntimeError>.
+ ↑              Tree-walking interpreter. Walks HIR Body expression trees with scoped Env. Value enum (Int, Float, String, Char, Bool, Unit, Adt, Record, List, Map, Fn). Core stdlib as intrinsics: List ops (list_new, list_push, list_len, list_get→Option, list_head→Option, list_tail, list_is_empty, list_reverse, list_concat, list_map, list_filter, list_fold), Map ops (map_new, map_insert, map_get→Option, map_contains, map_remove, map_len, map_keys, map_values, map_is_empty), String ops (string_len, string_contains, string_starts_with, string_ends_with, string_trim, string_split, string_substring, string_to_upper, string_to_lower, char_to_string), Int/Float math (abs, min, max, float_abs, float_min, float_max, int_to_float, float_to_int), I/O (print, println, int_to_string, string_concat). Higher-order intrinsics (list_map, list_filter, list_fold) dispatched through interpreter for closure callbacks. Runtime contract enforcement: evaluates requires (preconditions), ensures (postconditions with `result` binding), and invariant clauses; old() expressions look up the pre-call env snapshot. Custom compilation pipeline injects builtin types (Option, Result, List, Map) and intrinsic signatures before type-checking. Entry points: run(source) → Result<RunResult, RuntimeError> (single-file), run_project(entry_file) → Result<RunResult, RuntimeError> (multi-file with cross-module function calls).
 fmt             (depends: parser, syntax, rowan)
  ↑              Canonical code formatter. Architecture: CST → Doc IR (Wadler-Lindig) → String. 2-space indent, 100-column width. Features: import sorting, trailing commas in break mode, comment preservation (leading/trailing), verbatim fallback for error/unknown nodes. Modules: doc.rs (Doc enum), print.rs (width-fitting printer), comments.rs (trivia classification), format.rs (CST→Doc dispatcher for all SyntaxKind variants). Entry point: format_source(source: &str) → String.
 api             (depends: stdx, span, intern, diagnostics, hir-def, hir-ty, hir, syntax, serde)
  ↑              Compiler-as-API: check(source, file_name) → CheckOutput. DTO types (DiagnosticDto, HoleSpecDto, SymbolGraphDto, SpanDto, FixDto) with serde. Structured JSON with error codes (E0001–E0012 type, E0100 parse, E0101–E0102 lowering), expected/actual types, hole specs with available variables and effect constraints, symbol graph (function/type/capability nodes with stable namespaced IDs — fn::name, type::Name, type::Name::Variant, cap::Name, cap::Name::method — call edges and effect annotations), and machine-applicable patch suggestions for E0009 (MissingMatchArms) and E0011 (EffectViolation).
 cli             (depends: api, eval, fmt, hir, syntax, diagnostics, clap, serde_json)
-                Binary: kyokara check <file> [--format human|json], kyokara run <file>, kyokara fmt <file> [--check]. Human-readable (default) or JSON output for check; interpreter execution for run; canonical formatting for fmt (--check exits 1 if not formatted).
+                Binary: kyokara check <file> [--format human|json], kyokara run <file>, kyokara fmt <file> [--check]. Human-readable (default) or JSON output for check; interpreter execution for run (auto-detects multi-file projects when sibling .ky files exist); canonical formatting for fmt (--check exits 1 if not formatted).
 ```
 
 ### Key Architectural Decisions
@@ -302,7 +321,7 @@ cli             (depends: api, eval, fmt, hir, syntax, diagnostics, clap, serde_
 
 - **v0.0** (complete): Parser with error recovery (lossless CST) ✓, name resolution with scope chains ✓, item tree collection + body lowering with desugaring ✓, type checker (ADTs, generics, exhaustiveness) ✓, effect/capability checking ✓, typed holes ✓, structured diagnostics ✓, hole specs ✓, symbol graph ✓, patch suggestions ✓
 - **v0.1** (complete): Tree-walking interpreter ✓, intrinsics ✓, canonical formatter ✓, stable symbol IDs ✓, runtime contracts ✓, core stdlib (List, Map, String, Int/Float) ✓
-- **v0.2**: Refactor engine, LSP server, capability enforcement, module/package system
+- **v0.2** (in progress): Module system (convention-based layout, `pub` visibility, flat imports) ✓, refactor engine, LSP server, capability enforcement
 - **v0.3**: Property-based test harness, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay
 
 ## Building
