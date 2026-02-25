@@ -7,6 +7,7 @@
 //! When salsa lands (v0.3), the incremental database will live here.
 
 pub use kyokara_hir_def::body::Body;
+pub use kyokara_hir_def::builtins::register_builtin_types;
 pub use kyokara_hir_def::item_tree::lower::collect_item_tree;
 pub use kyokara_hir_def::item_tree::{
     CapItem, FnItem, FnParam, ItemTree, TypeDefKind, TypeItem, VariantDef,
@@ -18,7 +19,7 @@ pub use kyokara_hir_def::type_ref::TypeRef;
 pub use kyokara_hir_ty::diagnostics::TyDiagnosticData;
 pub use kyokara_hir_ty::holes::HoleInfo;
 pub use kyokara_hir_ty::infer::InferenceResult;
-pub use kyokara_hir_ty::ty::{Ty, display_ty};
+pub use kyokara_hir_ty::ty::{Ty, display_ty, display_ty_with_tree};
 pub use kyokara_hir_ty::{TypeCheckResult, check_module};
 
 use kyokara_intern::Interner;
@@ -55,10 +56,16 @@ pub fn check_file(source: &str) -> CheckResult {
 
     // 3. Collect item tree (Pass 1).
     let mut interner = Interner::new();
-    let item_result = collect_item_tree(&sf, file_id, &mut interner);
-    let lowering_diagnostics = item_result.diagnostics;
+    let mut item_result = collect_item_tree(&sf, file_id, &mut interner);
 
-    // 4. Type-check all functions (Pass 2 + 3).
+    // 4. Register builtin types (Option, Result).
+    register_builtin_types(
+        &mut item_result.tree,
+        &mut item_result.module_scope,
+        &mut interner,
+    );
+
+    // 5. Type-check all functions (Pass 2 + 3).
     let type_check = check_module(
         &root,
         &item_result.tree,
@@ -74,6 +81,6 @@ pub fn check_file(source: &str) -> CheckResult {
         module_scope: item_result.module_scope,
         type_check,
         interner,
-        lowering_diagnostics,
+        lowering_diagnostics: item_result.diagnostics,
     }
 }

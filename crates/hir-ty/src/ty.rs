@@ -85,7 +85,27 @@ pub fn resolve_builtin(name: &str) -> Option<Ty> {
 }
 
 /// Human-readable display of a type (for diagnostics).
+///
+/// Without an `ItemTree`, ADT types display as `<adt>`. Prefer
+/// [`display_ty_with_tree`] when the item tree is available.
 pub fn display_ty(ty: &Ty, interner: &kyokara_intern::Interner) -> std::string::String {
+    display_ty_inner(ty, interner, None)
+}
+
+/// Human-readable display that resolves ADT names from the item tree.
+pub fn display_ty_with_tree(
+    ty: &Ty,
+    interner: &kyokara_intern::Interner,
+    tree: &kyokara_hir_def::item_tree::ItemTree,
+) -> std::string::String {
+    display_ty_inner(ty, interner, Some(tree))
+}
+
+fn display_ty_inner(
+    ty: &Ty,
+    interner: &kyokara_intern::Interner,
+    tree: Option<&kyokara_hir_def::item_tree::ItemTree>,
+) -> std::string::String {
     match ty {
         Ty::Var(v) => format!("?{}", v.0),
         Ty::Int => "Int".into(),
@@ -96,24 +116,43 @@ pub fn display_ty(ty: &Ty, interner: &kyokara_intern::Interner) -> std::string::
         Ty::Unit => "Unit".into(),
         Ty::Error => "<error>".into(),
         Ty::Never => "Never".into(),
-        Ty::Adt { def: _, args } => {
+        Ty::Adt { def, args } => {
+            let name = tree
+                .map(|t| t.types[*def].name.resolve(interner).to_owned())
+                .unwrap_or_else(|| "<adt>".to_owned());
             if args.is_empty() {
-                "<adt>".into()
+                name
             } else {
-                let args_str: Vec<_> = args.iter().map(|a| display_ty(a, interner)).collect();
-                format!("<adt><{}>", args_str.join(", "))
+                let args_str: Vec<_> = args
+                    .iter()
+                    .map(|a| display_ty_inner(a, interner, tree))
+                    .collect();
+                format!("{}<{}>", name, args_str.join(", "))
             }
         }
         Ty::Record { fields } => {
             let fs: Vec<_> = fields
                 .iter()
-                .map(|(n, t)| format!("{}: {}", n.resolve(interner), display_ty(t, interner)))
+                .map(|(n, t)| {
+                    format!(
+                        "{}: {}",
+                        n.resolve(interner),
+                        display_ty_inner(t, interner, tree)
+                    )
+                })
                 .collect();
             format!("{{ {} }}", fs.join(", "))
         }
         Ty::Fn { params, ret } => {
-            let ps: Vec<_> = params.iter().map(|p| display_ty(p, interner)).collect();
-            format!("fn({}) -> {}", ps.join(", "), display_ty(ret, interner))
+            let ps: Vec<_> = params
+                .iter()
+                .map(|p| display_ty_inner(p, interner, tree))
+                .collect();
+            format!(
+                "fn({}) -> {}",
+                ps.join(", "),
+                display_ty_inner(ret, interner, tree)
+            )
         }
     }
 }

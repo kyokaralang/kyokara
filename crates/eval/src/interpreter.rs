@@ -39,6 +39,21 @@ impl ControlFlow {
     }
 }
 
+/// Evaluate a sub-expression, propagating `ControlFlow::Return` up the stack.
+///
+/// If the sub-expression triggers an early return (e.g. via `?` operator
+/// or explicit `return`), this propagates it immediately instead of
+/// extracting the inner value.
+macro_rules! eval_propagate {
+    ($self:expr, $env:expr, $body:expr, $idx:expr) => {{
+        let cf = $self.eval_expr($env, $body, $idx)?;
+        match cf {
+            cf @ ControlFlow::Return(_) => return Ok(cf),
+            ControlFlow::Value(v) => v,
+        }
+    }};
+}
+
 impl Interpreter {
     pub fn new(
         item_tree: ItemTree,
@@ -128,31 +143,31 @@ impl Interpreter {
                 let op = *op;
                 let lhs = *lhs;
                 let rhs = *rhs;
-                let lv = self.eval_expr(env, body, lhs)?.into_value();
-                let rv = self.eval_expr(env, body, rhs)?.into_value();
+                let lv = eval_propagate!(self, env, body, lhs);
+                let rv = eval_propagate!(self, env, body, rhs);
                 self.eval_binary(op, lv, rv).map(ControlFlow::Value)
             }
 
             Expr::Unary { op, operand } => {
                 let op = *op;
                 let operand = *operand;
-                let v = self.eval_expr(env, body, operand)?.into_value();
+                let v = eval_propagate!(self, env, body, operand);
                 self.eval_unary(op, v).map(ControlFlow::Value)
             }
 
             Expr::Call { callee, args } => {
                 let callee_idx = *callee;
                 let args = args.clone();
-                let callee_val = self.eval_expr(env, body, callee_idx)?.into_value();
+                let callee_val = eval_propagate!(self, env, body, callee_idx);
                 let mut arg_vals = Vec::with_capacity(args.len());
                 for arg in &args {
                     match arg {
                         CallArg::Positional(idx) => {
-                            let v = self.eval_expr(env, body, *idx)?.into_value();
+                            let v = eval_propagate!(self, env, body, *idx);
                             arg_vals.push(v);
                         }
                         CallArg::Named { value, .. } => {
-                            let v = self.eval_expr(env, body, *value)?.into_value();
+                            let v = eval_propagate!(self, env, body, *value);
                             arg_vals.push(v);
                         }
                     }
@@ -164,7 +179,7 @@ impl Interpreter {
             Expr::Field { base, field } => {
                 let base_idx = *base;
                 let field = *field;
-                let base_val = self.eval_expr(env, body, base_idx)?.into_value();
+                let base_val = eval_propagate!(self, env, body, base_idx);
                 self.eval_field(base_val, field).map(ControlFlow::Value)
             }
 
@@ -176,7 +191,7 @@ impl Interpreter {
                 let cond_idx = *condition;
                 let then_idx = *then_branch;
                 let else_idx = *else_branch;
-                let cond = self.eval_expr(env, body, cond_idx)?.into_value();
+                let cond = eval_propagate!(self, env, body, cond_idx);
                 match cond {
                     Value::Bool(true) => self.eval_expr(env, body, then_idx),
                     Value::Bool(false) => {
@@ -193,7 +208,7 @@ impl Interpreter {
             Expr::Match { scrutinee, arms } => {
                 let scrutinee_idx = *scrutinee;
                 let arms = arms.clone();
-                let scrutinee_val = self.eval_expr(env, body, scrutinee_idx)?.into_value();
+                let scrutinee_val = eval_propagate!(self, env, body, scrutinee_idx);
                 self.eval_match(env, body, scrutinee_val, &arms)
             }
 
@@ -206,7 +221,7 @@ impl Interpreter {
             Expr::Return(val) => {
                 let val = *val;
                 let v = if let Some(idx) = val {
-                    self.eval_expr(env, body, idx)?.into_value()
+                    eval_propagate!(self, env, body, idx)
                 } else {
                     Value::Unit
                 };
@@ -217,7 +232,6 @@ impl Interpreter {
                 let path = path.clone();
                 let fields = fields.clone();
                 self.eval_record_lit(env, body, path.as_ref(), &fields)
-                    .map(ControlFlow::Value)
             }
 
             Expr::Lambda {
@@ -536,8 +550,12 @@ impl Interpreter {
         for stmt in stmts {
             match stmt {
                 Stmt::Let { pat, init, .. } => {
-                    let val = self.eval_expr(env, body, *init)?.into_value();
-                    self.bind_pat(body, *pat, &val, env)?;
+                    let result = self.eval_expr(env, body, *init)?;
+                    if let ControlFlow::Return(_) = &result {
+                        env.pop_scope();
+                        return Ok(result);
+                    }
+                    self.bind_pat(body, *pat, &result.into_value(), env)?;
                 }
                 Stmt::Expr(idx) => {
                     let result = self.eval_expr(env, body, *idx)?;
@@ -594,10 +612,10 @@ impl Interpreter {
         body: &Body,
         path: Option<&kyokara_hir_def::path::Path>,
         fields: &[(Name, ExprIdx)],
-    ) -> Result<Value, RuntimeError> {
+    ) -> Result<ControlFlow, RuntimeError> {
         let mut field_vals = Vec::with_capacity(fields.len());
         for (name, expr_idx) in fields {
-            let val = self.eval_expr(env, body, *expr_idx)?.into_value();
+            let val = eval_propagate!(self, env, body, *expr_idx);
             field_vals.push((*name, val));
         }
 
@@ -607,13 +625,13 @@ impl Interpreter {
             && let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&ctor_name)
         {
             let vals: Vec<Value> = field_vals.into_iter().map(|(_, v)| v).collect();
-            return Ok(Value::Adt {
+            return Ok(ControlFlow::Value(Value::Adt {
                 type_idx,
                 variant: variant_idx,
                 fields: vals,
-            });
+            }));
         }
 
-        Ok(Value::Record { fields: field_vals })
+        Ok(ControlFlow::Value(Value::Record { fields: field_vals }))
     }
 }

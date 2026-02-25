@@ -479,6 +479,7 @@ v0 stdlib provides:
 **v0.1 — Tooling Foundation + Interpreter**
 * Tree-walking interpreter (`kyokara run <file>`, `kyokara-eval` crate) ✓
 * Intrinsic functions (print, println, int_to_string, string_concat) ✓
+* Builtin `Option<T>` and `Result<T, E>` types (injected as synthetic ADTs; `?` works out of the box) ✓
 * Canonical formatter (`kyokara fmt`, `kyokara-fmt` crate, Wadler-Lindig Doc IR) ✓
 * Stable symbol IDs (across edits)
 * Runtime contract checks (requires/ensures/old)

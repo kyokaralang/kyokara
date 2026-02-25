@@ -178,11 +178,16 @@ fn symbol_graph_contains_types() {
     let src = "type Color = | Red | Green | Blue
         fn id(x: Int) -> Int { x }";
     let output = check(src, "test.ky");
-    assert_eq!(output.symbol_graph.types.len(), 1);
-    let ty = &output.symbol_graph.types[0];
-    assert_eq!(ty.name, "Color");
-    assert_eq!(ty.kind, "adt");
-    let variant_names: Vec<&str> = ty.variants.iter().map(|v| v.name.as_str()).collect();
+    // 3 types: Color (user-defined) + Option + Result (builtins)
+    assert_eq!(output.symbol_graph.types.len(), 3);
+    let color = output
+        .symbol_graph
+        .types
+        .iter()
+        .find(|t| t.name == "Color")
+        .expect("Color type should be in symbol graph");
+    assert_eq!(color.kind, "adt");
+    let variant_names: Vec<&str> = color.variants.iter().map(|v| v.name.as_str()).collect();
     assert_eq!(variant_names, vec!["Red", "Green", "Blue"]);
 }
 
