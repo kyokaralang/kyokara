@@ -1,0 +1,22 @@
+cap Console {
+  fn print_line(s: String) -> Unit
+}
+
+cap FileSystem {
+  fn read_file(path: String) -> String
+  fn write_file(path: String, content: String) -> Unit
+}
+
+fn log(msg: String) -> Unit with Console {
+  print_line(msg)
+}
+
+fn copy_file(src: String, dst: String) -> Unit with FileSystem, Console {
+  let content = read_file(src)
+  write_file(dst, content)
+  log(string_concat("Copied ", string_concat(src, string_concat(" to ", dst))))
+}
+
+fn pure_transform(x: Int) -> Int {
+  x * 2 + 1
+}

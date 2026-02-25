@@ -1,0 +1,24 @@
+fn factorial(n: Int) -> Int {
+  if n <= 1 {
+    1
+  } else {
+    n * factorial(n - 1)
+  }
+}
+
+fn fibonacci(n: Int) -> Int {
+  if n <= 0 {
+    0
+  } else {
+    if n == 1 {
+      1
+    } else {
+      fibonacci(n - 1) + fibonacci(n - 2)
+    }
+  }
+}
+
+fn main() -> Unit {
+  println(string_concat("factorial(10) = ", int_to_string(factorial(10))))
+  println(string_concat("fibonacci(10) = ", int_to_string(fibonacci(10))))
+}

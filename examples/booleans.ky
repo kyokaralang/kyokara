@@ -1,0 +1,23 @@
+fn is_even(n: Int) -> Bool {
+  n == 0
+}
+
+fn both(a: Bool, b: Bool) -> Bool {
+  if a { b } else { false }
+}
+
+fn either(a: Bool, b: Bool) -> Bool {
+  if a { true } else { b }
+}
+
+fn show_bool(b: Bool) -> String {
+  if b { "true" } else { "false" }
+}
+
+fn main() -> Unit {
+  println(string_concat("is_even(0) = ", show_bool(is_even(0))))
+  println(string_concat("is_even(3) = ", show_bool(is_even(3))))
+  println(string_concat("both(true, false) = ", show_bool(both(true, false))))
+  println(string_concat("either(false, true) = ", show_bool(either(false, true))))
+  println(string_concat("!true = ", show_bool(!true)))
+}

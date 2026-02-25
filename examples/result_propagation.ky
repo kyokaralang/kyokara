@@ -1,0 +1,24 @@
+fn parse_positive(n: Int) -> Result<Int, String> {
+  if n > 0 {
+    Ok(n)
+  } else {
+    Err("must be positive")
+  }
+}
+
+fn double_positive(n: Int) -> Result<Int, String> {
+  let valid = parse_positive(n)?
+  Ok(valid * 2)
+}
+
+fn show_result(r: Result<Int, String>) -> String {
+  match r {
+    Ok(v) => string_concat("Ok(", string_concat(int_to_string(v), ")"))
+    Err(e) => string_concat("Err(", string_concat(e, ")"))
+  }
+}
+
+fn main() -> Unit {
+  println(show_result(double_positive(5)))
+  println(show_result(double_positive(-3)))
+}
