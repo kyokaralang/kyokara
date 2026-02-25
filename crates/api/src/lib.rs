@@ -680,3 +680,109 @@ fn severity_str(sev: Severity) -> String {
         Severity::Hint => "hint".into(),
     }
 }
+
+// ── Refactor DTOs ───────────────────────────────────────────────────
+
+/// Output of a refactor operation.
+#[derive(Debug, Serialize)]
+pub struct RefactorOutputDto {
+    pub description: String,
+    pub status: String,
+    pub verified: bool,
+    pub edits: Vec<TextEditDto>,
+    pub error: Option<String>,
+}
+
+/// A single text edit in a refactor result.
+#[derive(Debug, Serialize)]
+pub struct TextEditDto {
+    pub file: String,
+    pub start: u32,
+    pub end: u32,
+    pub new_text: String,
+}
+
+// ── Refactor entry points ───────────────────────────────────────────
+
+/// Run a refactor on a single source file and return structured output.
+pub fn refactor(
+    source: &str,
+    file_name: &str,
+    action: kyokara_refactor::RefactorAction,
+) -> RefactorOutputDto {
+    let result = kyokara_hir::check_file(source);
+    let file_id = kyokara_span::FileId(0);
+
+    match kyokara_refactor::refactor(&result, file_id, action) {
+        Ok(r) => {
+            let edits = r
+                .edits
+                .iter()
+                .map(|e| TextEditDto {
+                    file: file_name.to_string(),
+                    start: e.range.start().into(),
+                    end: e.range.end().into(),
+                    new_text: e.new_text.clone(),
+                })
+                .collect();
+            RefactorOutputDto {
+                description: r.description,
+                status: "ok".into(),
+                verified: r.verified,
+                edits,
+                error: None,
+            }
+        }
+        Err(e) => RefactorOutputDto {
+            description: String::new(),
+            status: "error".into(),
+            verified: false,
+            edits: Vec::new(),
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+/// Run a refactor on a multi-file project and return structured output.
+pub fn refactor_project(
+    entry_file: &std::path::Path,
+    action: kyokara_refactor::RefactorAction,
+) -> RefactorOutputDto {
+    let result = kyokara_hir::check_project(entry_file);
+
+    match kyokara_refactor::refactor_project(&result, action) {
+        Ok(r) => {
+            let edits = r
+                .edits
+                .iter()
+                .map(|e| {
+                    let file = result
+                        .file_map
+                        .path(e.file_id)
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "<unknown>".into());
+                    TextEditDto {
+                        file,
+                        start: e.range.start().into(),
+                        end: e.range.end().into(),
+                        new_text: e.new_text.clone(),
+                    }
+                })
+                .collect();
+            RefactorOutputDto {
+                description: r.description,
+                status: "ok".into(),
+                verified: r.verified,
+                edits,
+                error: None,
+            }
+        }
+        Err(e) => RefactorOutputDto {
+            description: String::new(),
+            status: "error".into(),
+            verified: false,
+            edits: Vec::new(),
+            error: Some(e.to_string()),
+        },
+    }
+}

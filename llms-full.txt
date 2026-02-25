@@ -227,18 +227,33 @@ Replay mode is read-only by default — all write effects become no-ops returnin
 
 Compiles to WASM with host functions implementing capabilities. All I/O goes through the host function capability layer. Single-threaded for determinism.
 
-## Refactor Transactions
+## Refactor Engine
 
-Semantic refactors as compiler operations:
+Semantic refactors as compiler operations. The `refactor` crate provides CST-based transformations that produce structured `TextEdit` patches.
 
-- Rename symbol
+**Implemented (v0.2):**
+
+- **Rename symbol** — functions, types, capabilities, variants. Walks the rowan CST to find all `Ident` tokens matching the target name, classifies each by syntactic context (definition site vs usage site), and generates edits. Supports single-file (`refactor()`) and multi-file (`refactor_project()`) modes. Validates against keyword conflicts, name collisions, and missing symbols.
+- **Add missing match cases** — from E0009 (MissingMatchArms) diagnostics. Finds the diagnostic at a given byte offset and generates arms for uncovered variants.
+- **Add missing capability** — from E0011 (EffectViolation) diagnostics. Generates a `with` clause for missing capabilities.
+- **Post-refactor verification** — `verify_single()` applies edits and re-runs type checking to confirm zero diagnostics.
+
+**Planned:**
+
 - Extract/inline function
 - Move module
-- Add missing match cases
-- Add missing capability annotations
 - Convert positional args to named args
 
-Each returns a patch and verification status (`typechecked`, `verified_level_1`, `tests_updated`).
+Each returns a patch (list of TextEdit) and verification status.
+
+**CLI usage:**
+
+```sh
+kyokara refactor <file> --action rename --symbol <name> --new-name <name> [--kind function|type|capability|variant]
+kyokara refactor <file> --action add-missing-match-cases --offset <n>
+kyokara refactor <file> --action add-missing-capability --offset <n>
+kyokara refactor <file> ... --apply   # write edits to disk
+```
 
 ## Compiler Architecture
 
@@ -278,10 +293,12 @@ eval            (depends: stdx, span, intern, diagnostics, syntax, hir-def, hir,
  ↑              Tree-walking interpreter. Walks HIR Body expression trees with scoped Env. Value enum (Int, Float, String, Char, Bool, Unit, Adt, Record, List, Map, Fn). Core stdlib as intrinsics: List ops (list_new, list_push, list_len, list_get→Option, list_head→Option, list_tail, list_is_empty, list_reverse, list_concat, list_map, list_filter, list_fold), Map ops (map_new, map_insert, map_get→Option, map_contains, map_remove, map_len, map_keys, map_values, map_is_empty), String ops (string_len, string_contains, string_starts_with, string_ends_with, string_trim, string_split, string_substring, string_to_upper, string_to_lower, char_to_string), Int/Float math (abs, min, max, float_abs, float_min, float_max, int_to_float, float_to_int), I/O (print, println, int_to_string, string_concat). Higher-order intrinsics (list_map, list_filter, list_fold) dispatched through interpreter for closure callbacks. Runtime contract enforcement: evaluates requires (preconditions), ensures (postconditions with `result` binding), and invariant clauses; old() expressions look up the pre-call env snapshot. Custom compilation pipeline injects builtin types (Option, Result, List, Map) and intrinsic signatures before type-checking. Entry points: run(source) → Result<RunResult, RuntimeError> (single-file), run_project(entry_file) → Result<RunResult, RuntimeError> (multi-file with cross-module function calls).
 fmt             (depends: parser, syntax, rowan)
  ↑              Canonical code formatter. Architecture: CST → Doc IR (Wadler-Lindig) → String. 2-space indent, 100-column width. Features: import sorting, trailing commas in break mode, comment preservation (leading/trailing), verbatim fallback for error/unknown nodes. Modules: doc.rs (Doc enum), print.rs (width-fitting printer), comments.rs (trivia classification), format.rs (CST→Doc dispatcher for all SyntaxKind variants). Entry point: format_source(source: &str) → String.
-api             (depends: stdx, span, intern, diagnostics, hir-def, hir-ty, hir, syntax, serde)
+refactor        (depends: span, intern, diagnostics, parser, syntax, hir-def, hir-ty, hir, rowan, text-size)
+ ↑              Semantic refactor engine. CST-based transformations producing TextEdit patches. Modules: rename.rs (symbol rename — walks rowan CST descendants_with_tokens(), classifies Ident tokens by parent node context against SymbolKind classification table, generates edits for definition + usage sites; single-file rename_symbol() and multi-file rename_symbol_project()), quickfix.rs (add_missing_match_cases from E0009, add_missing_capability from E0011), lib.rs (TextEdit, RefactorResult, RefactorAction, SymbolKind, RefactorError, apply_edits, verify_single). Entry points: refactor(CheckResult, FileId, RefactorAction) and refactor_project(ProjectCheckResult, RefactorAction).
+api             (depends: stdx, span, intern, diagnostics, hir-def, hir-ty, hir, syntax, refactor, serde)
  ↑              Compiler-as-API: check(source, file_name) → CheckOutput. DTO types (DiagnosticDto, HoleSpecDto, SymbolGraphDto, SpanDto, FixDto) with serde. Structured JSON with error codes (E0001–E0012 type, E0100 parse, E0101–E0102 lowering), expected/actual types, hole specs with available variables and effect constraints, symbol graph (function/type/capability nodes with stable namespaced IDs — fn::name, type::Name, type::Name::Variant, cap::Name, cap::Name::method — call edges and effect annotations), and machine-applicable patch suggestions for E0009 (MissingMatchArms) and E0011 (EffectViolation).
-cli             (depends: api, eval, fmt, hir, syntax, diagnostics, clap, serde_json)
-                Binary: kyokara check <file> [--format human|json], kyokara run <file>, kyokara fmt <file> [--check]. Human-readable (default) or JSON output for check; interpreter execution for run (auto-detects multi-file projects when sibling .ky files exist); canonical formatting for fmt (--check exits 1 if not formatted).
+cli             (depends: api, refactor, eval, fmt, hir, syntax, diagnostics, clap, serde_json)
+                Binary: kyokara check <file> [--format human|json], kyokara run <file>, kyokara fmt <file> [--check], kyokara refactor <file> --action <action> [options]. Human-readable (default) or JSON output for check; interpreter execution for run (auto-detects multi-file projects when sibling .ky files exist); canonical formatting for fmt (--check exits 1 if not formatted); semantic refactors for refactor (--apply writes edits to disk).
 ```
 
 ### Key Architectural Decisions
@@ -321,7 +338,7 @@ cli             (depends: api, eval, fmt, hir, syntax, diagnostics, clap, serde_
 
 - **v0.0** (complete): Parser with error recovery (lossless CST) ✓, name resolution with scope chains ✓, item tree collection + body lowering with desugaring ✓, type checker (ADTs, generics, exhaustiveness) ✓, effect/capability checking ✓, typed holes ✓, structured diagnostics ✓, hole specs ✓, symbol graph ✓, patch suggestions ✓
 - **v0.1** (complete): Tree-walking interpreter ✓, intrinsics ✓, canonical formatter ✓, stable symbol IDs ✓, runtime contracts ✓, core stdlib (List, Map, String, Int/Float) ✓
-- **v0.2** (in progress): Module system (convention-based layout, `pub` visibility, flat imports) ✓, refactor engine, LSP server, capability enforcement
+- **v0.2** (in progress): Module system (convention-based layout, `pub` visibility, flat imports) ✓, refactor engine (rename symbol, add missing match cases, add missing capability) ✓, LSP server, capability enforcement
 - **v0.3**: Property-based test harness, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay
 
 ## Building
