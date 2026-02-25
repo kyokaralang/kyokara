@@ -42,7 +42,7 @@ CharLiteral   <- "'" ('\\' . / [^'\\]) "'"
 
 Ident         <- [a-zA-Z_] [a-zA-Z0-9_]*  # not a keyword
 
-Keyword       <- 'module' / 'import' / 'as' / 'type' / 'fn' / 'let'
+Keyword       <- 'import' / 'as' / 'type' / 'fn' / 'let' / 'pub'
                / 'match' / 'cap' / 'with' / 'requires' / 'ensures'
                / 'invariant' / 'property' / 'for' / 'all' / 'where'
                / 'pipe' / 'old' / 'true' / 'false' / 'if' / 'else'
@@ -67,13 +67,12 @@ LtEq          <- '<='
 ### Source File
 
 ```peg
-SourceFile     <- ModuleDecl? ImportDecl* Item* EOF
+SourceFile     <- ImportDecl* Item* EOF
 ```
 
 ### Module & Imports
 
 ```peg
-ModuleDecl     <- 'module' Path
 ImportDecl     <- 'import' Path ImportAlias?
 ImportAlias    <- 'as' Ident
 Path           <- Ident ('.' Ident)*
@@ -82,11 +81,11 @@ Path           <- Ident ('.' Ident)*
 ### Items
 
 ```peg
-Item           <- TypeDef
+Item           <- 'pub'? (TypeDef
                /  FnDef
                /  CapDef
                /  PropertyDef
-               /  LetBinding
+               /  LetBinding)
 ```
 
 ### Type Definitions
@@ -259,7 +258,7 @@ All keywords listed above are reserved and cannot be used as identifiers.
 
 ```
 all     as      cap     else    ensures   false    fn
-for     if      import  invariant  let   match    module
-old     pipe    property  requires  return  true   type
+for     if      import  invariant  let   match    old
+pipe    property  pub   requires  return  true   type
 where   with
 ```
