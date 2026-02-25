@@ -479,7 +479,7 @@ v0 stdlib provides:
 **v0.1 — Tooling Foundation + Interpreter**
 * Tree-walking interpreter (`kyokara run <file>`, `kyokara-eval` crate) ✓
 * Intrinsic functions (print, println, int_to_string, string_concat) ✓
-* Canonical formatter + deterministic pretty-printer
+* Canonical formatter (`kyokara fmt`, `kyokara-fmt` crate, Wadler-Lindig Doc IR) ✓
 * Stable symbol IDs (across edits)
 * Runtime contract checks (requires/ensures/old)
 * Core stdlib (List, Map, String, Result, Option)
@@ -523,8 +523,10 @@ kyokara/
     hir-def/       # HIR data types, CST→HIR lowering, name resolution
     hir-ty/        # type inference, exhaustiveness, effect checking
     hir/           # semantic query facade
+    eval/          # tree-walking interpreter
+    fmt/           # canonical code formatter (Wadler-Lindig Doc IR)
     api/           # compiler-as-API, JSON serialization DTOs
-    cli/           # kyokara binary (check / run / replay / fmt)
+    cli/           # kyokara binary (check / run / fmt / replay)
   docs/            # design docs
   spec/            # formal grammar
 ```

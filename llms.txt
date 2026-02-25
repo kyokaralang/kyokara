@@ -31,8 +31,9 @@
 - [hir-ty](https://github.com/kyokaralang/kyokara/tree/main/crates/hir-ty): Type inference, unification, exhaustiveness checking, effect checking
 - [hir](https://github.com/kyokaralang/kyokara/tree/main/crates/hir): High-level facade for semantic queries
 - [eval](https://github.com/kyokaralang/kyokara/tree/main/crates/eval): Tree-walking interpreter with scoped environments and intrinsics (print, int_to_string, string_concat)
+- [fmt](https://github.com/kyokaralang/kyokara/tree/main/crates/fmt): Canonical code formatter — Wadler-Lindig Doc IR, 2-space indent, 100-col width, import sorting, comment preservation, verbatim error fallback
 - [api](https://github.com/kyokaralang/kyokara/tree/main/crates/api): JSON serialization of all compiler outputs (diagnostics, typed AST, symbol graph, patches)
-- [cli](https://github.com/kyokaralang/kyokara/tree/main/crates/cli): `kyokara check`, `kyokara run`, `kyokara replay`, `kyokara fmt`
+- [cli](https://github.com/kyokaralang/kyokara/tree/main/crates/cli): `kyokara check`, `kyokara run`, `kyokara fmt`, `kyokara replay`
 
 ## Optional
 

@@ -3,8 +3,8 @@
 //! Commands:
 //! - `kyokara check <file>` — type-check a `.ky` file (v0.0)
 //! - `kyokara run <file>` — interpret a `.ky` file (v0.1)
+//! - `kyokara fmt <file>` — format a `.ky` file (v0.1)
 //! - `kyokara replay <file>` — replay execution trace (v0.2)
-//! - `kyokara fmt <file>` — format a `.ky` file (v0.3)
 
 use clap::{Parser, Subcommand};
 
@@ -29,6 +29,14 @@ enum Command {
     Run {
         /// Path to the .ky source file.
         file: String,
+    },
+    /// Format a Kyokara source file.
+    Fmt {
+        /// Path to the .ky source file.
+        file: String,
+        /// Check formatting without writing. Exits 1 if not formatted.
+        #[arg(long)]
+        check: bool,
     },
 }
 
@@ -93,6 +101,29 @@ fn main() {
                     eprintln!("runtime error: {e}");
                     std::process::exit(1);
                 }
+            }
+        }
+        Command::Fmt { file, check } => {
+            let source = match std::fs::read_to_string(&file) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: cannot read `{file}`: {e}");
+                    std::process::exit(1);
+                }
+            };
+
+            let formatted = kyokara_fmt::format_source(&source);
+
+            if check {
+                if formatted != source {
+                    eprintln!("{file}");
+                    std::process::exit(1);
+                }
+            } else if formatted != source
+                && let Err(e) = std::fs::write(&file, &formatted)
+            {
+                eprintln!("error: cannot write `{file}`: {e}");
+                std::process::exit(1);
             }
         }
     }
