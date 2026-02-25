@@ -205,13 +205,13 @@ fn symbol_graph_contains_capabilities() {
     let cap = &output.symbol_graph.capabilities[0];
     assert_eq!(cap.name, "IO");
     assert!(
-        cap.functions.contains(&"read".to_string()),
-        "missing 'read' in {:?}",
+        cap.functions.contains(&"cap::IO::read".to_string()),
+        "missing 'cap::IO::read' in {:?}",
         cap.functions
     );
     assert!(
-        cap.functions.contains(&"write".to_string()),
-        "missing 'write' in {:?}",
+        cap.functions.contains(&"cap::IO::write".to_string()),
+        "missing 'cap::IO::write' in {:?}",
         cap.functions
     );
 }
@@ -230,8 +230,8 @@ fn symbol_graph_call_edges() {
         .find(|f| f.name == "caller")
         .expect("should have 'caller' function node");
     assert!(
-        caller_node.calls.contains(&"callee".to_string()),
-        "expected caller to call callee, got: {:?}",
+        caller_node.calls.contains(&"fn::callee".to_string()),
+        "expected caller to call fn::callee, got: {:?}",
         caller_node.calls
     );
 }
@@ -355,4 +355,175 @@ fn patch_apply_effect_fix_fixes_error() {
         e0011.is_empty(),
         "expected no E0011 after adding capability, got: {e0011:?}"
     );
+}
+
+// ── Stable symbol ID tests ──────────────────────────────────────────
+
+#[test]
+fn stable_id_fn_nodes_have_ids() {
+    let src = "fn foo(x: Int) -> Int { x }\nfn bar(y: Int) -> Int { y }";
+    let output = check(src, "test.ky");
+    for f in &output.symbol_graph.functions {
+        assert!(
+            f.id.starts_with("fn::"),
+            "function id should start with 'fn::', got: {}",
+            f.id
+        );
+    }
+}
+
+#[test]
+fn stable_id_type_nodes_have_ids() {
+    let src = "type Color = | Red | Green\nfn id(x: Int) -> Int { x }";
+    let output = check(src, "test.ky");
+    for t in &output.symbol_graph.types {
+        assert!(
+            t.id.starts_with("type::"),
+            "type id should start with 'type::', got: {}",
+            t.id
+        );
+    }
+}
+
+#[test]
+fn stable_id_variant_nodes_have_ids() {
+    let src = "type Color = | Red | Green | Blue\nfn id(x: Int) -> Int { x }";
+    let output = check(src, "test.ky");
+    let color = output
+        .symbol_graph
+        .types
+        .iter()
+        .find(|t| t.name == "Color")
+        .expect("Color type should exist");
+    for v in &color.variants {
+        assert!(
+            v.id.starts_with("type::Color::"),
+            "variant id should start with 'type::Color::', got: {}",
+            v.id
+        );
+    }
+}
+
+#[test]
+fn stable_id_cap_nodes_have_ids() {
+    let src = r#"
+        cap IO {
+            fn read() -> String
+        }
+        fn noop() -> Unit { () }
+    "#;
+    let output = check(src, "test.ky");
+    for c in &output.symbol_graph.capabilities {
+        assert!(
+            c.id.starts_with("cap::"),
+            "capability id should start with 'cap::', got: {}",
+            c.id
+        );
+    }
+}
+
+#[test]
+fn stable_id_cap_function_refs_use_ids() {
+    let src = r#"
+        cap IO {
+            fn read() -> String
+            fn write(s: String) -> Unit
+        }
+        fn noop() -> Unit { () }
+    "#;
+    let output = check(src, "test.ky");
+    let cap = &output.symbol_graph.capabilities[0];
+    for f in &cap.functions {
+        assert!(
+            f.starts_with("cap::IO::"),
+            "cap function ref should start with 'cap::IO::', got: {f}"
+        );
+    }
+}
+
+#[test]
+fn stable_id_call_edges_use_fn_ids() {
+    let src = r#"
+        fn callee() -> Int { 42 }
+        fn caller() -> Int { callee() }
+    "#;
+    let output = check(src, "test.ky");
+    let caller = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "caller")
+        .expect("caller should exist");
+    for call in &caller.calls {
+        assert!(
+            call.starts_with("fn::"),
+            "call edge should start with 'fn::', got: {call}"
+        );
+    }
+}
+
+#[test]
+fn stable_id_uniqueness() {
+    let src = r#"
+        type Color = | Red | Green | Blue
+        cap IO {
+            fn read() -> String
+        }
+        fn foo(x: Int) -> Int { x }
+    "#;
+    let output = check(src, "test.ky");
+    let mut ids: Vec<String> = Vec::new();
+
+    for f in &output.symbol_graph.functions {
+        ids.push(f.id.clone());
+    }
+    for t in &output.symbol_graph.types {
+        ids.push(t.id.clone());
+        for v in &t.variants {
+            ids.push(v.id.clone());
+        }
+    }
+    for c in &output.symbol_graph.capabilities {
+        ids.push(c.id.clone());
+    }
+
+    let count = ids.len();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(
+        ids.len(),
+        count,
+        "all symbol IDs should be unique, found duplicates"
+    );
+}
+
+#[test]
+fn stable_id_fn_format() {
+    let src = "fn add(x: Int, y: Int) -> Int { x + y }";
+    let output = check(src, "test.ky");
+    let add = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "add")
+        .expect("add function should exist");
+    assert_eq!(add.id, "fn::add");
+}
+
+#[test]
+fn stable_id_variant_format() {
+    let src = "type Color = | Red | Green | Blue\nfn id(x: Int) -> Int { x }";
+    let output = check(src, "test.ky");
+    let color = output
+        .symbol_graph
+        .types
+        .iter()
+        .find(|t| t.name == "Color")
+        .expect("Color type should exist");
+    let red = color
+        .variants
+        .iter()
+        .find(|v| v.name == "Red")
+        .expect("Red variant should exist");
+    assert_eq!(red.id, "type::Color::Red");
 }

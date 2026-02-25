@@ -260,7 +260,7 @@ eval            (depends: stdx, span, intern, diagnostics, syntax, hir-def, hir,
 fmt             (depends: parser, syntax, rowan)
  ↑              Canonical code formatter. Architecture: CST → Doc IR (Wadler-Lindig) → String. 2-space indent, 100-column width. Features: import sorting, trailing commas in break mode, comment preservation (leading/trailing), verbatim fallback for error/unknown nodes. Modules: doc.rs (Doc enum), print.rs (width-fitting printer), comments.rs (trivia classification), format.rs (CST→Doc dispatcher for all SyntaxKind variants). Entry point: format_source(source: &str) → String.
 api             (depends: stdx, span, intern, diagnostics, hir-def, hir-ty, hir, syntax, serde)
- ↑              Compiler-as-API: check(source, file_name) → CheckOutput. DTO types (DiagnosticDto, HoleSpecDto, SymbolGraphDto, SpanDto, FixDto) with serde. Structured JSON with error codes (E0001–E0012 type, E0100 parse, E0101–E0102 lowering), expected/actual types, hole specs with available variables and effect constraints, symbol graph (function/type/capability nodes with call edges and effect annotations), and machine-applicable patch suggestions for E0009 (MissingMatchArms) and E0011 (EffectViolation).
+ ↑              Compiler-as-API: check(source, file_name) → CheckOutput. DTO types (DiagnosticDto, HoleSpecDto, SymbolGraphDto, SpanDto, FixDto) with serde. Structured JSON with error codes (E0001–E0012 type, E0100 parse, E0101–E0102 lowering), expected/actual types, hole specs with available variables and effect constraints, symbol graph (function/type/capability nodes with stable namespaced IDs — fn::name, type::Name, type::Name::Variant, cap::Name, cap::Name::method — call edges and effect annotations), and machine-applicable patch suggestions for E0009 (MissingMatchArms) and E0011 (EffectViolation).
 cli             (depends: api, eval, fmt, hir, syntax, diagnostics, clap, serde_json)
                 Binary: kyokara check <file> [--format human|json], kyokara run <file>, kyokara fmt <file> [--check]. Human-readable (default) or JSON output for check; interpreter execution for run; canonical formatting for fmt (--check exits 1 if not formatted).
 ```
@@ -301,7 +301,7 @@ cli             (depends: api, eval, fmt, hir, syntax, diagnostics, clap, serde_
 ## Roadmap
 
 - **v0.0** (complete): Parser with error recovery (lossless CST) ✓, name resolution with scope chains ✓, item tree collection + body lowering with desugaring ✓, type checker (ADTs, generics, exhaustiveness) ✓, effect/capability checking ✓, typed holes ✓, structured diagnostics ✓, hole specs ✓, symbol graph ✓, patch suggestions ✓
-- **v0.1** (in progress): Tree-walking interpreter ✓, intrinsics ✓, canonical formatter ✓, stable symbol IDs, runtime contracts, core stdlib
+- **v0.1** (in progress): Tree-walking interpreter ✓, intrinsics ✓, canonical formatter ✓, stable symbol IDs ✓, runtime contracts, core stdlib
 - **v0.2**: Refactor engine, LSP server, capability enforcement, module/package system
 - **v0.3**: Property-based test harness, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay
 
