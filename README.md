@@ -93,7 +93,18 @@ The compiler doesn't print error messages — it emits structured JSON. Diagnost
 
 ### 6. Semantic Refactoring
 
-Refactors are compiler operations, not text transformations. Rename a symbol across the codebase. Extract a function. Inline a call. Each refactor is a transaction that returns a patch *and* a verification status — did the types still check? Did the contracts still hold?
+Refactors are compiler operations, not text transformations. Rename a symbol across the codebase — functions, types, capabilities, variants — in single-file or multi-file projects. Add missing match cases or capability annotations from existing diagnostics. Each refactor returns structured text edits and a verification status: did the types still check?
+
+```sh
+# Rename a function across files
+kyokara refactor main.ky --action rename --symbol add --new-name sum
+
+# Apply edits directly to disk
+kyokara refactor main.ky --action rename --symbol add --new-name sum --apply
+
+# Add missing match arms at a specific offset
+kyokara refactor file.ky --action add-missing-match-cases --offset 42
+```
 
 ## Language at a Glance
 
@@ -154,6 +165,7 @@ crates/
   hir           # semantic query facade
   eval          # tree-walking interpreter
   fmt           # canonical code formatter (Wadler-Lindig Doc IR)
+  refactor      # semantic refactor engine (rename, quickfix)
   api           # JSON serialization of all compiler outputs
   cli           # kyokara binary
 ```
@@ -164,7 +176,7 @@ crates/
 |---------|-----------|--------|
 | **v0.0** | Parser ✓, name resolution ✓, CST→HIR lowering ✓, type checker ✓, effect checking ✓, typed holes ✓, structured diagnostics ✓, hole specs ✓, symbol graph ✓, patch suggestions ✓ | **Complete** |
 | **v0.1** | Tree-walking interpreter ✓, intrinsics ✓, builtin Option/Result types ✓, canonical formatter ✓, stable symbol IDs ✓, runtime contracts ✓, core stdlib (List, Map, String, Int/Float) ✓ | **Complete** |
-| **v0.2** | Module system (convention-based layout, `pub` visibility, flat imports) ✓, refactor engine, LSP server, capability enforcement | In progress |
+| **v0.2** | Module system (convention-based layout, `pub` visibility, flat imports) ✓, refactor engine (rename, add missing match cases, add missing capability) ✓, LSP server, capability enforcement | In progress |
 | **v0.3** | Property testing, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay | Planned |
 
 ## FAQ
@@ -212,6 +224,15 @@ cargo run -p kyokara-cli -- fmt <file.ky>
 
 # Check formatting without writing (exits 1 if not formatted)
 cargo run -p kyokara-cli -- fmt --check <file.ky>
+
+# Refactor: rename a symbol (prints JSON edits)
+cargo run -p kyokara-cli -- refactor <file.ky> --action rename --symbol add --new-name sum
+
+# Refactor: apply edits to disk
+cargo run -p kyokara-cli -- refactor <file.ky> --action rename --symbol add --new-name sum --apply
+
+# Refactor: rename a type or variant
+cargo run -p kyokara-cli -- refactor <file.ky> --action rename --symbol Color --new-name Hue --kind type
 ```
 
 ## License

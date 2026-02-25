@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 kyokara-api.workspace = true
+kyokara-refactor.workspace = true
 kyokara-eval.workspace = true
 kyokara-fmt.workspace = true
 kyokara-hir.workspace = true

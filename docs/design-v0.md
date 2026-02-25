@@ -525,7 +525,7 @@ injected as synthetic types before type-checking.
 
 **v0.2 — Refactoring + LSP + Capabilities**
 * Module system: convention-based file layout, `pub` visibility, flat imports ✓
-* Refactor engine (rename, extract, inline, move) with verification status
+* Refactor engine: rename symbol (single-file + multi-file), add missing match cases, add missing capability annotation ✓ — CST-based, post-refactor verification, structured TextEdit patches
 * LSP server
 * Capability enforcement at type level
 
@@ -564,8 +564,9 @@ kyokara/
     hir/           # semantic query facade
     eval/          # tree-walking interpreter
     fmt/           # canonical code formatter (Wadler-Lindig Doc IR)
+    refactor/      # semantic refactor engine (rename, quickfix)
     api/           # compiler-as-API, JSON serialization DTOs
-    cli/           # kyokara binary (check / run / fmt / replay)
+    cli/           # kyokara binary (check / run / fmt / refactor / replay)
   docs/            # design docs
   spec/            # formal grammar
 ```

@@ -12,6 +12,7 @@ members = [
     "crates/hir",
     "crates/eval",
     "crates/fmt",
+    "crates/refactor",
     "crates/api",
     "crates/cli",
     "xtask",
@@ -36,6 +37,7 @@ kyokara-hir-ty = { path = "crates/hir-ty" }
 kyokara-hir = { path = "crates/hir" }
 kyokara-eval = { path = "crates/eval" }
 kyokara-fmt = { path = "crates/fmt" }
+kyokara-refactor = { path = "crates/refactor" }
 kyokara-api = { path = "crates/api" }
 
 # External dependencies

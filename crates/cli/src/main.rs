@@ -4,6 +4,7 @@
 //! - `kyokara check <file>` — type-check a `.ky` file (v0.0)
 //! - `kyokara run <file>` — interpret a `.ky` file (v0.1)
 //! - `kyokara fmt <file>` — format a `.ky` file (v0.1)
+//! - `kyokara refactor <file>` — apply semantic refactors (v0.2)
 //! - `kyokara replay <file>` — replay execution trace (planned v0.3)
 
 use clap::{Parser, Subcommand};
@@ -37,6 +38,29 @@ enum Command {
         /// Check formatting without writing. Exits 1 if not formatted.
         #[arg(long)]
         check: bool,
+    },
+    /// Apply a semantic refactor to a Kyokara source file.
+    Refactor {
+        /// Path to the .ky source file.
+        file: String,
+        /// Refactor action: rename, add-missing-match-cases, add-missing-capability.
+        #[arg(long)]
+        action: String,
+        /// Symbol name (for rename).
+        #[arg(long)]
+        symbol: Option<String>,
+        /// New name (for rename).
+        #[arg(long)]
+        new_name: Option<String>,
+        /// Symbol kind: function, type, capability, variant (default: function).
+        #[arg(long, default_value = "function")]
+        kind: String,
+        /// Byte offset (for quickfix actions).
+        #[arg(long)]
+        offset: Option<u32>,
+        /// Apply edits to disk instead of printing JSON.
+        #[arg(long)]
+        apply: bool,
     },
 }
 
@@ -136,6 +160,127 @@ fn main() {
                         std::process::exit(1);
                     }
                 }
+            }
+        }
+        Command::Refactor {
+            file,
+            action,
+            symbol,
+            new_name,
+            kind,
+            offset,
+            apply,
+        } => {
+            let refactor_action = match action.as_str() {
+                "rename" => {
+                    let sym = symbol.unwrap_or_else(|| {
+                        eprintln!("error: --symbol is required for rename");
+                        std::process::exit(1);
+                    });
+                    let new = new_name.unwrap_or_else(|| {
+                        eprintln!("error: --new-name is required for rename");
+                        std::process::exit(1);
+                    });
+                    let sk = match kind.as_str() {
+                        "function" | "fn" => kyokara_refactor::SymbolKind::Function,
+                        "type" => kyokara_refactor::SymbolKind::Type,
+                        "capability" | "cap" => kyokara_refactor::SymbolKind::Capability,
+                        "variant" => kyokara_refactor::SymbolKind::Variant,
+                        other => {
+                            eprintln!("error: unknown symbol kind `{other}`");
+                            std::process::exit(1);
+                        }
+                    };
+                    kyokara_refactor::RefactorAction::RenameSymbol {
+                        old_name: sym,
+                        new_name: new,
+                        kind: sk,
+                    }
+                }
+                "add-missing-match-cases" => {
+                    let off = offset.unwrap_or_else(|| {
+                        eprintln!("error: --offset is required for add-missing-match-cases");
+                        std::process::exit(1);
+                    });
+                    kyokara_refactor::RefactorAction::AddMissingMatchCases { offset: off }
+                }
+                "add-missing-capability" => {
+                    let off = offset.unwrap_or_else(|| {
+                        eprintln!("error: --offset is required for add-missing-capability");
+                        std::process::exit(1);
+                    });
+                    kyokara_refactor::RefactorAction::AddMissingCapability { offset: off }
+                }
+                other => {
+                    eprintln!("error: unknown refactor action `{other}`");
+                    std::process::exit(1);
+                }
+            };
+
+            let path = std::path::Path::new(&file);
+            let is_multi_file = path.is_file()
+                && path
+                    .parent()
+                    .is_some_and(|dir| has_sibling_ky_files(path, dir));
+
+            let output = if is_multi_file {
+                kyokara_api::refactor_project(path, refactor_action)
+            } else {
+                let source = match std::fs::read_to_string(&file) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("error: cannot read `{file}`: {e}");
+                        std::process::exit(1);
+                    }
+                };
+                kyokara_api::refactor(&source, &file, refactor_action)
+            };
+
+            if apply && output.status == "ok" {
+                // Group edits by file and apply.
+                let mut edits_by_file: std::collections::HashMap<
+                    String,
+                    Vec<&kyokara_api::TextEditDto>,
+                > = std::collections::HashMap::new();
+                for edit in &output.edits {
+                    edits_by_file
+                        .entry(edit.file.clone())
+                        .or_default()
+                        .push(edit);
+                }
+
+                for (filepath, mut file_edits) in edits_by_file {
+                    let source = match std::fs::read_to_string(&filepath) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("error: cannot read `{filepath}`: {e}");
+                            std::process::exit(1);
+                        }
+                    };
+
+                    // Sort descending by start offset.
+                    file_edits.sort_by(|a, b| b.start.cmp(&a.start));
+
+                    let mut result = source;
+                    for edit in file_edits {
+                        result
+                            .replace_range(edit.start as usize..edit.end as usize, &edit.new_text);
+                    }
+
+                    if let Err(e) = std::fs::write(&filepath, &result) {
+                        eprintln!("error: cannot write `{filepath}`: {e}");
+                        std::process::exit(1);
+                    }
+                    eprintln!("wrote {filepath}");
+                }
+            } else {
+                let json =
+                    serde_json::to_string_pretty(&output).expect("failed to serialize output");
+                println!("{json}");
+            }
+
+            if output.status == "error" {
+                std::process::exit(1);
             }
         }
         Command::Fmt { file, check } => {

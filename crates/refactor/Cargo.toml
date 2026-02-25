@@ -1,21 +1,17 @@
 [package]
-name = "kyokara-api"
+name = "kyokara-refactor"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-kyokara-stdx.workspace = true
 kyokara-span.workspace = true
 kyokara-intern.workspace = true
 kyokara-diagnostics.workspace = true
+kyokara-parser.workspace = true
+kyokara-syntax.workspace = true
 kyokara-hir-def.workspace = true
 kyokara-hir-ty.workspace = true
 kyokara-hir.workspace = true
-kyokara-syntax.workspace = true
-kyokara-refactor.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-
-[dev-dependencies]
-serde_json.workspace = true
+rowan.workspace = true
+text-size.workspace = true

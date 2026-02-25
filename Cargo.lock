@@ -192,6 +192,7 @@ dependencies = [
  "kyokara-hir-def",
  "kyokara-hir-ty",
  "kyokara-intern",
+ "kyokara-refactor",
  "kyokara-span",
  "kyokara-stdx",
  "kyokara-syntax",
@@ -209,6 +210,7 @@ dependencies = [
  "kyokara-eval",
  "kyokara-fmt",
  "kyokara-hir",
+ "kyokara-refactor",
  "kyokara-syntax",
  "serde_json",
  "tracing",
@@ -307,6 +309,22 @@ dependencies = [
  "kyokara-intern",
  "kyokara-span",
  "kyokara-stdx",
+]
+
+[[package]]
+name = "kyokara-refactor"
+version = "0.0.0"
+dependencies = [
+ "kyokara-diagnostics",
+ "kyokara-hir",
+ "kyokara-hir-def",
+ "kyokara-hir-ty",
+ "kyokara-intern",
+ "kyokara-parser",
+ "kyokara-span",
+ "kyokara-syntax",
+ "rowan",
+ "text-size",
 ]
 
 [[package]]
