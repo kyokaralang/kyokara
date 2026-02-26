@@ -726,6 +726,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "kyokara-kir"
+version = "0.0.0"
+dependencies = [
+ "kyokara-diagnostics",
+ "kyokara-hir-def",
+ "kyokara-hir-ty",
+ "kyokara-intern",
+ "kyokara-span",
+ "kyokara-stdx",
+ "la-arena",
+]
+
+[[package]]
 name = "kyokara-lsp"
 version = "0.0.0"
 dependencies = [
