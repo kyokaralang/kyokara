@@ -16,6 +16,8 @@ pub(crate) struct TyResolutionEnv<'a> {
     pub interner: &'a Interner,
     /// Type parameter names → inference variables (for generic instantiation).
     pub type_params: Vec<(Name, Ty)>,
+    /// Alias indices currently being resolved (cycle detection).
+    pub resolving_aliases: Vec<TypeItemIdx>,
 }
 
 impl<'a> TyResolutionEnv<'a> {
@@ -86,11 +88,17 @@ impl<'a> TyResolutionEnv<'a> {
         args: &[TypeRef],
         table: &mut UnificationTable,
     ) -> Ty {
+        // Cycle detection: if we're already resolving this alias, bail out.
+        if self.resolving_aliases.contains(&type_idx) {
+            return Ty::Error;
+        }
+
         let type_item = &self.item_tree.types[type_idx];
 
         // For aliases, resolve the underlying type (substituting type args).
         if let TypeDefKind::Alias(inner) = &type_item.kind {
-            let env = self.with_type_args(&type_item.type_params, args, table);
+            let mut env = self.with_type_args(&type_item.type_params, args, table);
+            env.resolving_aliases.push(type_idx);
             return env.resolve_type_ref(inner, table);
         }
 
@@ -136,6 +144,7 @@ impl<'a> TyResolutionEnv<'a> {
             module_scope: self.module_scope,
             interner: self.interner,
             type_params,
+            resolving_aliases: self.resolving_aliases.clone(),
         }
     }
 }
@@ -155,6 +164,7 @@ pub(crate) fn instantiate_fn_sig(
         module_scope: env.module_scope,
         interner: env.interner,
         type_params: env.type_params.clone(),
+        resolving_aliases: vec![],
     };
     for &name in &fn_item.type_params {
         let var = table.fresh_var();
@@ -191,6 +201,7 @@ pub(crate) fn instantiate_constructor(
         module_scope: env.module_scope,
         interner: env.interner,
         type_params: env.type_params.clone(),
+        resolving_aliases: vec![],
     };
     let mut args = Vec::new();
     for &name in &type_item.type_params {

@@ -130,6 +130,7 @@ impl<'a> InferenceCtx<'a> {
             module_scope,
             interner,
             type_params: type_params.to_vec(),
+            resolving_aliases: vec![],
         }
     }
 }
@@ -158,6 +159,7 @@ pub fn infer_body(
         module_scope,
         interner,
         type_params: type_params.clone(),
+        resolving_aliases: vec![],
     };
 
     // Resolve return type.
@@ -191,6 +193,7 @@ pub fn infer_body(
             module_scope,
             interner,
             type_params: type_params.clone(),
+            resolving_aliases: vec![],
         };
         param_tys.push(param_env.resolve_type_ref(&param.ty, &mut table));
     }

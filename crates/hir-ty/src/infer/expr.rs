@@ -466,6 +466,7 @@ impl<'a> InferenceCtx<'a> {
                         module_scope: self.module_scope,
                         interner: self.interner,
                         type_params: tp_map,
+                        resolving_aliases: vec![],
                     };
                     for (n, type_ref) in def_fields {
                         if *n == field {
@@ -631,6 +632,7 @@ impl<'a> InferenceCtx<'a> {
                         module_scope: self.module_scope,
                         interner: self.interner,
                         type_params: tp,
+                        resolving_aliases: vec![],
                     };
 
                     // Resolve expected types for each field, then infer.
