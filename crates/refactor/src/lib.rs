@@ -10,6 +10,9 @@
 
 pub mod quickfix;
 pub mod rename;
+pub mod transaction;
+
+pub use transaction::{TransactionResult, VerificationDiagnostic, VerificationStatus};
 
 use kyokara_span::{FileId, TextRange};
 

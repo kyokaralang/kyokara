@@ -61,6 +61,9 @@ enum Command {
         /// Apply edits to disk instead of printing JSON.
         #[arg(long)]
         apply: bool,
+        /// Skip verification and apply edits even if they introduce errors.
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -170,6 +173,7 @@ fn main() {
             kind,
             offset,
             apply,
+            force,
         } => {
             let refactor_action = match action.as_str() {
                 "rename" => {
@@ -224,7 +228,7 @@ fn main() {
                     .is_some_and(|dir| has_sibling_ky_files(path, dir));
 
             let output = if is_multi_file {
-                kyokara_api::refactor_project(path, refactor_action)
+                kyokara_api::refactor_project(path, refactor_action, force)
             } else {
                 let source = match std::fs::read_to_string(&file) {
                     Ok(s) => s,
@@ -233,46 +237,32 @@ fn main() {
                         std::process::exit(1);
                     }
                 };
-                kyokara_api::refactor(&source, &file, refactor_action)
+                kyokara_api::refactor(&source, &file, refactor_action, force)
             };
 
-            if apply && output.status == "ok" {
-                // Group edits by file and apply.
-                let mut edits_by_file: std::collections::HashMap<
-                    String,
-                    Vec<&kyokara_api::TextEditDto>,
-                > = std::collections::HashMap::new();
-                for edit in &output.edits {
-                    edits_by_file
-                        .entry(edit.file.clone())
-                        .or_default()
-                        .push(edit);
+            if output.status == "failed" {
+                eprintln!("warning: verification failed after refactor");
+                for w in &output.warnings {
+                    eprintln!("  {w}");
                 }
+            }
 
-                for (filepath, mut file_edits) in edits_by_file {
-                    let source = match std::fs::read_to_string(&filepath) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            eprintln!("error: cannot read `{filepath}`: {e}");
+            if apply && (output.status == "typechecked" || output.status == "skipped") {
+                // Use patched sources from the transaction when available.
+                if let Some(patched) = &output.patched_sources {
+                    for ps in patched {
+                        if let Err(e) = std::fs::write(&ps.file, &ps.source) {
+                            eprintln!("error: cannot write `{}`: {e}", ps.file);
                             std::process::exit(1);
                         }
-                    };
-
-                    // Sort descending by start offset.
-                    file_edits.sort_by(|a, b| b.start.cmp(&a.start));
-
-                    let mut result = source;
-                    for edit in file_edits {
-                        result
-                            .replace_range(edit.start as usize..edit.end as usize, &edit.new_text);
+                        eprintln!("wrote {}", ps.file);
                     }
-
-                    if let Err(e) = std::fs::write(&filepath, &result) {
-                        eprintln!("error: cannot write `{filepath}`: {e}");
-                        std::process::exit(1);
-                    }
-                    eprintln!("wrote {filepath}");
                 }
+            } else if apply && output.status == "failed" {
+                eprintln!(
+                    "error: refusing to apply edits that fail verification (use --force to override)"
+                );
+                std::process::exit(1);
             } else {
                 let json =
                     serde_json::to_string_pretty(&output).expect("failed to serialize output");

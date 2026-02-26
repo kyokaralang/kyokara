@@ -1,6 +1,8 @@
 //! Integration tests for the refactor engine.
 
-use kyokara_refactor::{RefactorAction, RefactorError, SymbolKind, apply_edits, verify_single};
+use kyokara_refactor::{
+    RefactorAction, RefactorError, SymbolKind, VerificationStatus, apply_edits, verify_single,
+};
 use kyokara_span::FileId;
 
 fn file_id() -> FileId {
@@ -378,4 +380,86 @@ fn verify_rename_passes() {
         verify_single(src, &refactor.edits),
         "renamed source should pass verification"
     );
+}
+
+// ── Transaction tests ───────────────────────────────────────────────
+
+#[test]
+fn transact_rename_verified() {
+    let src = "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(1, 2) }";
+    let result = kyokara_hir::check_file(src);
+    let action = RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: SymbolKind::Function,
+    };
+    let tx = kyokara_refactor::transaction::transact(src, &result, file_id(), action).unwrap();
+
+    assert!(
+        matches!(tx.verification, VerificationStatus::Verified),
+        "expected Verified, got {:?}",
+        tx.verification
+    );
+    assert_eq!(tx.patched_sources.len(), 1);
+    let (_, patched) = &tx.patched_sources[0];
+    assert!(patched.contains("fn sum("), "patched source: {patched}");
+    assert!(patched.contains("sum(1, 2)"), "patched source: {patched}");
+}
+
+#[test]
+fn transact_rename_multifile_verified() {
+    let dir = std::env::temp_dir().join("kyokara_tx_test_multifile");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let main_path = dir.join("main.ky");
+    let math_path = dir.join("math.ky");
+
+    std::fs::write(
+        &main_path,
+        "import math\nfn main() -> Int {\n    let x = add(10, 20)\n    x\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &math_path,
+        "pub fn add(x: Int, y: Int) -> Int {\n    x + y\n}\n",
+    )
+    .unwrap();
+
+    let result = kyokara_hir::check_project(&main_path);
+    let action = RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: SymbolKind::Function,
+    };
+    let tx = kyokara_refactor::transaction::transact_project(&main_path, &result, action).unwrap();
+
+    assert!(
+        matches!(tx.verification, VerificationStatus::Verified),
+        "expected Verified, got {:?}",
+        tx.verification
+    );
+    assert!(!tx.patched_sources.is_empty(), "expected patched sources");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn transact_skipped_when_forced() {
+    let src = "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(1, 2) }";
+    let result = kyokara_hir::check_file(src);
+    let action = RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: SymbolKind::Function,
+    };
+    let tx =
+        kyokara_refactor::transaction::transact_force(src, &result, file_id(), action).unwrap();
+
+    assert!(
+        matches!(tx.verification, VerificationStatus::Skipped),
+        "expected Skipped, got {:?}",
+        tx.verification
+    );
+    assert_eq!(tx.patched_sources.len(), 1);
 }

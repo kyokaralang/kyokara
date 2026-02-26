@@ -691,6 +691,15 @@ pub struct RefactorOutputDto {
     pub verified: bool,
     pub edits: Vec<TextEditDto>,
     pub error: Option<String>,
+    pub warnings: Vec<String>,
+    pub patched_sources: Option<Vec<PatchedSourceDto>>,
+}
+
+/// A patched source file from a transactional refactor.
+#[derive(Debug, Serialize)]
+pub struct PatchedSourceDto {
+    pub file: String,
+    pub source: String,
 }
 
 /// A single text edit in a refactor result.
@@ -705,84 +714,118 @@ pub struct TextEditDto {
 // ── Refactor entry points ───────────────────────────────────────────
 
 /// Run a refactor on a single source file and return structured output.
+///
+/// When `force` is true, verification is skipped and status is "skipped".
 pub fn refactor(
     source: &str,
     file_name: &str,
     action: kyokara_refactor::RefactorAction,
+    force: bool,
 ) -> RefactorOutputDto {
     let result = kyokara_hir::check_file(source);
     let file_id = kyokara_span::FileId(0);
 
-    match kyokara_refactor::refactor(&result, file_id, action) {
-        Ok(r) => {
-            let edits = r
-                .edits
-                .iter()
-                .map(|e| TextEditDto {
-                    file: file_name.to_string(),
-                    start: e.range.start().into(),
-                    end: e.range.end().into(),
-                    new_text: e.new_text.clone(),
-                })
-                .collect();
-            RefactorOutputDto {
-                description: r.description,
-                status: "ok".into(),
-                verified: r.verified,
-                edits,
-                error: None,
+    let tx = if force {
+        kyokara_refactor::transaction::transact_force(source, &result, file_id, action)
+    } else {
+        kyokara_refactor::transaction::transact(source, &result, file_id, action)
+    };
+
+    match tx {
+        Ok(t) => transaction_to_dto(t, |fid| {
+            if fid == file_id {
+                file_name.to_string()
+            } else {
+                "<unknown>".into()
             }
-        }
-        Err(e) => RefactorOutputDto {
-            description: String::new(),
-            status: "error".into(),
-            verified: false,
-            edits: Vec::new(),
-            error: Some(e.to_string()),
-        },
+        }),
+        Err(e) => error_dto(e),
     }
 }
 
 /// Run a refactor on a multi-file project and return structured output.
+///
+/// When `force` is true, verification is skipped and status is "skipped".
 pub fn refactor_project(
     entry_file: &std::path::Path,
     action: kyokara_refactor::RefactorAction,
+    force: bool,
 ) -> RefactorOutputDto {
     let result = kyokara_hir::check_project(entry_file);
 
-    match kyokara_refactor::refactor_project(&result, action) {
-        Ok(r) => {
-            let edits = r
-                .edits
-                .iter()
-                .map(|e| {
-                    let file = result
-                        .file_map
-                        .path(e.file_id)
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|| "<unknown>".into());
-                    TextEditDto {
-                        file,
-                        start: e.range.start().into(),
-                        end: e.range.end().into(),
-                        new_text: e.new_text.clone(),
-                    }
-                })
-                .collect();
-            RefactorOutputDto {
-                description: r.description,
-                status: "ok".into(),
-                verified: r.verified,
-                edits,
-                error: None,
-            }
+    let tx = if force {
+        kyokara_refactor::transaction::transact_project_force(entry_file, &result, action)
+    } else {
+        kyokara_refactor::transaction::transact_project(entry_file, &result, action)
+    };
+
+    let file_map = result.file_map;
+    match tx {
+        Ok(t) => transaction_to_dto(t, |fid| {
+            file_map
+                .path(fid)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "<unknown>".into())
+        }),
+        Err(e) => error_dto(e),
+    }
+}
+
+fn transaction_to_dto(
+    t: kyokara_refactor::TransactionResult,
+    file_name: impl Fn(kyokara_span::FileId) -> String,
+) -> RefactorOutputDto {
+    let edits = t
+        .refactor
+        .edits
+        .iter()
+        .map(|e| TextEditDto {
+            file: file_name(e.file_id),
+            start: e.range.start().into(),
+            end: e.range.end().into(),
+            new_text: e.new_text.clone(),
+        })
+        .collect();
+
+    let patched_sources: Vec<PatchedSourceDto> = t
+        .patched_sources
+        .iter()
+        .map(|(fid, src)| PatchedSourceDto {
+            file: file_name(*fid),
+            source: src.clone(),
+        })
+        .collect();
+
+    let (status, verified, warnings) = match &t.verification {
+        kyokara_refactor::VerificationStatus::Verified => {
+            ("typechecked".to_string(), true, Vec::new())
         }
-        Err(e) => RefactorOutputDto {
-            description: String::new(),
-            status: "error".into(),
-            verified: false,
-            edits: Vec::new(),
-            error: Some(e.to_string()),
-        },
+        kyokara_refactor::VerificationStatus::Failed { diagnostics } => {
+            let warns: Vec<String> = diagnostics.iter().map(|d| d.message.clone()).collect();
+            ("failed".to_string(), false, warns)
+        }
+        kyokara_refactor::VerificationStatus::Skipped => ("skipped".to_string(), false, Vec::new()),
+    };
+
+    RefactorOutputDto {
+        description: t.refactor.description,
+        status,
+        verified,
+        edits,
+        error: None,
+        warnings,
+        patched_sources: Some(patched_sources),
+    }
+}
+
+fn error_dto(e: kyokara_refactor::RefactorError) -> RefactorOutputDto {
+    RefactorOutputDto {
+        description: String::new(),
+        status: "error".into(),
+        verified: false,
+        edits: Vec::new(),
+        error: Some(e.to_string()),
+        warnings: Vec::new(),
+        patched_sources: None,
     }
 }

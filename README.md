@@ -93,7 +93,7 @@ The compiler doesn't print error messages — it emits structured JSON. Diagnost
 
 ### 6. Semantic Refactoring
 
-Refactors are compiler operations, not text transformations. Rename a symbol across the codebase — functions, types, capabilities, variants — in single-file or multi-file projects. Add missing match cases or capability annotations from existing diagnostics. Each refactor returns structured text edits and a verification status: did the types still check?
+Refactors are compiler operations, not text transformations. Rename a symbol across the codebase — functions, types, capabilities, variants — in single-file or multi-file projects. Add missing match cases or capability annotations from existing diagnostics. Each refactor is wrapped in a transaction: edits are applied in-memory, the type checker re-runs, and the result reports whether the refactored code is still valid. The CLI only writes to disk when verification passes (or when `--force` is set).
 
 ```sh
 # Rename a function across files
@@ -176,7 +176,7 @@ crates/
 |---------|-----------|--------|
 | **v0.0** | Parser ✓, name resolution ✓, CST→HIR lowering ✓, type checker ✓, effect checking ✓, typed holes ✓, structured diagnostics ✓, hole specs ✓, symbol graph ✓, patch suggestions ✓ | **Complete** |
 | **v0.1** | Tree-walking interpreter ✓, intrinsics ✓, builtin Option/Result types ✓, canonical formatter ✓, stable symbol IDs ✓, runtime contracts ✓, core stdlib (List, Map, String, Int/Float) ✓ | **Complete** |
-| **v0.2** | Module system (convention-based layout, `pub` visibility, flat imports) ✓, refactor engine (rename, add missing match cases, add missing capability) ✓, LSP server, capability enforcement | In progress |
+| **v0.2** | Module system (convention-based layout, `pub` visibility, flat imports) ✓, refactor engine (rename, add missing match cases, add missing capability) ✓, refactor transactions (atomic verify-before-apply) ✓, LSP server, capability enforcement | In progress |
 | **v0.3** | Property testing, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay | Planned |
 
 ## FAQ
@@ -228,8 +228,11 @@ cargo run -p kyokara-cli -- fmt --check <file.ky>
 # Refactor: rename a symbol (prints JSON edits)
 cargo run -p kyokara-cli -- refactor <file.ky> --action rename --symbol add --new-name sum
 
-# Refactor: apply edits to disk
+# Refactor: apply edits to disk (only if verification passes)
 cargo run -p kyokara-cli -- refactor <file.ky> --action rename --symbol add --new-name sum --apply
+
+# Refactor: apply edits even if verification fails
+cargo run -p kyokara-cli -- refactor <file.ky> --action rename --symbol add --new-name sum --apply --force
 
 # Refactor: rename a type or variant
 cargo run -p kyokara-cli -- refactor <file.ky> --action rename --symbol Color --new-name Hue --kind type
