@@ -1965,6 +1965,37 @@ fn rename_function_does_not_rename_shadowing_local() {
 }
 
 #[test]
+fn if_condition_rejects_non_bool() {
+    // `if 1 {}` — the condition should require Bool, not accept Int silently.
+    let output = check("fn f() -> Unit { if 1 { } }", "test.ky");
+    assert!(
+        !output.diagnostics.is_empty(),
+        "expected a type mismatch diagnostic for `if 1`, got none"
+    );
+    assert!(
+        output.diagnostics.iter().any(|d| d.code == "E0001"),
+        "expected E0001 type mismatch, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn fallback_unification_catches_literal_type_mismatch() {
+    // Returning Int where String is expected — the fallback unification
+    // should catch this even for literal expressions.
+    let output = check("fn f() -> String { 42 }", "test.ky");
+    assert!(
+        !output.diagnostics.is_empty(),
+        "expected a type mismatch diagnostic, got none"
+    );
+    assert!(
+        output.diagnostics.iter().any(|d| d.code == "E0001"),
+        "expected E0001 type mismatch, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn symbol_graph_local_lambda_not_in_function_calls() {
     // A local lambda `f` should not produce a dangling fn::f call edge.
     let src = "fn main() -> Int {\n  let f = fn(x: Int, y: Int) -> Int => x\n  f(1, 2)\n}";
