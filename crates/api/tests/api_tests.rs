@@ -1780,3 +1780,43 @@ fn cap_member_fn_ids_resolve_in_symbol_graph() {
         }
     }
 }
+
+#[test]
+fn malformed_numeric_underscore_trailing() {
+    let src = "fn main() -> Int { 1_ }";
+    let output = check(src, "test.ky");
+    let errs: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("underscore"))
+        .collect();
+    assert!(
+        !errs.is_empty(),
+        "expected malformed underscore diagnostic for `1_`, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn malformed_numeric_underscore_consecutive() {
+    let src = "fn main() -> Int { 1__2 }";
+    let output = check(src, "test.ky");
+    let errs: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("underscore"))
+        .collect();
+    assert!(
+        !errs.is_empty(),
+        "expected malformed underscore diagnostic for `1__2`, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
