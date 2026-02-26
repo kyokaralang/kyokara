@@ -23,6 +23,7 @@ use kyokara_hir_def::body::Body;
 use kyokara_hir_def::body::lower::lower_body;
 use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree};
 use kyokara_hir_def::resolver::ModuleScope;
+use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_intern::Interner;
 use kyokara_span::{FileId, Span};
 use kyokara_stdx::FxHashMap;
@@ -118,6 +119,40 @@ pub fn check_module(
         fn_bodies.insert(fn_idx, body_result.body);
     }
 
+    // Validate type argument arities in function signatures.
+    for (_, fn_item) in item_tree.functions.iter() {
+        let fn_span = fn_item
+            .source_range
+            .map(|r| Span {
+                file: file_id,
+                range: r,
+            })
+            .unwrap_or(Span {
+                file: file_id,
+                range: kyokara_span::TextRange::default(),
+            });
+        for param in &fn_item.params {
+            validate_type_arity(
+                &param.ty,
+                item_tree,
+                module_scope,
+                interner,
+                fn_span,
+                &mut body_lowering_diagnostics,
+            );
+        }
+        if let Some(ret) = &fn_item.ret_type {
+            validate_type_arity(
+                ret,
+                item_tree,
+                module_scope,
+                interner,
+                fn_span,
+                &mut body_lowering_diagnostics,
+            );
+        }
+    }
+
     TypeCheckResult {
         fn_results,
         fn_bodies,
@@ -125,5 +160,57 @@ pub fn check_module(
         raw_diagnostics: all_raw_diagnostics,
         body_lowering_diagnostics,
         fn_calls,
+    }
+}
+
+/// Walk a TypeRef tree and emit diagnostics for type argument arity mismatches.
+fn validate_type_arity(
+    ty: &TypeRef,
+    item_tree: &ItemTree,
+    module_scope: &ModuleScope,
+    interner: &Interner,
+    span: Span,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    match ty {
+        TypeRef::Path { path, args } => {
+            if path.is_single() && !args.is_empty() {
+                let name = path.segments[0];
+                if let Some(&type_idx) = module_scope.types.get(&name) {
+                    let type_item = &item_tree.types[type_idx];
+                    let expected = type_item.type_params.len();
+                    let got = args.len();
+                    if got > expected {
+                        let name_str = name.resolve(interner);
+                        diagnostics.push(Diagnostic::error(
+                            format!(
+                                "`{name_str}` expects {expected} type argument{} but got {got}",
+                                if expected == 1 { "" } else { "s" }
+                            ),
+                            span,
+                        ));
+                    }
+                }
+            }
+            // Recurse into type arguments.
+            for arg in args {
+                validate_type_arity(arg, item_tree, module_scope, interner, span, diagnostics);
+            }
+        }
+        TypeRef::Fn { params, ret } => {
+            for p in params {
+                validate_type_arity(p, item_tree, module_scope, interner, span, diagnostics);
+            }
+            validate_type_arity(ret, item_tree, module_scope, interner, span, diagnostics);
+        }
+        TypeRef::Record { fields } => {
+            for (_, t) in fields {
+                validate_type_arity(t, item_tree, module_scope, interner, span, diagnostics);
+            }
+        }
+        TypeRef::Refined { base, .. } => {
+            validate_type_arity(base, item_tree, module_scope, interner, span, diagnostics);
+        }
+        TypeRef::Error => {}
     }
 }
