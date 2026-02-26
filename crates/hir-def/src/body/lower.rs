@@ -690,6 +690,16 @@ impl BodyLowerCtx<'_> {
                     // Binding pattern — introduces name into scope
                     let pat_idx = self.alloc_pat(pat::Pat::Bind { name });
                     if let Some(scope) = self.current_scope {
+                        if self.scopes.scopes[scope].entries.contains_key(&name) {
+                            let span = self.node_span(ip.syntax());
+                            self.diagnostics.push(Diagnostic::error(
+                                format!(
+                                    "duplicate binding `{}` in pattern",
+                                    name.resolve(self.interner)
+                                ),
+                                span,
+                            ));
+                        }
                         self.scopes.define(scope, name, ScopeDef::Local(pat_idx));
                         self.pat_scopes.push((pat_idx, scope));
                     }
