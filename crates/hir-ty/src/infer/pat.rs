@@ -69,6 +69,12 @@ impl<'a> InferenceCtx<'a> {
                     }
                     adt_ty
                 } else {
+                    self.push_diag(TyDiagnosticData::UnresolvedConstructor {
+                        name: name.resolve(self.interner).to_owned(),
+                    });
+                    for sub in &args {
+                        self.infer_pat(*sub, &Ty::Error);
+                    }
                     Ty::Error
                 }
             }
