@@ -1030,6 +1030,9 @@ fn format_match_arm_list(node: &SyntaxNode) -> Doc {
         |c| c.kind() == SyntaxKind::MatchArm,
         format_node,
     );
+    if arm_docs.is_empty() {
+        return Doc::text("{}");
+    }
     Doc::concat(vec![
         Doc::text("{"),
         Doc::indent(
