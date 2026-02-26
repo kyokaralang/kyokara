@@ -214,7 +214,7 @@ fn collect_rename_edits(
 
 /// Determine if an ident token with the given parent should be renamed
 /// for the target symbol kind.
-fn should_rename_token(parent: &SyntaxNode, kind: SymbolKind) -> bool {
+pub fn should_rename_token(parent: &SyntaxNode, kind: SymbolKind) -> bool {
     let parent_kind = parent.kind();
 
     // Definition sites: ident is a direct child of a definition node.
@@ -239,7 +239,7 @@ fn should_rename_token(parent: &SyntaxNode, kind: SymbolKind) -> bool {
 
 /// Check if a Path's parent node kind is a valid usage site for the
 /// target symbol kind.
-fn is_usage_site(gp_kind: SyntaxKind, kind: SymbolKind, grandparent: &SyntaxNode) -> bool {
+pub fn is_usage_site(gp_kind: SyntaxKind, kind: SymbolKind, grandparent: &SyntaxNode) -> bool {
     match kind {
         SymbolKind::Function => matches!(gp_kind, SyntaxKind::PathExpr | SyntaxKind::CallExpr),
         SymbolKind::Type => matches!(

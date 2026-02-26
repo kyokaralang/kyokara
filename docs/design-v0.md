@@ -537,7 +537,7 @@ injected as synthetic types before type-checking.
 * Module system: convention-based file layout, `pub` visibility, flat imports ✓
 * Refactor engine: rename symbol (single-file + multi-file), add missing match cases, add missing capability annotation ✓ — CST-based, post-refactor verification, structured TextEdit patches
 * Refactor transactions: atomic refactor operations with in-memory re-check ✓ — `transact()` / `transact_project()` apply edits, re-run the type checker, and return `VerificationStatus` (Verified / Failed / Skipped). CLI gates `--apply` on verification passing; `--force` bypasses. API returns `"typechecked"` / `"failed"` / `"skipped"` status with structured verification diagnostics (message, code, span). Quickfix actions accept `--target-file` to disambiguate which module an offset refers to in project mode. CLI auto-detects project mode for `main.ky` with sibling `.ky` files; `--project` flag forces project mode for other entry files.
-* LSP server
+* LSP server: salsa incrementality, diagnostics, hover, go-to-definition, find references, completion, code actions (quickfixes), formatting ✓
 * Capability enforcement: type-level checking (E0011) ✓ + runtime manifest enforcement (`--caps`, deny-by-default) ✓
 
 **v0.3 — Verification + Codegen + Replay**
@@ -576,8 +576,9 @@ kyokara/
     eval/          # tree-walking interpreter
     fmt/           # canonical code formatter (Wadler-Lindig Doc IR)
     refactor/      # semantic refactor engine (rename, quickfix)
+    lsp/           # LSP server with salsa incrementality
     api/           # compiler-as-API, JSON serialization DTOs
-    cli/           # kyokara binary (check / run / fmt / refactor / replay)
+    cli/           # kyokara binary (check / run / fmt / refactor / lsp)
   docs/            # design docs
   spec/            # formal grammar
 ```
@@ -620,6 +621,7 @@ Rust is recommended for:
 9. ~~Implement tree-walking interpreter for rapid iteration.~~ ✓
 10. ~~Add contracts as runtime checks.~~ ✓
 11. ~~Implement module system (convention-based layout, pub visibility, flat imports).~~ ✓
-12. Implement WASM runtime host functions for capabilities + replay log.
-13. Add property test runner and basic generators.
-14. Integrate SMT solver for opt-in static verification.
+12. ~~Implement LSP server with salsa incrementality (diagnostics, hover, goto-def, references, completion, code actions, formatting).~~ ✓
+13. Implement WASM runtime host functions for capabilities + replay log.
+14. Add property test runner and basic generators.
+15. Integrate SMT solver for opt-in static verification.
