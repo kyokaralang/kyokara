@@ -200,90 +200,101 @@ fn resolve_project_imports(
     let mut diagnostics = Vec::new();
 
     // Collect what needs to be resolved (to avoid borrow conflicts).
-    let mut to_resolve: Vec<(ModulePath, Vec<Name>, FileId)> = Vec::new();
+    struct PendingImport {
+        importing_mod: ModulePath,
+        resolve_name: Name,
+        file_id: FileId,
+    }
+
+    let mut to_resolve: Vec<PendingImport> = Vec::new();
 
     for (mod_path, info) in graph.iter() {
-        let import_names: Vec<Name> = info
-            .item_tree
-            .imports
-            .iter()
-            .filter_map(|imp| imp.alias.or_else(|| imp.path.last()))
-            .collect();
-        if !import_names.is_empty() {
-            to_resolve.push((mod_path.clone(), import_names, info.file_id));
+        for imp in &info.item_tree.imports {
+            // Resolve by the actual import path, not alias.
+            let Some(resolve_name) = imp.path.last() else {
+                continue;
+            };
+            to_resolve.push(PendingImport {
+                importing_mod: mod_path.clone(),
+                resolve_name,
+                file_id: info.file_id,
+            });
         }
     }
 
     // Collect the pub items from target modules (clone them to avoid borrow issues).
-    for (importing_mod, import_names, file_id) in to_resolve {
-        for target_name in import_names {
-            // Collect pub items from the target module.
-            let pub_data = {
-                let Some(target_info) = graph.resolve_import(&target_name) else {
-                    let name_str = target_name.resolve(interner);
-                    diagnostics.push(kyokara_diagnostics::Diagnostic::error(
-                        format!("unresolved import `{name_str}`"),
-                        kyokara_span::Span {
-                            file: file_id,
-                            range: kyokara_span::TextRange::default(),
-                        },
-                    ));
-                    continue;
-                };
-                collect_pub_data(&target_info.item_tree)
-            };
+    for pending in to_resolve {
+        let PendingImport {
+            importing_mod,
+            resolve_name,
+            file_id,
+        } = pending;
 
-            // Re-allocate pub items in the importing module's item tree.
-            let Some(importing_info) = graph.get_mut(&importing_mod) else {
+        // Collect pub items from the target module.
+        let pub_data = {
+            let Some(target_info) = graph.resolve_import(&resolve_name) else {
+                let name_str = resolve_name.resolve(interner);
+                diagnostics.push(kyokara_diagnostics::Diagnostic::error(
+                    format!("unresolved import `{name_str}`"),
+                    kyokara_span::Span {
+                        file: file_id,
+                        range: kyokara_span::TextRange::default(),
+                    },
+                ));
                 continue;
             };
+            collect_pub_data(&target_info.item_tree)
+        };
 
-            for item in pub_data {
-                match item {
-                    PubData::Fn(fn_item) => {
-                        let name = fn_item.name;
-                        if !importing_info.scope.functions.contains_key(&name) {
-                            let idx = importing_info.item_tree.functions.alloc(fn_item);
-                            importing_info.scope.functions.insert(name, idx);
+        // Re-allocate pub items in the importing module's item tree.
+        let Some(importing_info) = graph.get_mut(&importing_mod) else {
+            continue;
+        };
+
+        for item in pub_data {
+            match item {
+                PubData::Fn(fn_item) => {
+                    let name = fn_item.name;
+                    if !importing_info.scope.functions.contains_key(&name) {
+                        let idx = importing_info.item_tree.functions.alloc(fn_item);
+                        importing_info.scope.functions.insert(name, idx);
+                    }
+                }
+                PubData::Type(type_item) => {
+                    let name = type_item.name;
+                    if !importing_info.scope.types.contains_key(&name) {
+                        let variants_info: Vec<(Name, usize)> =
+                            if let TypeDefKind::Adt { ref variants } = type_item.kind {
+                                variants
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(vi, v)| (v.name, vi))
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            };
+                        let idx = importing_info.item_tree.types.alloc(type_item);
+                        importing_info.scope.types.insert(name, idx);
+                        // Register constructors.
+                        for (vname, vi) in variants_info {
+                            importing_info
+                                .scope
+                                .constructors
+                                .entry(vname)
+                                .or_insert((idx, vi));
                         }
                     }
-                    PubData::Type(type_item) => {
-                        let name = type_item.name;
-                        if !importing_info.scope.types.contains_key(&name) {
-                            let variants_info: Vec<(Name, usize)> =
-                                if let TypeDefKind::Adt { ref variants } = type_item.kind {
-                                    variants
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(vi, v)| (v.name, vi))
-                                        .collect()
-                                } else {
-                                    Vec::new()
-                                };
-                            let idx = importing_info.item_tree.types.alloc(type_item);
-                            importing_info.scope.types.insert(name, idx);
-                            // Register constructors.
-                            for (vname, vi) in variants_info {
-                                importing_info
-                                    .scope
-                                    .constructors
-                                    .entry(vname)
-                                    .or_insert((idx, vi));
-                            }
-                        }
-                    }
-                    PubData::Cap(cap_item) => {
-                        let name = cap_item.name;
-                        if !importing_info.scope.caps.contains_key(&name) {
-                            let idx = importing_info.item_tree.caps.alloc(cap_item);
-                            importing_info.scope.caps.insert(name, idx);
-                        }
+                }
+                PubData::Cap(cap_item) => {
+                    let name = cap_item.name;
+                    if !importing_info.scope.caps.contains_key(&name) {
+                        let idx = importing_info.item_tree.caps.alloc(cap_item);
+                        importing_info.scope.caps.insert(name, idx);
                     }
                 }
             }
         }
     }
-
     diagnostics
 }
 
