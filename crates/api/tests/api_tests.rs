@@ -1374,3 +1374,27 @@ fn duplicate_type_params_produce_diagnostic() {
         "should mention type param `T`"
     );
 }
+
+#[test]
+fn duplicate_fields_in_record_literal_produce_diagnostic() {
+    let src = "type Point = { x: Int }\nfn main() -> Int { let p = Point { x: 1, x: 2 }\n p.x }";
+    let output = check(src, "test.ky");
+    let dups: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("duplicate") && d.message.contains("field"))
+        .collect();
+    assert!(
+        !dups.is_empty(),
+        "expected duplicate field diagnostic in record literal, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        dups[0].message.contains("x"),
+        "should mention field name `x`"
+    );
+}
