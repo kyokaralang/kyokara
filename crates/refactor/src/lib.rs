@@ -77,6 +77,9 @@ pub enum RefactorError {
     NoDiagnosticAtOffset {
         offset: u32,
     },
+    IoError {
+        message: String,
+    },
 }
 
 impl std::fmt::Display for RefactorError {
@@ -96,6 +99,9 @@ impl std::fmt::Display for RefactorError {
             }
             RefactorError::NoDiagnosticAtOffset { offset } => {
                 write!(f, "no applicable diagnostic at offset {offset}")
+            }
+            RefactorError::IoError { message } => {
+                write!(f, "I/O error: {message}")
             }
         }
     }

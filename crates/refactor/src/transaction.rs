@@ -115,9 +115,8 @@ pub fn transact_project(
     }
 
     // Write patched sources to a temp directory preserving filenames, then re-check.
-    let temp_dir = tempfile::tempdir().map_err(|e| RefactorError::SymbolNotFound {
-        name: format!("tempdir: {e}"),
-        kind: crate::SymbolKind::Function,
+    let temp_dir = tempfile::tempdir().map_err(|e| RefactorError::IoError {
+        message: format!("failed to create temp directory: {e}"),
     })?;
 
     let entry_name = entry_file.file_name().unwrap_or_default();
@@ -138,14 +137,18 @@ pub fn transact_project(
 
         let dest = temp_dir.path().join(relative);
         if let Some(parent) = dest.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            std::fs::create_dir_all(parent).map_err(|e| RefactorError::IoError {
+                message: format!("failed to create directory {}: {e}", parent.display()),
+            })?;
         }
 
         let source = patched_map
             .get(&info.file_id)
             .map(|s| s.as_str())
             .unwrap_or(&info.source);
-        let _ = std::fs::write(&dest, source);
+        std::fs::write(&dest, source).map_err(|e| RefactorError::IoError {
+            message: format!("failed to write {}: {e}", dest.display()),
+        })?;
 
         // Track the entry file in the temp dir.
         if original_path == entry_file {
