@@ -38,6 +38,18 @@ impl<'a> InferenceCtx<'a> {
 
             Pat::Constructor { path, args } => {
                 if !path.is_single() {
+                    self.push_diag(TyDiagnosticData::UnresolvedConstructor {
+                        name: path
+                            .segments
+                            .iter()
+                            .map(|s| s.resolve(self.interner).to_owned())
+                            .collect::<Vec<_>>()
+                            .join("."),
+                    });
+                    for sub in &args {
+                        self.infer_pat(*sub, &Ty::Error);
+                    }
+                    self.pat_types.insert(pat_idx, Ty::Error);
                     return;
                 }
                 let name = path.segments[0];

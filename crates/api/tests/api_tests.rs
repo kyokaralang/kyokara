@@ -1418,3 +1418,23 @@ fn old_outside_contract_produces_diagnostic() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn dotted_constructor_pattern_produces_diagnostic() {
+    let src = "fn main() -> Int { match Some(1) { A.B(_) => 0, _ => 1 } }";
+    let output = check(src, "test.ky");
+    let errs: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0013")
+        .collect();
+    assert!(
+        !errs.is_empty(),
+        "expected diagnostic for dotted constructor pattern, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
