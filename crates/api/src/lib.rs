@@ -197,6 +197,16 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
 
         let item_tree = result.module_graph.get(mod_path).map(|i| &i.item_tree);
 
+        // Body lowering diagnostics (unresolved names, duplicates).
+        for diag in &tc.body_lowering_diagnostics {
+            let code = if diag.message.contains("duplicate") {
+                "E0102"
+            } else {
+                "E0101"
+            };
+            diagnostics.push(convert_lowering_diagnostic(diag, code, &file_name));
+        }
+
         for (data, span) in &tc.raw_diagnostics {
             if let Some(tree) = item_tree {
                 diagnostics.push(convert_ty_diagnostic(
@@ -332,6 +342,16 @@ fn convert_result(result: &CheckResult, file_name: &str) -> CheckOutput {
 
     // Lowering diagnostics → E0101 (unresolved name) / E0102 (duplicate definition).
     for diag in &result.lowering_diagnostics {
+        let code = if diag.message.contains("duplicate") {
+            "E0102"
+        } else {
+            "E0101"
+        };
+        diagnostics.push(convert_lowering_diagnostic(diag, code, file_name));
+    }
+
+    // Body lowering diagnostics (unresolved names, duplicates from body lowering).
+    for diag in &result.type_check.body_lowering_diagnostics {
         let code = if diag.message.contains("duplicate") {
             "E0102"
         } else {

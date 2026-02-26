@@ -277,12 +277,11 @@ fn resolve_param_types(
         .iter()
         .map(|param| {
             for (pat_idx, _) in &body.pat_scopes {
-                if let Pat::Bind { name } = &body.pats[*pat_idx] {
-                    if *name == param.name {
-                        if let Some(ty) = infer.pat_types.get(*pat_idx) {
-                            return ty.clone();
-                        }
-                    }
+                if let Pat::Bind { name } = &body.pats[*pat_idx]
+                    && *name == param.name
+                    && let Some(ty) = infer.pat_types.get(*pat_idx)
+                {
+                    return ty.clone();
                 }
             }
             Ty::Error
@@ -293,10 +292,10 @@ fn resolve_param_types(
 fn build_effects(fn_item: &kyokara_hir_def::item_tree::FnItem) -> EffectSet {
     let mut caps = FxHashSet::default();
     for cap_ref in &fn_item.with_caps {
-        if let TypeRef::Path { path, .. } = cap_ref {
-            if let Some(name) = path.last() {
-                caps.insert(name);
-            }
+        if let TypeRef::Path { path, .. } = cap_ref
+            && let Some(name) = path.last()
+        {
+            caps.insert(name);
         }
     }
     EffectSet { caps }

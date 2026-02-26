@@ -96,6 +96,7 @@ fn render_fn_signature(item: &FnItem, interner: &Interner, tree: &ItemTree) -> S
     format!("fn {name}({params_str}){ret}{caps}")
 }
 
+#[allow(clippy::only_used_in_recursion)]
 fn display_ty_ref(ty_ref: &kyokara_hir::TypeRef, interner: &Interner, tree: &ItemTree) -> String {
     use kyokara_hir::TypeRef;
     match ty_ref {
@@ -256,11 +257,11 @@ fn hover_local(
         // Look up the expression at the token's range.
         let token_range = token.text_range();
         for (expr_idx, range) in body.expr_source_map.iter() {
-            if *range == token_range {
-                if let Some(ty) = infer.expr_types.get(expr_idx) {
-                    let ty_str = display_ty_with_tree(ty, interner, item_tree);
-                    return Some(format!("{name}: {ty_str}"));
-                }
+            if *range == token_range
+                && let Some(ty) = infer.expr_types.get(expr_idx)
+            {
+                let ty_str = display_ty_with_tree(ty, interner, item_tree);
+                return Some(format!("{name}: {ty_str}"));
             }
         }
 
@@ -273,7 +274,7 @@ fn hover_local(
         }
     }
 
-    Some(format!("{name}"))
+    Some(name.to_string())
 }
 
 #[cfg(test)]

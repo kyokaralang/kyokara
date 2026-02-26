@@ -357,6 +357,48 @@ fn patch_apply_effect_fix_fixes_error() {
     );
 }
 
+// ── Unresolved name diagnostic tests ────────────────────────────────
+
+#[test]
+fn check_unresolved_name_produces_diagnostic() {
+    let output = check("fn main() -> Int { foo }", "test.ky");
+    assert!(
+        !output.diagnostics.is_empty(),
+        "expected at least one diagnostic for unresolved name `foo`, got none"
+    );
+    let has_unresolved = output
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("unresolved name"));
+    assert!(
+        has_unresolved,
+        "expected 'unresolved name' diagnostic, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn check_unresolved_name_in_expression_produces_diagnostic() {
+    let output = check("fn main() -> Int { foo + 1 }", "test.ky");
+    let has_unresolved = output
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("unresolved name"));
+    assert!(
+        has_unresolved,
+        "expected 'unresolved name' diagnostic, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
+
 // ── Stable symbol ID tests ──────────────────────────────────────────
 
 #[test]

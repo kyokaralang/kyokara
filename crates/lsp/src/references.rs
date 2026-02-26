@@ -103,13 +103,10 @@ fn should_include_token(parent: &SyntaxNode, kind: SymbolKind) -> bool {
                 SyntaxKind::NameType | SyntaxKind::RecordExpr | SyntaxKind::RecordPat
             ),
             SymbolKind::Capability => {
-                if gp_kind == SyntaxKind::NameType {
-                    if let Some(ggp) = grandparent.parent() {
-                        return matches!(
-                            ggp.kind(),
-                            SyntaxKind::WithClause | SyntaxKind::PipeClause
-                        );
-                    }
+                if gp_kind == SyntaxKind::NameType
+                    && let Some(ggp) = grandparent.parent()
+                {
+                    return matches!(ggp.kind(), SyntaxKind::WithClause | SyntaxKind::PipeClause);
                 }
                 false
             }

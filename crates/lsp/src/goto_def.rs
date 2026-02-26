@@ -40,11 +40,11 @@ pub fn goto_definition(
 
 fn find_fn_def(root: &SyntaxNode, name: &str, source: &str, uri: &Url) -> Option<Location> {
     for node in root.descendants() {
-        if let Some(fn_def) = FnDef::cast(node) {
-            if fn_def.name_token().is_some_and(|t| t.text() == name) {
-                let range = text_range_to_lsp_range(fn_def.syntax().text_range(), source);
-                return Some(Location::new(uri.clone(), range));
-            }
+        if let Some(fn_def) = FnDef::cast(node)
+            && fn_def.name_token().is_some_and(|t| t.text() == name)
+        {
+            let range = text_range_to_lsp_range(fn_def.syntax().text_range(), source);
+            return Some(Location::new(uri.clone(), range));
         }
     }
     None
@@ -52,11 +52,11 @@ fn find_fn_def(root: &SyntaxNode, name: &str, source: &str, uri: &Url) -> Option
 
 fn find_type_def(root: &SyntaxNode, name: &str, source: &str, uri: &Url) -> Option<Location> {
     for node in root.descendants() {
-        if let Some(type_def) = TypeDef::cast(node) {
-            if type_def.name_token().is_some_and(|t| t.text() == name) {
-                let range = text_range_to_lsp_range(type_def.syntax().text_range(), source);
-                return Some(Location::new(uri.clone(), range));
-            }
+        if let Some(type_def) = TypeDef::cast(node)
+            && type_def.name_token().is_some_and(|t| t.text() == name)
+        {
+            let range = text_range_to_lsp_range(type_def.syntax().text_range(), source);
+            return Some(Location::new(uri.clone(), range));
         }
     }
     None
@@ -64,11 +64,11 @@ fn find_type_def(root: &SyntaxNode, name: &str, source: &str, uri: &Url) -> Opti
 
 fn find_cap_def(root: &SyntaxNode, name: &str, source: &str, uri: &Url) -> Option<Location> {
     for node in root.descendants() {
-        if let Some(cap_def) = CapDef::cast(node) {
-            if cap_def.name_token().is_some_and(|t| t.text() == name) {
-                let range = text_range_to_lsp_range(cap_def.syntax().text_range(), source);
-                return Some(Location::new(uri.clone(), range));
-            }
+        if let Some(cap_def) = CapDef::cast(node)
+            && cap_def.name_token().is_some_and(|t| t.text() == name)
+        {
+            let range = text_range_to_lsp_range(cap_def.syntax().text_range(), source);
+            return Some(Location::new(uri.clone(), range));
         }
     }
     None
@@ -137,16 +137,16 @@ fn find_local_def(
                 }
             }
             SyntaxKind::Param => {
-                if let Some(param) = Param::cast(node.clone()) {
-                    if param.name_token().is_some_and(|t| t.text() == name) {
-                        let range = param.syntax().text_range();
-                        match &best {
-                            Some((prev_start, _)) if *prev_start < node_start => {
-                                best = Some((node_start, range));
-                            }
-                            None => best = Some((node_start, range)),
-                            _ => {}
+                if let Some(param) = Param::cast(node.clone())
+                    && param.name_token().is_some_and(|t| t.text() == name)
+                {
+                    let range = param.syntax().text_range();
+                    match &best {
+                        Some((prev_start, _)) if *prev_start < node_start => {
+                            best = Some((node_start, range));
                         }
+                        None => best = Some((node_start, range)),
+                        _ => {}
                     }
                 }
             }

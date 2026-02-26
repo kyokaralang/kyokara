@@ -38,7 +38,24 @@ pub fn to_lsp_diagnostics(analysis: &FileAnalysis, source: &str) -> Vec<lsp_type
         });
     }
 
-    // 3. Type-checker diagnostics.
+    // 3. Body lowering diagnostics (unresolved names, duplicates).
+    for diag in &analysis.type_check.body_lowering_diagnostics {
+        let severity = match diag.severity {
+            kyokara_diagnostics::Severity::Error => DiagnosticSeverity::ERROR,
+            kyokara_diagnostics::Severity::Warning => DiagnosticSeverity::WARNING,
+            kyokara_diagnostics::Severity::Info => DiagnosticSeverity::INFORMATION,
+            kyokara_diagnostics::Severity::Hint => DiagnosticSeverity::HINT,
+        };
+        out.push(lsp_types::Diagnostic {
+            range: text_range_to_lsp_range(diag.span.range, source),
+            severity: Some(severity),
+            source: Some("kyokara".into()),
+            message: diag.message.clone(),
+            ..Default::default()
+        });
+    }
+
+    // 4. Type-checker diagnostics.
     for (data, span) in &analysis.type_check.raw_diagnostics {
         let diag = data
             .clone()

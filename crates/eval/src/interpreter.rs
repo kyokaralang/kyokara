@@ -138,19 +138,20 @@ impl Interpreter {
 
         // Check user-declared capabilities against the manifest (only when manifest exists
         // and the function actually declares capabilities).
-        if self.manifest.is_some() && !fn_item.with_caps.is_empty() {
+        if let Some(manifest) = &self.manifest
+            && !fn_item.with_caps.is_empty()
+        {
             let fn_name_str = fn_item.name.resolve(&self.interner).to_string();
-            let manifest = self.manifest.as_ref().unwrap();
             for cap_ref in &fn_item.with_caps {
-                if let kyokara_hir_def::type_ref::TypeRef::Path { path, .. } = cap_ref {
-                    if let Some(name) = path.last() {
-                        let cap_str = name.resolve(&self.interner);
-                        if !manifest.is_granted(cap_str) {
-                            return Err(RuntimeError::CapabilityDenied {
-                                capability: cap_str.to_string(),
-                                function: fn_name_str,
-                            });
-                        }
+                if let kyokara_hir_def::type_ref::TypeRef::Path { path, .. } = cap_ref
+                    && let Some(name) = path.last()
+                {
+                    let cap_str = name.resolve(&self.interner);
+                    if !manifest.is_granted(cap_str) {
+                        return Err(RuntimeError::CapabilityDenied {
+                            capability: cap_str.to_string(),
+                            function: fn_name_str,
+                        });
                     }
                 }
             }
@@ -449,19 +450,20 @@ impl Interpreter {
                     let fn_item = &self.item_tree.functions[fn_idx];
 
                     // Capability check.
-                    if self.manifest.is_some() && !fn_item.with_caps.is_empty() {
+                    if let Some(manifest) = &self.manifest
+                        && !fn_item.with_caps.is_empty()
+                    {
                         let fn_name_str = fn_item.name.resolve(&self.interner).to_string();
-                        let manifest = self.manifest.as_ref().unwrap();
                         for cap_ref in &fn_item.with_caps {
-                            if let kyokara_hir_def::type_ref::TypeRef::Path { path, .. } = cap_ref {
-                                if let Some(name) = path.last() {
-                                    let cap_str = name.resolve(&self.interner);
-                                    if !manifest.is_granted(cap_str) {
-                                        return Err(RuntimeError::CapabilityDenied {
-                                            capability: cap_str.to_string(),
-                                            function: fn_name_str,
-                                        });
-                                    }
+                            if let kyokara_hir_def::type_ref::TypeRef::Path { path, .. } = cap_ref
+                                && let Some(name) = path.last()
+                            {
+                                let cap_str = name.resolve(&self.interner);
+                                if !manifest.is_granted(cap_str) {
+                                    return Err(RuntimeError::CapabilityDenied {
+                                        capability: cap_str.to_string(),
+                                        function: fn_name_str,
+                                    });
                                 }
                             }
                         }
@@ -802,15 +804,14 @@ impl Interpreter {
     }
 
     fn check_intrinsic_cap(&self, intr: IntrinsicFn) -> Result<(), RuntimeError> {
-        if let Some(ref manifest) = self.manifest {
-            if let Some(cap) = intr.required_capability() {
-                if !manifest.is_granted(cap) {
-                    return Err(RuntimeError::CapabilityDenied {
-                        capability: cap.to_string(),
-                        function: format!("{intr:?}"),
-                    });
-                }
-            }
+        if let Some(ref manifest) = self.manifest
+            && let Some(cap) = intr.required_capability()
+            && !manifest.is_granted(cap)
+        {
+            return Err(RuntimeError::CapabilityDenied {
+                capability: cap.to_string(),
+                function: format!("{intr:?}"),
+            });
         }
         Ok(())
     }

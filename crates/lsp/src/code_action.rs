@@ -31,13 +31,13 @@ pub fn code_actions(
         match code {
             "E0009" => {
                 // MissingMatchArms — add missing match cases.
-                if let Some(action) = missing_match_cases_action(analysis, source, &diag, uri) {
+                if let Some(action) = missing_match_cases_action(analysis, source, diag, uri) {
                     actions.push(CodeActionOrCommand::CodeAction(action));
                 }
             }
             "E0011" => {
                 // EffectViolation — add missing capability.
-                if let Some(action) = missing_capability_action(analysis, source, &diag, uri) {
+                if let Some(action) = missing_capability_action(analysis, source, diag, uri) {
                     actions.push(CodeActionOrCommand::CodeAction(action));
                 }
             }

@@ -47,6 +47,8 @@ pub struct TypeCheckResult {
     pub diagnostics: Vec<Diagnostic>,
     /// Raw diagnostic data with spans for structured output.
     pub raw_diagnostics: Vec<(TyDiagnosticData, Span)>,
+    /// Diagnostics from body lowering (e.g. unresolved names, duplicates).
+    pub body_lowering_diagnostics: Vec<Diagnostic>,
     /// Per-function call edges: (caller name, list of callee names).
     pub fn_calls: Vec<(Name, Vec<Name>)>,
 }
@@ -66,6 +68,7 @@ pub fn check_module(
     let mut fn_bodies = FxHashMap::default();
     let mut all_diagnostics = Vec::new();
     let mut all_raw_diagnostics = Vec::new();
+    let mut body_lowering_diagnostics = Vec::new();
     let mut fn_calls = Vec::new();
 
     let fn_defs: Vec<FnDef> = root.descendants().filter_map(FnDef::cast).collect();
@@ -90,6 +93,7 @@ pub fn check_module(
             range: fn_def.syntax().text_range(),
         };
 
+        body_lowering_diagnostics.extend(body_result.diagnostics.iter().cloned());
         all_diagnostics.extend(body_result.diagnostics);
 
         let result = infer::infer_body(
@@ -114,6 +118,7 @@ pub fn check_module(
         fn_bodies,
         diagnostics: all_diagnostics,
         raw_diagnostics: all_raw_diagnostics,
+        body_lowering_diagnostics,
         fn_calls,
     }
 }

@@ -139,45 +139,45 @@ impl<'a> LoweringCtx<'a> {
         let callee_expr = self.body.exprs[callee].clone();
 
         // Simple path callee (common case).
-        if let Expr::Path(ref path) = callee_expr {
-            if path.is_single() {
-                let name = path.segments[0];
-                let arg_vals = self.lower_call_args(&args);
+        if let Expr::Path(ref path) = callee_expr
+            && path.is_single()
+        {
+            let name = path.segments[0];
+            let arg_vals = self.lower_call_args(&args);
 
-                // 1. Local variable (indirect call) — locals shadow everything.
-                if let Some(vid) = self.lookup_local(name) {
-                    return self
-                        .builder
-                        .push_call(CallTarget::Indirect(vid), arg_vals, ty);
-                }
+            // 1. Local variable (indirect call) — locals shadow everything.
+            if let Some(vid) = self.lookup_local(name) {
+                return self
+                    .builder
+                    .push_call(CallTarget::Indirect(vid), arg_vals, ty);
+            }
 
-                // 2. Constructor call → AdtConstruct.
-                if let Some(&(type_idx, _)) = self.module_scope.constructors.get(&name) {
-                    return self
-                        .builder
-                        .push_adt_construct(type_idx, name, arg_vals, ty);
-                }
+            // 2. Constructor call → AdtConstruct.
+            if let Some(&(type_idx, _)) = self.module_scope.constructors.get(&name) {
+                return self
+                    .builder
+                    .push_adt_construct(type_idx, name, arg_vals, ty);
+            }
 
-                // 3. Intrinsic (has entry in functions but no body).
-                if self.intrinsics.contains(&name) {
-                    let name_str = name.resolve(self.interner).to_string();
-                    return self
-                        .builder
-                        .push_call(CallTarget::Intrinsic(name_str), arg_vals, ty);
-                }
+            // 3. Intrinsic (has entry in functions but no body).
+            if self.intrinsics.contains(&name) {
+                let name_str = name.resolve(self.interner).to_string();
+                return self
+                    .builder
+                    .push_call(CallTarget::Intrinsic(name_str), arg_vals, ty);
+            }
 
-                // 4. Module-level function (direct call).
-                if self.module_scope.functions.contains_key(&name) {
-                    return self
-                        .builder
-                        .push_call(CallTarget::Direct(name), arg_vals, ty);
-                }
-
-                // Fallback: treat as direct call (might be imported).
+            // 4. Module-level function (direct call).
+            if self.module_scope.functions.contains_key(&name) {
                 return self
                     .builder
                     .push_call(CallTarget::Direct(name), arg_vals, ty);
             }
+
+            // Fallback: treat as direct call (might be imported).
+            return self
+                .builder
+                .push_call(CallTarget::Direct(name), arg_vals, ty);
         }
 
         // Complex callee expression.
@@ -582,15 +582,14 @@ impl<'a> LoweringCtx<'a> {
             .collect();
 
         // Named constructor → AdtConstruct.
-        if let Some(path) = &path {
-            if let Some(ctor_name) = path.last() {
-                if let Some(&(type_idx, _)) = self.module_scope.constructors.get(&ctor_name) {
-                    let vals: Vec<_> = field_vals.into_iter().map(|(_, v)| v).collect();
-                    return self
-                        .builder
-                        .push_adt_construct(type_idx, ctor_name, vals, ty);
-                }
-            }
+        if let Some(path) = &path
+            && let Some(ctor_name) = path.last()
+            && let Some(&(type_idx, _)) = self.module_scope.constructors.get(&ctor_name)
+        {
+            let vals: Vec<_> = field_vals.into_iter().map(|(_, v)| v).collect();
+            return self
+                .builder
+                .push_adt_construct(type_idx, ctor_name, vals, ty);
         }
 
         // Plain record literal.

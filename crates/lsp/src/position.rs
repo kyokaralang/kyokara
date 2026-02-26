@@ -142,61 +142,61 @@ pub fn symbol_at_offset(root: &SyntaxNode, offset: TextSize) -> SymbolAtPosition
     }
 
     // Usage sites: ident inside a Path node.
-    if parent_kind == SyntaxKind::Path {
-        if let Some(grandparent) = parent.parent() {
-            let gp_kind = grandparent.kind();
-            match gp_kind {
-                SyntaxKind::PathExpr | SyntaxKind::CallExpr => {
-                    return SymbolAtPosition::Function {
-                        name,
-                        is_definition: false,
-                    };
-                }
-                SyntaxKind::NameType => {
-                    // Check if it's inside a WithClause or PipeClause (capability).
-                    if let Some(ggp) = grandparent.parent() {
-                        if matches!(ggp.kind(), SyntaxKind::WithClause | SyntaxKind::PipeClause) {
-                            return SymbolAtPosition::Capability {
-                                name,
-                                is_definition: false,
-                            };
-                        }
-                    }
-                    return SymbolAtPosition::Type {
-                        name,
-                        is_definition: false,
-                    };
-                }
-                SyntaxKind::RecordExpr | SyntaxKind::RecordPat => {
-                    return SymbolAtPosition::Type {
-                        name,
-                        is_definition: false,
-                    };
-                }
-                SyntaxKind::ConstructorPat => {
-                    return SymbolAtPosition::Variant {
-                        name,
-                        is_definition: false,
-                    };
-                }
-                SyntaxKind::IdentPat => {
-                    // Could be a zero-arg variant in a match arm, or a local.
-                    if let Some(ggp) = grandparent.parent() {
-                        if ggp.kind() == SyntaxKind::LetBinding {
-                            return SymbolAtPosition::Local { name };
-                        }
-                    }
-                    // In a match arm, treat as variant.
-                    return SymbolAtPosition::Variant {
-                        name,
-                        is_definition: false,
-                    };
-                }
-                SyntaxKind::ImportDecl => {
-                    return SymbolAtPosition::Import { name };
-                }
-                _ => {}
+    if parent_kind == SyntaxKind::Path
+        && let Some(grandparent) = parent.parent()
+    {
+        let gp_kind = grandparent.kind();
+        match gp_kind {
+            SyntaxKind::PathExpr | SyntaxKind::CallExpr => {
+                return SymbolAtPosition::Function {
+                    name,
+                    is_definition: false,
+                };
             }
+            SyntaxKind::NameType => {
+                // Check if it's inside a WithClause or PipeClause (capability).
+                if let Some(ggp) = grandparent.parent()
+                    && matches!(ggp.kind(), SyntaxKind::WithClause | SyntaxKind::PipeClause)
+                {
+                    return SymbolAtPosition::Capability {
+                        name,
+                        is_definition: false,
+                    };
+                }
+                return SymbolAtPosition::Type {
+                    name,
+                    is_definition: false,
+                };
+            }
+            SyntaxKind::RecordExpr | SyntaxKind::RecordPat => {
+                return SymbolAtPosition::Type {
+                    name,
+                    is_definition: false,
+                };
+            }
+            SyntaxKind::ConstructorPat => {
+                return SymbolAtPosition::Variant {
+                    name,
+                    is_definition: false,
+                };
+            }
+            SyntaxKind::IdentPat => {
+                // Could be a zero-arg variant in a match arm, or a local.
+                if let Some(ggp) = grandparent.parent()
+                    && ggp.kind() == SyntaxKind::LetBinding
+                {
+                    return SymbolAtPosition::Local { name };
+                }
+                // In a match arm, treat as variant.
+                return SymbolAtPosition::Variant {
+                    name,
+                    is_definition: false,
+                };
+            }
+            SyntaxKind::ImportDecl => {
+                return SymbolAtPosition::Import { name };
+            }
+            _ => {}
         }
     }
 
