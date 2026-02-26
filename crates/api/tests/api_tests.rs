@@ -1559,3 +1559,23 @@ fn capitalized_unknown_pattern_produces_diagnostic() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn duplicate_bindings_in_constructor_pattern_produce_diagnostic() {
+    let src = "type Pair = | Pair(Int, Int)\nfn f(p: Pair) -> Int { match p { Pair(x, x) => x } }\nfn main() -> Int { f(Pair(1, 2)) }";
+    let output = check(src, "test.ky");
+    let dups: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("duplicate") && d.message.contains("binding"))
+        .collect();
+    assert!(
+        !dups.is_empty(),
+        "expected duplicate binding diagnostic, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
