@@ -20,3 +20,4 @@ serde_json.workspace = true
 smallvec.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true

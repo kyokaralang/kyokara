@@ -472,6 +472,18 @@ impl<'a> LoweringCtx<'a> {
                     }
                     self.pop_scope();
                 }
+                Pat::Record { .. } | Pat::Constructor { .. } => {
+                    self.push_scope();
+                    self.bind_pattern(arm.pat, scr);
+                    let body_val = self.lower_expr(arm.body);
+                    if !self.block_has_terminator() {
+                        self.builder.set_jump(BranchTarget {
+                            block: merge_blk,
+                            args: vec![body_val],
+                        });
+                    }
+                    self.pop_scope();
+                }
                 _ => {}
             }
         }
@@ -527,6 +539,20 @@ impl<'a> LoweringCtx<'a> {
             Some(expr) => self.lower_expr(expr),
             None => self.builder.push_const(Constant::Unit, Ty::Unit),
         };
+
+        // Emit ensures assertion before the return terminator.
+        if let (Some(ens_expr), Some(rn)) = (self.ensures_expr, self.result_name) {
+            // Temporarily clear ensures_expr to avoid re-entrant emission.
+            self.ensures_expr = None;
+            self.push_scope();
+            self.define_local(rn, ret_val);
+            let cond = self.lower_expr(ens_expr);
+            self.builder
+                .push_assert(cond, "ensures".to_string(), Ty::Unit);
+            self.pop_scope();
+            // Restore ensures_expr for subsequent return statements.
+            self.ensures_expr = Some(ens_expr);
+        }
 
         self.builder.set_return(ret_val);
 

@@ -60,6 +60,10 @@ pub(crate) struct LoweringCtx<'a> {
     pub(crate) intrinsics: FxHashSet<Name>,
     pub(crate) hole_counter: u32,
     pub(crate) labels: Labels,
+    /// Ensures expression to emit before every return point.
+    pub(crate) ensures_expr: Option<ExprIdx>,
+    /// Pre-interned "result" name for binding the return value in ensures.
+    pub(crate) result_name: Option<Name>,
 }
 
 impl<'a> LoweringCtx<'a> {
@@ -167,6 +171,14 @@ pub fn lower_function(
     // Resolve param types from the inference result.
     let param_types = resolve_param_types(fn_item, body, infer);
 
+    // Pre-intern "result" name if there's an ensures clause.
+    let (ensures_expr, result_name) = if body.ensures.is_some() {
+        let rn = Name::new(interner, "result");
+        (body.ensures, Some(rn))
+    } else {
+        (None, None)
+    };
+
     let mut ctx = LoweringCtx {
         builder: KirBuilder::new(),
         body,
@@ -178,6 +190,8 @@ pub fn lower_function(
         intrinsics,
         hole_counter: 0,
         labels,
+        ensures_expr,
+        result_name,
     };
 
     // Create entry block.
@@ -207,18 +221,19 @@ pub fn lower_function(
     // Lower root expression.
     let root_val = ctx.lower_expr(body.root);
 
-    // Lower ensures clause → Assert.
+    // Emit ensures + return for implicit return (not already terminated by `return`).
     let mut ensures_vids = Vec::new();
-    if let Some(ens_expr) = body.ensures {
-        let cond = ctx.lower_expr(ens_expr);
-        let vid = ctx
-            .builder
-            .push_assert(cond, "ensures".to_string(), Ty::Unit);
-        ensures_vids.push(vid);
-    }
-
-    // Emit return if block not already terminated.
     if !ctx.block_has_terminator() {
+        if let (Some(ens_expr), Some(rn)) = (ctx.ensures_expr, ctx.result_name) {
+            // Temporarily clear ensures_expr to avoid re-entrant emission.
+            ctx.ensures_expr = None;
+            ctx.define_local(rn, root_val);
+            let cond = ctx.lower_expr(ens_expr);
+            let vid = ctx
+                .builder
+                .push_assert(cond, "ensures".to_string(), Ty::Unit);
+            ensures_vids.push(vid);
+        }
         ctx.builder.set_return(root_val);
     }
 
