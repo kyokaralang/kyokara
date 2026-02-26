@@ -1151,3 +1151,23 @@ fn api_io_error_produces_error_status() {
         "IoError message should include the original error: {msg}"
     );
 }
+
+// ── Unresolved import diagnostics (#64) ──────────────────────────────
+
+#[test]
+fn check_project_reports_unresolved_import() {
+    let (_dir, main_path) = write_project(&[("main.ky", "import nope\nfn main() -> Int { 1 }\n")]);
+    let output = check_project(&main_path);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("nope")),
+        "expected a diagnostic about unresolved import `nope`, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
