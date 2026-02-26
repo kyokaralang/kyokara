@@ -547,8 +547,10 @@ impl<'a> LoweringCtx<'a> {
             self.push_scope();
             self.define_local(rn, ret_val);
             let cond = self.lower_expr(ens_expr);
-            self.builder
+            let vid = self
+                .builder
                 .push_assert(cond, "ensures".to_string(), Ty::Unit);
+            self.ensures_vids.push(vid);
             self.pop_scope();
             // Restore ensures_expr for subsequent return statements.
             self.ensures_expr = Some(ens_expr);

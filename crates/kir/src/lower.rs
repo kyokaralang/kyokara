@@ -64,6 +64,8 @@ pub(crate) struct LoweringCtx<'a> {
     pub(crate) ensures_expr: Option<ExprIdx>,
     /// Pre-interned "result" name for binding the return value in ensures.
     pub(crate) result_name: Option<Name>,
+    /// Collected ensures assertion ValueIds from all return points.
+    pub(crate) ensures_vids: Vec<ValueId>,
 }
 
 impl<'a> LoweringCtx<'a> {
@@ -192,6 +194,7 @@ pub fn lower_function(
         labels,
         ensures_expr,
         result_name,
+        ensures_vids: Vec::new(),
     };
 
     // Create entry block.
@@ -222,7 +225,6 @@ pub fn lower_function(
     let root_val = ctx.lower_expr(body.root);
 
     // Emit ensures + return for implicit return (not already terminated by `return`).
-    let mut ensures_vids = Vec::new();
     if !ctx.block_has_terminator() {
         if let (Some(ens_expr), Some(rn)) = (ctx.ensures_expr, ctx.result_name) {
             // Temporarily clear ensures_expr to avoid re-entrant emission.
@@ -232,7 +234,7 @@ pub fn lower_function(
             let vid = ctx
                 .builder
                 .push_assert(cond, "ensures".to_string(), Ty::Unit);
-            ensures_vids.push(vid);
+            ctx.ensures_vids.push(vid);
         }
         ctx.builder.set_return(root_val);
     }
@@ -258,7 +260,7 @@ pub fn lower_function(
         entry_block,
         KirContracts {
             requires: requires_vids,
-            ensures: ensures_vids,
+            ensures: ctx.ensures_vids,
         },
     )
 }

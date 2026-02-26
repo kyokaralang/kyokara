@@ -628,6 +628,64 @@ fn test_sequential_match_constructor_pattern() {
     assert!(out.contains("eq"), "output:\n{out}");
 }
 
+// ── Bug regression: ensures metadata from early return (#55) ────
+
+#[test]
+fn test_ensures_early_return_recorded_in_contracts() {
+    // A function with `ensures` + explicit `return` should have the
+    // postcondition assert recorded in KirContracts.ensures, not just
+    // emitted silently.
+    let result = check_file(
+        "fn f(x: Int) -> Int ensures result > 0 {
+           return x
+         }",
+    );
+    assert!(
+        result.type_check.raw_diagnostics.is_empty(),
+        "type errors: {:?}",
+        result.type_check.raw_diagnostics
+    );
+
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+
+    let func = module.functions.iter().next().unwrap().1;
+    assert!(
+        !func.contracts.ensures.is_empty(),
+        "KirContracts.ensures should contain the postcondition assert from return, but it's empty"
+    );
+}
+
+#[test]
+fn test_ensures_implicit_return_recorded_in_contracts() {
+    // Baseline: implicit return path should also record ensures in contracts.
+    let result = check_file("fn f(x: Int) -> Int ensures result > 0 { x }");
+    assert!(
+        result.type_check.raw_diagnostics.is_empty(),
+        "type errors: {:?}",
+        result.type_check.raw_diagnostics
+    );
+
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+
+    let func = module.functions.iter().next().unwrap().1;
+    assert!(
+        !func.contracts.ensures.is_empty(),
+        "KirContracts.ensures should contain the postcondition assert from implicit return"
+    );
+}
+
 #[test]
 fn test_constructor_in_if_branches() {
     let source = "

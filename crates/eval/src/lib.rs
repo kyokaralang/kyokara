@@ -164,6 +164,33 @@ pub fn run_project_with_manifest(
 ) -> Result<RunResult, RuntimeError> {
     let mut project = check_project(entry_file);
 
+    // Check for parse errors across all modules.
+    if !project.parse_errors.is_empty() {
+        let msgs: Vec<String> = project
+            .parse_errors
+            .iter()
+            .flat_map(|(_mod_path, errs)| errs.iter().map(|e| format!("{e:?}")))
+            .collect();
+        return Err(RuntimeError::TypeError(format!(
+            "parse errors: {}",
+            msgs.join("; ")
+        )));
+    }
+
+    // Check for lowering diagnostics (e.g. duplicate definitions).
+    let lowering_errors: Vec<&kyokara_diagnostics::Diagnostic> = project
+        .lowering_diagnostics
+        .iter()
+        .filter(|d| d.severity == kyokara_diagnostics::Severity::Error)
+        .collect();
+    if !lowering_errors.is_empty() {
+        let msgs: Vec<String> = lowering_errors.iter().map(|d| d.message.clone()).collect();
+        return Err(RuntimeError::TypeError(format!(
+            "lowering errors: {}",
+            msgs.join("; ")
+        )));
+    }
+
     // Check for type errors across all modules.
     let mut type_errors = Vec::new();
     for (_mod_path, tc) in &project.type_checks {
