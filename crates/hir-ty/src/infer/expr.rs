@@ -405,6 +405,17 @@ impl<'a> InferenceCtx<'a> {
             && path.is_single()
         {
             let name = path.segments[0];
+
+            // Check if the name resolves to a local (let binding, param, lambda)
+            // rather than a top-level function. If so, skip recording as a call
+            // to avoid misattributing local closure calls to same-named functions.
+            let scope = self.find_scope_for_expr(callee);
+            let resolver = Resolver::new(self.module_scope, &self.body.scopes, scope);
+            let is_local = matches!(resolver.resolve_name(name), Some(ResolvedName::Local(_)));
+            if is_local {
+                return;
+            }
+
             // Record callee for symbol graph call edges.
             self.calls.push(name);
             if let Some(&fn_idx) = self.module_scope.functions.get(&name) {

@@ -1892,6 +1892,25 @@ fn symbol_graph_constructor_not_in_function_calls() {
 }
 
 #[test]
+fn symbol_graph_local_closure_not_attributed_to_function() {
+    // A local closure `foo` shadowing top-level `fn foo()` should not
+    // appear as a call to fn::foo in the symbol graph.
+    let src = "fn foo() -> Int { 1 }\nfn main() -> Int {\n  let foo = fn() => 2\n  foo()\n}";
+    let output = check(src, "test.ky");
+    let main_fn = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "main")
+        .expect("should have main function");
+    assert!(
+        !main_fn.calls.iter().any(|c| c.contains("foo")),
+        "local closure call should not appear as fn::foo, got: {:?}",
+        main_fn.calls
+    );
+}
+
+#[test]
 fn symbol_graph_not_partial_on_clean_file() {
     let output = check("fn main() -> Int { 1 }", "test.ky");
     assert!(
