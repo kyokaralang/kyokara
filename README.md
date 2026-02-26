@@ -182,7 +182,7 @@ crates/
 |---------|-----------|--------|
 | **v0.0** | Parser ✓, name resolution ✓, CST→HIR lowering ✓, type checker ✓, effect checking ✓, typed holes ✓, structured diagnostics ✓, hole specs ✓, symbol graph ✓, patch suggestions ✓ | **Complete** |
 | **v0.1** | Tree-walking interpreter ✓, intrinsics ✓, builtin Option/Result types ✓, canonical formatter ✓, stable symbol IDs ✓, runtime contracts ✓, core stdlib (List, Map, String, Int/Float) ✓ | **Complete** |
-| **v0.2** | Module system (convention-based layout, `pub` visibility, flat imports) ✓, refactor engine (rename, add missing match cases, add missing capability) ✓, refactor transactions (atomic verify-before-apply) ✓, LSP server, capability enforcement | In progress |
+| **v0.2** | Module system (convention-based layout, `pub` visibility, flat imports) ✓, refactor engine (rename, add missing match cases, add missing capability) ✓, refactor transactions (atomic verify-before-apply) ✓, capability enforcement (type-level E0011 + runtime manifest `--caps`) ✓, LSP server | In progress |
 | **v0.3** | Property testing, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay | Planned |
 
 ## FAQ

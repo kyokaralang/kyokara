@@ -15,5 +15,7 @@ kyokara-hir.workspace = true
 la-arena.workspace = true
 thiserror.workspace = true
 rustc-hash.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]

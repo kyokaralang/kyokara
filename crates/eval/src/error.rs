@@ -33,4 +33,10 @@ pub enum RuntimeError {
 
     #[error("invariant violated: {0}")]
     InvariantViolated(String),
+
+    #[error("capability denied: {capability} (required by `{function}`)")]
+    CapabilityDenied {
+        capability: String,
+        function: String,
+    },
 }

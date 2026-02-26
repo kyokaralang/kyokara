@@ -36,6 +36,9 @@ enum Command {
         /// Force multi-file project mode (auto-detected for main.ky).
         #[arg(long)]
         project: bool,
+        /// Path to capability manifest (caps.json). Deny-by-default when set.
+        #[arg(long)]
+        caps: Option<String>,
     },
     /// Format a Kyokara source file.
     Fmt {
@@ -132,13 +135,34 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        Command::Run { file, project } => {
+        Command::Run {
+            file,
+            project,
+            caps,
+        } => {
             let path = std::path::Path::new(&file);
             let is_multi_file = should_use_project_mode(path, project);
 
+            // Load capability manifest if --caps is provided.
+            let manifest = caps.map(|caps_path| {
+                let json = match std::fs::read_to_string(&caps_path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("error: cannot read manifest `{caps_path}`: {e}");
+                        std::process::exit(1);
+                    }
+                };
+                match kyokara_eval::manifest::CapabilityManifest::from_json(&json) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        eprintln!("error: invalid manifest `{caps_path}`: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            });
+
             if is_multi_file {
-                // Multi-file project: use run_project.
-                match kyokara_eval::run_project(path) {
+                match kyokara_eval::run_project_with_manifest(path, manifest) {
                     Ok(result) => {
                         if !matches!(result.value, kyokara_eval::value::Value::Unit) {
                             println!("{}", result.value.display(&result.interner));
@@ -150,7 +174,6 @@ fn main() {
                     }
                 }
             } else {
-                // Single file: use existing run.
                 let source = match std::fs::read_to_string(&file) {
                     Ok(s) => s,
                     Err(e) => {
@@ -159,7 +182,7 @@ fn main() {
                     }
                 };
 
-                match kyokara_eval::run(&source) {
+                match kyokara_eval::run_with_manifest(&source, manifest) {
                     Ok(result) => {
                         if !matches!(result.value, kyokara_eval::value::Value::Unit) {
                             println!("{}", result.value.display(&result.interner));

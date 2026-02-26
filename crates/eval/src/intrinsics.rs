@@ -64,6 +64,17 @@ pub enum IntrinsicFn {
 }
 
 impl IntrinsicFn {
+    /// Returns the capability required to call this intrinsic, if any.
+    ///
+    /// Only I/O intrinsics (print, println) require the "IO" capability.
+    /// All other intrinsics are pure and require no capability.
+    pub fn required_capability(self) -> Option<&'static str> {
+        match self {
+            IntrinsicFn::Print | IntrinsicFn::Println => Some("IO"),
+            _ => None,
+        }
+    }
+
     /// Returns true if this intrinsic needs access to the interpreter
     /// (e.g. for calling closures or constructing Option values).
     pub fn needs_interpreter(self) -> bool {
