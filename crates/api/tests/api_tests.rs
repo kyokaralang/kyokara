@@ -1636,3 +1636,28 @@ fn let_constructor_pattern_bindings_in_scope() {
         unresolved.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn project_import_collision_produces_diagnostic() {
+    // Two modules export `pub fn foo()` — importing both should produce a collision diagnostic.
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "import a\nimport b\nfn main() -> Int { foo() }"),
+        ("a.ky", "pub fn foo() -> Int { 1 }"),
+        ("b.ky", "pub fn foo() -> Int { 2 }"),
+    ]);
+    let output = check_project(&main_path);
+    let collisions: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("foo") && d.message.contains("import"))
+        .collect();
+    assert!(
+        !collisions.is_empty(),
+        "expected import collision diagnostic for `foo`, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}

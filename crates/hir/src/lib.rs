@@ -251,18 +251,37 @@ fn resolve_project_imports(
             continue;
         };
 
+        let import_file_id = importing_info.file_id;
         for item in pub_data {
             match item {
                 PubData::Fn(fn_item) => {
                     let name = fn_item.name;
-                    if !importing_info.scope.functions.contains_key(&name) {
+                    if importing_info.scope.functions.contains_key(&name) {
+                        let name_str = name.resolve(interner);
+                        diagnostics.push(kyokara_diagnostics::Diagnostic::error(
+                            format!("conflicting import: `{name_str}` is already defined"),
+                            kyokara_span::Span {
+                                file: import_file_id,
+                                range: kyokara_span::TextRange::default(),
+                            },
+                        ));
+                    } else {
                         let idx = importing_info.item_tree.functions.alloc(fn_item);
                         importing_info.scope.functions.insert(name, idx);
                     }
                 }
                 PubData::Type(type_item) => {
                     let name = type_item.name;
-                    if !importing_info.scope.types.contains_key(&name) {
+                    if importing_info.scope.types.contains_key(&name) {
+                        let name_str = name.resolve(interner);
+                        diagnostics.push(kyokara_diagnostics::Diagnostic::error(
+                            format!("conflicting import: `{name_str}` is already defined"),
+                            kyokara_span::Span {
+                                file: import_file_id,
+                                range: kyokara_span::TextRange::default(),
+                            },
+                        ));
+                    } else {
                         let variants_info: Vec<(Name, usize)> =
                             if let TypeDefKind::Adt { ref variants } = type_item.kind {
                                 variants
@@ -287,7 +306,16 @@ fn resolve_project_imports(
                 }
                 PubData::Cap(cap_item) => {
                     let name = cap_item.name;
-                    if !importing_info.scope.caps.contains_key(&name) {
+                    if importing_info.scope.caps.contains_key(&name) {
+                        let name_str = name.resolve(interner);
+                        diagnostics.push(kyokara_diagnostics::Diagnostic::error(
+                            format!("conflicting import: `{name_str}` is already defined"),
+                            kyokara_span::Span {
+                                file: import_file_id,
+                                range: kyokara_span::TextRange::default(),
+                            },
+                        ));
+                    } else {
                         let idx = importing_info.item_tree.caps.alloc(cap_item);
                         importing_info.scope.caps.insert(name, idx);
                     }
