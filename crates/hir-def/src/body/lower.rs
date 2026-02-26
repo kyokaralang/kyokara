@@ -172,6 +172,19 @@ impl BodyLowerCtx<'_> {
         }
     }
 
+    fn validate_numeric_underscores(&mut self, text: &str, range: TextRange) {
+        if text.contains('_') && (text.ends_with('_') || text.contains("__")) {
+            let span = Span {
+                file: self.file_id,
+                range,
+            };
+            self.diagnostics.push(Diagnostic::error(
+                format!("invalid underscore placement in numeric literal `{text}`"),
+                span,
+            ));
+        }
+    }
+
     // ── Expression lowering ────────────────────────────────────────
 
     fn lower_expr(&mut self, expr: &ExprCst) -> ExprIdx {
@@ -213,10 +226,12 @@ impl BodyLowerCtx<'_> {
             .token()
             .map(|tok| match tok.kind() {
                 SyntaxKind::IntLiteral => {
+                    self.validate_numeric_underscores(tok.text(), tok.text_range());
                     let text = tok.text().replace('_', "");
                     Literal::Int(text.parse().unwrap_or(0))
                 }
                 SyntaxKind::FloatLiteral => {
+                    self.validate_numeric_underscores(tok.text(), tok.text_range());
                     let text = tok.text().replace('_', "");
                     Literal::Float(text.parse().unwrap_or(0.0))
                 }
@@ -724,10 +739,12 @@ impl BodyLowerCtx<'_> {
                     .token()
                     .map(|tok| match tok.kind() {
                         SyntaxKind::IntLiteral => {
+                            self.validate_numeric_underscores(tok.text(), tok.text_range());
                             let text = tok.text().replace('_', "");
                             Literal::Int(text.parse().unwrap_or(0))
                         }
                         SyntaxKind::FloatLiteral => {
+                            self.validate_numeric_underscores(tok.text(), tok.text_range());
                             let text = tok.text().replace('_', "");
                             Literal::Float(text.parse().unwrap_or(0.0))
                         }
