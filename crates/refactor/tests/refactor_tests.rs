@@ -19,6 +19,7 @@ fn rename_fn_definition_and_calls() {
         old_name: "add".into(),
         new_name: "sum".into(),
         kind: SymbolKind::Function,
+        target_file: None,
     };
     let refactor = kyokara_refactor::refactor(&result, file_id(), action).unwrap();
 
@@ -49,6 +50,7 @@ fn rename_type() {
         old_name: "Color".into(),
         new_name: "Hue".into(),
         kind: SymbolKind::Type,
+        target_file: None,
     };
     let refactor = kyokara_refactor::refactor(&result, file_id(), action).unwrap();
     let new_source = apply_edits(src, &refactor.edits);
@@ -84,6 +86,7 @@ fn name(c: Color) -> String {
         old_name: "Red".into(),
         new_name: "Crimson".into(),
         kind: SymbolKind::Variant,
+        target_file: None,
     };
     let refactor = kyokara_refactor::refactor(&result, file_id(), action).unwrap();
     let new_source = apply_edits(src, &refactor.edits);
@@ -117,6 +120,7 @@ fn log(msg: String) -> Unit with Console {
         old_name: "Console".into(),
         new_name: "Output".into(),
         kind: SymbolKind::Capability,
+        target_file: None,
     };
     let refactor = kyokara_refactor::refactor(&result, file_id(), action).unwrap();
     let new_source = apply_edits(src, &refactor.edits);
@@ -149,6 +153,7 @@ fn main() -> Int {
         old_name: "add".into(),
         new_name: "sum".into(),
         kind: SymbolKind::Function,
+        target_file: None,
     };
     let refactor = kyokara_refactor::refactor(&result, file_id(), action).unwrap();
     let new_source = apply_edits(src, &refactor.edits);
@@ -175,6 +180,7 @@ fn rename_conflict_error() {
         old_name: "add".into(),
         new_name: "sum".into(),
         kind: SymbolKind::Function,
+        target_file: None,
     };
     let err = kyokara_refactor::refactor(&result, file_id(), action).unwrap_err();
     assert!(
@@ -191,6 +197,7 @@ fn rename_keyword_error() {
         old_name: "add".into(),
         new_name: "fn".into(),
         kind: SymbolKind::Function,
+        target_file: None,
     };
     let err = kyokara_refactor::refactor(&result, file_id(), action).unwrap_err();
     assert!(
@@ -207,6 +214,7 @@ fn rename_symbol_not_found() {
         old_name: "nonexistent".into(),
         new_name: "something".into(),
         kind: SymbolKind::Function,
+        target_file: None,
     };
     let err = kyokara_refactor::refactor(&result, file_id(), action).unwrap_err();
     assert!(
@@ -318,6 +326,7 @@ fn rename_multifile() {
         old_name: "add".into(),
         new_name: "sum".into(),
         kind: SymbolKind::Function,
+        target_file: None,
     };
     let refactor = kyokara_refactor::refactor_project(&result, action).unwrap();
 
@@ -370,6 +379,190 @@ fn rename_multifile() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// ── Project rename scoping (issue #63) ──────────────────────────────
+
+#[test]
+fn project_rename_does_not_over_rename_unrelated_same_name_symbol() {
+    // Two modules each define their own `fn add()` with no import relationship.
+    // Renaming `add` → `sum` with target_file = main.ky should only rename main.ky's `add`.
+    let dir = std::env::temp_dir().join("kyokara_refactor_over_rename");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let main_path = dir.join("main.ky");
+    let math_path = dir.join("math.ky");
+
+    std::fs::write(
+        &main_path,
+        "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(1, 2) }\n",
+    )
+    .unwrap();
+    std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x - y }\n").unwrap();
+
+    let result = kyokara_hir::check_project(&main_path);
+    let action = RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: SymbolKind::Function,
+        target_file: Some(main_path.display().to_string()),
+    };
+    let refactor = kyokara_refactor::refactor_project(&result, action).unwrap();
+
+    // main.ky should have the rename applied.
+    let main_src = std::fs::read_to_string(&main_path).unwrap();
+    let main_edits: Vec<_> = refactor
+        .edits
+        .iter()
+        .filter(|e| {
+            result
+                .file_map
+                .path(e.file_id)
+                .is_some_and(|p| p == &main_path)
+        })
+        .cloned()
+        .collect();
+    let new_main = apply_edits(&main_src, &main_edits);
+    assert!(
+        new_main.contains("fn sum("),
+        "main.ky should have renamed definition: {new_main}"
+    );
+    assert!(
+        new_main.contains("sum(1, 2)"),
+        "main.ky should have renamed call: {new_main}"
+    );
+
+    // math.ky should NOT have any edits.
+    let math_edits: Vec<_> = refactor
+        .edits
+        .iter()
+        .filter(|e| {
+            result
+                .file_map
+                .path(e.file_id)
+                .is_some_and(|p| p == &math_path)
+        })
+        .cloned()
+        .collect();
+    assert!(
+        math_edits.is_empty(),
+        "math.ky should have NO edits (unrelated `add`), got {} edits",
+        math_edits.len()
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn project_rename_ambiguous_without_target_file() {
+    // Two modules define `fn add()`. Rename without target_file should error.
+    let dir = std::env::temp_dir().join("kyokara_refactor_ambiguous");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let main_path = dir.join("main.ky");
+    let math_path = dir.join("math.ky");
+
+    std::fs::write(
+        &main_path,
+        "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(1, 2) }\n",
+    )
+    .unwrap();
+    std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x - y }\n").unwrap();
+
+    let result = kyokara_hir::check_project(&main_path);
+    let action = RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: SymbolKind::Function,
+        target_file: None,
+    };
+    let err = kyokara_refactor::refactor_project(&result, action).unwrap_err();
+    assert!(
+        matches!(err, RefactorError::AmbiguousRename { .. }),
+        "expected AmbiguousRename error, got: {err:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn project_rename_with_import_renames_both_modules() {
+    // math.ky defines `pub fn add()`, main.ky imports and uses it.
+    // Renaming with target_file = math.ky should rename in both files.
+    let dir = std::env::temp_dir().join("kyokara_refactor_import_rename");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let main_path = dir.join("main.ky");
+    let math_path = dir.join("math.ky");
+
+    std::fs::write(
+        &main_path,
+        "import math\nfn main() -> Int {\n    let x = add(10, 20)\n    x\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &math_path,
+        "pub fn add(x: Int, y: Int) -> Int {\n    x + y\n}\n",
+    )
+    .unwrap();
+
+    let result = kyokara_hir::check_project(&main_path);
+    let action = RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: SymbolKind::Function,
+        target_file: Some(math_path.display().to_string()),
+    };
+    let refactor = kyokara_refactor::refactor_project(&result, action).unwrap();
+
+    // Should have edits in both files.
+    let files: std::collections::HashSet<_> = refactor.edits.iter().map(|e| e.file_id).collect();
+    assert!(
+        files.len() >= 2,
+        "expected edits in at least 2 files, got {:?}",
+        files
+    );
+
+    let math_src = std::fs::read_to_string(&math_path).unwrap();
+    let math_edits: Vec<_> = refactor
+        .edits
+        .iter()
+        .filter(|e| {
+            result
+                .file_map
+                .path(e.file_id)
+                .is_some_and(|p| p == &math_path)
+        })
+        .cloned()
+        .collect();
+    let new_math = apply_edits(&math_src, &math_edits);
+    assert!(
+        new_math.contains("fn sum("),
+        "math.ky should have sum: {new_math}"
+    );
+
+    let main_src = std::fs::read_to_string(&main_path).unwrap();
+    let main_edits: Vec<_> = refactor
+        .edits
+        .iter()
+        .filter(|e| {
+            result
+                .file_map
+                .path(e.file_id)
+                .is_some_and(|p| p == &main_path)
+        })
+        .cloned()
+        .collect();
+    let new_main = apply_edits(&main_src, &main_edits);
+    assert!(
+        new_main.contains("sum(10, 20)"),
+        "main.ky should have sum call: {new_main}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ── Verification ────────────────────────────────────────────────────
 
 #[test]
@@ -380,6 +573,7 @@ fn verify_rename_passes() {
         old_name: "add".into(),
         new_name: "sum".into(),
         kind: SymbolKind::Function,
+        target_file: None,
     };
     let refactor = kyokara_refactor::refactor(&result, file_id(), action).unwrap();
     assert!(
@@ -398,6 +592,7 @@ fn transact_rename_verified() {
         old_name: "add".into(),
         new_name: "sum".into(),
         kind: SymbolKind::Function,
+        target_file: None,
     };
     let tx = kyokara_refactor::transaction::transact(src, &result, file_id(), action).unwrap();
 
@@ -437,6 +632,7 @@ fn transact_rename_multifile_verified() {
         old_name: "add".into(),
         new_name: "sum".into(),
         kind: SymbolKind::Function,
+        target_file: None,
     };
     let tx = kyokara_refactor::transaction::transact_project(&main_path, &result, action).unwrap();
 
@@ -537,6 +733,7 @@ fn transact_skipped_when_forced() {
         old_name: "add".into(),
         new_name: "sum".into(),
         kind: SymbolKind::Function,
+        target_file: None,
     };
     let tx =
         kyokara_refactor::transaction::transact_force(src, &result, file_id(), action).unwrap();
@@ -601,6 +798,7 @@ fn transact_project_with_invalid_path_returns_io_error() {
         old_name: "add".into(),
         new_name: "sum".into(),
         kind: SymbolKind::Function,
+        target_file: None,
     };
 
     // This should succeed (valid project, valid rename).
@@ -633,6 +831,7 @@ fn transact_project_success_returns_verified() {
         old_name: "add".into(),
         new_name: "sum".into(),
         kind: SymbolKind::Function,
+        target_file: None,
     };
 
     let tx = kyokara_refactor::transaction::transact_project(&main_path, &result, action).unwrap();

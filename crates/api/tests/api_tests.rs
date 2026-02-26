@@ -806,6 +806,7 @@ fn refactor_verified_has_empty_verification_diagnostics() {
         old_name: "foo".into(),
         new_name: "bar".into(),
         kind: kyokara_refactor::SymbolKind::Function,
+        target_file: None,
     };
     let output = refactor(src, "test.ky", action, false);
     assert_eq!(output.status, "typechecked");
@@ -823,6 +824,7 @@ fn refactor_skipped_has_empty_verification_diagnostics() {
         old_name: "foo".into(),
         new_name: "bar".into(),
         kind: kyokara_refactor::SymbolKind::Function,
+        target_file: None,
     };
     let output = refactor(src, "test.ky", action, true);
     assert_eq!(output.status, "skipped");
@@ -840,6 +842,7 @@ fn refactor_error_has_empty_verification_diagnostics() {
         old_name: "nonexistent".into(),
         new_name: "bar".into(),
         kind: kyokara_refactor::SymbolKind::Function,
+        target_file: None,
     };
     let output = refactor(src, "test.ky", action, false);
     assert_eq!(output.status, "error");
@@ -858,6 +861,7 @@ fn refactor_json_has_verification_diagnostics_field() {
         old_name: "foo".into(),
         new_name: "bar".into(),
         kind: kyokara_refactor::SymbolKind::Function,
+        target_file: None,
     };
     let output = refactor(src, "test.ky", action, false);
     let json = serde_json::to_string_pretty(&output).expect("serialization failed");
@@ -971,6 +975,7 @@ fn refactor_project_verified_json_structure() {
         old_name: "add".into(),
         new_name: "sum".into(),
         kind: kyokara_refactor::SymbolKind::Function,
+        target_file: None,
     };
     let output = refactor_project(&main_path, action, false);
     assert_eq!(output.status, "typechecked");
@@ -1116,6 +1121,7 @@ fn api_refactor_project_io_error_surfaces_in_dto() {
         old_name: "add".into(),
         new_name: "sum".into(),
         kind: kyokara_refactor::SymbolKind::Function,
+        target_file: None,
     };
     let output = refactor_project(&main_path, action, false);
     // Should be verified, not an error (filesystem ops should succeed).

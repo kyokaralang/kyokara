@@ -238,6 +238,7 @@ fn main() {
                         old_name: sym,
                         new_name: new,
                         kind: sk,
+                        target_file: None,
                     }
                 }
                 "add-missing-match-cases" => {

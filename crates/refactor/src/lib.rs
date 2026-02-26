@@ -42,6 +42,9 @@ pub enum RefactorAction {
         old_name: String,
         new_name: String,
         kind: SymbolKind,
+        /// In project mode, the file path containing the target symbol's
+        /// definition. Required when multiple modules define the same name.
+        target_file: Option<String>,
     },
     AddMissingMatchCases {
         offset: u32,
@@ -83,6 +86,11 @@ pub enum RefactorError {
     NoDiagnosticAtOffset {
         offset: u32,
     },
+    AmbiguousRename {
+        name: String,
+        kind: SymbolKind,
+        files: Vec<String>,
+    },
     IoError {
         message: String,
     },
@@ -106,6 +114,13 @@ impl std::fmt::Display for RefactorError {
             RefactorError::NoDiagnosticAtOffset { offset } => {
                 write!(f, "no applicable diagnostic at offset {offset}")
             }
+            RefactorError::AmbiguousRename { name, kind, files } => {
+                write!(
+                    f,
+                    "{kind:?} `{name}` is defined in multiple modules ({}); specify target_file to disambiguate",
+                    files.join(", ")
+                )
+            }
             RefactorError::IoError { message } => {
                 write!(f, "I/O error: {message}")
             }
@@ -126,6 +141,7 @@ pub fn refactor(
             old_name,
             new_name,
             kind,
+            ..
         } => rename::rename_symbol(result, file_id, &old_name, &new_name, kind),
         RefactorAction::AddMissingMatchCases { offset, .. } => {
             quickfix::add_missing_match_cases(result, file_id, offset)
@@ -146,7 +162,14 @@ pub fn refactor_project(
             old_name,
             new_name,
             kind,
-        } => rename::rename_symbol_project(result, &old_name, &new_name, kind),
+            target_file,
+        } => rename::rename_symbol_project(
+            result,
+            &old_name,
+            &new_name,
+            kind,
+            target_file.as_deref(),
+        ),
         RefactorAction::AddMissingMatchCases {
             offset,
             target_file,
