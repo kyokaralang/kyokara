@@ -3,6 +3,7 @@
 use kyokara_hir_def::expr::Literal;
 use kyokara_hir_def::pat::Pat;
 
+use crate::diagnostics::TyDiagnosticData;
 use crate::resolve::instantiate_constructor;
 use crate::ty::Ty;
 
@@ -54,6 +55,10 @@ impl<'a> InferenceCtx<'a> {
                     self.unify_or_err(expected, &adt_ty);
 
                     if args.len() != field_tys.len() {
+                        self.push_diag(TyDiagnosticData::ArgCountMismatch {
+                            expected: field_tys.len(),
+                            actual: args.len(),
+                        });
                         for sub in &args {
                             self.infer_pat(*sub, &Ty::Error);
                         }
