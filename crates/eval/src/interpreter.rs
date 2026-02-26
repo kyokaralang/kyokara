@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use kyokara_hir_def::body::Body;
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, MatchArm, Stmt, UnaryOp};
-use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree, TypeDefKind, TypeItemIdx};
+use kyokara_hir_def::item_tree::{FnItemIdx, FnParam, ItemTree, TypeDefKind, TypeItemIdx};
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::resolver::ModuleScope;
@@ -13,7 +13,7 @@ use kyokara_stdx::FxHashMap;
 
 use crate::env::Env;
 use crate::error::RuntimeError;
-use crate::intrinsics::{self, IntrinsicFn};
+use crate::intrinsics::{self, Args, IntrinsicFn};
 use crate::manifest::CapabilityManifest;
 use crate::value::{FnValue, Value};
 
@@ -32,6 +32,8 @@ pub struct Interpreter {
     option_none: Option<(TypeItemIdx, usize)>,
     /// Optional capability manifest for deny-by-default enforcement.
     manifest: Option<CapabilityManifest>,
+    /// Shared environment used across all function calls to avoid per-call allocation.
+    env: Env,
 }
 
 /// Used to implement early return from functions.
@@ -56,6 +58,17 @@ impl ControlFlow {
 macro_rules! eval_propagate {
     ($self:expr, $env:expr, $body:expr, $idx:expr) => {{
         let cf = $self.eval_expr($env, $body, $idx)?;
+        match cf {
+            cf @ ControlFlow::Return(_) => return Ok(cf),
+            ControlFlow::Value(v) => v,
+        }
+    }};
+}
+
+/// Like `eval_propagate` but for the shared-env path (`eval_expr_shared`).
+macro_rules! eval_propagate_shared {
+    ($self:expr, $body:expr, $idx:expr) => {{
+        let cf = $self.eval_expr_shared($body, $idx)?;
         match cf {
             cf @ ControlFlow::Return(_) => return Ok(cf),
             ControlFlow::Value(v) => v,
@@ -89,6 +102,7 @@ impl Interpreter {
             option_some,
             option_none,
             manifest,
+            env: Env::new(),
         }
     }
 
@@ -107,11 +121,11 @@ impl Interpreter {
             .copied()
             .ok_or(RuntimeError::NoMainFunction)?;
 
-        self.call_fn(main_idx, vec![])
+        self.call_fn(main_idx, Args::new())
     }
 
     /// Call a user-defined function by index.
-    fn call_fn(&mut self, fn_idx: FnItemIdx, args: Vec<Value>) -> Result<Value, RuntimeError> {
+    fn call_fn(&mut self, fn_idx: FnItemIdx, args: Args) -> Result<Value, RuntimeError> {
         let body = self
             .fn_bodies
             .get(&fn_idx)
@@ -120,13 +134,13 @@ impl Interpreter {
         // SAFETY: we hold &mut self but only mutate interner/env/old_env, not fn_bodies.
         let body = unsafe { &*body };
 
-        // Extract param names and function name before borrowing self mutably.
         let fn_item = &self.item_tree.functions[fn_idx];
-        let fn_name_str = fn_item.name.resolve(&self.interner).to_string();
-        let param_names: Vec<Name> = fn_item.params.iter().map(|p| p.name).collect();
 
-        // Check user-declared capabilities against the manifest.
-        if let Some(ref manifest) = self.manifest {
+        // Check user-declared capabilities against the manifest (only when manifest exists
+        // and the function actually declares capabilities).
+        if self.manifest.is_some() && !fn_item.with_caps.is_empty() {
+            let fn_name_str = fn_item.name.resolve(&self.interner).to_string();
+            let manifest = self.manifest.as_ref().unwrap();
             for cap_ref in &fn_item.with_caps {
                 if let kyokara_hir_def::type_ref::TypeRef::Path { path, .. } = cap_ref {
                     if let Some(name) = path.last() {
@@ -142,38 +156,60 @@ impl Interpreter {
             }
         }
 
-        let mut env = Env::new();
+        // Use the shared environment with a new scope instead of allocating a fresh Env.
+        self.env.push_scope();
 
-        // Bind parameters.
-        for (i, name) in param_names.iter().enumerate() {
+        // Bind parameters directly from the item tree (no intermediate Vec allocation).
+        let params = &fn_item.params;
+        for (i, param) in params.iter().enumerate() {
             if let Some(val) = args.get(i) {
-                env.bind(*name, val.clone());
+                self.env.bind(param.name, val.clone());
             }
         }
 
+        // Fast path: skip contract checks when no contracts are present.
+        let has_requires = body.requires.is_some();
+        let has_ensures = body.ensures.is_some();
+        let has_invariant = body.invariant.is_some();
+
+        if !has_requires && !has_ensures && !has_invariant {
+            // Hot path: no contracts — just evaluate the body.
+            let result = self.eval_expr_shared(body, body.root);
+            self.env.pop_scope();
+            let return_val = match result? {
+                ControlFlow::Value(v) | ControlFlow::Return(v) => v,
+            };
+            return Ok(return_val);
+        }
+
+        // Slow path: full contract checking.
+        let fn_name_str = fn_item.name.resolve(&self.interner).to_string();
+
         // Check precondition.
         if let Some(req_idx) = body.requires {
-            let val = self.eval_expr(&mut env, body, req_idx)?.into_value();
+            let val = self.eval_expr_shared(body, req_idx)?.into_value();
             if !matches!(val, Value::Bool(true)) {
+                self.env.pop_scope();
                 return Err(RuntimeError::PreconditionFailed(fn_name_str));
             }
         }
 
         // Snapshot env for old() before evaluating the body.
         let prev_old_env = self.old_env.take();
-        if body.ensures.is_some() {
-            self.old_env = Some(env.clone());
+        if has_ensures {
+            self.old_env = Some(self.env.clone());
         }
 
         // Evaluate the function body.
-        let return_val = match self.eval_expr(&mut env, body, body.root)? {
+        let return_val = match self.eval_expr_shared(body, body.root)? {
             ControlFlow::Value(v) | ControlFlow::Return(v) => v,
         };
 
         // Check invariant.
         if let Some(inv_idx) = body.invariant {
-            let val = self.eval_expr(&mut env, body, inv_idx)?.into_value();
+            let val = self.eval_expr_shared(body, inv_idx)?.into_value();
             if !matches!(val, Value::Bool(true)) {
+                self.env.pop_scope();
                 self.old_env = prev_old_env;
                 return Err(RuntimeError::InvariantViolated(fn_name_str));
             }
@@ -182,13 +218,15 @@ impl Interpreter {
         // Check postcondition.
         if let Some(ens_idx) = body.ensures {
             let result_name = Name::new(&mut self.interner, "result");
-            env.bind(result_name, return_val.clone());
-            let val = self.eval_expr(&mut env, body, ens_idx)?.into_value();
+            self.env.bind(result_name, return_val.clone());
+            let val = self.eval_expr_shared(body, ens_idx)?.into_value();
+            self.env.pop_scope();
             self.old_env = prev_old_env;
             if !matches!(val, Value::Bool(true)) {
                 return Err(RuntimeError::PostconditionFailed(fn_name_str));
             }
         } else {
+            self.env.pop_scope();
             self.old_env = prev_old_env;
         }
 
@@ -239,7 +277,7 @@ impl Interpreter {
                 let callee_idx = *callee;
                 let args = args.clone();
                 let callee_val = eval_propagate!(self, env, body, callee_idx);
-                let mut arg_vals = Vec::with_capacity(args.len());
+                let mut arg_vals = Args::with_capacity(args.len());
                 for arg in &args {
                     match arg {
                         CallArg::Positional(idx) => {
@@ -320,7 +358,7 @@ impl Interpreter {
             } => {
                 let param_pats: Vec<_> = params.iter().map(|(pat, _)| *pat).collect();
                 let lambda_body_idx = *lambda_body;
-                Ok(ControlFlow::Value(Value::Fn(FnValue::Lambda {
+                Ok(ControlFlow::Value(Value::Fn(Box::new(FnValue::Lambda {
                     params: param_pats,
                     body_expr: lambda_body_idx,
                     body: Rc::new(Body {
@@ -336,7 +374,7 @@ impl Interpreter {
                         expr_source_map: Default::default(),
                     }),
                     env: env.clone(),
-                })))
+                }))))
             }
 
             Expr::Old(inner) => {
@@ -353,6 +391,238 @@ impl Interpreter {
         }
     }
 
+    /// Evaluate an expression using the interpreter's shared environment (`self.env`).
+    ///
+    /// This avoids per-call `Env::new()` allocation and eliminates the need
+    /// to clone Vec fields out of expressions (since `body` and `self.env` are
+    /// separate objects with no borrow conflict).
+    fn eval_expr_shared(&mut self, body: &Body, idx: ExprIdx) -> Result<ControlFlow, RuntimeError> {
+        let expr = &body.exprs[idx];
+        match expr {
+            Expr::Missing => Err(RuntimeError::MissingExpr),
+            Expr::Hole => Err(RuntimeError::HoleEncountered),
+
+            Expr::Literal(lit) => Ok(ControlFlow::Value(self.eval_literal(lit))),
+
+            Expr::Path(path) => {
+                let name = path.segments[0];
+                let mut val = self.resolve_name_shared(name)?;
+                for &field in &path.segments[1..] {
+                    val = self.eval_field(val, field)?;
+                }
+                Ok(ControlFlow::Value(val))
+            }
+
+            Expr::Binary { op, lhs, rhs } => {
+                let op = *op;
+                let lhs = *lhs;
+                let rhs = *rhs;
+                let lv = eval_propagate_shared!(self, body, lhs);
+                let rv = eval_propagate_shared!(self, body, rhs);
+                self.eval_binary(op, lv, rv).map(ControlFlow::Value)
+            }
+
+            Expr::Unary { op, operand } => {
+                let op = *op;
+                let operand = *operand;
+                let v = eval_propagate_shared!(self, body, operand);
+                self.eval_unary(op, v).map(ControlFlow::Value)
+            }
+
+            Expr::Call { callee, args } => {
+                let callee_idx = *callee;
+                // Note: args borrows body.exprs[idx] immutably, which is compatible
+                // with passing body to eval_expr_shared (also immutable).
+                // The &mut self in eval_expr_shared doesn't conflict because body
+                // is not borrowed from self (it comes from a raw pointer).
+                let callee_val = eval_propagate_shared!(self, body, callee_idx);
+
+                // Fast path: direct user function call — evaluate args directly
+                // into the shared env, avoiding Vec<Value> allocation entirely.
+                if let Value::Fn(ref fv) = callee_val
+                    && let FnValue::User(fn_idx) = **fv
+                {
+                    let fn_body = self.fn_bodies.get(&fn_idx).ok_or_else(|| {
+                        RuntimeError::UnresolvedName("function body not found".into())
+                    })? as *const Body;
+                    let fn_body = unsafe { &*fn_body };
+                    let fn_item = &self.item_tree.functions[fn_idx];
+
+                    // Capability check.
+                    if self.manifest.is_some() && !fn_item.with_caps.is_empty() {
+                        let fn_name_str = fn_item.name.resolve(&self.interner).to_string();
+                        let manifest = self.manifest.as_ref().unwrap();
+                        for cap_ref in &fn_item.with_caps {
+                            if let kyokara_hir_def::type_ref::TypeRef::Path { path, .. } = cap_ref {
+                                if let Some(name) = path.last() {
+                                    let cap_str = name.resolve(&self.interner);
+                                    if !manifest.is_granted(cap_str) {
+                                        return Err(RuntimeError::CapabilityDenied {
+                                            capability: cap_str.to_string(),
+                                            function: fn_name_str,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let has_contracts = fn_body.requires.is_some()
+                        || fn_body.ensures.is_some()
+                        || fn_body.invariant.is_some();
+
+                    if !has_contracts {
+                        // Hot path: push scope, bind args directly, evaluate body.
+                        // We use a raw pointer to fn_item.params to avoid holding
+                        // an immutable borrow on self.item_tree across eval calls.
+                        // SAFETY: eval_expr_shared never mutates item_tree.
+                        let params_ptr = &fn_item.params as *const Vec<FnParam>;
+                        let params = unsafe { &*params_ptr };
+
+                        self.env.push_scope();
+                        for (i, arg) in args.iter().enumerate() {
+                            let arg_idx = match arg {
+                                CallArg::Positional(idx) => *idx,
+                                CallArg::Named { value, .. } => *value,
+                            };
+                            let val = eval_propagate_shared!(self, body, arg_idx);
+                            if let Some(param) = params.get(i) {
+                                self.env.bind(param.name, val);
+                            }
+                        }
+
+                        let result = self.eval_expr_shared(fn_body, fn_body.root);
+                        self.env.pop_scope();
+                        let return_val = match result? {
+                            ControlFlow::Value(v) | ControlFlow::Return(v) => v,
+                        };
+                        return Ok(ControlFlow::Value(return_val));
+                    }
+
+                    // Slow path: contracts present — collect args into SmallVec.
+                    let mut args_vec = Args::with_capacity(args.len());
+                    for arg in args {
+                        let arg_idx = match arg {
+                            CallArg::Positional(idx) => *idx,
+                            CallArg::Named { value, .. } => *value,
+                        };
+                        let v = eval_propagate_shared!(self, body, arg_idx);
+                        args_vec.push(v);
+                    }
+                    return self.call_fn(fn_idx, args_vec).map(ControlFlow::Value);
+                }
+
+                // Non-user-function call (intrinsic, lambda, constructor).
+                let mut arg_vals = Args::with_capacity(args.len());
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(idx) => {
+                            let v = eval_propagate_shared!(self, body, *idx);
+                            arg_vals.push(v);
+                        }
+                        CallArg::Named { value, .. } => {
+                            let v = eval_propagate_shared!(self, body, *value);
+                            arg_vals.push(v);
+                        }
+                    }
+                }
+                self.call_value(callee_val, arg_vals)
+                    .map(ControlFlow::Value)
+            }
+
+            Expr::Field { base, field } => {
+                let base_idx = *base;
+                let field = *field;
+                let base_val = eval_propagate_shared!(self, body, base_idx);
+                self.eval_field(base_val, field).map(ControlFlow::Value)
+            }
+
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let cond_idx = *condition;
+                let then_idx = *then_branch;
+                let else_idx = *else_branch;
+                let cond = eval_propagate_shared!(self, body, cond_idx);
+                match cond {
+                    Value::Bool(true) => self.eval_expr_shared(body, then_idx),
+                    Value::Bool(false) => {
+                        if let Some(else_idx) = else_idx {
+                            self.eval_expr_shared(body, else_idx)
+                        } else {
+                            Ok(ControlFlow::Value(Value::Unit))
+                        }
+                    }
+                    _ => Err(RuntimeError::TypeError("if condition must be Bool".into())),
+                }
+            }
+
+            Expr::Match { scrutinee, arms } => {
+                let scrutinee_idx = *scrutinee;
+                let scrutinee_val = eval_propagate_shared!(self, body, scrutinee_idx);
+                self.eval_match_shared(body, scrutinee_val, arms)
+            }
+
+            Expr::Block { stmts, tail } => {
+                let tail = *tail;
+                self.eval_block_shared(body, stmts, tail)
+            }
+
+            Expr::Return(val) => {
+                let val = *val;
+                let v = if let Some(idx) = val {
+                    eval_propagate_shared!(self, body, idx)
+                } else {
+                    Value::Unit
+                };
+                Ok(ControlFlow::Return(v))
+            }
+
+            Expr::RecordLit { path, fields } => {
+                self.eval_record_lit_shared(body, path.as_ref(), fields)
+            }
+
+            Expr::Lambda {
+                params,
+                body: lambda_body,
+            } => {
+                let param_pats: Vec<_> = params.iter().map(|(pat, _)| *pat).collect();
+                let lambda_body_idx = *lambda_body;
+                Ok(ControlFlow::Value(Value::Fn(Box::new(FnValue::Lambda {
+                    params: param_pats,
+                    body_expr: lambda_body_idx,
+                    body: Rc::new(Body {
+                        exprs: body.exprs.clone(),
+                        pats: body.pats.clone(),
+                        root: lambda_body_idx,
+                        requires: None,
+                        ensures: None,
+                        invariant: None,
+                        scopes: Default::default(),
+                        pat_scopes: Vec::new(),
+                        expr_scopes: Default::default(),
+                        expr_source_map: Default::default(),
+                    }),
+                    env: self.env.clone(),
+                }))))
+            }
+
+            Expr::Old(inner) => {
+                let inner = *inner;
+                if let Some(mut snapshot) = self.old_env.take() {
+                    let result = self.eval_expr(&mut snapshot, body, inner);
+                    self.old_env = Some(snapshot);
+                    result
+                } else {
+                    self.eval_expr_shared(body, inner)
+                }
+            }
+        }
+    }
+
+    #[inline(always)]
     fn eval_literal(&self, lit: &Literal) -> Value {
         match lit {
             Literal::Int(n) => Value::Int(*n),
@@ -363,20 +633,23 @@ impl Interpreter {
         }
     }
 
+    #[inline(always)]
     fn resolve_name(&self, env: &Env, name: Name) -> Result<Value, RuntimeError> {
-        // 1. Local variables.
+        // 1. Local variables (most common in hot loops).
         if let Some(val) = env.lookup(name) {
             return Ok(val.clone());
         }
 
-        // 2. Intrinsics.
+        // 2. Intrinsics (checked before module functions because intrinsic names
+        //    are also registered in module_scope.functions for type checking, but
+        //    lack bodies — resolving them as User functions would fail at call time).
         if let Some(&intr) = self.intrinsics.get(&name) {
-            return Ok(Value::Fn(FnValue::Intrinsic(intr)));
+            return Ok(Value::Fn(Box::new(FnValue::Intrinsic(intr))));
         }
 
         // 3. Module-level functions.
         if let Some(&fn_idx) = self.module_scope.functions.get(&name) {
-            return Ok(Value::Fn(FnValue::User(fn_idx)));
+            return Ok(Value::Fn(Box::new(FnValue::User(fn_idx))));
         }
 
         // 4. ADT constructors.
@@ -391,11 +664,11 @@ impl Interpreter {
                         fields: Vec::new(),
                     });
                 }
-                return Ok(Value::Fn(FnValue::Constructor {
+                return Ok(Value::Fn(Box::new(FnValue::Constructor {
                     type_idx,
                     variant_idx,
                     arity: variant.fields.len(),
-                }));
+                })));
             }
         }
 
@@ -403,6 +676,7 @@ impl Interpreter {
         Err(RuntimeError::UnresolvedName(name_str.to_string()))
     }
 
+    #[inline(always)]
     fn eval_binary(&self, op: BinaryOp, lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
         match (op, &lhs, &rhs) {
             // Int arithmetic.
@@ -455,6 +729,7 @@ impl Interpreter {
         }
     }
 
+    #[inline(always)]
     fn eval_unary(&self, op: UnaryOp, val: Value) -> Result<Value, RuntimeError> {
         match (op, &val) {
             (UnaryOp::Neg, Value::Int(n)) => Ok(Value::Int(-n)),
@@ -466,40 +741,42 @@ impl Interpreter {
         }
     }
 
-    fn call_value(&mut self, callee: Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
+    fn call_value(&mut self, callee: Value, args: Args) -> Result<Value, RuntimeError> {
         match callee {
-            Value::Fn(FnValue::User(fn_idx)) => self.call_fn(fn_idx, args),
-            Value::Fn(FnValue::Intrinsic(intr)) if intr.needs_interpreter() => {
-                self.check_intrinsic_cap(intr)?;
-                self.call_complex_intrinsic(intr, args)
-            }
-            Value::Fn(FnValue::Intrinsic(intr)) => {
-                self.check_intrinsic_cap(intr)?;
-                intr.call(args)
-            }
-            Value::Fn(FnValue::Lambda {
-                params,
-                body_expr,
-                body,
-                env: captured_env,
-            }) => {
-                let mut env = captured_env;
-                env.push_scope();
-                for (pat_idx, val) in params.iter().zip(args) {
-                    self.bind_pat(&body, *pat_idx, &val, &mut env)?;
+            Value::Fn(fv) => match *fv {
+                FnValue::User(fn_idx) => self.call_fn(fn_idx, args),
+                FnValue::Intrinsic(intr) if intr.needs_interpreter() => {
+                    self.check_intrinsic_cap(intr)?;
+                    self.call_complex_intrinsic(intr, args)
                 }
-                let result = self.eval_expr(&mut env, &body, body_expr)?;
-                Ok(result.into_value())
-            }
-            Value::Fn(FnValue::Constructor {
-                type_idx,
-                variant_idx,
-                ..
-            }) => Ok(Value::Adt {
-                type_idx,
-                variant: variant_idx,
-                fields: args,
-            }),
+                FnValue::Intrinsic(intr) => {
+                    self.check_intrinsic_cap(intr)?;
+                    intr.call(args)
+                }
+                FnValue::Lambda {
+                    params,
+                    body_expr,
+                    body,
+                    env: captured_env,
+                } => {
+                    let mut env = captured_env;
+                    env.push_scope();
+                    for (pat_idx, val) in params.iter().zip(args) {
+                        self.bind_pat(&body, *pat_idx, &val, &mut env)?;
+                    }
+                    let result = self.eval_expr(&mut env, &body, body_expr)?;
+                    Ok(result.into_value())
+                }
+                FnValue::Constructor {
+                    type_idx,
+                    variant_idx,
+                    ..
+                } => Ok(Value::Adt {
+                    type_idx,
+                    variant: variant_idx,
+                    fields: args.into_vec(),
+                }),
+            },
             _ => Err(RuntimeError::TypeError(
                 "called value is not a function".into(),
             )),
@@ -541,7 +818,7 @@ impl Interpreter {
     fn call_complex_intrinsic(
         &mut self,
         intr: IntrinsicFn,
-        args: Vec<Value>,
+        args: Args,
     ) -> Result<Value, RuntimeError> {
         match intr {
             IntrinsicFn::ListGet => {
@@ -590,7 +867,7 @@ impl Interpreter {
                 let xs = xs.clone();
                 let mut result = Vec::with_capacity(xs.len());
                 for item in xs {
-                    let val = self.call_value(f.clone(), vec![item])?;
+                    let val = self.call_value(f.clone(), smallvec::smallvec![item])?;
                     result.push(val);
                 }
                 Ok(Value::List(result))
@@ -603,7 +880,7 @@ impl Interpreter {
                 let xs = xs.clone();
                 let mut result = Vec::new();
                 for item in xs {
-                    let keep = self.call_value(f.clone(), vec![item.clone()])?;
+                    let keep = self.call_value(f.clone(), smallvec::smallvec![item.clone()])?;
                     if matches!(keep, Value::Bool(true)) {
                         result.push(item);
                     }
@@ -618,7 +895,7 @@ impl Interpreter {
                 let mut acc = args[1].clone();
                 let f = args[2].clone();
                 for item in xs {
-                    acc = self.call_value(f.clone(), vec![acc, item])?;
+                    acc = self.call_value(f.clone(), smallvec::smallvec![acc, item])?;
                 }
                 Ok(acc)
             }
@@ -836,6 +1113,125 @@ impl Interpreter {
         }
 
         // If there's a path, it's an ADT record constructor.
+        if let Some(path) = path
+            && let Some(ctor_name) = path.last()
+            && let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&ctor_name)
+        {
+            let vals: Vec<Value> = field_vals.into_iter().map(|(_, v)| v).collect();
+            return Ok(ControlFlow::Value(Value::Adt {
+                type_idx,
+                variant: variant_idx,
+                fields: vals,
+            }));
+        }
+
+        Ok(ControlFlow::Value(Value::Record { fields: field_vals }))
+    }
+
+    // --- Shared-env variants of helper methods ---
+
+    /// Name resolution using `self.env`.
+    #[inline(always)]
+    fn resolve_name_shared(&self, name: Name) -> Result<Value, RuntimeError> {
+        self.resolve_name(&self.env, name)
+    }
+
+    fn eval_match_shared(
+        &mut self,
+        body: &Body,
+        scrutinee: Value,
+        arms: &[MatchArm],
+    ) -> Result<ControlFlow, RuntimeError> {
+        for arm in arms {
+            let mut bindings = Vec::new();
+            if self.match_pat(body, arm.pat, &scrutinee, &mut bindings) {
+                self.env.push_scope();
+                for (name, val) in bindings {
+                    self.env.bind(name, val);
+                }
+                let result = self.eval_expr_shared(body, arm.body);
+                self.env.pop_scope();
+                return result;
+            }
+        }
+        Err(RuntimeError::PatternMatchFailure)
+    }
+
+    fn eval_block_shared(
+        &mut self,
+        body: &Body,
+        stmts: &[Stmt],
+        tail: Option<ExprIdx>,
+    ) -> Result<ControlFlow, RuntimeError> {
+        self.env.push_scope();
+        for stmt in stmts {
+            match stmt {
+                Stmt::Let { pat, init, .. } => {
+                    let result = self.eval_expr_shared(body, *init)?;
+                    if let ControlFlow::Return(_) = &result {
+                        self.env.pop_scope();
+                        return Ok(result);
+                    }
+                    self.bind_pat_shared(body, *pat, &result.into_value())?;
+                }
+                Stmt::Expr(idx) => {
+                    let result = self.eval_expr_shared(body, *idx)?;
+                    if let ControlFlow::Return(_) = &result {
+                        self.env.pop_scope();
+                        return Ok(result);
+                    }
+                }
+            }
+        }
+        let result = if let Some(tail_idx) = tail {
+            self.eval_expr_shared(body, tail_idx)
+        } else {
+            Ok(ControlFlow::Value(Value::Unit))
+        };
+        let r = result?;
+        self.env.pop_scope();
+        Ok(r)
+    }
+
+    fn bind_pat_shared(
+        &mut self,
+        body: &Body,
+        pat_idx: kyokara_hir_def::expr::PatIdx,
+        value: &Value,
+    ) -> Result<(), RuntimeError> {
+        let pat = &body.pats[pat_idx];
+        match pat {
+            Pat::Bind { name } => {
+                self.env.bind(*name, value.clone());
+                Ok(())
+            }
+            Pat::Wildcard => Ok(()),
+            _ => {
+                let mut bindings = Vec::new();
+                if self.match_pat(body, pat_idx, value, &mut bindings) {
+                    for (name, val) in bindings {
+                        self.env.bind(name, val);
+                    }
+                    Ok(())
+                } else {
+                    Err(RuntimeError::PatternMatchFailure)
+                }
+            }
+        }
+    }
+
+    fn eval_record_lit_shared(
+        &mut self,
+        body: &Body,
+        path: Option<&kyokara_hir_def::path::Path>,
+        fields: &[(Name, ExprIdx)],
+    ) -> Result<ControlFlow, RuntimeError> {
+        let mut field_vals = Vec::with_capacity(fields.len());
+        for (name, expr_idx) in fields {
+            let val = eval_propagate_shared!(self, body, *expr_idx);
+            field_vals.push((*name, val));
+        }
+
         if let Some(path) = path
             && let Some(ctor_name) = path.last()
             && let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&ctor_name)
