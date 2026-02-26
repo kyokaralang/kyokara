@@ -1152,7 +1152,7 @@ fn api_io_error_produces_error_status() {
     );
 }
 
-// ── Unresolved import diagnostics (#64) ──────────────────────────────
+// ── Import resolution fixes (#64, #65) ───────────────────────────────
 
 #[test]
 fn check_project_reports_unresolved_import() {
@@ -1169,5 +1169,29 @@ fn check_project_reports_unresolved_import() {
             .iter()
             .map(|d| &d.message)
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn check_project_aliased_import_resolves_by_path_not_alias() {
+    // `import math as M` should resolve the "math" module, not look for a module named "M".
+    let (_dir, main_path) = write_project(&[
+        (
+            "main.ky",
+            "import math as M\nfn main() -> Int { add(1, 2) }\n",
+        ),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
+    ]);
+    let output = check_project(&main_path);
+    // Should have no "unresolved import" errors.
+    let import_errors: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("unresolved import"))
+        .collect();
+    assert!(
+        import_errors.is_empty(),
+        "aliased import should resolve correctly, got errors: {:?}",
+        import_errors.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
 }
