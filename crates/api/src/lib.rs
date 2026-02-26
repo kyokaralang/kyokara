@@ -166,8 +166,8 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
                 message: err.message.clone(),
                 span: SpanDto {
                     file: file_name.clone(),
-                    start: 0,
-                    end: 0,
+                    start: err.range_start,
+                    end: err.range_end,
                 },
                 expected_type: None,
                 actual_type: None,
@@ -336,8 +336,8 @@ fn convert_result(result: &CheckResult, file_name: &str) -> CheckOutput {
             message: err.message.clone(),
             span: SpanDto {
                 file: file_name.into(),
-                start: 0,
-                end: 0,
+                start: err.range_start,
+                end: err.range_end,
             },
             expected_type: None,
             actual_type: None,

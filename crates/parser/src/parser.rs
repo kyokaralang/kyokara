@@ -8,10 +8,16 @@ use crate::event::Event;
 use crate::input::Input;
 use crate::token_set::TokenSet;
 
-/// A parse error message.
+/// A parse error message with location info.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
     pub message: String,
+    /// Byte start offset of the error in the source text (filled in by syntax crate).
+    pub range_start: u32,
+    /// Byte end offset (exclusive) of the error in the source text.
+    pub range_end: u32,
+    /// Non-trivia token index at error time (used by syntax crate to compute byte offsets).
+    pub token_pos: usize,
 }
 
 /// The parser engine. Grammar functions receive `&mut Parser` and call
@@ -144,6 +150,9 @@ impl<'i> Parser<'i> {
         });
         self.errors.push(ParseError {
             message: message.to_owned(),
+            range_start: 0,
+            range_end: 0,
+            token_pos: self.pos,
         });
     }
 
