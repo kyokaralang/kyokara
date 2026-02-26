@@ -9,6 +9,7 @@ use std::collections::HashMap;
 /// When absent (i.e. `Option<CapabilityManifest>` is `None`), all capabilities
 /// are permitted (backward-compatible allow-all).
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CapabilityManifest {
     #[serde(default)]
     pub caps: HashMap<String, CapabilityGrant>,
@@ -19,6 +20,7 @@ pub struct CapabilityManifest {
 /// An empty grant (all fields `None`) means the capability is granted
 /// without restrictions.
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct CapabilityGrant {
     pub allow_domains: Option<Vec<String>>,
     pub allow_tables: Option<Vec<String>>,

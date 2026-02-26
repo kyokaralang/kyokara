@@ -67,3 +67,18 @@ fn parse_manifest_missing_caps_key() {
     assert!(manifest.caps.is_empty());
     assert!(!manifest.is_granted("IO"));
 }
+
+#[test]
+fn parse_manifest_rejects_unknown_top_level_field() {
+    let json = r#"{"caps": {"IO": {}}, "unknown_field": true}"#;
+    let result = CapabilityManifest::from_json(json);
+    assert!(result.is_err(), "should reject unknown top-level field");
+}
+
+#[test]
+fn parse_manifest_rejects_unknown_grant_field() {
+    // Typo: allow_domain instead of allow_domains
+    let json = r#"{"caps": {"IO": {"allow_domain": ["example.com"]}}}"#;
+    let result = CapabilityManifest::from_json(json);
+    assert!(result.is_err(), "should reject unknown grant field (typo)");
+}
