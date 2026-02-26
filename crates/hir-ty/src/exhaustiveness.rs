@@ -3,7 +3,7 @@
 //! v0.0: checks that all ADT constructors are covered (or a wildcard/bind
 //! pattern is present). No nested pattern decomposition.
 
-use kyokara_hir_def::expr::MatchArm;
+use kyokara_hir_def::expr::{ExprIdx, MatchArm};
 use kyokara_hir_def::item_tree::{ItemTree, TypeDefKind, TypeItemIdx};
 use kyokara_hir_def::pat::Pat;
 use kyokara_intern::Interner;
@@ -19,7 +19,8 @@ pub fn check_exhaustiveness(
     pats: &Arena<Pat>,
     item_tree: &ItemTree,
     interner: &Interner,
-    diags: &mut Vec<TyDiagnosticData>,
+    diags: &mut Vec<(TyDiagnosticData, ExprIdx)>,
+    match_expr_idx: ExprIdx,
 ) {
     let type_item = &item_tree.types[type_idx];
     let variants = match &type_item.kind {
@@ -36,7 +37,7 @@ pub fn check_exhaustiveness(
         match pat {
             Pat::Wildcard | Pat::Bind { .. } => {
                 if has_wildcard || covered.len() == variants.len() {
-                    diags.push(TyDiagnosticData::RedundantMatchArm);
+                    diags.push((TyDiagnosticData::RedundantMatchArm, match_expr_idx));
                 }
                 if !has_wildcard {
                     has_wildcard = true;
@@ -46,7 +47,7 @@ pub fn check_exhaustiveness(
             Pat::Constructor { path, .. } => {
                 if has_wildcard {
                     // Arms after a wildcard are redundant.
-                    diags.push(TyDiagnosticData::RedundantMatchArm);
+                    diags.push((TyDiagnosticData::RedundantMatchArm, match_expr_idx));
                     continue;
                 }
                 // Find which variant this constructor matches.
@@ -56,7 +57,7 @@ pub fn check_exhaustiveness(
                         .position(|v| v.name.resolve(interner) == name.resolve(interner))
                     && !covered.insert(variant_idx)
                 {
-                    diags.push(TyDiagnosticData::RedundantMatchArm);
+                    diags.push((TyDiagnosticData::RedundantMatchArm, match_expr_idx));
                 }
             }
             Pat::Literal(_) => {
@@ -75,6 +76,9 @@ pub fn check_exhaustiveness(
             .filter(|(i, _)| !covered.contains(i))
             .map(|(_, v)| v.name.resolve(interner).to_owned())
             .collect();
-        diags.push(TyDiagnosticData::MissingMatchArms { missing });
+        diags.push((
+            TyDiagnosticData::MissingMatchArms { missing },
+            match_expr_idx,
+        ));
     }
 }

@@ -444,6 +444,79 @@ fn transact_rename_multifile_verified() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// ── Quickfix transaction tests ───────────────────────────────────────
+
+#[test]
+fn quickfix_match_cases_transact_verified() {
+    let src = r#"type Color = | Red | Green | Blue
+fn pick(c: Color) -> Int {
+    match c {
+        Red => 1
+    }
+}"#;
+    let result = kyokara_hir::check_file(src);
+
+    let (_, span) = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .find(|(d, _)| matches!(d, kyokara_hir::TyDiagnosticData::MissingMatchArms { .. }))
+        .expect("expected MissingMatchArms diagnostic");
+
+    let offset: u32 = span.range.start().into();
+    let action = RefactorAction::AddMissingMatchCases { offset };
+    let tx = kyokara_refactor::transaction::transact(src, &result, file_id(), action).unwrap();
+
+    assert!(
+        matches!(tx.verification, VerificationStatus::Verified),
+        "expected Verified, got {:?}",
+        tx.verification
+    );
+
+    let (_, patched) = &tx.patched_sources[0];
+    // Original arm should still be present.
+    assert!(
+        patched.contains("Red => 1"),
+        "original arm should remain: {patched}"
+    );
+    // New arms should be present.
+    assert!(patched.contains("Green"), "should contain Green: {patched}");
+    assert!(patched.contains("Blue"), "should contain Blue: {patched}");
+}
+
+#[test]
+fn quickfix_capability_transact_verified() {
+    let src = r#"cap Console {
+    fn print(s: String) -> Unit
+}
+fn effectful() -> Unit with Console { print("hi") }
+fn pure_caller() -> Unit { effectful() }"#;
+    let result = kyokara_hir::check_file(src);
+
+    let (_, span) = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .find(|(d, _)| matches!(d, kyokara_hir::TyDiagnosticData::EffectViolation { .. }))
+        .expect("expected EffectViolation diagnostic");
+
+    let offset: u32 = span.range.start().into();
+    let action = RefactorAction::AddMissingCapability { offset };
+    let tx = kyokara_refactor::transaction::transact(src, &result, file_id(), action).unwrap();
+
+    assert!(
+        matches!(tx.verification, VerificationStatus::Verified),
+        "expected Verified, got {:?}",
+        tx.verification
+    );
+
+    let (_, patched) = &tx.patched_sources[0];
+    assert!(
+        patched.contains("with Console"),
+        "patched source should have capability: {patched}"
+    );
+}
+
 #[test]
 fn transact_skipped_when_forced() {
     let src = "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(1, 2) }";

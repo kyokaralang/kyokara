@@ -61,7 +61,8 @@ pub(crate) struct InferenceCtx<'a> {
     pub expr_types: ArenaMap<ExprIdx, Ty>,
     pub pat_types: ArenaMap<la_arena::Idx<Pat>, Ty>,
     pub holes: Vec<HoleInfo>,
-    pub diags: Vec<TyDiagnosticData>,
+    /// Diagnostics paired with the expression that caused them.
+    pub diags: Vec<(TyDiagnosticData, ExprIdx)>,
     /// Names of functions called from this body (for symbol graph edges).
     pub calls: Vec<Name>,
 
@@ -71,6 +72,8 @@ pub(crate) struct InferenceCtx<'a> {
     pub interner: &'a Interner,
     pub _fn_span: Span,
 
+    /// The expression currently being inferred (for diagnostic span tracking).
+    pub current_expr: Option<ExprIdx>,
     /// Current function's return type (for `return` expressions).
     pub ret_ty: Ty,
     /// Current function's effect set (for effect checking at call sites).
@@ -86,9 +89,14 @@ pub(crate) struct InferenceCtx<'a> {
 }
 
 impl<'a> InferenceCtx<'a> {
-    /// Record a diagnostic.
+    /// Record a diagnostic at the current expression.
     pub(crate) fn push_diag(&mut self, data: TyDiagnosticData) {
-        self.diags.push(data);
+        if let Some(expr_idx) = self.current_expr {
+            self.diags.push((data, expr_idx));
+        } else {
+            // Fallback: use body root (shouldn't happen in practice).
+            self.diags.push((data, self.body.root));
+        }
     }
 
     /// Unify two types, emitting a type mismatch diagnostic on failure.
@@ -186,6 +194,7 @@ pub fn infer_body(
         module_scope,
         interner,
         _fn_span: fn_span,
+        current_expr: None,
         ret_ty,
         caller_effects,
         type_params,
@@ -213,6 +222,8 @@ pub fn infer_body(
     let body_ty = ctx.infer_expr(body.root, &Expectation::Has(ctx.ret_ty.clone()));
 
     // Unify body result with declared return type.
+    // Attribute mismatch to the body root expression.
+    ctx.current_expr = Some(body.root);
     let ret = ctx.ret_ty.clone();
     ctx.unify_or_err(&ret, &body_ty);
 
@@ -227,14 +238,41 @@ pub fn infer_body(
     }
 
     // Build raw diagnostics (data + span) for structured output.
-    let raw_diagnostics: Vec<(TyDiagnosticData, Span)> =
-        ctx.diags.iter().map(|d| (d.clone(), fn_span)).collect();
+    let raw_diagnostics: Vec<(TyDiagnosticData, Span)> = ctx
+        .diags
+        .iter()
+        .map(|(d, expr_idx)| {
+            let range = body
+                .expr_source_map
+                .get(*expr_idx)
+                .copied()
+                .unwrap_or(fn_span.range);
+            (
+                d.clone(),
+                Span {
+                    file: fn_span.file,
+                    range,
+                },
+            )
+        })
+        .collect();
 
-    // Convert diagnostics.
+    // Convert diagnostics using expression-precise spans.
     let diagnostics: Vec<Diagnostic> = ctx
         .diags
         .into_iter()
-        .map(|d| d.into_diagnostic(fn_span, interner, item_tree))
+        .map(|(d, expr_idx)| {
+            let range = body
+                .expr_source_map
+                .get(expr_idx)
+                .copied()
+                .unwrap_or(fn_span.range);
+            let span = Span {
+                file: fn_span.file,
+                range,
+            };
+            d.into_diagnostic(span, interner, item_tree)
+        })
         .collect();
 
     InferenceResult {

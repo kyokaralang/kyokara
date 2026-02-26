@@ -470,3 +470,72 @@ fn multiple_functions_checked() {
 fn comparison_returns_bool() {
     check_ok("fn foo() -> Bool { 1 >= 2 }");
 }
+
+// ── Scope resolution tests ──────────────────────────────────────────
+
+#[test]
+fn nested_shadowing_resolves_correctly() {
+    // Outer x is Int; inner block shadows x as Bool; after the block, x should still be Int.
+    check_ok(
+        "fn foo() -> Int {
+            let x: Int = 1
+            let y: Bool = { let x = true\n x }
+            x + 1
+        }",
+    );
+}
+
+#[test]
+fn match_arm_scope_isolation() {
+    // Bindings in one match arm must not leak to the next arm or after the match.
+    check_ok(
+        "type Option<T> = | Some(T) | None
+         fn foo(o: Option<Int>) -> Int {
+             let result = match o {
+                 Some(v) => v
+                 None => 0
+             }
+             result
+         }",
+    );
+}
+
+// ── Diagnostic span precision tests ─────────────────────────────────
+
+#[test]
+fn diagnostic_span_is_expression_precise() {
+    // A multi-expression function with a type error in only one expression.
+    // The raw diagnostic span should be smaller than the full function range.
+    let src = "fn foo() -> Int {
+        let a = 1
+        let b: Int = true
+        a
+    }";
+    let (result, _) = check(src);
+
+    // Find the function's full text range.
+    let root = parse_source(src);
+    let fn_def = root
+        .descendants()
+        .find_map(kyokara_syntax::ast::nodes::FnDef::cast)
+        .expect("should find fn def");
+    let fn_range = fn_def.syntax().text_range();
+
+    // Find the raw diagnostic for the type mismatch.
+    let mismatch_diag = result
+        .raw_diagnostics
+        .iter()
+        .find(|(d, _)| {
+            matches!(
+                d,
+                kyokara_hir_ty::diagnostics::TyDiagnosticData::TypeMismatch { .. }
+            )
+        })
+        .expect("expected a TypeMismatch diagnostic");
+
+    let diag_range = mismatch_diag.1.range;
+    assert!(
+        diag_range.len() < fn_range.len(),
+        "diagnostic span ({diag_range:?}) should be smaller than function span ({fn_range:?})"
+    );
+}

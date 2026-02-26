@@ -3,11 +3,11 @@
 //! Walks typed AST expressions and patterns to produce HIR `Body`.
 //! Desugars `|>` (pipeline) and `?` (propagation) here.
 
-use la_arena::Arena;
+use la_arena::{Arena, ArenaMap};
 
 use kyokara_diagnostics::Diagnostic;
 use kyokara_intern::Interner;
-use kyokara_span::{FileId, Span};
+use kyokara_span::{FileId, Span, TextRange};
 use kyokara_syntax::SyntaxKind;
 use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::{
@@ -44,6 +44,8 @@ pub fn lower_body(
         pats: Arena::new(),
         scopes: ScopeTree::default(),
         pat_scopes: Vec::new(),
+        expr_scopes: ArenaMap::default(),
+        expr_source_map: ArenaMap::default(),
         diagnostics: Vec::new(),
         file_id,
         interner,
@@ -95,7 +97,10 @@ pub fn lower_body(
 
     // Lower body
     let root = if let Some(body) = fn_def.body() {
-        ctx.lower_block(&body)
+        let range = body.syntax().text_range();
+        let idx = ctx.lower_block(&body);
+        ctx.expr_source_map.insert(idx, range);
+        idx
     } else {
         ctx.alloc_expr(Expr::Missing)
     };
@@ -110,6 +115,8 @@ pub fn lower_body(
             invariant,
             scopes: ctx.scopes,
             pat_scopes: ctx.pat_scopes,
+            expr_scopes: ctx.expr_scopes,
+            expr_source_map: ctx.expr_source_map,
         },
         diagnostics: ctx.diagnostics,
     }
@@ -120,6 +127,8 @@ struct BodyLowerCtx<'a> {
     pats: Arena<pat::Pat>,
     scopes: ScopeTree,
     pat_scopes: Vec<(PatIdx, ScopeIdx)>,
+    expr_scopes: ArenaMap<ExprIdx, ScopeIdx>,
+    expr_source_map: ArenaMap<ExprIdx, TextRange>,
     diagnostics: Vec<Diagnostic>,
     file_id: FileId,
     interner: &'a mut Interner,
@@ -129,7 +138,11 @@ struct BodyLowerCtx<'a> {
 
 impl BodyLowerCtx<'_> {
     fn alloc_expr(&mut self, expr: Expr) -> ExprIdx {
-        self.exprs.alloc(expr)
+        let idx = self.exprs.alloc(expr);
+        if let Some(scope) = self.current_scope {
+            self.expr_scopes.insert(idx, scope);
+        }
+        idx
     }
 
     fn alloc_pat(&mut self, pat: pat::Pat) -> PatIdx {
@@ -158,6 +171,13 @@ impl BodyLowerCtx<'_> {
     // ── Expression lowering ────────────────────────────────────────
 
     fn lower_expr(&mut self, expr: &ExprCst) -> ExprIdx {
+        let range = expr.syntax().text_range();
+        let idx = self.lower_expr_inner(expr);
+        self.expr_source_map.insert(idx, range);
+        idx
+    }
+
+    fn lower_expr_inner(&mut self, expr: &ExprCst) -> ExprIdx {
         match expr {
             ExprCst::Literal(lit) => self.lower_literal(lit),
             ExprCst::Path(pe) => self.lower_path_expr(pe),

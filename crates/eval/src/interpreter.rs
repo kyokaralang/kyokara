@@ -310,6 +310,8 @@ impl Interpreter {
                         invariant: None,
                         scopes: Default::default(),
                         pat_scopes: Vec::new(),
+                        expr_scopes: Default::default(),
+                        expr_source_map: Default::default(),
                     }),
                     env: env.clone(),
                 })))

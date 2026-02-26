@@ -17,8 +17,11 @@ use super::{Expectation, InferenceCtx};
 impl<'a> InferenceCtx<'a> {
     /// Infer the type of an expression, possibly guided by an expectation.
     pub(crate) fn infer_expr(&mut self, idx: ExprIdx, expected: &Expectation) -> Ty {
+        let prev_expr = self.current_expr;
+        self.current_expr = Some(idx);
         let ty = self.infer_expr_inner(idx, expected);
         self.expr_types.insert(idx, ty.clone());
+        self.current_expr = prev_expr;
 
         // If we have an expectation, try to unify (but don't double-report).
         if let Expectation::Has(exp) = expected
@@ -69,7 +72,7 @@ impl<'a> InferenceCtx<'a> {
                 ref arms,
             } => {
                 let arms = arms.clone();
-                self.infer_match(scrutinee, &arms, expected)
+                self.infer_match(idx, scrutinee, &arms, expected)
             }
 
             Expr::Block { ref stmts, tail } => {
@@ -114,10 +117,20 @@ impl<'a> InferenceCtx<'a> {
 
                 let locals = self.collect_locals_in_scope();
 
+                let hole_span = self
+                    .body
+                    .expr_source_map
+                    .get(idx)
+                    .map(|range| kyokara_span::Span {
+                        file: self._fn_span.file,
+                        range: *range,
+                    })
+                    .unwrap_or(self._fn_span);
+
                 self.holes.push(HoleInfo {
                     expected_type: expected_ty,
                     available_locals: locals,
-                    span: self._fn_span,
+                    span: hole_span,
                     effect_constraints: self.caller_effects.clone(),
                     name: None,
                 });
@@ -496,6 +509,7 @@ impl<'a> InferenceCtx<'a> {
 
         if let Some(else_idx) = else_branch {
             let else_ty = self.infer_expr(else_idx, &Expectation::Has(then_ty.clone()));
+            self.current_expr = Some(else_idx);
             self.unify_or_err(&then_ty, &else_ty);
             then_ty
         } else {
@@ -505,6 +519,7 @@ impl<'a> InferenceCtx<'a> {
 
     fn infer_match(
         &mut self,
+        match_expr_idx: ExprIdx,
         scrutinee: ExprIdx,
         arms: &[kyokara_hir_def::expr::MatchArm],
         expected: &Expectation,
@@ -523,6 +538,7 @@ impl<'a> InferenceCtx<'a> {
             let arm_ty = self.infer_expr(arm.body, &arm_exp);
 
             if let Some(ref res) = result_ty {
+                self.current_expr = Some(arm.body);
                 self.unify_or_err(res, &arm_ty);
             } else {
                 result_ty = Some(arm_ty);
@@ -539,6 +555,7 @@ impl<'a> InferenceCtx<'a> {
                 self.item_tree,
                 self.interner,
                 &mut self.diags,
+                match_expr_idx,
             );
         }
 
@@ -558,6 +575,8 @@ impl<'a> InferenceCtx<'a> {
                         );
                         let annotation = env.resolve_type_ref(ty_ref, &mut self.table);
                         let init_ty = self.infer_expr(*init, &Expectation::Has(annotation.clone()));
+                        // Attribute mismatch diagnostic to the init expression.
+                        self.current_expr = Some(*init);
                         self.unify_or_err(&annotation, &init_ty);
                         annotation
                     } else {
@@ -692,12 +711,11 @@ impl<'a> InferenceCtx<'a> {
         }
     }
 
-    fn find_scope_for_expr(&self, _expr_idx: ExprIdx) -> Option<kyokara_hir_def::scope::ScopeIdx> {
-        // Use the deepest scope registered in body, or root.
+    fn find_scope_for_expr(&self, expr_idx: ExprIdx) -> Option<kyokara_hir_def::scope::ScopeIdx> {
         self.body
-            .pat_scopes
-            .last()
-            .map(|(_, scope)| *scope)
+            .expr_scopes
+            .get(expr_idx)
+            .copied()
             .or(self.body.scopes.root)
     }
 
