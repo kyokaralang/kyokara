@@ -1710,3 +1710,11 @@ fn symbol_graph_no_duplicate_fn_ids_with_cap_member() {
         "expected exactly 1 fn node for `foo`, got {foo_count}: {fn_ids:?}"
     );
 }
+
+#[test]
+fn cyclic_type_alias_does_not_crash() {
+    // `type A = A` is a direct cycle — should produce an error, not a stack overflow.
+    let src = "type A = A\nfn main() -> A { _ }";
+    let _output = check(src, "test.ky");
+    // Just verifying we don't crash. The output will have type errors.
+}
