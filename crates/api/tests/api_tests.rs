@@ -1278,6 +1278,30 @@ fn nested_constructor_pattern_binding_is_in_scope() {
 }
 
 #[test]
+fn duplicate_record_field_in_type_alias_produces_diagnostic() {
+    let src = "type P = { x: Int, x: Int }\nfn main() -> Int { 1 }";
+    let output = check(src, "test.ky");
+    let dups: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("duplicate") && d.message.contains("field"))
+        .collect();
+    assert!(
+        !dups.is_empty(),
+        "expected duplicate field diagnostic, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        dups[0].message.contains("x"),
+        "should mention field name `x`"
+    );
+}
+
+#[test]
 fn unknown_constructor_pattern_emits_diagnostic() {
     // `Nope` is not a constructor in scope — should produce E0013.
     let src = "fn main() -> Int { match Some(1) { Nope(x) => x, _ => 0 } }";
