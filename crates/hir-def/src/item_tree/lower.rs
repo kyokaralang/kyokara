@@ -293,6 +293,21 @@ impl ItemTreeCtx<'_> {
         let functions: Vec<FnItemIdx> =
             c.functions().map(|f| self.lower_fn_def(&f, true)).collect();
 
+        // Check for duplicate member function names.
+        let mut seen_members = std::collections::HashSet::new();
+        for &fn_idx in &functions {
+            let fn_name = self.tree.functions[fn_idx].name;
+            if !seen_members.insert(fn_name) {
+                let fn_name_str = fn_name.resolve(self.interner);
+                let cap_name_str = name.resolve(self.interner);
+                let span = self.node_span(c.syntax());
+                self.diagnostics.push(Diagnostic::error(
+                    format!("duplicate function `{fn_name_str}` in capability `{cap_name_str}`"),
+                    span,
+                ));
+            }
+        }
+
         let is_pub = c.is_pub();
         let idx = self.tree.caps.alloc(CapItem {
             name,
