@@ -159,7 +159,8 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
     module_graph.entry = Some(ModulePath::root());
 
     // 3. Resolve cross-module imports.
-    resolve_project_imports(&mut module_graph, &mut interner);
+    let import_diags = resolve_project_imports(&mut module_graph, &interner);
+    all_lowering_diagnostics.extend(import_diags);
 
     // 4. Type-check each module.
     let mut type_checks = Vec::new();
@@ -190,9 +191,16 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
 /// For each module's imports, look up the target module and **copy** its
 /// pub items into the importing module's item tree and scope. This way
 /// the indices are valid within the importing module's arena.
-fn resolve_project_imports(graph: &mut ModuleGraph, _interner: &mut Interner) {
+///
+/// Returns diagnostics for unresolved imports.
+fn resolve_project_imports(
+    graph: &mut ModuleGraph,
+    interner: &Interner,
+) -> Vec<kyokara_diagnostics::Diagnostic> {
+    let mut diagnostics = Vec::new();
+
     // Collect what needs to be resolved (to avoid borrow conflicts).
-    let mut to_resolve: Vec<(ModulePath, Vec<Name>)> = Vec::new();
+    let mut to_resolve: Vec<(ModulePath, Vec<Name>, FileId)> = Vec::new();
 
     for (mod_path, info) in graph.iter() {
         let import_names: Vec<Name> = info
@@ -202,16 +210,24 @@ fn resolve_project_imports(graph: &mut ModuleGraph, _interner: &mut Interner) {
             .filter_map(|imp| imp.alias.or_else(|| imp.path.last()))
             .collect();
         if !import_names.is_empty() {
-            to_resolve.push((mod_path.clone(), import_names));
+            to_resolve.push((mod_path.clone(), import_names, info.file_id));
         }
     }
 
     // Collect the pub items from target modules (clone them to avoid borrow issues).
-    for (importing_mod, import_names) in to_resolve {
+    for (importing_mod, import_names, file_id) in to_resolve {
         for target_name in import_names {
             // Collect pub items from the target module.
             let pub_data = {
                 let Some(target_info) = graph.resolve_import(&target_name) else {
+                    let name_str = target_name.resolve(interner);
+                    diagnostics.push(kyokara_diagnostics::Diagnostic::error(
+                        format!("unresolved import `{name_str}`"),
+                        kyokara_span::Span {
+                            file: file_id,
+                            range: kyokara_span::TextRange::default(),
+                        },
+                    ));
                     continue;
                 };
                 collect_pub_data(&target_info.item_tree)
@@ -267,6 +283,8 @@ fn resolve_project_imports(graph: &mut ModuleGraph, _interner: &mut Interner) {
             }
         }
     }
+
+    diagnostics
 }
 
 enum PubData {
