@@ -34,7 +34,7 @@
 - [hir](https://github.com/kyokaralang/kyokara/tree/main/crates/hir): High-level facade for semantic queries
 - [eval](https://github.com/kyokaralang/kyokara/tree/main/crates/eval): Tree-walking interpreter with scoped environments, core stdlib (List, Map, String, Int/Float intrinsics + print/println/int_to_string/string_concat), builtin Option/Result types, and runtime contract enforcement (requires/ensures/old)
 - [fmt](https://github.com/kyokaralang/kyokara/tree/main/crates/fmt): Canonical code formatter — Wadler-Lindig Doc IR, 2-space indent, 100-col width, import sorting, comment preservation, verbatim error fallback
-- [refactor](https://github.com/kyokaralang/kyokara/tree/main/crates/refactor): Semantic refactor engine — CST-based rename (function, type, capability, variant), add missing match cases, add missing capability annotation, post-refactor verification
+- [refactor](https://github.com/kyokaralang/kyokara/tree/main/crates/refactor): Semantic refactor engine — CST-based rename (function, type, capability, variant), add missing match cases, add missing capability annotation, transactional verification (apply edits in-memory, re-check, return Verified/Failed/Skipped status)
 - [api](https://github.com/kyokaralang/kyokara/tree/main/crates/api): JSON serialization of all compiler outputs (diagnostics, typed AST, symbol graph with stable namespaced IDs, patches, refactor results)
 - [cli](https://github.com/kyokaralang/kyokara/tree/main/crates/cli): `kyokara check`, `kyokara run`, `kyokara fmt`, `kyokara refactor`, `kyokara replay`
 
