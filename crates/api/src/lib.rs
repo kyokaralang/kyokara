@@ -212,6 +212,10 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
     let mut all_types = Vec::new();
     let mut all_capabilities = Vec::new();
 
+    let builtin_names: std::collections::HashSet<&str> =
+        ["Option", "Result", "List", "Map"].into_iter().collect();
+    let mut seen_builtins: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     for (mod_path, tc) in &result.type_checks {
         let file_name = result
             .module_graph
@@ -219,6 +223,20 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
             .and_then(|i| result.file_map.path(i.file_id))
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "<unknown>".into());
+
+        // Build module prefix from ModulePath segments.
+        let prefix = if mod_path.is_root() {
+            None
+        } else {
+            Some(
+                mod_path
+                    .0
+                    .iter()
+                    .map(|n| n.resolve(interner))
+                    .collect::<Vec<_>>()
+                    .join("."),
+            )
+        };
 
         if let Some(info) = result.module_graph.get(mod_path) {
             // Holes.
@@ -234,11 +252,47 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
                 }
             }
 
-            // Symbol graph.
-            let graph = build_module_symbol_graph(&info.item_tree, tc, interner);
+            // Symbol graph with module prefix.
+            let graph = build_module_symbol_graph(&info.item_tree, tc, interner, prefix.as_deref());
             all_functions.extend(graph.functions);
-            all_types.extend(graph.types);
             all_capabilities.extend(graph.capabilities);
+
+            // Deduplicate builtins: only keep the first copy.
+            for t in graph.types {
+                if builtin_names.contains(t.name.as_str()) {
+                    if !seen_builtins.insert(t.name.clone()) {
+                        continue; // skip duplicate
+                    }
+                    // Emit builtin with bare ID (no module prefix).
+                    all_types.push(TypeNodeDto {
+                        id: symbol_id("type", &t.name, None),
+                        ..t
+                    });
+                } else {
+                    all_types.push(t);
+                }
+            }
+        }
+    }
+
+    // Post-process call edges: build a global fn_name → qualified_id map,
+    // then rewrite any call edge that doesn't match an emitted function ID.
+    let fn_name_to_id: std::collections::HashMap<String, String> = all_functions
+        .iter()
+        .map(|f| (f.name.clone(), f.id.clone()))
+        .collect();
+    for func in &mut all_functions {
+        for call in &mut func.calls {
+            // If the call ID doesn't match any emitted function, look up by name.
+            if !fn_name_to_id.values().any(|id| id == call) {
+                // Extract the callee name (last segment after "fn::").
+                let callee_name = call.strip_prefix("fn::").unwrap_or(call);
+                // Strip any module prefix to get the bare name.
+                let bare_name = callee_name.rsplit("::").next().unwrap_or(callee_name);
+                if let Some(qualified) = fn_name_to_id.get(bare_name) {
+                    *call = qualified.clone();
+                }
+            }
         }
     }
 
@@ -458,31 +512,50 @@ fn convert_hole(
 
 // ── Symbol graph builder ────────────────────────────────────────────
 
-fn symbol_id(kind: &str, name: &str) -> String {
-    format!("{kind}::{name}")
+fn symbol_id(kind: &str, name: &str, prefix: Option<&str>) -> String {
+    match prefix {
+        Some(p) => format!("{kind}::{p}::{name}"),
+        None => format!("{kind}::{name}"),
+    }
 }
 
-fn nested_symbol_id(parent_kind: &str, parent_name: &str, child_name: &str) -> String {
-    format!("{parent_kind}::{parent_name}::{child_name}")
+fn nested_symbol_id(
+    parent_kind: &str,
+    parent_name: &str,
+    child_name: &str,
+    prefix: Option<&str>,
+) -> String {
+    match prefix {
+        Some(p) => format!("{parent_kind}::{p}::{parent_name}::{child_name}"),
+        None => format!("{parent_kind}::{parent_name}::{child_name}"),
+    }
 }
 
 fn build_symbol_graph(result: &CheckResult) -> SymbolGraphDto {
-    build_module_symbol_graph(&result.item_tree, &result.type_check, &result.interner)
+    build_module_symbol_graph(
+        &result.item_tree,
+        &result.type_check,
+        &result.interner,
+        None,
+    )
 }
 
 fn build_module_symbol_graph(
     item_tree: &kyokara_hir::ItemTree,
     type_check: &kyokara_hir::TypeCheckResult,
     interner: &Interner,
+    module_prefix: Option<&str>,
 ) -> SymbolGraphDto {
-    // Build a lookup from function name → list of callee IDs (fn::name format).
+    // Build a lookup from function name → list of callee IDs.
+    // Callee IDs use the *same* module prefix — cross-module calls get fixed up
+    // later in `check_project` via a global name→ID map.
     let mut call_map: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     for (caller_name, callees) in &type_check.fn_calls {
         let caller_str = caller_name.resolve(interner).to_owned();
         let callee_ids: Vec<String> = callees
             .iter()
-            .map(|n| symbol_id("fn", n.resolve(interner)))
+            .map(|n| symbol_id("fn", n.resolve(interner), module_prefix))
             .collect();
         call_map.insert(caller_str, callee_ids);
     }
@@ -511,7 +584,7 @@ fn build_module_symbol_graph(
                 .filter_map(|tr| type_ref_name(tr, interner))
                 .collect();
             let calls = call_map.get(&name).cloned().unwrap_or_default();
-            let id = symbol_id("fn", &name);
+            let id = symbol_id("fn", &name, module_prefix);
             FnNodeDto {
                 id,
                 name,
@@ -551,7 +624,7 @@ fn build_module_symbol_graph(
                         .iter()
                         .map(|v| {
                             let vname = v.name.resolve(interner).to_owned();
-                            let vid = nested_symbol_id("type", &name, &vname);
+                            let vid = nested_symbol_id("type", &name, &vname, module_prefix);
                             VariantDto {
                                 id: vid,
                                 name: vname,
@@ -566,7 +639,7 @@ fn build_module_symbol_graph(
                     ("adt".to_owned(), Vec::new(), var_dtos)
                 }
             };
-            let id = symbol_id("type", &name);
+            let id = symbol_id("type", &name, module_prefix);
             TypeNodeDto {
                 id,
                 name,
@@ -589,10 +662,10 @@ fn build_module_symbol_graph(
                 .iter()
                 .map(|&fn_idx| {
                     let fn_name = item_tree.functions[fn_idx].name.resolve(interner);
-                    nested_symbol_id("cap", &name, fn_name)
+                    nested_symbol_id("cap", &name, fn_name, module_prefix)
                 })
                 .collect();
-            let id = symbol_id("cap", &name);
+            let id = symbol_id("cap", &name, module_prefix);
             CapNodeDto {
                 id,
                 name,
