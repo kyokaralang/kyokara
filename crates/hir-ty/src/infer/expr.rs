@@ -21,17 +21,22 @@ impl<'a> InferenceCtx<'a> {
         self.current_expr = Some(idx);
         let ty = self.infer_expr_inner(idx, expected);
         self.expr_types.insert(idx, ty.clone());
-        self.current_expr = prev_expr;
 
-        // If we have an expectation, try to unify (but don't double-report).
+        // Fallback: enforce expectation for non-poison types.
+        // On mismatch, return Ty::Error so parent expressions see poison
+        // and don't re-report the same mismatch (prevents cascading).
         if let Expectation::Has(exp) = expected
             && !ty.is_poison()
             && !exp.is_poison()
         {
-            // Already unified inside specific handlers for most cases.
-            // Only unify here if the inner handler didn't (catch-all).
+            let result = self.unify_or_err(exp, &ty);
+            if result.is_poison() {
+                self.current_expr = prev_expr;
+                return Ty::Error;
+            }
         }
 
+        self.current_expr = prev_expr;
         ty
     }
 
@@ -517,7 +522,14 @@ impl<'a> InferenceCtx<'a> {
     ) -> Ty {
         self.infer_expr(condition, &Expectation::Has(Ty::Bool));
 
-        let then_ty = self.infer_expr(then_branch, expected);
+        // Only propagate the expected type to then/else when both branches
+        // exist, since if-without-else always returns Unit.
+        let then_expectation = if else_branch.is_some() {
+            expected.clone()
+        } else {
+            Expectation::None
+        };
+        let then_ty = self.infer_expr(then_branch, &then_expectation);
 
         if let Some(else_idx) = else_branch {
             let else_ty = self.infer_expr(else_idx, &Expectation::Has(then_ty.clone()));
