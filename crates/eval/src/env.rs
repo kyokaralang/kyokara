@@ -4,10 +4,17 @@ use kyokara_hir_def::name::Name;
 
 use crate::value::Value;
 
-/// A stack of scopes, each holding name-value bindings.
+/// A flat-stack environment with scope markers for efficient push/pop.
+///
+/// Instead of `Vec<Vec<(Name, Value)>>`, this uses a single flat `Vec`
+/// with a separate scope-boundary stack. This avoids inner Vec allocations
+/// on every scope push.
 #[derive(Debug, Clone)]
 pub struct Env {
-    scopes: Vec<Vec<(Name, Value)>>,
+    /// All bindings in a flat list; scopes are delimited by `scope_starts`.
+    bindings: Vec<(Name, Value)>,
+    /// Stack of indices into `bindings` marking where each scope begins.
+    scope_starts: Vec<usize>,
 }
 
 impl Default for Env {
@@ -19,31 +26,35 @@ impl Default for Env {
 impl Env {
     pub fn new() -> Self {
         Env {
-            scopes: vec![Vec::new()],
+            bindings: Vec::new(),
+            scope_starts: vec![0],
         }
     }
 
+    #[inline(always)]
     pub fn push_scope(&mut self) {
-        self.scopes.push(Vec::new());
+        self.scope_starts.push(self.bindings.len());
     }
 
+    #[inline(always)]
     pub fn pop_scope(&mut self) {
-        self.scopes.pop();
-    }
-
-    pub fn bind(&mut self, name: Name, value: Value) {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.push((name, value));
+        if let Some(start) = self.scope_starts.pop() {
+            self.bindings.truncate(start);
         }
     }
 
-    /// Look up a name, searching from innermost scope outward.
+    #[inline(always)]
+    pub fn bind(&mut self, name: Name, value: Value) {
+        self.bindings.push((name, value));
+    }
+
+    /// Look up a name, searching from innermost binding outward.
+    #[inline(always)]
     pub fn lookup(&self, name: Name) -> Option<&Value> {
-        for scope in self.scopes.iter().rev() {
-            for (n, v) in scope.iter().rev() {
-                if *n == name {
-                    return Some(v);
-                }
+        // Search from the end (innermost scope) backward.
+        for (n, v) in self.bindings.iter().rev() {
+            if *n == name {
+                return Some(v);
             }
         }
         None

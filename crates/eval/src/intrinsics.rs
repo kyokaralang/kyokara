@@ -3,8 +3,13 @@
 use kyokara_hir_def::name::Name;
 use kyokara_intern::Interner;
 
+use smallvec::SmallVec;
+
 use crate::error::RuntimeError;
 use crate::value::Value;
+
+/// Stack-allocated argument vector for function calls.
+pub type Args = SmallVec<[Value; 4]>;
 
 /// Identifies an intrinsic function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,7 +98,7 @@ impl IntrinsicFn {
     ///
     /// Complex intrinsics (where `needs_interpreter()` is true) are
     /// intercepted by the interpreter before reaching this method.
-    pub fn call(self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+    pub fn call(self, args: Args) -> Result<Value, RuntimeError> {
         match self {
             // ── I/O ──────────────────────────────────────────────
             IntrinsicFn::Print => {

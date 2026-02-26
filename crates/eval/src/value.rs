@@ -12,6 +12,9 @@ use crate::env::Env;
 use crate::intrinsics::IntrinsicFn;
 
 /// A runtime value.
+///
+/// Kept small (32 bytes) by boxing heap-heavy variants behind indirection.
+/// This improves cache locality for the common Int/Float/Bool/Unit cases.
 #[derive(Debug, Clone)]
 pub enum Value {
     Int(i64),
@@ -30,7 +33,7 @@ pub enum Value {
     },
     List(Vec<Value>),
     Map(Vec<(Value, Value)>),
-    Fn(FnValue),
+    Fn(Box<FnValue>),
 }
 
 /// Function values — user-defined, lambdas, or intrinsics.
