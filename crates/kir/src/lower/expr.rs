@@ -73,9 +73,14 @@ impl<'a> LoweringCtx<'a> {
     // ── Path ─────────────────────────────────────────────────────
 
     fn lower_path(&mut self, path: Path, ty: Ty) -> ValueId {
+        if path.segments.is_empty() {
+            let id = self.next_hole_id();
+            return self.builder.push_hole(id, vec![], ty);
+        }
+
         let first = path.segments[0];
 
-        // Local variable.
+        // Local variable — chain field gets for multi-segment paths.
         if let Some(vid) = self.lookup_local(first) {
             return self.chain_field_gets(vid, &path.segments[1..], ty);
         }
@@ -87,7 +92,10 @@ impl<'a> LoweringCtx<'a> {
                 TypeDefKind::Adt { variants } if variants[variant_idx].fields.is_empty()
             );
             if is_nullary {
-                return self.builder.push_adt_construct(type_idx, first, vec![], ty);
+                let ctor_val = self
+                    .builder
+                    .push_adt_construct(type_idx, first, vec![], ty.clone());
+                return self.chain_field_gets(ctor_val, &path.segments[1..], ty);
             }
             // Multi-field constructor as value — placeholder.
             let id = self.next_hole_id();
@@ -136,33 +144,33 @@ impl<'a> LoweringCtx<'a> {
                 let name = path.segments[0];
                 let arg_vals = self.lower_call_args(&args);
 
-                // Constructor call → AdtConstruct.
+                // 1. Local variable (indirect call) — locals shadow everything.
+                if let Some(vid) = self.lookup_local(name) {
+                    return self
+                        .builder
+                        .push_call(CallTarget::Indirect(vid), arg_vals, ty);
+                }
+
+                // 2. Constructor call → AdtConstruct.
                 if let Some(&(type_idx, _)) = self.module_scope.constructors.get(&name) {
                     return self
                         .builder
                         .push_adt_construct(type_idx, name, arg_vals, ty);
                 }
 
-                // Function call (direct or intrinsic).
+                // 3. Intrinsic (has entry in functions but no body).
+                if self.intrinsics.contains(&name) {
+                    let name_str = name.resolve(self.interner).to_string();
+                    return self
+                        .builder
+                        .push_call(CallTarget::Intrinsic(name_str), arg_vals, ty);
+                }
+
+                // 4. Module-level function (direct call).
                 if self.module_scope.functions.contains_key(&name) {
-                    if self.intrinsics.contains(&name) {
-                        let name_str = name.resolve(self.interner).to_string();
-                        return self.builder.push_call(
-                            CallTarget::Intrinsic(name_str),
-                            arg_vals,
-                            ty,
-                        );
-                    }
                     return self
                         .builder
                         .push_call(CallTarget::Direct(name), arg_vals, ty);
-                }
-
-                // Local variable (indirect call).
-                if let Some(vid) = self.lookup_local(name) {
-                    return self
-                        .builder
-                        .push_call(CallTarget::Indirect(vid), arg_vals, ty);
                 }
 
                 // Fallback: treat as direct call (might be imported).
@@ -362,10 +370,6 @@ impl<'a> LoweringCtx<'a> {
             self.pop_scope();
         }
 
-        if all_terminated {
-            all_terminated = true; // keep the flag
-        }
-
         let result = self.builder.add_block_param(merge_blk, None, ty);
         self.builder.switch_to(merge_blk);
         if all_terminated {
@@ -394,13 +398,24 @@ impl<'a> LoweringCtx<'a> {
                     );
 
                     let body_blk = self.builder.new_block(None);
-
-                    if is_last {
-                        // Last literal arm — unconditionally jump.
-                        self.builder.set_jump(BranchTarget {
-                            block: body_blk,
-                            args: vec![],
-                        });
+                    let next_blk = if is_last {
+                        // Last literal arm — create an unreachable fallthrough block.
+                        let dead_blk = self.builder.new_block(None);
+                        self.builder.set_branch(
+                            eq_val,
+                            BranchTarget {
+                                block: body_blk,
+                                args: vec![],
+                            },
+                            BranchTarget {
+                                block: dead_blk,
+                                args: vec![],
+                            },
+                        );
+                        // Mark the fallthrough as unreachable.
+                        self.builder.switch_to(dead_blk);
+                        self.builder.set_unreachable();
+                        None
                     } else {
                         let next_blk = self.builder.new_block(None);
                         self.builder.set_branch(
@@ -414,22 +429,10 @@ impl<'a> LoweringCtx<'a> {
                                 args: vec![],
                             },
                         );
-                        // Continue in next_blk for subsequent arms.
-                        self.builder.switch_to(body_blk);
-                        self.push_scope();
-                        let body_val = self.lower_expr(arm.body);
-                        if !self.block_has_terminator() {
-                            self.builder.set_jump(BranchTarget {
-                                block: merge_blk,
-                                args: vec![body_val],
-                            });
-                        }
-                        self.pop_scope();
-                        self.builder.switch_to(next_blk);
-                        continue;
-                    }
+                        Some(next_blk)
+                    };
 
-                    // Last arm body.
+                    // Lower the arm body.
                     self.builder.switch_to(body_blk);
                     self.push_scope();
                     let body_val = self.lower_expr(arm.body);
@@ -440,6 +443,11 @@ impl<'a> LoweringCtx<'a> {
                         });
                     }
                     self.pop_scope();
+
+                    // Continue in next_blk for subsequent arms.
+                    if let Some(next) = next_blk {
+                        self.builder.switch_to(next);
+                    }
                 }
                 Pat::Wildcard => {
                     self.push_scope();
