@@ -154,39 +154,26 @@ fn non_trivia_tokens(node: &SyntaxNode) -> Vec<SyntaxToken> {
 
 fn format_source_file(node: &SyntaxNode) -> Doc {
     // Single pass: categorize all children with their attached comments.
-    let all_children = comments::format_children_with_comments(
-        node,
-        |c| {
-            matches!(
-                c.kind(),
-                SyntaxKind::ModuleDecl
-                    | SyntaxKind::ImportDecl
-                    | SyntaxKind::TypeDef
-                    | SyntaxKind::FnDef
-                    | SyntaxKind::CapDef
-                    | SyntaxKind::PropertyDef
-                    | SyntaxKind::LetBinding
-            )
-        },
-        format_node,
-    );
+    let is_top_level_item = |c: &SyntaxNode| {
+        matches!(
+            c.kind(),
+            SyntaxKind::ModuleDecl
+                | SyntaxKind::ImportDecl
+                | SyntaxKind::TypeDef
+                | SyntaxKind::FnDef
+                | SyntaxKind::CapDef
+                | SyntaxKind::PropertyDef
+                | SyntaxKind::LetBinding
+                | SyntaxKind::ErrorNode
+        )
+    };
+
+    let all_children =
+        comments::format_children_with_comments(node, &is_top_level_item, format_node);
 
     // Separate into module, imports, and items based on original node kinds.
-    let child_nodes_iter: Vec<SyntaxNode> = node
-        .children()
-        .filter(|c| {
-            matches!(
-                c.kind(),
-                SyntaxKind::ModuleDecl
-                    | SyntaxKind::ImportDecl
-                    | SyntaxKind::TypeDef
-                    | SyntaxKind::FnDef
-                    | SyntaxKind::CapDef
-                    | SyntaxKind::PropertyDef
-                    | SyntaxKind::LetBinding
-            )
-        })
-        .collect();
+    let child_nodes_iter: Vec<SyntaxNode> =
+        node.children().filter(|c| is_top_level_item(c)).collect();
 
     let mut module_docs = Vec::new();
     let mut import_docs = Vec::new();
