@@ -1739,3 +1739,23 @@ fn extra_type_args_produce_diagnostic() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn duplicate_cap_member_names_produce_diagnostic() {
+    let src = "cap C {\n  fn f() -> Int\n  fn f() -> Int\n}\nfn main() -> Int { 1 }";
+    let output = check(src, "test.ky");
+    let dups: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("duplicate") && d.message.contains("f"))
+        .collect();
+    assert!(
+        !dups.is_empty(),
+        "expected duplicate cap member diagnostic, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
