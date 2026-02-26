@@ -1963,3 +1963,21 @@ fn rename_function_does_not_rename_shadowing_local() {
         "local variable usage should NOT be renamed, got: {patched}"
     );
 }
+
+#[test]
+fn symbol_graph_local_lambda_not_in_function_calls() {
+    // A local lambda `f` should not produce a dangling fn::f call edge.
+    let src = "fn main() -> Int {\n  let f = fn(x: Int, y: Int) -> Int => x\n  f(1, 2)\n}";
+    let output = check(src, "test.ky");
+    let main_fn = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "main")
+        .expect("should have main function");
+    assert!(
+        !main_fn.calls.iter().any(|c| c.contains("f")),
+        "local lambda call should not appear as fn::f, got: {:?}",
+        main_fn.calls
+    );
+}
