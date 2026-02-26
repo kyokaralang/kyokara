@@ -1240,6 +1240,27 @@ fn constructor_pattern_binding_is_in_scope() {
 }
 
 #[test]
+fn constructor_pattern_arity_mismatch_produces_diagnostic() {
+    // `Some(_, _)` has 2 args but Some expects 1.
+    let src = "fn main() -> Int { match Some(1) { Some(_, _) => 0, None => 1 } }";
+    let output = check(src, "test.ky");
+    let arity_errors: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("expected") && d.message.contains("argument"))
+        .collect();
+    assert!(
+        !arity_errors.is_empty(),
+        "expected arity mismatch diagnostic for Some(_, _), got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn nested_constructor_pattern_binding_is_in_scope() {
     // `Some(Some(x)) => x` — nested constructor bindings should also work.
     let src = "fn main() -> Int { match Some(Some(1)) { Some(Some(x)) => x, _ => 0 } }";
