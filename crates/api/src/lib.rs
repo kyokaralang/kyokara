@@ -580,12 +580,21 @@ fn build_module_symbol_graph(
     // Build a lookup from function name → list of callee IDs.
     // Callee IDs use the *same* module prefix — cross-module calls get fixed up
     // later in `check_project` via a global name→ID map.
+    // Build the set of known function names so we can filter out constructor
+    // calls (e.g. Some, Ok, Err) that the inference engine records as callees.
+    let fn_names: std::collections::HashSet<&str> = item_tree
+        .functions
+        .iter()
+        .map(|(_, f)| f.name.resolve(interner))
+        .collect();
+
     let mut call_map: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     for (caller_name, callees) in &type_check.fn_calls {
         let caller_str = caller_name.resolve(interner).to_owned();
         let callee_ids: Vec<String> = callees
             .iter()
+            .filter(|n| fn_names.contains(n.resolve(interner)))
             .map(|n| symbol_id("fn", n.resolve(interner), module_prefix))
             .collect();
         call_map.insert(caller_str, callee_ids);

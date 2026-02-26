@@ -1859,6 +1859,23 @@ fn symbol_graph_partial_on_parse_error() {
 }
 
 #[test]
+fn symbol_graph_constructor_not_in_function_calls() {
+    // Constructor expressions like Some(1) should NOT appear as fn::Some in calls.
+    let output = check("fn main() -> Option<Int> { Some(1) }", "test.ky");
+    let main_fn = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "main")
+        .expect("should have main function");
+    assert!(
+        !main_fn.calls.iter().any(|c| c.contains("Some")),
+        "constructor Some should not appear in function calls, got: {:?}",
+        main_fn.calls
+    );
+}
+
+#[test]
 fn symbol_graph_not_partial_on_clean_file() {
     let output = check("fn main() -> Int { 1 }", "test.ky");
     assert!(
