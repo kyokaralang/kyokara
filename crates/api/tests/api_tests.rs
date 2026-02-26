@@ -1458,3 +1458,23 @@ fn record_pattern_invalid_field_produces_diagnostic() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn record_pattern_on_non_record_scrutinee_produces_diagnostic() {
+    let src = "fn main() -> Int { match 1 { { x } => 0, _ => 1 } }";
+    let output = check(src, "test.ky");
+    let errs: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("mismatch") || d.message.contains("record"))
+        .collect();
+    assert!(
+        !errs.is_empty(),
+        "expected type mismatch for record pattern on Int, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
