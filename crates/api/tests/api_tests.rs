@@ -1195,3 +1195,27 @@ fn check_project_aliased_import_resolves_by_path_not_alias() {
         import_errors.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
 }
+
+// ── Lowering diagnostic file path (#66) ──────────────────────────────
+
+#[test]
+fn check_project_lowering_diagnostic_has_real_file_path() {
+    // Lowering diagnostics should report the actual file path, not "<project>".
+    let (_dir, main_path) = write_project(&[("main.ky", "import nope\nfn main() -> Int { 1 }\n")]);
+    let output = check_project(&main_path);
+    let diag = output
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains("unresolved import"))
+        .expect("expected unresolved import diagnostic");
+    assert!(
+        !diag.span.file.contains("<project>"),
+        "diagnostic file should not be '<project>', got: {}",
+        diag.span.file
+    );
+    assert!(
+        diag.span.file.contains("main.ky"),
+        "diagnostic file should reference main.ky, got: {}",
+        diag.span.file
+    );
+}

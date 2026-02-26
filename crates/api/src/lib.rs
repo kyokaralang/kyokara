@@ -183,7 +183,12 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
         } else {
             "E0101"
         };
-        diagnostics.push(convert_lowering_diagnostic(diag, code, "<project>"));
+        let file_name = result
+            .file_map
+            .path(diag.span.file)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<project>".into());
+        diagnostics.push(convert_lowering_diagnostic(diag, code, &file_name));
     }
 
     // Type-check diagnostics from all modules.
