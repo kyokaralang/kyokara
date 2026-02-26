@@ -54,6 +54,12 @@ impl KirBuilder {
 
     // ── Instruction helpers ──────────────────────────────────────
 
+    /// Allocate a value without pushing it to any block body.
+    /// Used for `FnParam` values that don't belong to a specific block.
+    pub fn alloc_value(&mut self, ty: Ty, inst: Inst) -> ValueId {
+        self.values.alloc(ValueDef { ty, inst })
+    }
+
     fn push_value(&mut self, ty: Ty, inst: Inst) -> ValueId {
         let vid = self.values.alloc(ValueDef { ty, inst });
         let block = self
@@ -119,6 +125,27 @@ impl KirBuilder {
 
     pub fn push_hole(&mut self, id: u32, constraints: Vec<HoleConstraint>, ty: Ty) -> ValueId {
         self.push_value(ty, Inst::Hole { id, constraints })
+    }
+
+    pub fn push_adt_field_get(&mut self, base: ValueId, field_index: u32, ty: Ty) -> ValueId {
+        self.push_value(ty, Inst::AdtFieldGet { base, field_index })
+    }
+
+    // ── Query helpers ─────────────────────────────────────────────
+
+    pub fn current_block(&self) -> Option<BlockId> {
+        self.current_block
+    }
+
+    pub fn block_has_terminator(&self) -> bool {
+        self.current_block
+            .map(|bid| self.blocks[bid].terminator.is_some())
+            .unwrap_or(false)
+    }
+
+    /// Get the type of an already-allocated value.
+    pub fn value_ty(&self, vid: ValueId) -> &Ty {
+        &self.values[vid].ty
     }
 
     // ── Terminators ──────────────────────────────────────────────

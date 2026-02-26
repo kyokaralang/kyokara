@@ -12,3 +12,7 @@ kyokara-hir-def.workspace = true
 kyokara-hir-ty.workspace = true
 kyokara-diagnostics.workspace = true
 la-arena.workspace = true
+rustc-hash.workspace = true
+
+[dev-dependencies]
+kyokara-hir.workspace = true

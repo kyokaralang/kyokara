@@ -9,6 +9,7 @@ pub mod build;
 pub mod display;
 pub mod function;
 pub mod inst;
+pub mod lower;
 pub mod validate;
 pub mod value;
 

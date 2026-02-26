@@ -336,6 +336,27 @@ fn validate_inst_operands(
                 )));
             }
         }
+        Inst::FnParam { index } => {
+            if (*index as usize) >= func.params.len() {
+                diags.push(error(format!(
+                    "fn {}: block {} fn_param index {} out of range (function has {} params)",
+                    fn_name,
+                    block_label,
+                    index,
+                    func.params.len()
+                )));
+            }
+        }
+        Inst::AdtFieldGet { base, .. } => {
+            check_value_exists(
+                *base,
+                func,
+                block_label,
+                fn_name,
+                "adt_field_get base",
+                diags,
+            );
+        }
     }
 }
 
