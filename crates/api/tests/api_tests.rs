@@ -1845,6 +1845,34 @@ fn parse_error_has_nonzero_span() {
 }
 
 #[test]
+fn symbol_graph_partial_on_parse_error() {
+    // When a file has parse errors, the symbol graph should be marked partial.
+    let output = check("fn main( -> Int { 1 }", "test.ky");
+    assert!(
+        !output.diagnostics.is_empty(),
+        "should have parse error diagnostics"
+    );
+    assert!(
+        output.symbol_graph.partial,
+        "symbol graph should be marked partial when parse errors exist"
+    );
+}
+
+#[test]
+fn symbol_graph_not_partial_on_clean_file() {
+    let output = check("fn main() -> Int { 1 }", "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "should have no diagnostics, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        !output.symbol_graph.partial,
+        "symbol graph should NOT be partial for clean file"
+    );
+}
+
+#[test]
 fn rename_function_does_not_rename_shadowing_local() {
     // A local variable `foo` shadows the function `foo` inside the body.
     // Renaming function `foo` → `bar` should NOT touch the local binding or its usages.

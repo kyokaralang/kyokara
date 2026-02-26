@@ -83,6 +83,10 @@ pub struct SymbolGraphDto {
     pub functions: Vec<FnNodeDto>,
     pub types: Vec<TypeNodeDto>,
     pub capabilities: Vec<CapNodeDto>,
+    /// `true` when the source has parse errors, indicating the graph
+    /// was built from a recovered/partial CST and may contain artifacts.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub partial: bool,
 }
 
 /// A function node in the symbol graph.
@@ -318,6 +322,7 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
             functions: all_functions,
             types: all_types,
             capabilities: all_capabilities,
+            partial: result.parse_errors.iter().any(|(_, errs)| !errs.is_empty()),
         },
     }
 }
@@ -391,7 +396,8 @@ fn convert_result(result: &CheckResult, file_name: &str) -> CheckOutput {
     }
 
     // Build symbol graph.
-    let symbol_graph = build_symbol_graph(result);
+    let mut symbol_graph = build_symbol_graph(result);
+    symbol_graph.partial = !result.parse_errors.is_empty();
 
     CheckOutput {
         diagnostics,
@@ -737,6 +743,7 @@ fn build_module_symbol_graph(
     functions.extend(cap_member_fn_nodes);
 
     SymbolGraphDto {
+        partial: false,
         functions,
         types,
         capabilities,
