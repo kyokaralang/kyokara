@@ -9,7 +9,7 @@ use kyokara_hir::{CheckResult, ProjectCheckResult};
 use kyokara_intern::Interner;
 use kyokara_parser::SyntaxKind;
 use kyokara_span::FileId;
-use kyokara_syntax::SyntaxNode;
+use kyokara_syntax::{SyntaxNode, SyntaxToken};
 
 use crate::{RefactorError, RefactorResult, SymbolKind, TextEdit};
 
@@ -303,6 +303,11 @@ fn collect_rename_edits(
         };
 
         if should_rename_token(&parent, kind) {
+            // For function renames, skip PathExpr usages that are locally
+            // shadowed by a LetBinding or Param with the same name.
+            if kind == SymbolKind::Function && is_locally_shadowed(&token, old_name) {
+                continue;
+            }
             edits.push(TextEdit {
                 file_id,
                 range: token.text_range(),
@@ -375,4 +380,66 @@ pub fn is_usage_site(gp_kind: SyntaxKind, kind: SymbolKind, grandparent: &Syntax
             false
         }
     }
+}
+
+/// Check if a token usage is locally shadowed by a `LetBinding` or `Param`
+/// with the same name in the enclosing function body.
+///
+/// This prevents function renames from touching local variables that shadow
+/// the function name.
+fn is_locally_shadowed(token: &SyntaxToken, name: &str) -> bool {
+    // Walk up from the token's parent to find the enclosing FnDef.
+    let fn_def = token
+        .parent_ancestors()
+        .find(|n| n.kind() == SyntaxKind::FnDef);
+    let Some(fn_def) = fn_def else {
+        return false;
+    };
+
+    // Check if the token is at the definition site (direct child of FnDef).
+    // Definition-site tokens should never be considered "shadowed".
+    if let Some(parent) = token.parent()
+        && parent.kind() == SyntaxKind::FnDef
+    {
+        return false;
+    }
+
+    // Look for Param or LetBinding nodes within this FnDef that bind the same name.
+    for node in fn_def.descendants() {
+        match node.kind() {
+            // Param structure: Param > Ident "name" > Colon > TypeExpr
+            // The first Ident child is the parameter name.
+            SyntaxKind::Param => {
+                for child in node.children_with_tokens() {
+                    if let Some(t) = child.into_token()
+                        && t.kind() == SyntaxKind::Ident
+                    {
+                        if t.text() == name {
+                            return true;
+                        }
+                        break; // Only check the first Ident
+                    }
+                }
+            }
+            // LetBinding structure: LetKw > IdentPat > ... > Eq > Expr
+            // Only check the IdentPat child (the pattern), not the initializer.
+            SyntaxKind::LetBinding => {
+                for child in node.children() {
+                    if child.kind() == SyntaxKind::IdentPat {
+                        for element in child.descendants_with_tokens() {
+                            if let Some(t) = element.into_token()
+                                && t.kind() == SyntaxKind::Ident
+                                && t.text() == name
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    false
 }
