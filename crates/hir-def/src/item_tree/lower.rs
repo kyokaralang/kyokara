@@ -371,9 +371,20 @@ impl ItemTreeCtx<'_> {
     fn collect_type_params(&mut self, node: &impl HasTypeParams) -> Vec<Name> {
         node.type_param_list()
             .map(|tpl| {
+                let mut seen = std::collections::HashSet::new();
                 tpl.type_params()
-                    .filter_map(|tp| tp.name_token())
-                    .map(|tok| Name::new(self.interner, tok.text()))
+                    .filter_map(|tp| {
+                        let tok = tp.name_token()?;
+                        let text = tok.text();
+                        if !seen.insert(text.to_string()) {
+                            let span = self.node_span(tp.syntax());
+                            self.diagnostics.push(Diagnostic::error(
+                                format!("duplicate type parameter `{text}`"),
+                                span,
+                            ));
+                        }
+                        Some(Name::new(self.interner, text))
+                    })
                     .collect()
             })
             .unwrap_or_default()

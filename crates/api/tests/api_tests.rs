@@ -1350,3 +1350,27 @@ fn duplicate_function_params_produce_diagnostic() {
         "should mention param name `x`"
     );
 }
+
+#[test]
+fn duplicate_type_params_produce_diagnostic() {
+    let src = "fn id<T, T>(x: T) -> T { x }\nfn main() -> Int { id(1) }";
+    let output = check(src, "test.ky");
+    let dups: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("duplicate") && d.message.contains("type parameter"))
+        .collect();
+    assert!(
+        !dups.is_empty(),
+        "expected duplicate type parameter diagnostic, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        dups[0].message.contains("T"),
+        "should mention type param `T`"
+    );
+}
