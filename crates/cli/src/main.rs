@@ -238,7 +238,7 @@ fn main() {
                         old_name: sym,
                         new_name: new,
                         kind: sk,
-                        target_file: None,
+                        target_file: target_file.clone(),
                     }
                 }
                 "add-missing-match-cases" => {
