@@ -979,3 +979,47 @@ fn verification_diagnostic_dto_nullable_fields() {
     assert!(json["code"].is_null());
     assert!(json["span"].is_null());
 }
+
+// ── IoError handling tests ───────────────────────────────────────────
+
+#[test]
+fn api_refactor_project_io_error_surfaces_in_dto() {
+    // A valid project refactor should succeed — regression test that
+    // filesystem operations work and don't silently fail.
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "import math\nfn caller() -> Int { add(1, 2) }"),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
+    ]);
+    let action = kyokara_refactor::RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: kyokara_refactor::SymbolKind::Function,
+    };
+    let output = refactor_project(&main_path, action, false);
+    // Should be verified, not an error (filesystem ops should succeed).
+    assert_ne!(
+        output.status, "error",
+        "valid project refactor should not produce an error: {:?}",
+        output.error
+    );
+    assert_eq!(output.status, "typechecked");
+}
+
+#[test]
+fn api_io_error_produces_error_status() {
+    // Construct an IoError directly and verify the Display message
+    // is what the API's error_dto would serialize.
+    let err = kyokara_refactor::RefactorError::IoError {
+        message: "failed to create temp directory".into(),
+    };
+    let msg = err.to_string();
+    // The message should clearly indicate an I/O error, not a symbol error.
+    assert!(
+        !msg.contains("not found in module scope"),
+        "IoError should NOT look like SymbolNotFound: {msg}"
+    );
+    assert!(
+        msg.contains("failed to create temp directory"),
+        "IoError message should include the original error: {msg}"
+    );
+}

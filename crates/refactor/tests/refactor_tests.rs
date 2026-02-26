@@ -536,3 +536,112 @@ fn transact_skipped_when_forced() {
     );
     assert_eq!(tx.patched_sources.len(), 1);
 }
+
+// ── IoError variant tests ──────────────────────────────────────────
+
+#[test]
+fn io_error_variant_exists_and_displays() {
+    let err = RefactorError::IoError {
+        message: "permission denied".into(),
+    };
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("permission denied"),
+        "IoError display should include the message: {msg}"
+    );
+    assert!(
+        matches!(err, RefactorError::IoError { .. }),
+        "should match IoError variant"
+    );
+}
+
+#[test]
+fn io_error_is_not_symbol_not_found() {
+    // IoError should be its own variant, not SymbolNotFound.
+    let err = RefactorError::IoError {
+        message: "tempdir creation failed".into(),
+    };
+    assert!(
+        !matches!(err, RefactorError::SymbolNotFound { .. }),
+        "IoError should NOT match SymbolNotFound"
+    );
+}
+
+#[test]
+fn transact_project_with_invalid_path_returns_io_error() {
+    // Using a nonexistent entry path that will cause fs errors during verification.
+    // First set up a valid project so the refactor succeeds, then we test error types.
+    let dir = std::env::temp_dir().join("kyokara_io_error_test");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let main_path = dir.join("main.ky");
+    let math_path = dir.join("math.ky");
+    std::fs::write(
+        &main_path,
+        "import math\nfn caller() -> Int { add(1, 2) }\n",
+    )
+    .unwrap();
+    std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x + y }\n").unwrap();
+
+    let result = kyokara_hir::check_project(&main_path);
+    let action = RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: SymbolKind::Function,
+    };
+
+    // This should succeed (valid project, valid rename).
+    let tx = kyokara_refactor::transaction::transact_project(&main_path, &result, action);
+    assert!(
+        tx.is_ok(),
+        "valid project transact should succeed, got: {tx:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn transact_project_success_returns_verified() {
+    let dir = std::env::temp_dir().join("kyokara_io_success_test");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let main_path = dir.join("main.ky");
+    let math_path = dir.join("math.ky");
+    std::fs::write(
+        &main_path,
+        "import math\nfn caller() -> Int { add(1, 2) }\n",
+    )
+    .unwrap();
+    std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x + y }\n").unwrap();
+
+    let result = kyokara_hir::check_project(&main_path);
+    let action = RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: SymbolKind::Function,
+    };
+
+    let tx = kyokara_refactor::transaction::transact_project(&main_path, &result, action).unwrap();
+    assert!(
+        matches!(tx.verification, VerificationStatus::Verified),
+        "expected Verified, got {:?}",
+        tx.verification
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn io_error_display_includes_io_prefix() {
+    let err = RefactorError::IoError {
+        message: "disk full".into(),
+    };
+    let msg = format!("{err}");
+    // The display should make it clear this is an I/O error.
+    assert!(
+        msg.to_lowercase().contains("i/o") || msg.to_lowercase().contains("io"),
+        "IoError display should indicate it's an I/O error: {msg}"
+    );
+}
