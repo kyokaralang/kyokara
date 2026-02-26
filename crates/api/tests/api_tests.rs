@@ -1619,3 +1619,20 @@ fn refined_type_produces_unsupported_diagnostic() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn let_constructor_pattern_bindings_in_scope() {
+    // `let Some(x) = Some(1)` — x should be in scope after the let binding.
+    let src = "fn main() -> Int { let Some(x) = Some(1)\n x }";
+    let output = check(src, "test.ky");
+    let unresolved: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("unresolved"))
+        .collect();
+    assert!(
+        unresolved.is_empty(),
+        "constructor pattern binding `x` should be in scope, got: {:?}",
+        unresolved.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
