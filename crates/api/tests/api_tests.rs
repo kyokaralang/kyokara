@@ -1276,3 +1276,29 @@ fn nested_constructor_pattern_binding_is_in_scope() {
         unresolved.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn unknown_constructor_pattern_emits_diagnostic() {
+    // `Nope` is not a constructor in scope — should produce E0013.
+    let src = "fn main() -> Int { match Some(1) { Nope(x) => x, _ => 0 } }";
+    let output = check(src, "test.ky");
+    let unresolved: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0013")
+        .collect();
+    assert!(
+        !unresolved.is_empty(),
+        "expected E0013 for unknown constructor `Nope`, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        unresolved[0].message.contains("Nope"),
+        "diagnostic should mention the unknown constructor name, got: {}",
+        unresolved[0].message
+    );
+}
