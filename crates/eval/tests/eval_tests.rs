@@ -1794,3 +1794,62 @@ fn run_project_rejects_type_error_in_imported_module() {
         }
     }
 }
+
+#[test]
+fn run_project_rejects_parse_error_in_sibling_module() {
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    // bad.ky has a syntax error (missing param name).
+    let bad_path = dir.path().join("bad.ky");
+    let mut bad_file = std::fs::File::create(&bad_path).unwrap();
+    writeln!(bad_file, "pub fn bad( -> Int {{ 42 }}").unwrap();
+
+    // main.ky is valid and doesn't import bad.
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "fn main() -> Int {{ 42 }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path);
+    match result {
+        Ok(_) => panic!("expected parse error from sibling module"),
+        Err(e) => {
+            let err = e.to_string();
+            assert!(
+                err.contains("parse error"),
+                "expected 'parse error' in message, got: {err}"
+            );
+        }
+    }
+}
+
+#[test]
+fn run_project_rejects_lowering_error_in_sibling_module() {
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    // dup.ky has a lowering error: duplicate function definition.
+    let dup_path = dir.path().join("dup.ky");
+    let mut dup_file = std::fs::File::create(&dup_path).unwrap();
+    writeln!(dup_file, "pub fn foo() -> Int {{ 1 }}").unwrap();
+    writeln!(dup_file, "pub fn foo() -> Int {{ 2 }}").unwrap();
+
+    // main.ky is valid.
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "fn main() -> Int {{ 42 }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path);
+    match result {
+        Ok(_) => panic!("expected lowering error from sibling module"),
+        Err(e) => {
+            let err = e.to_string();
+            assert!(
+                err.contains("lowering error") || err.contains("duplicate"),
+                "expected lowering/duplicate error in message, got: {err}"
+            );
+        }
+    }
+}
