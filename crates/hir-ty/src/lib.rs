@@ -78,11 +78,16 @@ pub fn check_module(
             continue;
         }
 
+        // Match by source range when available (exact CST node identity),
+        // falling back to name-based matching for imported functions.
         let fn_name_str = fn_item.name.resolve(interner);
-        let Some(fn_def) = fn_defs
-            .iter()
-            .find(|fd: &&FnDef| fd.name_token().is_some_and(|t| t.text() == fn_name_str))
-        else {
+        let Some(fn_def) = fn_defs.iter().find(|fd: &&FnDef| {
+            if let Some(range) = fn_item.source_range {
+                fd.syntax().text_range() == range
+            } else {
+                fd.name_token().is_some_and(|t| t.text() == fn_name_str)
+            }
+        }) else {
             continue;
         };
 

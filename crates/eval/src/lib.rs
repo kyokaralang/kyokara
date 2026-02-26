@@ -336,6 +336,7 @@ fn mk_intrinsic(
             with_caps: Vec::new(),
             pipe_caps: Vec::new(),
             has_body: false,
+            source_range: None,
         },
     )
 }
