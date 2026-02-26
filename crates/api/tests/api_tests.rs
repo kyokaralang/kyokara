@@ -1518,3 +1518,23 @@ fn duplicate_lambda_params_produce_diagnostic() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn named_record_literal_unknown_field_produces_diagnostic() {
+    let src = "type Point = { x: Int }\nfn main() -> Int { let p = Point { y: 1 }\n p.x }";
+    let output = check(src, "test.ky");
+    let errs: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("field") && d.message.contains("y"))
+        .collect();
+    assert!(
+        !errs.is_empty(),
+        "expected unknown field diagnostic for `y`, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
