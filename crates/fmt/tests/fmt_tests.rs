@@ -362,3 +362,15 @@ fn fmt_error_node_verbatim() {
     // Should not panic and should produce some output
     assert!(!output.is_empty());
 }
+
+#[test]
+fn fmt_top_level_error_node_preserved() {
+    // Top-level parse-error nodes should be preserved verbatim, not dropped.
+    let input = "match x {}";
+    let output = format_source(input);
+    assert!(
+        output.contains("match"),
+        "top-level error node text should be preserved, got: {:?}",
+        output
+    );
+}
