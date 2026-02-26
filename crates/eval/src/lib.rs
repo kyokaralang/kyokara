@@ -191,6 +191,22 @@ pub fn run_project_with_manifest(
         )));
     }
 
+    // Check for body lowering errors (e.g. unresolved names) across all modules.
+    let mut body_lowering_errors = Vec::new();
+    for (_mod_path, tc) in &project.type_checks {
+        for diag in &tc.body_lowering_diagnostics {
+            if diag.severity == kyokara_diagnostics::Severity::Error {
+                body_lowering_errors.push(diag.message.clone());
+            }
+        }
+    }
+    if !body_lowering_errors.is_empty() {
+        return Err(RuntimeError::TypeError(format!(
+            "lowering errors: {}",
+            body_lowering_errors.join("; ")
+        )));
+    }
+
     // Check for type errors across all modules.
     let mut type_errors = Vec::new();
     for (_mod_path, tc) in &project.type_checks {

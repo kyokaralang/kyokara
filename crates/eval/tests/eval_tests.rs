@@ -1853,3 +1853,32 @@ fn run_project_rejects_lowering_error_in_sibling_module() {
         }
     }
 }
+
+#[test]
+fn run_project_rejects_body_lowering_error_in_sibling_module() {
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    // bad.ky has an unresolved name in the body.
+    let bad_path = dir.path().join("bad.ky");
+    let mut bad_file = std::fs::File::create(&bad_path).unwrap();
+    writeln!(bad_file, "pub fn oops() -> Int {{ unknown_name }}").unwrap();
+
+    // main.ky is valid and doesn't import bad.
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "fn main() -> Int {{ 42 }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path);
+    match result {
+        Ok(_) => panic!("expected body lowering error from sibling module"),
+        Err(e) => {
+            let err = e.to_string();
+            assert!(
+                err.contains("unresolved") || err.contains("lowering"),
+                "expected unresolved/lowering error in message, got: {err}"
+            );
+        }
+    }
+}
