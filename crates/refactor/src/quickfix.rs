@@ -32,12 +32,25 @@ pub fn add_missing_match_cases(
 }
 
 /// Add missing match cases in a multi-file project.
+///
+/// When `target_file` is `Some`, only diagnostics in the matching module are
+/// considered. This prevents offset collisions across files.
 pub fn add_missing_match_cases_project(
     result: &ProjectCheckResult,
     offset: u32,
+    target_file: Option<&str>,
 ) -> Result<RefactorResult, RefactorError> {
     for (mod_path, tc) in &result.type_checks {
         let info = result.module_graph.get(mod_path);
+
+        // Filter by target_file if provided.
+        if let Some(target) = target_file {
+            let matches = info.is_some_and(|i| i.path.display().to_string() == target);
+            if !matches {
+                continue;
+            }
+        }
+
         let file_id = info.map(|i| i.file_id).unwrap_or(FileId(0));
 
         for (data, span) in &tc.raw_diagnostics {
@@ -160,12 +173,25 @@ pub fn add_missing_capability(
 }
 
 /// Add missing capability in a multi-file project.
+///
+/// When `target_file` is `Some`, only diagnostics in the matching module are
+/// considered. This prevents offset collisions across files.
 pub fn add_missing_capability_project(
     result: &ProjectCheckResult,
     offset: u32,
+    target_file: Option<&str>,
 ) -> Result<RefactorResult, RefactorError> {
     for (mod_path, tc) in &result.type_checks {
         let info = result.module_graph.get(mod_path);
+
+        // Filter by target_file if provided.
+        if let Some(target) = target_file {
+            let matches = info.is_some_and(|i| i.path.display().to_string() == target);
+            if !matches {
+                continue;
+            }
+        }
+
         let file_id = info.map(|i| i.file_id).unwrap_or(FileId(0));
 
         for (data, span) in &tc.raw_diagnostics {

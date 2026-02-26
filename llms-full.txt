@@ -250,11 +250,14 @@ Each returns a patch (list of TextEdit), verification status, and patched source
 
 ```sh
 kyokara refactor <file> --action rename --symbol <name> --new-name <name> [--kind function|type|capability|variant]
-kyokara refactor <file> --action add-missing-match-cases --offset <n>
-kyokara refactor <file> --action add-missing-capability --offset <n>
+kyokara refactor <file> --action add-missing-match-cases --offset <n> [--target-file <path>]
+kyokara refactor <file> --action add-missing-capability --offset <n> [--target-file <path>]
 kyokara refactor <file> ... --apply          # write edits to disk (only if verification passes)
 kyokara refactor <file> ... --apply --force  # write edits even if verification fails
+kyokara refactor <file> ... --project        # force multi-file project mode
 ```
+
+In project mode, `--target-file` disambiguates which module the byte offset refers to (offsets are per-file, so two modules can have diagnostics at the same offset). Project mode auto-detects when the entry file is named `main.ky` and has sibling `.ky` files; use `--project` to force it for other entry files.
 
 ## Compiler Architecture
 
