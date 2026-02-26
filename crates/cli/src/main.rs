@@ -5,6 +5,7 @@
 //! - `kyokara run <file>` — interpret a `.ky` file (v0.1)
 //! - `kyokara fmt <file>` — format a `.ky` file (v0.1)
 //! - `kyokara refactor <file>` — apply semantic refactors (v0.2)
+//! - `kyokara lsp` — start the Language Server Protocol server (v0.2)
 //! - `kyokara replay <file>` — replay execution trace (planned v0.3)
 
 use clap::{Parser, Subcommand};
@@ -48,6 +49,8 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// Start the Language Server Protocol server.
+    Lsp,
     /// Apply a semantic refactor to a Kyokara source file.
     Refactor {
         /// Path to the .ky source file.
@@ -194,6 +197,10 @@ fn main() {
                     }
                 }
             }
+        }
+        Command::Lsp => {
+            let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+            rt.block_on(kyokara_lsp::run_lsp());
         }
         Command::Refactor {
             file,

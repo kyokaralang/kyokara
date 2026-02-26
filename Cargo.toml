@@ -15,6 +15,7 @@ members = [
     "crates/refactor",
     "crates/api",
     "crates/cli",
+    "crates/lsp",
     "xtask",
 ]
 
@@ -39,6 +40,7 @@ kyokara-eval = { path = "crates/eval" }
 kyokara-fmt = { path = "crates/fmt" }
 kyokara-refactor = { path = "crates/refactor" }
 kyokara-api = { path = "crates/api" }
+kyokara-lsp = { path = "crates/lsp" }
 
 # External dependencies
 rowan = "0.16"
@@ -54,3 +56,6 @@ smol_str = "0.3"
 tracing = "0.1"
 text-size = "1.1"
 tempfile = "3"
+tower-lsp = "0.20"
+salsa = "0.26"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-std", "macros"] }
