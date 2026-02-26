@@ -54,12 +54,19 @@ impl<'a> DisplayCtx<'a> {
     }
 
     fn fmt_value(&self, vid: ValueId, func: &KirFunction) -> String {
-        // Check if this value is a block param — if so, use the param name
         match &func.values[vid].inst {
+            // Block params use the param name if available.
             Inst::BlockParam { block, index } => {
                 let param = &func.blocks[*block].params[*index as usize];
                 if let Some(n) = param.name {
                     return self.fmt_name(n);
+                }
+                format!("%{}", vid.into_raw().into_u32())
+            }
+            // Function params use the function's parameter name.
+            Inst::FnParam { index } => {
+                if let Some((name, _)) = func.params.get(*index as usize) {
+                    return self.fmt_name(*name);
                 }
                 format!("%{}", vid.into_raw().into_u32())
             }
@@ -276,6 +283,17 @@ fn display_instruction(
             // Block params are not emitted as instructions in the body.
             // This shouldn't appear here, but handle gracefully.
             write!(out, "block_param")?;
+        }
+        Inst::FnParam { index } => {
+            write!(out, "fn_param {}", index)?;
+        }
+        Inst::AdtFieldGet { base, field_index } => {
+            write!(
+                out,
+                "adt_field_get {}, {}",
+                ctx.fmt_value(*base, func),
+                field_index
+            )?;
         }
     }
 

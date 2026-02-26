@@ -90,4 +90,11 @@ pub enum Inst {
     /// Reference to a block parameter. The value is the `index`-th
     /// parameter of `block`.
     BlockParam { block: BlockId, index: u32 },
+
+    /// Reference to a function parameter by position.
+    /// Not pushed into any block body — just lives in the value arena.
+    FnParam { index: u32 },
+
+    /// Extract a positional field from an ADT value (for destructuring).
+    AdtFieldGet { base: ValueId, field_index: u32 },
 }
