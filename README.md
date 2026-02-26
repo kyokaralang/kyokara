@@ -150,11 +150,11 @@ Kyokara's compiler follows [rust-analyzer](https://github.com/rust-analyzer/rust
 ```
 Source → Lexer (logos) → Parser (tree-agnostic) → CST (rowan, lossless)
      → HIR (def/ty/facade) → Type Inference → Effect Checking
-     → KyokaraIR (SSA, planned) → Codegen (WASM, planned)
+     → KyokaraIR (SSA, block-params) → Codegen (WASM, planned)
      → API (structured JSON output)
 ```
 
-**Glossary:** **CST** = Concrete Syntax Tree (lossless, preserves whitespace/comments). **HIR** = High-level Intermediate Representation (desugared, typed, used for analysis). **IR** (KyokaraIR) = low-level Intermediate Representation (SSA-based, used for optimization and codegen — planned for v0.3).
+**Glossary:** **CST** = Concrete Syntax Tree (lossless, preserves whitespace/comments). **HIR** = High-level Intermediate Representation (desugared, typed, used for analysis). **KIR** (KyokaraIR) = SSA-based IR with block parameters, reuses HIR types directly. Data structures + text format + validator live in the `kir` crate; lowering (HIR→KIR) comes next.
 
 The parser emits events, not trees — so it can be tested without a CST library. The HIR is split into data definitions, type checking, and a query facade — so the interpreter can use the data without the checker. The API crate owns all serialization — so internal types stay clean.
 
@@ -169,6 +169,7 @@ crates/
   hir-def       # HIR data types + CST→HIR lowering + name resolution
   hir-ty        # type inference + effect checking
   hir           # semantic query facade
+  kir           # SSA-based IR (block params, text format, validator)
   eval          # tree-walking interpreter
   fmt           # canonical code formatter (Wadler-Lindig Doc IR)
   refactor      # semantic refactor engine (rename, quickfix)
@@ -184,7 +185,7 @@ crates/
 | **v0.0** | Parser ✓, name resolution ✓, CST→HIR lowering ✓, type checker ✓, effect checking ✓, typed holes ✓, structured diagnostics ✓, hole specs ✓, symbol graph ✓, patch suggestions ✓ | **Complete** |
 | **v0.1** | Tree-walking interpreter ✓, intrinsics ✓, builtin Option/Result types ✓, canonical formatter ✓, stable symbol IDs ✓, runtime contracts ✓, core stdlib (List, Map, String, Int/Float) ✓ | **Complete** |
 | **v0.2** | Module system (convention-based layout, `pub` visibility, flat imports) ✓, refactor engine (rename, add missing match cases, add missing capability) ✓, refactor transactions (atomic verify-before-apply) ✓, capability enforcement (type-level E0011 + runtime manifest `--caps`) ✓, LSP server (diagnostics, hover, go-to-def, references, completion, code actions, formatting) ✓ | **Complete** |
-| **v0.3** | Property testing, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay | Planned |
+| **v0.3** | KyokaraIR data structures ✓, HIR→KIR lowering, property testing, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay | In progress |
 
 ## FAQ
 

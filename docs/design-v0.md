@@ -313,6 +313,8 @@ Given wedge (automation), start with:
 
 KyokaraIR is the low-level **Intermediate Representation (IR)** — a compiler-internal form of the program that sits between the HIR (High-level IR, used for type checking and analysis) and the final codegen target (WASM). It is fully typed, SSA-based, and designed for optimization and verification.
 
+**Implementation status:** The `kir` crate implements the data structures, text format printer, well-formedness validator, and a builder API. Key design choices: block parameters instead of phi nodes (Cranelift/MLIR style), reuses `hir_ty::Ty` directly (no parallel type system), arena-based storage via `la_arena`. HIR→KIR lowering is next (#20).
+
 ### 6.1 Requirements
 
 KyokaraIR must be:
@@ -543,7 +545,7 @@ injected as synthetic types before type-checking.
 **v0.3 — Verification + Codegen + Replay**
 * Property-based test harness + stdlib generators
 * SMT integration for contract verification (restricted fragment: linear arithmetic + uninterpreted functions, best-effort, never blocks compilation)
-* KyokaraIR (SSA-based) + WASM code generation
+* KyokaraIR data structures ✓ (SSA, block params, text format, validator) + HIR→KIR lowering + WASM code generation
 * Capability sandbox runtime (host functions + manifest)
 * Deterministic replay logging and execution (single-threaded, recorded effects)
 
