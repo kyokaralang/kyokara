@@ -136,6 +136,23 @@ impl ItemTreeCtx<'_> {
             })
             .unwrap_or_default();
 
+        // Check for duplicate parameter names.
+        if let Some(pl) = f.param_list() {
+            let mut seen = std::collections::HashSet::new();
+            for p in pl.params() {
+                if let Some(tok) = p.name_token() {
+                    let name = tok.text();
+                    if !seen.insert(name.to_string()) {
+                        let span = self.node_span(p.syntax());
+                        self.diagnostics.push(Diagnostic::error(
+                            format!("duplicate parameter `{name}`"),
+                            span,
+                        ));
+                    }
+                }
+            }
+        }
+
         let ret_type = f
             .return_type()
             .and_then(|rt| rt.type_expr())
