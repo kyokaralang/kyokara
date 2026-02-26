@@ -29,6 +29,7 @@ pub enum VerificationStatus {
 pub struct VerificationDiagnostic {
     pub message: String,
     pub span: Option<Span>,
+    pub code: Option<String>,
 }
 
 /// Result of a transactional refactor: edits + verification + patched sources.
@@ -206,19 +207,29 @@ fn collect_single_verification(check: &kyokara_hir::CheckResult) -> Verification
         diags.push(VerificationDiagnostic {
             message: err.message.clone(),
             span: None,
+            code: Some("E0100".into()),
         });
     }
     for d in &check.lowering_diagnostics {
+        let code = if d.message.contains("duplicate") {
+            "E0102"
+        } else {
+            "E0101"
+        };
         diags.push(VerificationDiagnostic {
             message: d.message.clone(),
             span: Some(d.span),
+            code: Some(code.into()),
         });
     }
     for (data, span) in &check.type_check.raw_diagnostics {
-        let msg = format!("{data:?}");
+        let diag = data
+            .clone()
+            .into_diagnostic(*span, &check.interner, &check.item_tree);
         diags.push(VerificationDiagnostic {
-            message: msg,
+            message: diag.message,
             span: Some(*span),
+            code: Some(data.code().into()),
         });
     }
 
@@ -231,28 +242,46 @@ fn collect_single_verification(check: &kyokara_hir::CheckResult) -> Verification
 
 fn collect_project_verification(check: &kyokara_hir::ProjectCheckResult) -> VerificationStatus {
     let mut diags = Vec::new();
+    let interner = &check.interner;
 
     for (_mod_path, errors) in &check.parse_errors {
         for err in errors {
             diags.push(VerificationDiagnostic {
                 message: err.message.clone(),
                 span: None,
+                code: Some("E0100".into()),
             });
         }
     }
     for d in &check.lowering_diagnostics {
+        let code = if d.message.contains("duplicate") {
+            "E0102"
+        } else {
+            "E0101"
+        };
         diags.push(VerificationDiagnostic {
             message: d.message.clone(),
             span: Some(d.span),
+            code: Some(code.into()),
         });
     }
-    for (_mod_path, tc) in &check.type_checks {
+    for (mod_path, tc) in &check.type_checks {
+        let item_tree = check.module_graph.get(mod_path).map(|i| &i.item_tree);
         for (data, span) in &tc.raw_diagnostics {
-            let msg = format!("{data:?}");
-            diags.push(VerificationDiagnostic {
-                message: msg,
-                span: Some(*span),
-            });
+            if let Some(tree) = item_tree {
+                let diag = data.clone().into_diagnostic(*span, interner, tree);
+                diags.push(VerificationDiagnostic {
+                    message: diag.message,
+                    span: Some(*span),
+                    code: Some(data.code().into()),
+                });
+            } else {
+                diags.push(VerificationDiagnostic {
+                    message: format!("{data:?}"),
+                    span: Some(*span),
+                    code: Some(data.code().into()),
+                });
+            }
         }
     }
 
