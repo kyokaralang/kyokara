@@ -459,6 +459,60 @@ fn test_all_output_validates() {
     let _ = lower_and_display(source);
 }
 
+// ── Bug regressions ─────────────────────────────────────────────
+
+#[test]
+fn test_regression_last_literal_arm_uses_branch() {
+    // Bug: the last literal arm in a sequential match used an unconditional
+    // jump, ignoring the equality check.  After fix, every literal arm
+    // (including the last) emits a branch (conditional).
+    let out = lower_and_display(
+        "fn f(x: Int) -> Int {
+           match x {
+             0 => 100
+             1 => 200
+           }
+         }",
+    );
+    // Each literal arm must produce a branch instruction.
+    // Before fix: last arm used jump → only 1 branch.
+    let branch_count = out.matches("branch").count();
+    assert!(
+        branch_count >= 2,
+        "expected >= 2 branches (one per literal arm), got {branch_count}. output:\n{out}"
+    );
+}
+
+#[test]
+fn test_regression_record_pattern_field_type() {
+    // Bug: record pattern destructuring used the whole record type as each
+    // field's type instead of resolving individual field types.
+    let out = lower_and_display(
+        "type Point = { x: Int, y: Int }
+         fn f(p: Point) -> Int {
+           let { x, y } = p
+           0
+         }",
+    );
+    // field_get for x should have type Int, not the whole record type.
+    // Before fix: `field_get p, x : { x: Int, y: Int }` (whole record type).
+    // After fix:  `field_get p, x : Int` (correct field type).
+    for line in out.lines() {
+        if line.contains("field_get") && line.contains(", x") {
+            assert!(
+                !line.contains('{'),
+                "field_get for x should have type Int, not the whole record type. got: {line}"
+            );
+            assert!(
+                line.trim().ends_with(": Int"),
+                "field_get for x should end with `: Int`. got: {line}"
+            );
+            return;
+        }
+    }
+    panic!("no field_get for x found in output:\n{out}");
+}
+
 // ── Edge cases ───────────────────────────────────────────────────
 
 #[test]
