@@ -1843,3 +1843,43 @@ fn parse_error_has_nonzero_span() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn rename_function_does_not_rename_shadowing_local() {
+    // A local variable `foo` shadows the function `foo` inside the body.
+    // Renaming function `foo` → `bar` should NOT touch the local binding or its usages.
+    let src = "fn foo() -> Int {\n  let foo = 1\n  foo\n}\n\nfn main() -> Int { foo() }";
+    let action = kyokara_refactor::RefactorAction::RenameSymbol {
+        old_name: "foo".into(),
+        new_name: "bar".into(),
+        kind: kyokara_refactor::SymbolKind::Function,
+        target_file: None,
+    };
+    let output = refactor(src, "test.ky", action, false);
+    let patched = &output
+        .patched_sources
+        .as_ref()
+        .expect("should have patched sources")[0]
+        .source;
+    // The function def should be renamed, and the call in main() should be renamed,
+    // but the local `let foo = 1` and `foo` usage inside the body should NOT be renamed.
+    assert!(
+        patched.contains("fn bar()"),
+        "function definition should be renamed, got: {patched}"
+    );
+    assert!(
+        patched.contains("bar()"),
+        "function call should be renamed, got: {patched}"
+    );
+    assert!(
+        patched.contains("let foo = 1"),
+        "local binding should NOT be renamed, got: {patched}"
+    );
+    // The local usage `foo` on line 3 should remain `foo`, not become `bar`.
+    let lines: Vec<&str> = patched.lines().collect();
+    assert_eq!(
+        lines[2].trim(),
+        "foo",
+        "local variable usage should NOT be renamed, got: {patched}"
+    );
+}
