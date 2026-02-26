@@ -603,6 +603,23 @@ impl BodyLowerCtx<'_> {
     fn lower_lambda(&mut self, le: &LambdaExpr) -> ExprIdx {
         self.push_scope();
 
+        // Check for duplicate parameter names.
+        if let Some(pl) = le.param_list() {
+            let mut seen = std::collections::HashSet::new();
+            for p in pl.params() {
+                if let Some(tok) = p.name_token() {
+                    let name = tok.text();
+                    if !seen.insert(name.to_string()) {
+                        let span = self.node_span(p.syntax());
+                        self.diagnostics.push(Diagnostic::error(
+                            format!("duplicate parameter `{name}`"),
+                            span,
+                        ));
+                    }
+                }
+            }
+        }
+
         let params: Vec<(PatIdx, Option<TypeRef>)> = le
             .param_list()
             .map(|pl| {

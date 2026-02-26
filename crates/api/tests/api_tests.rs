@@ -1498,3 +1498,23 @@ fn duplicate_fields_in_record_pattern_produce_diagnostic() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn duplicate_lambda_params_produce_diagnostic() {
+    let src = "fn main() -> Int { let f = fn(x: Int, x: Int) => x\n f(1, 2) }";
+    let output = check(src, "test.ky");
+    let dups: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("duplicate") && d.message.contains("parameter"))
+        .collect();
+    assert!(
+        !dups.is_empty(),
+        "expected duplicate lambda parameter diagnostic, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
