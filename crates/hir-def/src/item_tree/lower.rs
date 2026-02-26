@@ -483,11 +483,12 @@ impl ItemTreeCtx<'_> {
                     .collect();
                 TypeRef::Record { fields }
             }
-            TypeExpr::RefinedType(_rt) => {
-                // Refined types reference expressions, which require body lowering.
-                // For the item tree (signatures only), we represent them as Error
-                // and handle them properly during body lowering.
-                // TODO: properly lower refined types when body lowering is available.
+            TypeExpr::RefinedType(rt) => {
+                let span = self.node_span(rt.syntax());
+                self.diagnostics.push(Diagnostic::error(
+                    "refined types are not yet supported",
+                    span,
+                ));
                 TypeRef::Error
             }
         }

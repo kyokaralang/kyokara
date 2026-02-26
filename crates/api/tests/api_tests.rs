@@ -1599,3 +1599,23 @@ fn unknown_capability_in_with_clause_produces_diagnostic() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn refined_type_produces_unsupported_diagnostic() {
+    let src = "fn f(x: { v: Int | false }) -> Int { x }\nfn main() -> Int { f(0) }";
+    let output = check(src, "test.ky");
+    let errs: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("refined") && d.message.contains("not yet supported"))
+        .collect();
+    assert!(
+        !errs.is_empty(),
+        "expected unsupported refined type diagnostic, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
