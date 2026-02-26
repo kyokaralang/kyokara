@@ -1683,3 +1683,30 @@ fn cap_member_same_name_as_top_level_fn_no_duplicate_diags() {
         mismatches.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn symbol_graph_no_duplicate_fn_ids_with_cap_member() {
+    // Cap member `foo` and top-level `foo` should not produce duplicate fn IDs.
+    let src = "cap C {\n  fn foo() -> Int\n}\nfn foo() -> Int { 1 }\nfn main() -> Int { foo() }";
+    let output = check(src, "test.ky");
+    let fn_ids: Vec<&str> = output
+        .symbol_graph
+        .functions
+        .iter()
+        .map(|f| f.id.as_str())
+        .collect();
+    // Check no duplicates.
+    let mut seen = std::collections::HashSet::new();
+    for id in &fn_ids {
+        assert!(
+            seen.insert(*id),
+            "duplicate function ID in symbol graph: {id}"
+        );
+    }
+    // Cap member `foo` should NOT appear as a top-level fn node.
+    let foo_count = fn_ids.iter().filter(|id| id.contains("foo")).count();
+    assert_eq!(
+        foo_count, 1,
+        "expected exactly 1 fn node for `foo`, got {foo_count}: {fn_ids:?}"
+    );
+}

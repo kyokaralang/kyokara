@@ -585,10 +585,20 @@ fn build_module_symbol_graph(
         call_map.insert(caller_str, callee_ids);
     }
 
-    // Functions.
+    // Collect capability member function indices so we can exclude them
+    // from the flat function list (they belong under their cap node).
+    let cap_member_fns: std::collections::HashSet<kyokara_hir_def::item_tree::FnItemIdx> =
+        item_tree
+            .caps
+            .iter()
+            .flat_map(|(_, cap)| cap.functions.iter().copied())
+            .collect();
+
+    // Functions (excluding capability members).
     let functions: Vec<FnNodeDto> = item_tree
         .functions
         .iter()
+        .filter(|(idx, _)| !cap_member_fns.contains(idx))
         .map(|(_, fn_item)| {
             let name = fn_item.name.resolve(interner).to_owned();
             let params: Vec<ParamDto> = fn_item
