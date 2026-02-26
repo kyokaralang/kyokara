@@ -1,6 +1,6 @@
 //! End-to-end API tests: source → `check()` → verify structured output.
 
-use kyokara_api::check;
+use kyokara_api::{check, check_project};
 
 #[test]
 fn check_clean_program_no_diagnostics() {
@@ -526,4 +526,230 @@ fn stable_id_variant_format() {
         .find(|v| v.name == "Red")
         .expect("Red variant should exist");
     assert_eq!(red.id, "type::Color::Red");
+}
+
+// ── Project-mode symbol graph tests ──────────────────────────────────
+
+/// Helper: create a temp dir with .ky files and return the path to main.ky.
+fn write_project(files: &[(&str, &str)]) -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    for (name, content) in files {
+        let path = dir.path().join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, content).unwrap();
+    }
+    let main_path = dir.path().join("main.ky");
+    (dir, main_path)
+}
+
+#[test]
+fn project_symbol_ids_are_module_qualified() {
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "fn helper() -> Int { 1 }"),
+        ("math.ky", "pub fn helper() -> Int { 2 }"),
+    ]);
+    let output = check_project(&main_path);
+    let helpers: Vec<_> = output
+        .symbol_graph
+        .functions
+        .iter()
+        .filter(|f| f.name == "helper")
+        .collect();
+    assert_eq!(
+        helpers.len(),
+        2,
+        "expected 2 helper functions, got {}",
+        helpers.len()
+    );
+    let ids: Vec<&str> = helpers.iter().map(|f| f.id.as_str()).collect();
+    assert!(ids.contains(&"fn::helper"), "missing fn::helper in {ids:?}");
+    assert!(
+        ids.contains(&"fn::math::helper"),
+        "missing fn::math::helper in {ids:?}"
+    );
+    assert_ne!(helpers[0].id, helpers[1].id, "IDs must be unique");
+}
+
+#[test]
+fn project_symbol_graph_no_duplicate_builtins() {
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "fn foo() -> Int { 1 }"),
+        ("math.ky", "pub fn bar() -> Int { 2 }"),
+    ]);
+    let output = check_project(&main_path);
+    for builtin in &["Option", "Result", "List", "Map"] {
+        let count = output
+            .symbol_graph
+            .types
+            .iter()
+            .filter(|t| t.name == *builtin)
+            .count();
+        assert_eq!(count, 1, "expected exactly 1 {builtin} type, got {count}");
+    }
+}
+
+#[test]
+fn project_symbol_id_uniqueness() {
+    let (_dir, main_path) = write_project(&[
+        (
+            "main.ky",
+            "type Color = | Red | Green\ncap IO { fn read() -> String }\nfn foo() -> Int { 1 }",
+        ),
+        (
+            "math.ky",
+            "pub fn add(x: Int, y: Int) -> Int { x + y }\npub type Point = { x: Int, y: Int }",
+        ),
+    ]);
+    let output = check_project(&main_path);
+
+    let mut ids: Vec<String> = Vec::new();
+    for f in &output.symbol_graph.functions {
+        ids.push(f.id.clone());
+    }
+    for t in &output.symbol_graph.types {
+        ids.push(t.id.clone());
+        for v in &t.variants {
+            ids.push(v.id.clone());
+        }
+    }
+    for c in &output.symbol_graph.capabilities {
+        ids.push(c.id.clone());
+    }
+
+    let count = ids.len();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(
+        ids.len(),
+        count,
+        "all symbol IDs should be unique, found duplicates in: {ids:?}"
+    );
+}
+
+#[test]
+fn project_call_edges_use_qualified_ids() {
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "import math\nfn caller() -> Int { add(1, 2) }"),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
+    ]);
+    let output = check_project(&main_path);
+    let caller = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "caller")
+        .expect("should have 'caller' function");
+    assert!(
+        caller.calls.contains(&"fn::math::add".to_string()),
+        "expected caller to call fn::math::add, got: {:?}",
+        caller.calls
+    );
+}
+
+#[test]
+fn project_root_module_uses_bare_ids() {
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "fn foo() -> Int { 1 }"),
+        ("math.ky", "pub fn bar() -> Int { 2 }"),
+    ]);
+    let output = check_project(&main_path);
+    let foo = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "foo")
+        .expect("should have 'foo' function");
+    assert_eq!(
+        foo.id, "fn::foo",
+        "root module function should use bare fn::name, got: {}",
+        foo.id
+    );
+}
+
+#[test]
+fn project_variant_ids_are_module_qualified() {
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "fn foo() -> Int { 1 }"),
+        ("math.ky", "pub type Color = | Red | Green"),
+    ]);
+    let output = check_project(&main_path);
+    let color = output
+        .symbol_graph
+        .types
+        .iter()
+        .find(|t| t.name == "Color")
+        .expect("Color type should exist");
+    assert_eq!(color.id, "type::math::Color");
+    let red = color
+        .variants
+        .iter()
+        .find(|v| v.name == "Red")
+        .expect("Red variant should exist");
+    assert_eq!(
+        red.id, "type::math::Color::Red",
+        "variant ID should be module-qualified"
+    );
+}
+
+#[test]
+fn project_capability_ids_are_module_qualified() {
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "fn foo() -> Int { 1 }"),
+        ("math.ky", "pub cap IO { fn read() -> String }"),
+    ]);
+    let output = check_project(&main_path);
+    let io = output
+        .symbol_graph
+        .capabilities
+        .iter()
+        .find(|c| c.name == "IO")
+        .expect("IO capability should exist");
+    assert_eq!(
+        io.id, "cap::math::IO",
+        "capability ID should be module-qualified"
+    );
+    assert!(
+        io.functions.contains(&"cap::math::IO::read".to_string()),
+        "cap function ref should be module-qualified, got: {:?}",
+        io.functions
+    );
+}
+
+#[test]
+fn project_builtin_type_ids_are_unqualified() {
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "fn foo() -> Int { 1 }"),
+        ("math.ky", "pub fn bar() -> Int { 2 }"),
+    ]);
+    let output = check_project(&main_path);
+    for builtin in &["Option", "Result", "List", "Map"] {
+        let t = output
+            .symbol_graph
+            .types
+            .iter()
+            .find(|t| t.name == *builtin)
+            .unwrap_or_else(|| panic!("{builtin} should exist"));
+        assert_eq!(
+            t.id,
+            format!("type::{builtin}"),
+            "builtin {builtin} should have unqualified ID"
+        );
+    }
+}
+
+#[test]
+fn single_file_ids_unchanged() {
+    let output = check("fn foo(x: Int) -> Int { x }", "test.ky");
+    let foo = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "foo")
+        .expect("foo should exist");
+    assert_eq!(
+        foo.id, "fn::foo",
+        "single-file IDs should remain fn::name format"
+    );
 }
