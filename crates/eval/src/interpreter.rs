@@ -14,6 +14,7 @@ use kyokara_stdx::FxHashMap;
 use crate::env::Env;
 use crate::error::RuntimeError;
 use crate::intrinsics::{self, IntrinsicFn};
+use crate::manifest::CapabilityManifest;
 use crate::value::{FnValue, Value};
 
 /// Tree-walking interpreter state.
@@ -29,6 +30,8 @@ pub struct Interpreter {
     option_some: Option<(TypeItemIdx, usize)>,
     /// Cached Option::None constructor (type_idx, variant_idx).
     option_none: Option<(TypeItemIdx, usize)>,
+    /// Optional capability manifest for deny-by-default enforcement.
+    manifest: Option<CapabilityManifest>,
 }
 
 /// Used to implement early return from functions.
@@ -66,6 +69,7 @@ impl Interpreter {
         module_scope: ModuleScope,
         fn_bodies: FxHashMap<FnItemIdx, Body>,
         mut interner: Interner,
+        manifest: Option<CapabilityManifest>,
     ) -> Self {
         let intrinsic_list = intrinsics::all_intrinsics(&mut interner);
         let intrinsics = intrinsic_list.into_iter().collect();
@@ -84,6 +88,7 @@ impl Interpreter {
             old_env: None,
             option_some,
             option_none,
+            manifest,
         }
     }
 
@@ -119,6 +124,23 @@ impl Interpreter {
         let fn_item = &self.item_tree.functions[fn_idx];
         let fn_name_str = fn_item.name.resolve(&self.interner).to_string();
         let param_names: Vec<Name> = fn_item.params.iter().map(|p| p.name).collect();
+
+        // Check user-declared capabilities against the manifest.
+        if let Some(ref manifest) = self.manifest {
+            for cap_ref in &fn_item.with_caps {
+                if let kyokara_hir_def::type_ref::TypeRef::Path { path, .. } = cap_ref {
+                    if let Some(name) = path.last() {
+                        let cap_str = name.resolve(&self.interner);
+                        if !manifest.is_granted(cap_str) {
+                            return Err(RuntimeError::CapabilityDenied {
+                                capability: cap_str.to_string(),
+                                function: fn_name_str,
+                            });
+                        }
+                    }
+                }
+            }
+        }
 
         let mut env = Env::new();
 
@@ -448,9 +470,13 @@ impl Interpreter {
         match callee {
             Value::Fn(FnValue::User(fn_idx)) => self.call_fn(fn_idx, args),
             Value::Fn(FnValue::Intrinsic(intr)) if intr.needs_interpreter() => {
+                self.check_intrinsic_cap(intr)?;
                 self.call_complex_intrinsic(intr, args)
             }
-            Value::Fn(FnValue::Intrinsic(intr)) => intr.call(args),
+            Value::Fn(FnValue::Intrinsic(intr)) => {
+                self.check_intrinsic_cap(intr)?;
+                intr.call(args)
+            }
             Value::Fn(FnValue::Lambda {
                 params,
                 body_expr,
@@ -496,6 +522,20 @@ impl Interpreter {
             variant,
             fields: vec![],
         }
+    }
+
+    fn check_intrinsic_cap(&self, intr: IntrinsicFn) -> Result<(), RuntimeError> {
+        if let Some(ref manifest) = self.manifest {
+            if let Some(cap) = intr.required_capability() {
+                if !manifest.is_granted(cap) {
+                    return Err(RuntimeError::CapabilityDenied {
+                        capability: cap.to_string(),
+                        function: format!("{intr:?}"),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     fn call_complex_intrinsic(

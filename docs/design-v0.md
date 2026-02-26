@@ -396,14 +396,20 @@ Each returns:
 
 ## 8. Runtime (wedge-defining features)
 
-### 8.1 Capability sandbox (least privilege)
+### 8.1 Capability sandbox (least privilege) ✓
 
-Runtime enforces capabilities with:
-* explicit manifest
-* deny-by-default
-* optional allowlists (domains, tables, secret names)
+Runtime enforces capabilities via a JSON manifest loaded with `--caps`:
+* `kyokara run program.ky --caps caps.json`
+* deny-by-default: when a manifest is present, only listed capabilities are allowed
+* no manifest = allow-all (backward compatible)
+* optional fine-grained allowlists (domains, tables, secret names) parsed but not yet enforced
 
-Example manifest concept:
+Enforcement points:
+* **Intrinsic I/O** — `print` and `println` require the `"IO"` capability
+* **User-defined capabilities** — functions with `with Console` etc. are checked against the manifest at call time
+* **Pure functions** — never denied regardless of manifest
+
+Example manifest:
 
 ```json
 {
@@ -411,10 +417,13 @@ Example manifest concept:
     "Net": { "allow_domains": ["rates.example", "api.partner.com"] },
     "Db":  { "allow_tables": ["payments", "users"] },
     "Secrets": { "allow_keys": ["PAYMENTS_API_KEY"] },
-    "Clock": {}
+    "Clock": {},
+    "IO": {}
   }
 }
 ```
+
+Implementation: `CapabilityManifest` and `CapabilityGrant` types in `kyokara-eval::manifest`, loaded via `run_with_manifest()` and `run_project_with_manifest()`. The `Interpreter` checks capabilities before dispatching intrinsics and before entering user functions with `with_caps` annotations.
 
 ### 8.2 Deterministic replay
 
@@ -446,12 +455,13 @@ WASM limitations to address:
 * I/O: all I/O goes through host function capability layer
 * Threads: single-threaded for v0 (aligns with determinism goal)
 
-### 8.4 Capability violation errors
+### 8.4 Capability violation errors ✓
 
 Capability violations at runtime produce a structured `CapabilityDenied` error (not a panic). This error includes:
-* the capability requested
-* the function that requested it
-* the manifest rule that denied it
+* the capability requested (e.g. `"IO"`, `"Console"`)
+* the function that requested it (e.g. `"Println"` for intrinsics, `"greet"` for user functions)
+
+Error format: `capability denied: {capability} (required by \`{function}\`)`
 
 ---
 
@@ -528,7 +538,7 @@ injected as synthetic types before type-checking.
 * Refactor engine: rename symbol (single-file + multi-file), add missing match cases, add missing capability annotation ✓ — CST-based, post-refactor verification, structured TextEdit patches
 * Refactor transactions: atomic refactor operations with in-memory re-check ✓ — `transact()` / `transact_project()` apply edits, re-run the type checker, and return `VerificationStatus` (Verified / Failed / Skipped). CLI gates `--apply` on verification passing; `--force` bypasses. API returns `"typechecked"` / `"failed"` / `"skipped"` status with structured verification diagnostics (message, code, span). Quickfix actions accept `--target-file` to disambiguate which module an offset refers to in project mode. CLI auto-detects project mode for `main.ky` with sibling `.ky` files; `--project` flag forces project mode for other entry files.
 * LSP server
-* Capability enforcement at type level
+* Capability enforcement: type-level checking (E0011) ✓ + runtime manifest enforcement (`--caps`, deny-by-default) ✓
 
 **v0.3 — Verification + Codegen + Replay**
 * Property-based test harness + stdlib generators

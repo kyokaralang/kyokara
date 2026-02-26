@@ -1,5 +1,6 @@
 //! Integration tests for the tree-walking interpreter.
 
+use kyokara_eval::manifest::CapabilityManifest;
 use kyokara_eval::value::Value;
 
 fn run_ok(source: &str) -> Value {
@@ -14,6 +15,24 @@ fn run_err(source: &str) -> String {
         Ok(result) => panic!("expected error, got {:?}", result.value),
         Err(e) => e.to_string(),
     }
+}
+
+fn run_with_manifest_ok(source: &str, manifest: Option<CapabilityManifest>) -> Value {
+    match kyokara_eval::run_with_manifest(source, manifest) {
+        Ok(result) => result.value,
+        Err(e) => panic!("runtime error: {e}"),
+    }
+}
+
+fn run_with_manifest_err(source: &str, manifest: Option<CapabilityManifest>) -> String {
+    match kyokara_eval::run_with_manifest(source, manifest) {
+        Ok(result) => panic!("expected error, got {:?}", result.value),
+        Err(e) => e.to_string(),
+    }
+}
+
+fn manifest_from_json(json: &str) -> CapabilityManifest {
+    CapabilityManifest::from_json(json).unwrap()
 }
 
 // ── Literal tests ────────────────────────────────────────────────────
@@ -1524,4 +1543,222 @@ fn eval_map_list_interop() {
          }"#,
     );
     assert!(matches!(val, Value::Int(32)));
+}
+
+// ── Capability manifest enforcement ─────────────────────────────────
+
+#[test]
+fn no_manifest_print_works() {
+    // No manifest = allow all (backward compat).
+    let val = run_with_manifest_ok(
+        r#"fn main() -> Unit {
+            println("hello")
+        }"#,
+        None,
+    );
+    assert!(matches!(val, Value::Unit));
+}
+
+#[test]
+fn manifest_with_io_print_works() {
+    let manifest = manifest_from_json(r#"{"caps": {"IO": {}}}"#);
+    let val = run_with_manifest_ok(
+        r#"fn main() -> Unit {
+            println("hello")
+        }"#,
+        Some(manifest),
+    );
+    assert!(matches!(val, Value::Unit));
+}
+
+#[test]
+fn manifest_without_io_print_denied() {
+    let manifest = manifest_from_json(r#"{"caps": {"Net": {}}}"#);
+    let err = run_with_manifest_err(
+        r#"fn main() -> Unit {
+            print("hello")
+        }"#,
+        Some(manifest),
+    );
+    assert!(err.contains("capability denied"));
+    assert!(err.contains("IO"));
+}
+
+#[test]
+fn manifest_without_io_println_denied() {
+    let manifest = manifest_from_json(r#"{"caps": {"Net": {}}}"#);
+    let err = run_with_manifest_err(
+        r#"fn main() -> Unit {
+            println("hello")
+        }"#,
+        Some(manifest),
+    );
+    assert!(err.contains("capability denied"));
+    assert!(err.contains("IO"));
+}
+
+#[test]
+fn manifest_with_io_pure_intrinsics_work() {
+    let manifest = manifest_from_json(r#"{"caps": {"IO": {}}}"#);
+    let val = run_with_manifest_ok(
+        r#"fn main() -> String {
+            int_to_string(42)
+        }"#,
+        Some(manifest),
+    );
+    assert!(matches!(val, Value::String(s) if s == "42"));
+}
+
+#[test]
+fn empty_manifest_denies_io() {
+    let manifest = manifest_from_json(r#"{"caps": {}}"#);
+    let err = run_with_manifest_err(
+        r#"fn main() -> Unit {
+            println("hello")
+        }"#,
+        Some(manifest),
+    );
+    assert!(err.contains("capability denied"));
+}
+
+#[test]
+fn pure_program_no_manifest_works() {
+    let val = run_with_manifest_ok(
+        r#"fn main() -> Int {
+            1 + 2
+        }"#,
+        None,
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn pure_program_empty_manifest_works() {
+    let manifest = manifest_from_json(r#"{"caps": {}}"#);
+    let val = run_with_manifest_ok(
+        r#"fn main() -> Int {
+            1 + 2
+        }"#,
+        Some(manifest),
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn manifest_grants_user_cap() {
+    // main must also declare `with Console` to satisfy the type checker.
+    let manifest = manifest_from_json(r#"{"caps": {"Console": {}}}"#);
+    let val = run_with_manifest_ok(
+        r#"
+        cap Console { fn log(msg: String) -> Unit }
+        fn greet(name: String) -> String with Console {
+            string_concat("hi ", name)
+        }
+        fn main() -> String with Console {
+            greet("world")
+        }
+        "#,
+        Some(manifest),
+    );
+    assert!(matches!(val, Value::String(s) if s == "hi world"));
+}
+
+#[test]
+fn manifest_denies_user_cap() {
+    // Type-checks fine (main declares Console), but manifest doesn't grant Console.
+    let manifest = manifest_from_json(r#"{"caps": {"IO": {}}}"#);
+    let err = run_with_manifest_err(
+        r#"
+        cap Console { fn log(msg: String) -> Unit }
+        fn greet(name: String) -> String with Console {
+            string_concat("hi ", name)
+        }
+        fn main() -> String with Console {
+            greet("world")
+        }
+        "#,
+        Some(manifest),
+    );
+    assert!(err.contains("capability denied"));
+    assert!(err.contains("Console"));
+}
+
+#[test]
+fn manifest_grants_multiple_caps() {
+    let manifest = manifest_from_json(r#"{"caps": {"Console": {}, "Logger": {}}}"#);
+    let val = run_with_manifest_ok(
+        r#"
+        cap Console { fn log(msg: String) -> Unit }
+        cap Logger { fn trace(msg: String) -> Unit }
+        fn do_stuff(x: Int) -> Int with Console, Logger {
+            x + 1
+        }
+        fn main() -> Int with Console, Logger {
+            do_stuff(41)
+        }
+        "#,
+        Some(manifest),
+    );
+    assert!(matches!(val, Value::Int(42)));
+}
+
+#[test]
+fn manifest_missing_one_of_multiple_caps() {
+    let manifest = manifest_from_json(r#"{"caps": {"Console": {}}}"#);
+    let err = run_with_manifest_err(
+        r#"
+        cap Console { fn log(msg: String) -> Unit }
+        cap Logger { fn trace(msg: String) -> Unit }
+        fn do_stuff(x: Int) -> Int with Console, Logger {
+            x + 1
+        }
+        fn main() -> Int with Console, Logger {
+            do_stuff(41)
+        }
+        "#,
+        Some(manifest),
+    );
+    assert!(err.contains("capability denied"));
+    assert!(err.contains("Logger"));
+}
+
+#[test]
+fn pure_function_with_restrictive_manifest() {
+    let manifest = manifest_from_json(r#"{"caps": {}}"#);
+    let val = run_with_manifest_ok(
+        r#"
+        fn add(a: Int, b: Int) -> Int { a + b }
+        fn main() -> Int { add(3, 4) }
+        "#,
+        Some(manifest),
+    );
+    assert!(matches!(val, Value::Int(7)));
+}
+
+#[test]
+fn manifest_grants_unused_cap() {
+    // Manifest grants Net, program only uses IO — that's fine.
+    let manifest = manifest_from_json(r#"{"caps": {"Net": {}, "IO": {}}}"#);
+    let val = run_with_manifest_ok(
+        r#"fn main() -> Unit {
+            println("hello")
+        }"#,
+        Some(manifest),
+    );
+    assert!(matches!(val, Value::Unit));
+}
+
+#[test]
+fn capability_denied_error_message_format() {
+    let manifest = manifest_from_json(r#"{"caps": {}}"#);
+    let err = run_with_manifest_err(r#"fn main() -> Unit { println("x") }"#, Some(manifest));
+    // Should contain both the capability name and the function name.
+    assert!(err.contains("IO"));
+    assert!(err.contains("Println"));
+}
+
+#[test]
+fn run_with_manifest_none_allows_all() {
+    let val = run_with_manifest_ok(r#"fn main() -> Unit { println("ok") }"#, None);
+    assert!(matches!(val, Value::Unit));
 }

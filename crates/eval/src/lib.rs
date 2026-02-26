@@ -7,6 +7,7 @@ pub mod env;
 pub mod error;
 pub mod interpreter;
 pub mod intrinsics;
+pub mod manifest;
 pub mod value;
 
 use kyokara_hir::{
@@ -22,6 +23,7 @@ use kyokara_syntax::ast::nodes::SourceFile;
 
 use crate::error::RuntimeError;
 use crate::interpreter::Interpreter;
+use crate::manifest::CapabilityManifest;
 use crate::value::Value;
 
 /// Result of running a Kyokara program.
@@ -35,7 +37,20 @@ pub struct RunResult {
 /// Injects builtin types (`Option`, `Result`) and intrinsic function
 /// signatures before type-checking so that constructors and calls to
 /// `println`, `int_to_string`, etc. resolve correctly.
+///
+/// All capabilities are allowed (no manifest enforcement).
 pub fn run(source: &str) -> Result<RunResult, RuntimeError> {
+    run_with_manifest(source, None)
+}
+
+/// Like [`run`], but with an optional capability manifest for deny-by-default enforcement.
+///
+/// When `manifest` is `Some`, only capabilities listed in the manifest are allowed.
+/// When `manifest` is `None`, all capabilities are permitted (backward compatible).
+pub fn run_with_manifest(
+    source: &str,
+    manifest: Option<CapabilityManifest>,
+) -> Result<RunResult, RuntimeError> {
     let file_id = FileId(0);
 
     // 1. Parse.
@@ -124,6 +139,7 @@ pub fn run(source: &str) -> Result<RunResult, RuntimeError> {
         item_result.module_scope,
         type_check.fn_bodies,
         interner,
+        manifest,
     );
 
     let value = interp.run_main()?;
@@ -135,7 +151,17 @@ pub fn run(source: &str) -> Result<RunResult, RuntimeError> {
 ///
 /// `entry_file` is the main `.ky` file. Sibling `.ky` files are
 /// discovered as importable modules.
+///
+/// All capabilities are allowed (no manifest enforcement).
 pub fn run_project(entry_file: &std::path::Path) -> Result<RunResult, RuntimeError> {
+    run_project_with_manifest(entry_file, None)
+}
+
+/// Like [`run_project`], but with an optional capability manifest.
+pub fn run_project_with_manifest(
+    entry_file: &std::path::Path,
+    manifest: Option<CapabilityManifest>,
+) -> Result<RunResult, RuntimeError> {
     let mut project = check_project(entry_file);
 
     // Find the entry module.
@@ -203,6 +229,7 @@ pub fn run_project(entry_file: &std::path::Path) -> Result<RunResult, RuntimeErr
         entry_info.scope.clone(),
         fn_bodies,
         project.interner,
+        manifest,
     );
 
     let value = interp.run_main()?;
