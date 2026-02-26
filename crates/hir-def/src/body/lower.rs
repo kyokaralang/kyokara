@@ -677,6 +677,16 @@ impl BodyLowerCtx<'_> {
                         args: vec![],
                     })
                 } else {
+                    if is_constructor {
+                        let span = self.node_span(ip.syntax());
+                        self.diagnostics.push(Diagnostic::error(
+                            format!(
+                                "unknown constructor `{}` used as pattern (treating as binding)",
+                                name.resolve(self.interner)
+                            ),
+                            span,
+                        ));
+                    }
                     // Binding pattern — introduces name into scope
                     let pat_idx = self.alloc_pat(pat::Pat::Bind { name });
                     if let Some(scope) = self.current_scope {

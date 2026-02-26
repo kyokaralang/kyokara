@@ -1538,3 +1538,24 @@ fn named_record_literal_unknown_field_produces_diagnostic() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn capitalized_unknown_pattern_produces_diagnostic() {
+    // `Smoe` looks like a constructor but isn't — should warn, not silently bind.
+    let src = "fn main() -> Int { match Some(1) { Smoe => 0, _ => 1 } }";
+    let output = check(src, "test.ky");
+    let errs: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("Smoe"))
+        .collect();
+    assert!(
+        !errs.is_empty(),
+        "expected diagnostic for unknown capitalized pattern `Smoe`, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
