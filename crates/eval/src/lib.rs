@@ -110,9 +110,28 @@ pub fn run_with_manifest(
         &mut interner,
     );
 
+    // Check body_lowering_diagnostics for errors (e.g. unresolved names).
+    // Filter out known false positives:
+    //   - "unresolved name `result`" from ensures/requires contract clauses
+    //   - "duplicate binding" from constructor pattern scope bug
+    let body_errors: Vec<String> = type_check
+        .body_lowering_diagnostics
+        .iter()
+        .filter(|d| d.severity == kyokara_diagnostics::Severity::Error)
+        .filter(|d| {
+            !d.message.contains("unresolved name `result`")
+                && !d.message.starts_with("duplicate binding")
+        })
+        .map(|d| d.message.clone())
+        .collect();
+    if !body_errors.is_empty() {
+        return Err(RuntimeError::TypeError(format!(
+            "lowering errors: {}",
+            body_errors.join("; ")
+        )));
+    }
+
     // Check raw_diagnostics for real type errors.
-    // (type_check.diagnostics also includes body-lowering false positives
-    // for constructor pattern bindings, so we skip those.)
     if !type_check.raw_diagnostics.is_empty() {
         let msgs: Vec<String> = type_check
             .raw_diagnostics

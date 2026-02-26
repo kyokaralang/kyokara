@@ -1855,6 +1855,31 @@ fn run_project_rejects_lowering_error_in_sibling_module() {
 }
 
 #[test]
+fn run_rejects_body_lowering_errors_before_execution() {
+    // A program with an unresolved name should be rejected at compile time
+    // (as a TypeError), not reach the interpreter and fail at runtime
+    // (as an UnresolvedName).
+    let src = "fn main() -> Int { unknown_name }";
+    let result = kyokara_eval::run(src);
+    let err = match result {
+        Ok(_) => panic!("expected error for unresolved name, but program executed"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    // Compile-time errors are "lowering errors: ..." or "type error at compile time: ..."
+    // Runtime errors are "unresolved name: ..."
+    // The error should be a compile-time rejection, NOT "unresolved name: unknown_name".
+    assert!(
+        !msg.starts_with("unresolved name:"),
+        "should be rejected at compile time, not at runtime; got: {msg}"
+    );
+    assert!(
+        msg.contains("lowering") || msg.contains("type error"),
+        "expected compile-time error message, got: {msg}"
+    );
+}
+
+#[test]
 fn run_project_rejects_body_lowering_error_in_sibling_module() {
     use std::io::Write;
 
