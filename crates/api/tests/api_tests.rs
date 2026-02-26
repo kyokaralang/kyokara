@@ -56,6 +56,22 @@ fn check_hole_with_available_locals() {
 }
 
 #[test]
+fn check_hole_inputs_no_duplicate_names() {
+    // When a name is shadowed, hole inputs should not contain duplicates.
+    let src = "fn main() -> Int {\n  let x = 1\n  let y = {\n    let x = true\n    0\n  }\n  _\n}";
+    let output = check(src, "test.ky");
+    assert_eq!(output.holes.len(), 1);
+    let hole = &output.holes[0];
+    let x_inputs: Vec<_> = hole.inputs.iter().filter(|v| v.name == "x").collect();
+    assert!(
+        x_inputs.len() <= 1,
+        "expected at most one `x` in hole inputs, got {}: {:?}",
+        x_inputs.len(),
+        x_inputs
+    );
+}
+
+#[test]
 fn check_effect_violation_code() {
     let src = r#"
         cap Console {

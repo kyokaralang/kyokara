@@ -745,19 +745,36 @@ impl<'a> InferenceCtx<'a> {
     }
 
     fn collect_locals_in_scope(&self) -> Vec<(kyokara_hir_def::name::Name, Ty)> {
-        let mut locals = Vec::new();
+        // Use an ordered map to deduplicate by name (last binding per name wins).
+        let mut seen = rustc_hash::FxHashMap::default();
+        let mut order = Vec::new();
+
         // Include function parameters.
         for (name, ty) in self.param_names.iter().zip(self.param_types.iter()) {
-            locals.push((*name, self.table.resolve_deep(ty)));
+            if seen.insert(*name, self.table.resolve_deep(ty)).is_none() {
+                order.push(*name);
+            } else {
+                // Update existing entry with new type (shadowing).
+                seen.insert(*name, self.table.resolve_deep(ty));
+            }
         }
         // Include let-bound locals.
         for (pat_idx, _) in &self.body.pat_scopes {
             if let Pat::Bind { name } = &self.body.pats[*pat_idx]
                 && let Some(ty) = self.local_types.get(*pat_idx)
             {
-                locals.push((*name, self.table.resolve_deep(ty)));
+                let resolved = self.table.resolve_deep(ty);
+                if seen.insert(*name, resolved.clone()).is_none() {
+                    order.push(*name);
+                } else {
+                    seen.insert(*name, resolved);
+                }
             }
         }
-        locals
+
+        order
+            .into_iter()
+            .filter_map(|name| seen.remove(&name).map(|ty| (name, ty)))
+            .collect()
     }
 }
