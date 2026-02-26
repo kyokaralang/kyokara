@@ -1703,11 +1703,11 @@ fn symbol_graph_no_duplicate_fn_ids_with_cap_member() {
             "duplicate function ID in symbol graph: {id}"
         );
     }
-    // Cap member `foo` should NOT appear as a top-level fn node.
-    let foo_count = fn_ids.iter().filter(|id| id.contains("foo")).count();
+    // Top-level `foo` should appear once as `fn::foo`, cap member as `cap::C::foo`.
+    let top_foo_count = fn_ids.iter().filter(|id| **id == "fn::foo").count();
     assert_eq!(
-        foo_count, 1,
-        "expected exactly 1 fn node for `foo`, got {foo_count}: {fn_ids:?}"
+        top_foo_count, 1,
+        "expected exactly 1 top-level fn::foo node, got {top_foo_count}: {fn_ids:?}"
     );
 }
 
@@ -1758,4 +1758,25 @@ fn duplicate_cap_member_names_produce_diagnostic() {
             .map(|d| &d.message)
             .collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn cap_member_fn_ids_resolve_in_symbol_graph() {
+    // Every capability function reference should point to an actual fn node.
+    let src = "cap C {\n  fn g() -> Int { 1 }\n}\nfn main() -> Int { 1 }";
+    let output = check(src, "test.ky");
+    let fn_ids: std::collections::HashSet<&str> = output
+        .symbol_graph
+        .functions
+        .iter()
+        .map(|f| f.id.as_str())
+        .collect();
+    for cap in &output.symbol_graph.capabilities {
+        for fn_ref in &cap.functions {
+            assert!(
+                fn_ids.contains(fn_ref.as_str()),
+                "cap function reference `{fn_ref}` has no matching fn node; fn_ids: {fn_ids:?}"
+            );
+        }
+    }
 }
