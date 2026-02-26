@@ -1326,3 +1326,27 @@ fn unknown_constructor_pattern_emits_diagnostic() {
         unresolved[0].message
     );
 }
+
+#[test]
+fn duplicate_function_params_produce_diagnostic() {
+    let src = "fn f(x: Int, x: Int) -> Int { x }\nfn main() -> Int { f(1, 2) }";
+    let output = check(src, "test.ky");
+    let dups: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("duplicate") && d.message.contains("parameter"))
+        .collect();
+    assert!(
+        !dups.is_empty(),
+        "expected duplicate parameter diagnostic, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        dups[0].message.contains("x"),
+        "should mention param name `x`"
+    );
+}
