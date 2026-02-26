@@ -1398,3 +1398,23 @@ fn duplicate_fields_in_record_literal_produce_diagnostic() {
         "should mention field name `x`"
     );
 }
+
+#[test]
+fn old_outside_contract_produces_diagnostic() {
+    let src = "fn f(x: Int) -> Int { old(x) }\nfn main() -> Int { f(1) }";
+    let output = check(src, "test.ky");
+    let old_errs: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("old") && d.message.contains("contract"))
+        .collect();
+    assert!(
+        !old_errs.is_empty(),
+        "expected `old()` outside contract diagnostic, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}

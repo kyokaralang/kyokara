@@ -51,6 +51,7 @@ pub fn lower_body(
         interner,
         module_scope,
         current_scope: None,
+        in_contract: false,
     };
 
     // Create root scope
@@ -79,7 +80,8 @@ pub fn lower_body(
         }
     }
 
-    // Lower contract clauses
+    // Lower contract clauses (old() is valid here)
+    ctx.in_contract = true;
     let requires = fn_def
         .requires_clause()
         .and_then(|rc| rc.expr())
@@ -94,6 +96,7 @@ pub fn lower_body(
         .invariant_clause()
         .and_then(|ic| ic.expr())
         .map(|e| ctx.lower_expr(&e));
+    ctx.in_contract = false;
 
     // Lower body
     let root = if let Some(body) = fn_def.body() {
@@ -134,6 +137,7 @@ struct BodyLowerCtx<'a> {
     interner: &'a mut Interner,
     module_scope: &'a ModuleScope,
     current_scope: Option<ScopeIdx>,
+    in_contract: bool,
 }
 
 impl BodyLowerCtx<'_> {
@@ -582,6 +586,13 @@ impl BodyLowerCtx<'_> {
     }
 
     fn lower_old(&mut self, oe: &OldExpr) -> ExprIdx {
+        if !self.in_contract {
+            let span = self.node_span(oe.syntax());
+            self.diagnostics.push(Diagnostic::error(
+                "`old(...)` can only be used inside a contract clause (requires/ensures/invariant)",
+                span,
+            ));
+        }
         let inner = oe
             .inner()
             .map(|e| self.lower_expr(&e))
