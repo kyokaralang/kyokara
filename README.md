@@ -104,6 +104,12 @@ kyokara refactor main.ky --action rename --symbol add --new-name sum --apply
 
 # Add missing match arms at a specific offset
 kyokara refactor file.ky --action add-missing-match-cases --offset 42
+
+# In multi-file projects, --target-file disambiguates which module the offset refers to
+kyokara refactor main.ky --action add-missing-capability --offset 42 --target-file math.ky
+
+# Project mode auto-detects for main.ky; use --project to force it for other entry files
+kyokara refactor other.ky --action rename --symbol foo --new-name bar --project
 ```
 
 ## Language at a Glance

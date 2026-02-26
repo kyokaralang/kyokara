@@ -236,7 +236,10 @@ fn pick(c: Color) -> Int {
         .expect("expected MissingMatchArms diagnostic");
 
     let offset: u32 = span.range.start().into();
-    let action = RefactorAction::AddMissingMatchCases { offset };
+    let action = RefactorAction::AddMissingMatchCases {
+        offset,
+        target_file: None,
+    };
     let refactor = kyokara_refactor::refactor(&result, file_id(), action).unwrap();
 
     assert!(!refactor.edits.is_empty(), "expected edits");
@@ -272,7 +275,10 @@ fn pure_caller() -> Unit { effectful() }"#;
         .expect("expected EffectViolation diagnostic");
 
     let offset: u32 = span.range.start().into();
-    let action = RefactorAction::AddMissingCapability { offset };
+    let action = RefactorAction::AddMissingCapability {
+        offset,
+        target_file: None,
+    };
     let refactor = kyokara_refactor::refactor(&result, file_id(), action).unwrap();
 
     assert!(!refactor.edits.is_empty(), "expected edits");
@@ -464,7 +470,10 @@ fn pick(c: Color) -> Int {
         .expect("expected MissingMatchArms diagnostic");
 
     let offset: u32 = span.range.start().into();
-    let action = RefactorAction::AddMissingMatchCases { offset };
+    let action = RefactorAction::AddMissingMatchCases {
+        offset,
+        target_file: None,
+    };
     let tx = kyokara_refactor::transaction::transact(src, &result, file_id(), action).unwrap();
 
     assert!(
@@ -501,7 +510,10 @@ fn pure_caller() -> Unit { effectful() }"#;
         .expect("expected EffectViolation diagnostic");
 
     let offset: u32 = span.range.start().into();
-    let action = RefactorAction::AddMissingCapability { offset };
+    let action = RefactorAction::AddMissingCapability {
+        offset,
+        target_file: None,
+    };
     let tx = kyokara_refactor::transaction::transact(src, &result, file_id(), action).unwrap();
 
     assert!(
@@ -628,6 +640,238 @@ fn transact_project_success_returns_verified() {
         matches!(tx.verification, VerificationStatus::Verified),
         "expected Verified, got {:?}",
         tx.verification
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ── File-qualified quickfix tests (#44) ──────────────────────────────
+
+#[test]
+fn quickfix_action_has_target_file_field() {
+    // AddMissingMatchCases and AddMissingCapability should accept a target_file
+    // so that project-mode quickfixes can disambiguate modules.
+    let action = RefactorAction::AddMissingMatchCases {
+        offset: 42,
+        target_file: Some("/tmp/math.ky".into()),
+    };
+    match &action {
+        RefactorAction::AddMissingMatchCases {
+            offset,
+            target_file,
+        } => {
+            assert_eq!(*offset, 42);
+            assert_eq!(target_file.as_deref(), Some("/tmp/math.ky"));
+        }
+        _ => panic!("expected AddMissingMatchCases"),
+    }
+
+    let action2 = RefactorAction::AddMissingCapability {
+        offset: 10,
+        target_file: Some("/tmp/main.ky".into()),
+    };
+    match &action2 {
+        RefactorAction::AddMissingCapability {
+            offset,
+            target_file,
+        } => {
+            assert_eq!(*offset, 10);
+            assert_eq!(target_file.as_deref(), Some("/tmp/main.ky"));
+        }
+        _ => panic!("expected AddMissingCapability"),
+    }
+}
+
+#[test]
+fn quickfix_action_target_file_none_for_single_file() {
+    // Single-file mode should work with target_file = None.
+    let action = RefactorAction::AddMissingMatchCases {
+        offset: 0,
+        target_file: None,
+    };
+    match &action {
+        RefactorAction::AddMissingMatchCases { target_file, .. } => {
+            assert!(target_file.is_none());
+        }
+        _ => panic!("expected AddMissingMatchCases"),
+    }
+}
+
+#[test]
+fn project_quickfix_match_cases_filters_by_target_file() {
+    // Two modules, each with a match exhaustiveness error at potentially overlapping offsets.
+    // target_file should select the correct module.
+    let dir = std::env::temp_dir().join("kyokara_qf_target_file_match");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let main_path = dir.join("main.ky");
+    let math_path = dir.join("math.ky");
+
+    // Both files define a type and a non-exhaustive match.
+    // main.ky: type A with missing arm
+    std::fs::write(
+        &main_path,
+        "type A = | X | Y\nfn check_a(a: A) -> Int {\n    match a {\n        X => 1\n    }\n}\n",
+    )
+    .unwrap();
+    // math.ky: type B with missing arm
+    std::fs::write(
+        &math_path,
+        "pub type B = | P | Q\npub fn check_b(b: B) -> Int {\n    match b {\n        P => 1\n    }\n}\n",
+    )
+    .unwrap();
+
+    let result = kyokara_hir::check_project(&main_path);
+
+    // Find the MissingMatchArms diagnostic for math.ky specifically.
+    let (math_mod_path, math_tc) = result
+        .type_checks
+        .iter()
+        .find(|(mp, _)| !mp.is_root())
+        .expect("should have math module");
+    let math_info = result.module_graph.get(math_mod_path).unwrap();
+
+    let (_, math_span) = math_tc
+        .raw_diagnostics
+        .iter()
+        .find(|(d, _)| matches!(d, kyokara_hir::TyDiagnosticData::MissingMatchArms { .. }))
+        .expect("math.ky should have MissingMatchArms diagnostic");
+
+    let math_offset: u32 = math_span.range.start().into();
+    let math_file_path = math_info.path.display().to_string();
+
+    // Quickfix with target_file pointing to math.ky should produce edits for math.ky.
+    let action = RefactorAction::AddMissingMatchCases {
+        offset: math_offset,
+        target_file: Some(math_file_path.clone()),
+    };
+    let refactor_result = kyokara_refactor::refactor_project(&result, action).unwrap();
+
+    // The edit should mention "Q" (the missing variant from type B in math.ky).
+    assert!(
+        refactor_result
+            .edits
+            .iter()
+            .any(|e| e.new_text.contains("Q")),
+        "should have added missing arm Q from math.ky, got edits: {:?}",
+        refactor_result.edits
+    );
+    // The edit should be in math.ky's file_id.
+    assert!(
+        refactor_result
+            .edits
+            .iter()
+            .all(|e| e.file_id == math_info.file_id),
+        "edits should target math.ky's file_id"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn project_quickfix_capability_filters_by_target_file() {
+    // Two modules, each with an effect violation. target_file disambiguates.
+    let dir = std::env::temp_dir().join("kyokara_qf_target_file_cap");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let main_path = dir.join("main.ky");
+    let math_path = dir.join("math.ky");
+
+    std::fs::write(
+        &main_path,
+        "cap Logger {\n    fn log(s: String) -> Unit\n}\nfn do_log() -> Unit with Logger { log(\"hi\") }\nfn bad_main() -> Unit { do_log() }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &math_path,
+        "pub cap Counter {\n    pub fn incr() -> Unit\n}\npub fn do_count() -> Unit with Counter { incr() }\npub fn bad_math() -> Unit { do_count() }\n",
+    )
+    .unwrap();
+
+    let result = kyokara_hir::check_project(&main_path);
+
+    // Find the EffectViolation diagnostic for main.ky specifically.
+    let (root_path, root_tc) = result
+        .type_checks
+        .iter()
+        .find(|(mp, _)| mp.is_root())
+        .expect("should have root module");
+    let root_info = result.module_graph.get(root_path).unwrap();
+
+    let (_, root_span) = root_tc
+        .raw_diagnostics
+        .iter()
+        .find(|(d, _)| matches!(d, kyokara_hir::TyDiagnosticData::EffectViolation { .. }))
+        .expect("main.ky should have EffectViolation diagnostic");
+
+    let root_offset: u32 = root_span.range.start().into();
+    let root_file_path = root_info.path.display().to_string();
+
+    // Quickfix with target_file pointing to main.ky should produce edits with Logger.
+    let action = RefactorAction::AddMissingCapability {
+        offset: root_offset,
+        target_file: Some(root_file_path.clone()),
+    };
+    let refactor_result = kyokara_refactor::refactor_project(&result, action).unwrap();
+
+    assert!(
+        refactor_result
+            .edits
+            .iter()
+            .any(|e| e.new_text.contains("Logger")),
+        "should add Logger capability for main.ky, got edits: {:?}",
+        refactor_result.edits
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn project_quickfix_wrong_target_file_returns_error() {
+    // If target_file points to a file with no diagnostic at the given offset,
+    // the quickfix should return NoDiagnosticAtOffset.
+    let dir = std::env::temp_dir().join("kyokara_qf_wrong_target");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let main_path = dir.join("main.ky");
+    let math_path = dir.join("math.ky");
+
+    std::fs::write(
+        &main_path,
+        "type A = | X | Y\nfn check_a(a: A) -> Int {\n    match a {\n        X => 1\n    }\n}\n",
+    )
+    .unwrap();
+    std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x + y }\n").unwrap();
+
+    let result = kyokara_hir::check_project(&main_path);
+
+    // Find the offset of the match diagnostic in main.ky.
+    let (_root_path, root_tc) = result
+        .type_checks
+        .iter()
+        .find(|(mp, _)| mp.is_root())
+        .expect("should have root module");
+
+    let (_, span) = root_tc
+        .raw_diagnostics
+        .iter()
+        .find(|(d, _)| matches!(d, kyokara_hir::TyDiagnosticData::MissingMatchArms { .. }))
+        .expect("main.ky should have MissingMatchArms diagnostic");
+
+    let offset: u32 = span.range.start().into();
+
+    // Point target_file to math.ky (which has no diagnostic at this offset).
+    let action = RefactorAction::AddMissingMatchCases {
+        offset,
+        target_file: Some(math_path.display().to_string()),
+    };
+    let err = kyokara_refactor::refactor_project(&result, action).unwrap_err();
+    assert!(
+        matches!(err, RefactorError::NoDiagnosticAtOffset { .. }),
+        "expected NoDiagnosticAtOffset when target_file has no diagnostic, got: {err:?}"
     );
 
     let _ = std::fs::remove_dir_all(&dir);

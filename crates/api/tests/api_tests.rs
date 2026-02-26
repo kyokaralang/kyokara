@@ -980,6 +980,86 @@ fn verification_diagnostic_dto_nullable_fields() {
     assert!(json["span"].is_null());
 }
 
+// ── File-qualified quickfix tests (#44) ──────────────────────────────
+
+#[test]
+fn api_refactor_project_quickfix_with_target_file() {
+    // Set up a project where two modules have match exhaustiveness errors.
+    // The API should accept target_file to disambiguate.
+    let (_dir, main_path) = write_project(&[
+        (
+            "main.ky",
+            "type A = | X | Y\nfn check_a(a: A) -> Int {\n    match a {\n        X => 1\n    }\n}",
+        ),
+        (
+            "math.ky",
+            "pub type B = | P | Q\npub fn check_b(b: B) -> Int {\n    match b {\n        P => 1\n    }\n}",
+        ),
+    ]);
+
+    // Get the diagnostics to find the offset.
+    let check_output = check_project(&main_path);
+    let match_diag = check_output
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "E0009" && d.span.file.contains("math"))
+        .expect("math.ky should have E0009 (MissingMatchArms)");
+
+    let math_file = &match_diag.span.file;
+    let offset = match_diag.span.start;
+
+    let action = kyokara_refactor::RefactorAction::AddMissingMatchCases {
+        offset,
+        target_file: Some(math_file.clone()),
+    };
+    let output = refactor_project(&main_path, action, false);
+    assert_ne!(
+        output.status, "error",
+        "quickfix with target_file should succeed: {:?}",
+        output.error
+    );
+    // The edit should mention Q (the missing variant from math.ky's type B).
+    let has_q = output.edits.iter().any(|e| e.new_text.contains("Q"));
+    assert!(
+        has_q,
+        "should add missing arm Q from math.ky, got edits: {:?}",
+        output.edits
+    );
+}
+
+#[test]
+fn api_refactor_project_quickfix_wrong_target_file_gives_error() {
+    let (_dir, main_path) = write_project(&[
+        (
+            "main.ky",
+            "type A = | X | Y\nfn check_a(a: A) -> Int {\n    match a {\n        X => 1\n    }\n}",
+        ),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
+    ]);
+
+    // Get the offset of the match diagnostic in main.ky.
+    let check_output = check_project(&main_path);
+    let match_diag = check_output
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "E0009")
+        .expect("should have E0009 diagnostic");
+
+    let offset = match_diag.span.start;
+    let math_file = _dir.path().join("math.ky").display().to_string();
+
+    // Point target_file to math.ky (which has no match diagnostic).
+    let action = kyokara_refactor::RefactorAction::AddMissingMatchCases {
+        offset,
+        target_file: Some(math_file),
+    };
+    let output = refactor_project(&main_path, action, false);
+    assert_eq!(
+        output.status, "error",
+        "quickfix with wrong target_file should fail"
+    );
+}
+
 // ── IoError handling tests ───────────────────────────────────────────
 
 #[test]

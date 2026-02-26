@@ -45,9 +45,15 @@ pub enum RefactorAction {
     },
     AddMissingMatchCases {
         offset: u32,
+        /// In project mode, the file path that contains the target diagnostic.
+        /// `None` for single-file mode (selects the only file).
+        target_file: Option<String>,
     },
     AddMissingCapability {
         offset: u32,
+        /// In project mode, the file path that contains the target diagnostic.
+        /// `None` for single-file mode (selects the only file).
+        target_file: Option<String>,
     },
 }
 
@@ -121,10 +127,10 @@ pub fn refactor(
             new_name,
             kind,
         } => rename::rename_symbol(result, file_id, &old_name, &new_name, kind),
-        RefactorAction::AddMissingMatchCases { offset } => {
+        RefactorAction::AddMissingMatchCases { offset, .. } => {
             quickfix::add_missing_match_cases(result, file_id, offset)
         }
-        RefactorAction::AddMissingCapability { offset } => {
+        RefactorAction::AddMissingCapability { offset, .. } => {
             quickfix::add_missing_capability(result, file_id, offset)
         }
     }
@@ -141,12 +147,14 @@ pub fn refactor_project(
             new_name,
             kind,
         } => rename::rename_symbol_project(result, &old_name, &new_name, kind),
-        RefactorAction::AddMissingMatchCases { offset } => {
-            quickfix::add_missing_match_cases_project(result, offset)
-        }
-        RefactorAction::AddMissingCapability { offset } => {
-            quickfix::add_missing_capability_project(result, offset)
-        }
+        RefactorAction::AddMissingMatchCases {
+            offset,
+            target_file,
+        } => quickfix::add_missing_match_cases_project(result, offset, target_file.as_deref()),
+        RefactorAction::AddMissingCapability {
+            offset,
+            target_file,
+        } => quickfix::add_missing_capability_project(result, offset, target_file.as_deref()),
     }
 }
 
