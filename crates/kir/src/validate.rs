@@ -31,6 +31,15 @@ pub fn validate_function(func: &KirFunction, interner: &Interner) -> Vec<Diagnos
     let mut diags = Vec::new();
     let fn_name = func.name.resolve(interner);
 
+    // Validate entry block exists
+    if !is_valid_block(func.entry_block, func) {
+        diags.push(error(format!(
+            "fn {}: invalid entry block (index out of bounds)",
+            fn_name
+        )));
+        return diags;
+    }
+
     // Check entry block has no parameters
     let entry = &func.blocks[func.entry_block];
     if !entry.params.is_empty() {
