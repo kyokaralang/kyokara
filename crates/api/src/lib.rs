@@ -686,7 +686,8 @@ fn build_module_symbol_graph(
         })
         .collect();
 
-    // Capabilities.
+    // Capabilities — also emit member functions as fn nodes with cap-qualified IDs.
+    let mut cap_member_fn_nodes: Vec<FnNodeDto> = Vec::new();
     let capabilities: Vec<CapNodeDto> = item_tree
         .caps
         .iter()
@@ -696,8 +697,30 @@ fn build_module_symbol_graph(
                 .functions
                 .iter()
                 .map(|&fn_idx| {
-                    let fn_name = item_tree.functions[fn_idx].name.resolve(interner);
-                    nested_symbol_id("cap", &name, fn_name, module_prefix)
+                    let fn_item = &item_tree.functions[fn_idx];
+                    let fn_name = fn_item.name.resolve(interner).to_owned();
+                    let member_id = nested_symbol_id("cap", &name, &fn_name, module_prefix);
+                    let params: Vec<ParamDto> = fn_item
+                        .params
+                        .iter()
+                        .map(|p| ParamDto {
+                            name: p.name.resolve(interner).to_owned(),
+                            ty: display_type_ref(&p.ty, interner),
+                        })
+                        .collect();
+                    let return_type = fn_item
+                        .ret_type
+                        .as_ref()
+                        .map(|t| display_type_ref(t, interner));
+                    cap_member_fn_nodes.push(FnNodeDto {
+                        id: member_id.clone(),
+                        name: fn_name,
+                        params,
+                        return_type,
+                        effects: Vec::new(),
+                        calls: Vec::new(),
+                    });
+                    member_id
                 })
                 .collect();
             let id = symbol_id("cap", &name, module_prefix);
@@ -708,6 +731,10 @@ fn build_module_symbol_graph(
             }
         })
         .collect();
+
+    // Merge cap member fn nodes into the function list.
+    let mut functions = functions;
+    functions.extend(cap_member_fn_nodes);
 
     SymbolGraphDto {
         functions,
