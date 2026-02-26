@@ -203,6 +203,7 @@ impl ItemTreeCtx<'_> {
 
             TypeDefKind::Adt { variants }
         } else if let Some(rfl) = t.record_field_list() {
+            self.check_duplicate_record_fields(rfl.fields());
             let fields = rfl
                 .fields()
                 .map(|f| {
@@ -382,6 +383,26 @@ impl ItemTreeCtx<'_> {
         }
     }
 
+    /// Emit diagnostics for duplicate field names in a record field list.
+    fn check_duplicate_record_fields<I>(&mut self, fields: I)
+    where
+        I: Iterator<Item = RecordField>,
+    {
+        let mut seen = std::collections::HashSet::new();
+        for f in fields {
+            if let Some(tok) = f.name_token() {
+                let name = tok.text();
+                if !seen.insert(name.to_string()) {
+                    let span = self.node_span(f.syntax());
+                    self.diagnostics.push(Diagnostic::error(
+                        format!("duplicate field `{name}` in record type"),
+                        span,
+                    ));
+                }
+            }
+        }
+    }
+
     /// Lower a CST type expression to a `TypeRef`.
     fn lower_type_ref(&mut self, ty: &TypeExpr) -> TypeRef {
         match ty {
@@ -417,6 +438,7 @@ impl ItemTreeCtx<'_> {
                 }
             }
             TypeExpr::RecordType(rt) => {
+                self.check_duplicate_record_fields(rt.fields());
                 let fields = rt
                     .fields()
                     .map(|f| {
