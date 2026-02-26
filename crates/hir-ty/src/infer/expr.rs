@@ -609,7 +609,15 @@ impl<'a> InferenceCtx<'a> {
             let name = path.segments[0];
             if let Some(&type_idx) = self.module_scope.types.get(&name) {
                 let type_item = &self.item_tree.types[type_idx];
-                if let TypeDefKind::Record { fields: def_fields } = &type_item.kind {
+                // Extract record fields from either Record kind or Alias to Record.
+                let (def_fields, is_true_record) = match &type_item.kind {
+                    TypeDefKind::Record { fields: def_fields } => (Some(def_fields), true),
+                    TypeDefKind::Alias(kyokara_hir_def::type_ref::TypeRef::Record {
+                        fields: def_fields,
+                    }) => (Some(def_fields), false),
+                    _ => (None, false),
+                };
+                if let Some(def_fields) = def_fields {
                     // Build substitution env.
                     let mut tp = self.type_params.clone();
                     let mut args = Vec::new();
@@ -631,6 +639,20 @@ impl<'a> InferenceCtx<'a> {
                         .map(|(n, tr)| (*n, env.resolve_type_ref(tr, &mut self.table)))
                         .collect();
 
+                    let result_ty = if is_true_record {
+                        Ty::Adt {
+                            def: type_idx,
+                            args: args.clone(),
+                        }
+                    } else {
+                        Ty::Record {
+                            fields: expected_field_tys
+                                .iter()
+                                .map(|(n, ty)| (*n, ty.clone()))
+                                .collect(),
+                        }
+                    };
+
                     for (fname, fexpr) in fields {
                         let exp = expected_field_tys
                             .iter()
@@ -639,14 +661,15 @@ impl<'a> InferenceCtx<'a> {
                         if let Some(exp_ty) = exp {
                             self.infer_expr(*fexpr, &Expectation::Has(exp_ty));
                         } else {
+                            self.push_diag(TyDiagnosticData::NoSuchField {
+                                field: fname.resolve(self.interner).to_owned(),
+                                ty: result_ty.clone(),
+                            });
                             self.infer_expr(*fexpr, &Expectation::None);
                         }
                     }
 
-                    return Ty::Adt {
-                        def: type_idx,
-                        args,
-                    };
+                    return result_ty;
                 }
             }
         }
