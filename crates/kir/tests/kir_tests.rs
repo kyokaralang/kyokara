@@ -14,6 +14,7 @@ use kyokara_kir::display::{DisplayCtx, display_function, display_module};
 use kyokara_kir::function::KirContracts;
 use kyokara_kir::inst::{CallTarget, Constant};
 use kyokara_kir::validate::validate_function;
+use la_arena::Idx;
 
 fn mk_interner() -> Interner {
     Interner::new()
@@ -765,4 +766,37 @@ fn test_unlabeled_blocks() {
     display_function(&func, &ctx, &mut out).unwrap();
 
     assert!(out.contains("bb0:"), "expected bb0 label in: {}", out);
+}
+
+// ── Validator: invalid entry block ─────────────────────────────
+
+#[test]
+fn test_validator_invalid_entry_block_does_not_panic() {
+    let mut interner = mk_interner();
+    let fn_name = mk_name(&mut interner, "bad_func");
+
+    let mut b = KirBuilder::new();
+    let entry = b.new_block(None);
+    b.switch_to(entry);
+    let v = b.push_const(Constant::Int(0), Ty::Int);
+    b.set_return(v);
+
+    // Build with a bogus entry_block that doesn't exist in the arena.
+    let bogus_entry: kyokara_kir::block::BlockId = Idx::from_raw(la_arena::RawIdx::from_u32(999));
+    let func = b.build(
+        fn_name,
+        vec![],
+        Ty::Int,
+        EffectSet::default(),
+        bogus_entry,
+        KirContracts::default(),
+    );
+
+    // Should NOT panic, should return a diagnostic.
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.iter().any(|d| d.message.contains("entry block")),
+        "expected 'invalid entry block' diagnostic, got: {:?}",
+        diags
+    );
 }
