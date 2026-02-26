@@ -1,6 +1,6 @@
 //! End-to-end API tests: source → `check()` → verify structured output.
 
-use kyokara_api::{check, check_project};
+use kyokara_api::{check, check_project, refactor, refactor_project};
 
 #[test]
 fn check_clean_program_no_diagnostics() {
@@ -752,4 +752,230 @@ fn single_file_ids_unchanged() {
         foo.id, "fn::foo",
         "single-file IDs should remain fn::name format"
     );
+}
+
+// ── Verification diagnostic tests ────────────────────────────────────
+
+#[test]
+fn refactor_verified_has_empty_verification_diagnostics() {
+    // A clean rename that passes verification.
+    let src = "fn foo() -> Int { 1 }\nfn caller() -> Int { foo() }";
+    let action = kyokara_refactor::RefactorAction::RenameSymbol {
+        old_name: "foo".into(),
+        new_name: "bar".into(),
+        kind: kyokara_refactor::SymbolKind::Function,
+    };
+    let output = refactor(src, "test.ky", action, false);
+    assert_eq!(output.status, "typechecked");
+    assert!(
+        output.verification_diagnostics.is_empty(),
+        "verified refactor should have empty verification_diagnostics, got: {:?}",
+        output.verification_diagnostics
+    );
+}
+
+#[test]
+fn refactor_skipped_has_empty_verification_diagnostics() {
+    let src = "fn foo() -> Int { 1 }";
+    let action = kyokara_refactor::RefactorAction::RenameSymbol {
+        old_name: "foo".into(),
+        new_name: "bar".into(),
+        kind: kyokara_refactor::SymbolKind::Function,
+    };
+    let output = refactor(src, "test.ky", action, true);
+    assert_eq!(output.status, "skipped");
+    assert!(
+        output.verification_diagnostics.is_empty(),
+        "skipped verification should have empty verification_diagnostics"
+    );
+}
+
+#[test]
+fn refactor_error_has_empty_verification_diagnostics() {
+    // Nonexistent symbol → RefactorError, not verification failure.
+    let src = "fn foo() -> Int { 1 }";
+    let action = kyokara_refactor::RefactorAction::RenameSymbol {
+        old_name: "nonexistent".into(),
+        new_name: "bar".into(),
+        kind: kyokara_refactor::SymbolKind::Function,
+    };
+    let output = refactor(src, "test.ky", action, false);
+    assert_eq!(output.status, "error");
+    assert!(output.error.is_some());
+    assert!(
+        output.verification_diagnostics.is_empty(),
+        "error status should have empty verification_diagnostics"
+    );
+}
+
+#[test]
+fn refactor_json_has_verification_diagnostics_field() {
+    // Verify the JSON output uses "verification_diagnostics" (not "warnings").
+    let src = "fn foo() -> Int { 1 }\nfn caller() -> Int { foo() }";
+    let action = kyokara_refactor::RefactorAction::RenameSymbol {
+        old_name: "foo".into(),
+        new_name: "bar".into(),
+        kind: kyokara_refactor::SymbolKind::Function,
+    };
+    let output = refactor(src, "test.ky", action, false);
+    let json = serde_json::to_string_pretty(&output).expect("serialization failed");
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("invalid JSON");
+
+    assert!(
+        parsed.get("verification_diagnostics").is_some(),
+        "JSON should contain 'verification_diagnostics' key"
+    );
+    assert!(
+        parsed.get("warnings").is_none(),
+        "JSON should NOT contain old 'warnings' key"
+    );
+    let diags = parsed["verification_diagnostics"].as_array().unwrap();
+    assert!(
+        diags.is_empty(),
+        "verified refactor should serialize as empty array"
+    );
+}
+
+#[test]
+fn refactor_verification_diagnostics_dto_structure() {
+    // Test that VerificationDiagnostic carries structured data (span, code).
+    // Manually apply an edit that introduces a type mismatch, then re-check.
+    //   Original: fn foo() -> Int { 1 }
+    //   Patched:  fn foo() -> Int { "hello" }  (replace "1" with "\"hello\"")
+    let src = "fn foo() -> Int { 1 }";
+    // "1" is at offset 18 (fn foo() -> Int { 1 })
+    //  0123456789012345678901
+    let bad_edits = vec![kyokara_refactor::TextEdit {
+        file_id: kyokara_span::FileId(0),
+        range: kyokara_span::TextRange::new(18.into(), 19.into()),
+        new_text: "\"hello\"".into(),
+    }];
+    let patched = kyokara_refactor::apply_edits(src, &bad_edits);
+    assert!(
+        patched.contains("\"hello\""),
+        "patched should have string literal, got: {patched}"
+    );
+
+    // Re-check the broken source — should have a type mismatch.
+    let check = kyokara_hir::check_file(&patched);
+    assert!(
+        !check.type_check.raw_diagnostics.is_empty(),
+        "patched source should have type errors"
+    );
+
+    // Verify the diagnostic data has code and span.
+    let (data, span) = &check.type_check.raw_diagnostics[0];
+    assert_eq!(data.code(), "E0001", "should be type mismatch error");
+    assert!(
+        span.range.start() <= span.range.end(),
+        "span should have valid range"
+    );
+
+    // Verify VerificationDiagnostic correctly carries the enriched data.
+    let diag = data
+        .clone()
+        .into_diagnostic(*span, &check.interner, &check.item_tree);
+    let vd = kyokara_refactor::transaction::VerificationDiagnostic {
+        message: diag.message.clone(),
+        span: Some(*span),
+        code: Some(data.code().into()),
+    };
+    assert!(vd.span.is_some(), "diagnostic should have span");
+    assert_eq!(vd.code.as_deref(), Some("E0001"));
+    assert!(
+        vd.message.contains("mismatch"),
+        "message should mention mismatch: {}",
+        vd.message
+    );
+}
+
+#[test]
+fn transaction_verification_failure_has_structured_spans() {
+    // Apply edits that introduce a type mismatch, verify the re-check produces
+    // diagnostics with spans and codes.
+    let src = "fn foo() -> Int { 1 }";
+    let bad_edits = vec![kyokara_refactor::TextEdit {
+        file_id: kyokara_span::FileId(0),
+        range: kyokara_span::TextRange::new(18.into(), 19.into()),
+        new_text: "\"broken\"".into(),
+    }];
+    let patched = kyokara_refactor::apply_edits(src, &bad_edits);
+
+    let check = kyokara_hir::check_file(&patched);
+    let has_errors =
+        !check.lowering_diagnostics.is_empty() || !check.type_check.raw_diagnostics.is_empty();
+    assert!(has_errors, "broken source should have type errors");
+
+    // Type check diagnostics should have valid spans.
+    for (data, span) in &check.type_check.raw_diagnostics {
+        assert!(
+            span.range.start() <= span.range.end(),
+            "type diagnostic should have valid span range"
+        );
+        assert!(
+            !data.code().is_empty(),
+            "diagnostic should have an error code"
+        );
+    }
+}
+
+#[test]
+fn refactor_project_verified_json_structure() {
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "import math\nfn caller() -> Int { add(1, 2) }"),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
+    ]);
+    let action = kyokara_refactor::RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: kyokara_refactor::SymbolKind::Function,
+    };
+    let output = refactor_project(&main_path, action, false);
+    assert_eq!(output.status, "typechecked");
+
+    let json = serde_json::to_string_pretty(&output).expect("serialization failed");
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("invalid JSON");
+
+    assert!(
+        parsed.get("verification_diagnostics").is_some(),
+        "project refactor JSON should have 'verification_diagnostics'"
+    );
+    assert!(
+        parsed.get("warnings").is_none(),
+        "project refactor JSON should NOT have old 'warnings' field"
+    );
+}
+
+#[test]
+fn verification_diagnostic_dto_serializes_all_fields() {
+    // Directly test the DTO serialization structure.
+    let dto = kyokara_api::VerificationDiagnosticDto {
+        message: "type mismatch".into(),
+        code: Some("E0001".into()),
+        span: Some(kyokara_api::SpanDto {
+            file: "test.ky".into(),
+            start: 10,
+            end: 20,
+        }),
+    };
+    let json = serde_json::to_value(&dto).expect("serialization failed");
+    assert_eq!(json["message"], "type mismatch");
+    assert_eq!(json["code"], "E0001");
+    assert_eq!(json["span"]["file"], "test.ky");
+    assert_eq!(json["span"]["start"], 10);
+    assert_eq!(json["span"]["end"], 20);
+}
+
+#[test]
+fn verification_diagnostic_dto_nullable_fields() {
+    // Code and span can be null.
+    let dto = kyokara_api::VerificationDiagnosticDto {
+        message: "parse error".into(),
+        code: None,
+        span: None,
+    };
+    let json = serde_json::to_value(&dto).expect("serialization failed");
+    assert_eq!(json["message"], "parse error");
+    assert!(json["code"].is_null());
+    assert!(json["span"].is_null());
 }

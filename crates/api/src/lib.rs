@@ -764,8 +764,16 @@ pub struct RefactorOutputDto {
     pub verified: bool,
     pub edits: Vec<TextEditDto>,
     pub error: Option<String>,
-    pub warnings: Vec<String>,
+    pub verification_diagnostics: Vec<VerificationDiagnosticDto>,
     pub patched_sources: Option<Vec<PatchedSourceDto>>,
+}
+
+/// A structured verification diagnostic from post-refactor type checking.
+#[derive(Debug, Serialize)]
+pub struct VerificationDiagnosticDto {
+    pub message: String,
+    pub code: Option<String>,
+    pub span: Option<SpanDto>,
 }
 
 /// A patched source file from a transactional refactor.
@@ -869,13 +877,20 @@ fn transaction_to_dto(
         })
         .collect();
 
-    let (status, verified, warnings) = match &t.verification {
+    let (status, verified, verification_diagnostics) = match &t.verification {
         kyokara_refactor::VerificationStatus::Verified => {
             ("typechecked".to_string(), true, Vec::new())
         }
         kyokara_refactor::VerificationStatus::Failed { diagnostics } => {
-            let warns: Vec<String> = diagnostics.iter().map(|d| d.message.clone()).collect();
-            ("failed".to_string(), false, warns)
+            let dtos: Vec<VerificationDiagnosticDto> = diagnostics
+                .iter()
+                .map(|d| VerificationDiagnosticDto {
+                    message: d.message.clone(),
+                    code: d.code.clone(),
+                    span: d.span.map(|s| span_dto(&s, &file_name(s.file))),
+                })
+                .collect();
+            ("failed".to_string(), false, dtos)
         }
         kyokara_refactor::VerificationStatus::Skipped => ("skipped".to_string(), false, Vec::new()),
     };
@@ -886,7 +901,7 @@ fn transaction_to_dto(
         verified,
         edits,
         error: None,
-        warnings,
+        verification_diagnostics,
         patched_sources: Some(patched_sources),
     }
 }
@@ -898,7 +913,7 @@ fn error_dto(e: kyokara_refactor::RefactorError) -> RefactorOutputDto {
         verified: false,
         edits: Vec::new(),
         error: Some(e.to_string()),
-        warnings: Vec::new(),
+        verification_diagnostics: Vec::new(),
         patched_sources: None,
     }
 }

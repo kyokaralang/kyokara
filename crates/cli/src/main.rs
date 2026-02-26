@@ -242,8 +242,16 @@ fn main() {
 
             if output.status == "failed" {
                 eprintln!("warning: verification failed after refactor");
-                for w in &output.warnings {
-                    eprintln!("  {w}");
+                for d in &output.verification_diagnostics {
+                    if let Some(span) = &d.span {
+                        let code = d.code.as_deref().unwrap_or("????");
+                        eprintln!(
+                            "  [{code}] {}:{}-{}: {}",
+                            span.file, span.start, span.end, d.message
+                        );
+                    } else {
+                        eprintln!("  {}", d.message);
+                    }
                 }
             }
 
