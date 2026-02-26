@@ -91,9 +91,25 @@ impl<'a> InferenceCtx<'a> {
                 }
             }
 
-            Pat::Record { path: _, fields: _ } => {
-                // Bind record field names to expected type fields.
-                // Simplified for v0.0.
+            Pat::Record { path: _, fields } => {
+                let resolved = self.table.resolve(expected);
+                if let Ty::Record {
+                    fields: ref rec_fields,
+                } = resolved
+                {
+                    for field_name in &fields {
+                        let field_str = field_name.resolve(self.interner);
+                        if !rec_fields
+                            .iter()
+                            .any(|(n, _)| n.resolve(self.interner) == field_str)
+                        {
+                            self.push_diag(TyDiagnosticData::NoSuchField {
+                                field: field_str.to_owned(),
+                                ty: resolved.clone(),
+                            });
+                        }
+                    }
+                }
                 expected.clone()
             }
         };
