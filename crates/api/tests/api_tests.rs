@@ -1820,3 +1820,26 @@ fn malformed_numeric_underscore_consecutive() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn parse_error_has_nonzero_span() {
+    // `fn main( -> Int { 1 }` is missing `)` — the parse error should have a non-zero span.
+    let src = "fn main( -> Int { 1 }";
+    let output = check(src, "test.ky");
+    let parse_errs: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0100")
+        .collect();
+    assert!(!parse_errs.is_empty(), "expected at least one parse error");
+    assert!(
+        parse_errs
+            .iter()
+            .any(|d| d.span.start != 0 || d.span.end != 0),
+        "expected parse error with non-zero span, got: {:?}",
+        parse_errs
+            .iter()
+            .map(|d| (d.span.start, d.span.end))
+            .collect::<Vec<_>>()
+    );
+}

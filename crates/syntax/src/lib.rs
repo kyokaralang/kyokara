@@ -38,9 +38,31 @@ pub fn parse(source: &str) -> Parse {
     let input = kyokara_parser::Input::new(raw_kinds);
 
     // 3. Run the parser to get events.
-    let (events, errors) = kyokara_parser::parse(&input);
+    let (events, mut errors) = kyokara_parser::parse(&input);
 
-    // 4. Build the rowan green tree.
+    // 4. Compute byte offsets for parse errors from token positions.
+    let mut byte_offsets: Vec<u32> = Vec::with_capacity(tokens.len() + 1);
+    let mut offset = 0u32;
+    for tok in &tokens {
+        byte_offsets.push(offset);
+        offset += tok.text.len() as u32;
+    }
+    byte_offsets.push(offset);
+
+    for error in &mut errors {
+        let pos = error.token_pos;
+        if pos < input.len() {
+            let raw = input.raw_index(pos);
+            error.range_start = byte_offsets[raw];
+            error.range_end = byte_offsets[raw] + tokens[raw].text.len() as u32;
+        } else {
+            // Past end — point to source end.
+            error.range_start = offset;
+            error.range_end = offset;
+        }
+    }
+
+    // 5. Build the rowan green tree.
     let green = bridge::build_tree(events, &tokens);
 
     Parse { green, errors }
