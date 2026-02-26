@@ -647,9 +647,9 @@ impl BodyLowerCtx<'_> {
                     .map(|p| self.lower_path(&p))
                     .unwrap_or_else(|| path::Path { segments: vec![] });
 
-                self.push_scope();
+                // No push_scope/pop_scope — sub-pattern bindings must stay in the
+                // current (arm) scope so the arm body can resolve them.
                 let args: Vec<PatIdx> = cp.args().map(|a| self.lower_pat(&a)).collect();
-                self.pop_scope();
 
                 self.alloc_pat(pat::Pat::Constructor { path, args })
             }

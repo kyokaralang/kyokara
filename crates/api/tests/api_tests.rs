@@ -1219,3 +1219,39 @@ fn check_project_lowering_diagnostic_has_real_file_path() {
         diag.span.file
     );
 }
+
+// ── Constructor pattern binding scope (#100) ─────────────────────────
+
+#[test]
+fn constructor_pattern_binding_is_in_scope() {
+    // `Some(x) => x` should not produce "unresolved name x".
+    let src = "fn main() -> Int { match Some(1) { Some(x) => x, None => 0 } }";
+    let output = check(src, "test.ky");
+    let unresolved: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("unresolved"))
+        .collect();
+    assert!(
+        unresolved.is_empty(),
+        "constructor pattern binding `x` should be in scope, got: {:?}",
+        unresolved.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn nested_constructor_pattern_binding_is_in_scope() {
+    // `Some(Some(x)) => x` — nested constructor bindings should also work.
+    let src = "fn main() -> Int { match Some(Some(1)) { Some(Some(x)) => x, _ => 0 } }";
+    let output = check(src, "test.ky");
+    let unresolved: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("unresolved"))
+        .collect();
+    assert!(
+        unresolved.is_empty(),
+        "nested constructor pattern binding `x` should be in scope, got: {:?}",
+        unresolved.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
