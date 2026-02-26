@@ -28,12 +28,12 @@ fn green_text(green: &rowan::GreenNode) -> String {
     fn collect(node: &rowan::GreenNodeData, out: &mut String) {
         for child in node.children() {
             match child {
-                NodeOrToken::Node(n) => collect(&n, out),
+                NodeOrToken::Node(n) => collect(n, out),
                 NodeOrToken::Token(t) => out.push_str(t.text()),
             }
         }
     }
-    collect(&green, &mut out);
+    collect(green, &mut out);
     out
 }
 

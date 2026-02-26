@@ -225,7 +225,7 @@ fn test_constant_display() {
     b.switch_to(entry);
 
     let _int = b.push_const(Constant::Int(42), Ty::Int);
-    let _float = b.push_const(Constant::Float(3.14), Ty::Float);
+    let _float = b.push_const(Constant::Float(std::f64::consts::PI), Ty::Float);
     let _str = b.push_const(Constant::String("hello".into()), Ty::String);
     let _ch = b.push_const(Constant::Char('a'), Ty::Char);
     let _bool = b.push_const(Constant::Bool(true), Ty::Bool);
@@ -247,7 +247,7 @@ fn test_constant_display() {
     display_function(&func, &ctx, &mut out).unwrap();
 
     assert!(out.contains("const 42 : Int"));
-    assert!(out.contains("const 3.14 : Float"));
+    assert!(out.contains("const 3.141592653589793 : Float"));
     assert!(out.contains(r#"const "hello" : String"#));
     assert!(out.contains("const 'a' : Char"));
     assert!(out.contains("const true : Bool"));

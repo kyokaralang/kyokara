@@ -46,42 +46,105 @@ pub fn rename_symbol(
 }
 
 /// Rename a symbol across all modules in a multi-file project.
+///
+/// When `target_file` is `Some`, only the symbol defined in that file
+/// (and its cross-module usages) are renamed. When `None`, the rename
+/// succeeds only if exactly one module defines the symbol; otherwise
+/// an `AmbiguousRename` error is returned.
 pub fn rename_symbol_project(
     result: &ProjectCheckResult,
     old_name: &str,
     new_name: &str,
     kind: SymbolKind,
+    target_file: Option<&str>,
 ) -> Result<RefactorResult, RefactorError> {
-    // Find the module where the symbol is defined.
-    let mut found = false;
-    for (_, info) in result.module_graph.iter() {
-        if name_exists_in_scope(&result.interner, &info.scope, old_name, kind) {
-            found = true;
-            break;
-        }
-    }
-    if !found {
+    // 1. Find which modules locally define this symbol (have a definition
+    //    site in their source CST, not just an imported name in scope).
+    let defining_modules: Vec<(&kyokara_hir::ModulePath, &kyokara_hir::ModuleInfo)> = result
+        .module_graph
+        .iter()
+        .filter(|(_, info)| {
+            let parse = kyokara_syntax::parse(&info.source);
+            let root = SyntaxNode::new_root(parse.green);
+            is_locally_defined(&root, old_name, kind)
+        })
+        .collect();
+
+    if defining_modules.is_empty() {
         return Err(RefactorError::SymbolNotFound {
             name: old_name.to_string(),
             kind,
         });
     }
 
-    // Check the new name is not a keyword.
+    // 2. Disambiguate: pick the defining module.
+    let (def_mod_path, _def_info) = if let Some(tf) = target_file {
+        defining_modules
+            .iter()
+            .find(|(_, info)| info.path.display().to_string() == tf)
+            .copied()
+            .ok_or_else(|| RefactorError::SymbolNotFound {
+                name: old_name.to_string(),
+                kind,
+            })?
+    } else if defining_modules.len() == 1 {
+        defining_modules[0]
+    } else {
+        let files: Vec<String> = defining_modules
+            .iter()
+            .map(|(_, info)| info.path.display().to_string())
+            .collect();
+        return Err(RefactorError::AmbiguousRename {
+            name: old_name.to_string(),
+            kind,
+            files,
+        });
+    };
+
+    // 3. Check the new name is not a keyword.
     if SyntaxKind::from_keyword(new_name).is_some() {
         return Err(RefactorError::NewNameIsKeyword {
             name: new_name.to_string(),
         });
     }
 
-    // Check for conflicts in every module.
-    for (_, info) in result.module_graph.iter() {
-        validate_new_name(&result.interner, &info.scope, new_name, kind)?
+    // 4. Determine which modules should be edited:
+    //    - The defining module itself
+    //    - Modules that import from the defining module
+    let importing_modules: Vec<&kyokara_hir::ModulePath> = result
+        .module_graph
+        .iter()
+        .filter(|(mod_path, info)| {
+            if *mod_path == def_mod_path {
+                return false;
+            }
+            imports_from_module(&info.item_tree, def_mod_path, &result.interner)
+        })
+        .map(|(mod_path, _)| mod_path)
+        .collect();
+
+    // 5. Check for conflicts only in affected modules.
+    let def_info = result.module_graph.get(def_mod_path).unwrap();
+    validate_new_name(&result.interner, &def_info.scope, new_name, kind)?;
+    for imp_mod in &importing_modules {
+        let info = result.module_graph.get(imp_mod).unwrap();
+        validate_new_name(&result.interner, &info.scope, new_name, kind)?;
     }
 
-    // Walk each module's source and collect edits.
+    // 6. Collect edits only in affected modules.
     let mut all_edits = Vec::new();
-    for (_, info) in result.module_graph.iter() {
+
+    // Defining module: rename definition + usages.
+    {
+        let parse = kyokara_syntax::parse(&def_info.source);
+        let root = SyntaxNode::new_root(parse.green);
+        let edits = collect_rename_edits(&root, def_info.file_id, old_name, new_name, kind);
+        all_edits.extend(edits);
+    }
+
+    // Importing modules: rename usages only.
+    for imp_mod in &importing_modules {
+        let info = result.module_graph.get(imp_mod).unwrap();
         let parse = kyokara_syntax::parse(&info.source);
         let root = SyntaxNode::new_root(parse.green);
         let edits = collect_rename_edits(&root, info.file_id, old_name, new_name, kind);
@@ -92,6 +155,49 @@ pub fn rename_symbol_project(
         description: format!("rename {kind:?} `{old_name}` → `{new_name}` (project-wide)"),
         edits: all_edits,
         verified: false,
+    })
+}
+
+/// Check if a module's CST contains a local definition of the given symbol.
+fn is_locally_defined(root: &SyntaxNode, name: &str, kind: SymbolKind) -> bool {
+    for element in root.descendants_with_tokens() {
+        let Some(token) = element.into_token() else {
+            continue;
+        };
+        if token.kind() != SyntaxKind::Ident || token.text() != name {
+            continue;
+        }
+        let Some(parent) = token.parent() else {
+            continue;
+        };
+        let pk = parent.kind();
+        let is_def = match kind {
+            SymbolKind::Function => pk == SyntaxKind::FnDef,
+            SymbolKind::Type => pk == SyntaxKind::TypeDef,
+            SymbolKind::Capability => pk == SyntaxKind::CapDef,
+            SymbolKind::Variant => pk == SyntaxKind::Variant,
+        };
+        if is_def {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check if a module imports from another module by comparing import paths
+/// against the target module's path.
+fn imports_from_module(
+    item_tree: &kyokara_hir::ItemTree,
+    target_mod_path: &kyokara_hir::ModulePath,
+    interner: &Interner,
+) -> bool {
+    let Some(target_last) = target_mod_path.last() else {
+        return false; // Root module can't be imported
+    };
+    let target_name = target_last.resolve(interner);
+    item_tree.imports.iter().any(|imp| {
+        let local = imp.alias.or_else(|| imp.path.last());
+        local.is_some_and(|n| n.resolve(interner) == target_name)
     })
 }
 
