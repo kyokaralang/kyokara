@@ -1579,3 +1579,23 @@ fn duplicate_bindings_in_constructor_pattern_produce_diagnostic() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn unknown_capability_in_with_clause_produces_diagnostic() {
+    let src = "fn main() -> Int with Nope { 1 }";
+    let output = check(src, "test.ky");
+    let errs: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("Nope") || d.message.contains("unresolved"))
+        .collect();
+    assert!(
+        !errs.is_empty(),
+        "expected diagnostic for unknown capability `Nope`, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}

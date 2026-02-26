@@ -170,6 +170,19 @@ pub fn infer_body(
     // Build caller effect set.
     let caller_effects = EffectSet::from_with_caps(&fn_item.with_caps, &env, &mut table, interner);
 
+    // Validate capability names.
+    let mut cap_diags: Vec<(TyDiagnosticData, ExprIdx)> = Vec::new();
+    for cap_name in &caller_effects.caps {
+        if !module_scope.caps.contains_key(cap_name) {
+            cap_diags.push((
+                TyDiagnosticData::UnresolvedType {
+                    name: cap_name.resolve(interner).to_owned(),
+                },
+                body.root,
+            ));
+        }
+    }
+
     // Resolve parameter types eagerly (stored by index for ScopeDef::Param lookups).
     let mut param_tys = Vec::new();
     for param in &fn_item.params {
@@ -187,7 +200,7 @@ pub fn infer_body(
         expr_types: ArenaMap::default(),
         pat_types: ArenaMap::default(),
         holes: Vec::new(),
-        diags: Vec::new(),
+        diags: cap_diags,
         calls: Vec::new(),
         body,
         item_tree,
