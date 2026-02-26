@@ -537,6 +537,23 @@ impl BodyLowerCtx<'_> {
     fn lower_record(&mut self, re: &RecordExpr) -> ExprIdx {
         let path = re.path().map(|p| self.lower_path(&p));
 
+        // Check for duplicate field names.
+        if let Some(fl) = re.field_list() {
+            let mut seen = std::collections::HashSet::new();
+            for f in fl.fields() {
+                if let Some(tok) = f.name_token() {
+                    let name = tok.text();
+                    if !seen.insert(name.to_string()) {
+                        let span = self.node_span(f.syntax());
+                        self.diagnostics.push(Diagnostic::error(
+                            format!("duplicate field `{name}` in record literal"),
+                            span,
+                        ));
+                    }
+                }
+            }
+        }
+
         let fields = re
             .field_list()
             .map(|fl| {
