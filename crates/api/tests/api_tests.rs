@@ -1718,3 +1718,24 @@ fn cyclic_type_alias_does_not_crash() {
     let _output = check(src, "test.ky");
     // Just verifying we don't crash. The output will have type errors.
 }
+
+#[test]
+fn extra_type_args_produce_diagnostic() {
+    // `List<Int, Int>` has 2 type args but List expects 1.
+    let src = "fn f(x: List<Int, Int>) -> Int { 1 }\nfn main() -> Int { 1 }";
+    let output = check(src, "test.ky");
+    let arity_errs: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("type argument"))
+        .collect();
+    assert!(
+        !arity_errs.is_empty(),
+        "expected type arity diagnostic for List<Int, Int>, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
