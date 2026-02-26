@@ -1438,3 +1438,23 @@ fn dotted_constructor_pattern_produces_diagnostic() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn record_pattern_invalid_field_produces_diagnostic() {
+    let src = "type Point = { x: Int }\nfn f(p: Point) -> Int { match p { Point { y } => 0, _ => 1 } }\nfn main() -> Int { f(Point { x: 1 }) }";
+    let output = check(src, "test.ky");
+    let errs: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("field") && d.message.contains("y"))
+        .collect();
+    assert!(
+        !errs.is_empty(),
+        "expected invalid field diagnostic for `y`, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
