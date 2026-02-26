@@ -76,9 +76,7 @@ pub fn rename_symbol_project(
 
     // Check for conflicts in every module.
     for (_, info) in result.module_graph.iter() {
-        if let Err(e) = validate_new_name(&result.interner, &info.scope, new_name, kind) {
-            return Err(e);
-        }
+        validate_new_name(&result.interner, &info.scope, new_name, kind)?
     }
 
     // Walk each module's source and collect edits.
@@ -248,10 +246,10 @@ pub fn is_usage_site(gp_kind: SyntaxKind, kind: SymbolKind, grandparent: &Syntax
         ),
         SymbolKind::Capability => {
             // Capabilities appear as NameType inside WithClause or PipeClause.
-            if gp_kind == SyntaxKind::NameType {
-                if let Some(ggp) = grandparent.parent() {
-                    return matches!(ggp.kind(), SyntaxKind::WithClause | SyntaxKind::PipeClause);
-                }
+            if gp_kind == SyntaxKind::NameType
+                && let Some(ggp) = grandparent.parent()
+            {
+                return matches!(ggp.kind(), SyntaxKind::WithClause | SyntaxKind::PipeClause);
             }
             // Also match CapDef name position (handled above as definition site).
             false

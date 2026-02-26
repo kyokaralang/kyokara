@@ -21,16 +21,16 @@ pub fn completions(
     let mut items = Vec::new();
 
     // Module scope: functions, types, caps, constructors.
-    add_module_scope_completions(&analysis, &mut items);
+    add_module_scope_completions(analysis, &mut items);
 
     // Builtin types.
     add_builtin_completions(&mut items);
 
     // Local scope: find enclosing function and add locals.
-    add_local_completions(&analysis, source, offset, &mut items);
+    add_local_completions(analysis, source, offset, &mut items);
 
     // Hole completion: if at a `_`, suggest matching locals.
-    add_hole_completions(&analysis, source, offset, &mut items);
+    add_hole_completions(analysis, source, offset, &mut items);
 
     if items.is_empty() {
         None
@@ -81,7 +81,7 @@ fn add_module_scope_completions(analysis: &FileAnalysis, items: &mut Vec<Complet
     }
 
     // Capabilities.
-    for (name, _) in &scope.caps {
+    for name in scope.caps.keys() {
         items.push(CompletionItem {
             label: name.resolve(interner).to_string(),
             kind: Some(CompletionItemKind::INTERFACE),
@@ -90,7 +90,7 @@ fn add_module_scope_completions(analysis: &FileAnalysis, items: &mut Vec<Complet
     }
 
     // Constructors.
-    for (name, _) in &scope.constructors {
+    for name in scope.constructors.keys() {
         items.push(CompletionItem {
             label: name.resolve(interner).to_string(),
             kind: Some(CompletionItemKind::ENUM_MEMBER),
@@ -167,7 +167,7 @@ fn add_local_completions(
             let mut current = Some(scope_idx);
             while let Some(idx) = current {
                 let scope_data = &body.scopes.scopes[idx];
-                for (name, _def) in &scope_data.entries {
+                for name in scope_data.entries.keys() {
                     items.push(CompletionItem {
                         label: name.resolve(interner).to_string(),
                         kind: Some(CompletionItemKind::VARIABLE),
@@ -212,7 +212,7 @@ fn add_hole_completions(
     }
 
     // Find matching HoleInfo from inference results.
-    for (_, infer) in &analysis.type_check.fn_results {
+    for infer in analysis.type_check.fn_results.values() {
         for hole in &infer.holes {
             let hole_start: u32 = hole.span.range.start().into();
             let hole_end: u32 = hole.span.range.end().into();

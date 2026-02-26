@@ -471,6 +471,18 @@ fn comparison_returns_bool() {
     check_ok("fn foo() -> Bool { 1 >= 2 }");
 }
 
+// ── Unresolved name tests ───────────────────────────────────────────
+
+#[test]
+fn err_unresolved_name() {
+    check_err("fn main() -> Int { foo }", "unresolved name");
+}
+
+#[test]
+fn err_unresolved_name_in_expr() {
+    check_err("fn main() -> Int { foo + 1 }", "unresolved name");
+}
+
 // ── Scope resolution tests ──────────────────────────────────────────
 
 #[test]
