@@ -1762,3 +1762,35 @@ fn run_with_manifest_none_allows_all() {
     let val = run_with_manifest_ok(r#"fn main() -> Unit { println("ok") }"#, None);
     assert!(matches!(val, Value::Unit));
 }
+
+// ── Multi-file project diagnostics ──────────────────────────────────
+
+#[test]
+fn run_project_rejects_type_error_in_imported_module() {
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    // util.ky has a type error: returns Bool where Int is declared.
+    let util_path = dir.path().join("util.ky");
+    let mut util_file = std::fs::File::create(&util_path).unwrap();
+    writeln!(util_file, "pub fn util() -> Int {{ true }}").unwrap();
+
+    // main.ky imports util and calls it.
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import util").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ util() }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path);
+    match result {
+        Ok(_) => panic!("expected type error from imported module"),
+        Err(e) => {
+            let err = e.to_string();
+            assert!(
+                err.contains("type error"),
+                "expected 'type error' in message, got: {err}"
+            );
+        }
+    }
+}

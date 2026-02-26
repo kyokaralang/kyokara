@@ -164,6 +164,21 @@ pub fn run_project_with_manifest(
 ) -> Result<RunResult, RuntimeError> {
     let mut project = check_project(entry_file);
 
+    // Check for type errors across all modules.
+    let mut type_errors = Vec::new();
+    for (_mod_path, tc) in &project.type_checks {
+        for (data, _span) in &tc.raw_diagnostics {
+            let msg = format!("{data:?}");
+            type_errors.push(msg);
+        }
+    }
+    if !type_errors.is_empty() {
+        return Err(RuntimeError::TypeError(format!(
+            "type error at compile time: {}",
+            type_errors.join("; ")
+        )));
+    }
+
     // Find the entry module.
     let entry_path = ModulePath::root();
     let entry_info = project

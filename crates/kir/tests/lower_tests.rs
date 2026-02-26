@@ -546,6 +546,88 @@ fn test_recursive_call() {
     assert!(out.contains("call @fib("), "output:\n{out}");
 }
 
+// ── Bug regression: ensures binds result (#50) ─────────────────
+
+#[test]
+fn test_ensures_binds_result_variable() {
+    let out = lower_and_display("fn f(x: Int) -> Int ensures result > 0 { x }");
+    // The ensures clause should reference the return value, not produce a hole.
+    // Before fix: `result` lowered to a hole because it wasn't defined as a local.
+    assert!(
+        !out.contains("hole"),
+        "ensures should reference result, not produce a hole. output:\n{out}"
+    );
+    assert!(out.contains("assert"), "output:\n{out}");
+    assert!(out.contains("ensures"), "output:\n{out}");
+}
+
+// ── Bug regression: ensures with early return (#51) ─────────────
+
+#[test]
+fn test_ensures_with_early_return() {
+    let out = lower_and_display(
+        "fn f(x: Int) -> Int ensures result > 0 {
+           return x
+         }",
+    );
+    // The ensures assertion should appear before the return terminator,
+    // not in dead code after it.
+    assert!(
+        out.contains("assert"),
+        "ensures assert missing. output:\n{out}"
+    );
+    assert!(
+        out.contains("ensures"),
+        "ensures label missing. output:\n{out}"
+    );
+    // The assert should NOT be in a block that starts with unreachable.
+    // Check that there is an assert followed eventually by a return.
+    let assert_pos = out.find("assert").expect("assert missing");
+    let return_pos = out.rfind("return").expect("return missing");
+    assert!(
+        assert_pos < return_pos,
+        "ensures assert should come before return. output:\n{out}"
+    );
+}
+
+// ── Bug regression: sequential match with record pattern (#52) ──
+
+#[test]
+fn test_sequential_match_record_pattern() {
+    let out = lower_and_display(
+        "type Point = { x: Int, y: Int }
+         fn f(p: Point) -> Int {
+           match p {
+             { x, y } => x + y
+           }
+         }",
+    );
+    // The record pattern arm body should be lowered (not silently dropped).
+    assert!(
+        out.contains("add"),
+        "record pattern arm body should produce add. output:\n{out}"
+    );
+    assert!(
+        out.contains("field_get"),
+        "record pattern should destructure fields. output:\n{out}"
+    );
+}
+
+#[test]
+fn test_sequential_match_constructor_pattern() {
+    let out = lower_and_display(
+        "type Wrap<T> = | Val(T) | Empty
+         fn f(x: Int) -> Int {
+           match x {
+             0 => 100
+             n => n
+           }
+         }",
+    );
+    // Bind pattern arm should still work as before.
+    assert!(out.contains("eq"), "output:\n{out}");
+}
+
 #[test]
 fn test_constructor_in_if_branches() {
     let source = "

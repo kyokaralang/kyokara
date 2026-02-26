@@ -13,14 +13,17 @@ pub fn lsp_position_to_offset(pos: Position, text: &str) -> Option<TextSize> {
     let mut offset = 0usize;
     for (i, line) in text.split('\n').enumerate() {
         if i == pos.line as usize {
-            let char_offset = pos.character as usize;
-            // Count bytes for the character offset (UTF-16 code units in LSP).
-            let byte_offset: usize = line
-                .char_indices()
-                .take(char_offset)
-                .last()
-                .map(|(idx, ch)| idx + ch.len_utf8())
-                .unwrap_or(0);
+            let target_units = pos.character as usize;
+            // Count UTF-16 code units to find the byte offset.
+            let mut units = 0usize;
+            let mut byte_offset = 0usize;
+            for ch in line.chars() {
+                if units >= target_units {
+                    break;
+                }
+                units += ch.len_utf16();
+                byte_offset += ch.len_utf8();
+            }
             return Some(TextSize::from((offset + byte_offset) as u32));
         }
         offset += line.len() + 1; // +1 for the '\n'
@@ -42,7 +45,7 @@ pub fn offset_to_lsp_position(offset: TextSize, text: &str) -> Position {
             line += 1;
             col = 0;
         } else {
-            col += 1;
+            col += ch.len_utf16() as u32;
         }
     }
     Position::new(line, col)
@@ -226,6 +229,37 @@ mod tests {
         let pos = Position::new(1, 0);
         let offset = lsp_position_to_offset(pos, text).unwrap();
         assert_eq!(offset, TextSize::from(6));
+    }
+
+    #[test]
+    fn emoji_position_to_offset() {
+        // 😀 is U+1F600: 4 bytes in UTF-8, 2 code units in UTF-16.
+        let text = "a😀b\ncd";
+        // In UTF-16: a(1) + 😀(2) + b(1) = col 4 for end of first line.
+        // Position(0, 3) means after a(1 unit) + 😀(2 units) = 3 units → byte offset 5 (1 + 4).
+        let offset = lsp_position_to_offset(Position::new(0, 3), text).unwrap();
+        assert_eq!(
+            offset,
+            TextSize::from(5),
+            "col 3 in UTF-16 should be byte 5 (past a + 😀)"
+        );
+    }
+
+    #[test]
+    fn emoji_offset_to_position() {
+        let text = "a😀b\ncd";
+        // Byte offset 5 = after 'a'(1 byte) + '😀'(4 bytes) → col 3 in UTF-16.
+        let pos = offset_to_lsp_position(TextSize::from(5), text);
+        assert_eq!(pos, Position::new(0, 3));
+    }
+
+    #[test]
+    fn emoji_roundtrip() {
+        let text = "a😀b\ncd";
+        let pos = Position::new(0, 3);
+        let offset = lsp_position_to_offset(pos, text).unwrap();
+        let back = offset_to_lsp_position(offset, text);
+        assert_eq!(pos, back);
     }
 
     #[test]
