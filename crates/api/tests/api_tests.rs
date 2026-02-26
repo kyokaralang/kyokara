@@ -1661,3 +1661,25 @@ fn project_import_collision_produces_diagnostic() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn cap_member_same_name_as_top_level_fn_no_duplicate_diags() {
+    // A capability member `foo` and a top-level `foo` should each get type-checked
+    // against their own body, not mis-matched by name.
+    let src =
+        "cap C {\n  fn foo() -> Int { true }\n}\nfn foo() -> Int { 1 }\nfn main() -> Int { foo() }";
+    let output = check(src, "test.ky");
+    // Exactly one type mismatch for the capability member body (Bool vs Int).
+    let mismatches: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("mismatch"))
+        .collect();
+    assert_eq!(
+        mismatches.len(),
+        1,
+        "expected exactly 1 type mismatch (from cap member), got {}: {:?}",
+        mismatches.len(),
+        mismatches.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}

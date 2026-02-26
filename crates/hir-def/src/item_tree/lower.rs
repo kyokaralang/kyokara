@@ -180,6 +180,7 @@ impl ItemTreeCtx<'_> {
             with_caps,
             pipe_caps,
             has_body,
+            source_range: Some(f.syntax().text_range()),
         });
 
         if !inside_cap {

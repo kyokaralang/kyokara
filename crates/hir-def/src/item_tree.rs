@@ -5,6 +5,7 @@
 
 pub mod lower;
 
+use kyokara_span::TextRange;
 use la_arena::{Arena, Idx};
 
 use crate::name::Name;
@@ -52,6 +53,8 @@ pub struct FnItem {
     pub with_caps: Vec<TypeRef>,
     pub pipe_caps: Vec<TypeRef>,
     pub has_body: bool,
+    /// Source range of the CST `FnDef` node (for matching back to syntax).
+    pub source_range: Option<TextRange>,
 }
 
 /// A function parameter.
