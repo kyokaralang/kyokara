@@ -3,6 +3,8 @@
 //! Bridges LSP `Position` (line/character) ↔ rowan `TextSize` (byte offset),
 //! and provides a symbol classifier for tokens at a given offset.
 
+use kyokara_hir::ModuleScope;
+use kyokara_intern::Interner;
 use kyokara_parser::SyntaxKind;
 use kyokara_syntax::SyntaxNode;
 use text_size::TextSize;
@@ -202,6 +204,53 @@ pub fn symbol_at_offset(root: &SyntaxNode, offset: TextSize) -> SymbolAtPosition
     SymbolAtPosition::Local { name }
 }
 
+/// Scope-aware variant of [`symbol_at_offset`].
+///
+/// For usage sites inside `PathExpr`/`CallExpr`, this consults the module
+/// scope to decide whether the name refers to a function, constructor, or
+/// local variable. Without this, every ident under `PathExpr` is classified
+/// as `Function`, which misdirects hover/goto/references.
+pub fn symbol_at_offset_with_scope(
+    root: &SyntaxNode,
+    offset: TextSize,
+    module_scope: &ModuleScope,
+    interner: &Interner,
+) -> SymbolAtPosition {
+    let base = symbol_at_offset(root, offset);
+
+    // Only override the PathExpr/CallExpr case where the base classifier
+    // unconditionally returns Function for usage sites.
+    if let SymbolAtPosition::Function {
+        ref name,
+        is_definition: false,
+    } = base
+    {
+        // Check if name is actually known at module level.
+        let is_fn = module_scope
+            .functions
+            .keys()
+            .any(|n| n.resolve(interner) == name);
+        let is_ctor = module_scope
+            .constructors
+            .keys()
+            .any(|n| n.resolve(interner) == name);
+
+        if is_fn {
+            return base; // Correctly a function call.
+        }
+        if is_ctor {
+            return SymbolAtPosition::Variant {
+                name: name.clone(),
+                is_definition: false,
+            };
+        }
+        // Not in module scope — it's a local variable reference.
+        return SymbolAtPosition::Local { name: name.clone() };
+    }
+
+    base
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,5 +339,51 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn symbol_classifier_local_in_path_expr() {
+        // `x` in `x + 1` should be classified as Local, not Function.
+        let source = "fn f(x: Int) -> Int { x + 1 }";
+        let result = kyokara_hir::check_file(source);
+        let root = SyntaxNode::new_root(result.green.clone());
+        // Find the `x` in the body (after the `{ `).
+        let body_x = source.rfind('x').unwrap();
+        let sym = symbol_at_offset_with_scope(
+            &root,
+            TextSize::from(body_x as u32),
+            &result.module_scope,
+            &result.interner,
+        );
+        assert!(
+            matches!(sym, SymbolAtPosition::Local { .. }),
+            "expected Local, got {sym:?}"
+        );
+    }
+
+    #[test]
+    fn symbol_classifier_fn_call_still_function() {
+        // `f` in `f()` should still be classified as Function.
+        let source = "fn f() -> Int { 1 }\nfn g() -> Int { f() }";
+        let result = kyokara_hir::check_file(source);
+        let root = SyntaxNode::new_root(result.green.clone());
+        // Find the `f` in `f()` on the second line.
+        let call_f = source.rfind("f()").unwrap();
+        let sym = symbol_at_offset_with_scope(
+            &root,
+            TextSize::from(call_f as u32),
+            &result.module_scope,
+            &result.interner,
+        );
+        assert!(
+            matches!(
+                sym,
+                SymbolAtPosition::Function {
+                    is_definition: false,
+                    ..
+                }
+            ),
+            "expected Function usage, got {sym:?}"
+        );
     }
 }

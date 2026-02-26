@@ -21,7 +21,12 @@ pub fn goto_definition(
     uri: &Url,
 ) -> Option<Location> {
     let root = analysis.syntax_root();
-    let symbol = position::symbol_at_offset(&root, offset);
+    let symbol = position::symbol_at_offset_with_scope(
+        &root,
+        offset,
+        &analysis.module_scope,
+        &analysis.interner,
+    );
 
     match symbol {
         SymbolAtPosition::Function { ref name, .. } => find_fn_def(&root, name, source, uri),
@@ -93,11 +98,20 @@ fn find_local_def(
     source: &str,
     uri: &Url,
 ) -> Option<Location> {
+    // Scope the search to the enclosing FnDef so we don't jump to bindings
+    // in other functions.
+    let token = root.token_at_offset(cursor_offset).left_biased()?;
+    let search_root = token
+        .parent_ancestors()
+        .find_map(FnDef::cast)
+        .map(|f| f.syntax().clone())
+        .unwrap_or_else(|| root.clone());
+
     // Walk backwards from cursor to find the nearest LetBinding or Param
     // that introduces this name.
     let mut best: Option<(TextSize, kyokara_span::TextRange)> = None;
 
-    for node in root.descendants() {
+    for node in search_root.descendants() {
         let node_start = node.text_range().start();
         if node_start > cursor_offset {
             continue;
@@ -175,5 +189,28 @@ mod tests {
         let loc = goto_definition(&analysis, source, TextSize::from(idx as u32), &test_uri());
         assert!(loc.is_some(), "should find type definition");
         assert_eq!(loc.unwrap().range.start.line, 0);
+    }
+
+    #[test]
+    fn goto_local_scoped_to_function() {
+        // Both functions have a parameter `x`. Cursor on `x` in `g`'s body
+        // should go to `g`'s param (line 1), not `f`'s param (line 0).
+        let source = "fn f(x: Int) -> Int { x }\nfn g(x: Int) -> Int { x }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        // Find the last `x` (in g's body).
+        let body_x = source.rfind('x').unwrap();
+        let loc = goto_definition(
+            &analysis,
+            source,
+            TextSize::from(body_x as u32),
+            &test_uri(),
+        );
+        assert!(loc.is_some(), "should find local definition");
+        assert_eq!(
+            loc.unwrap().range.start.line,
+            1,
+            "should jump to g's param on line 1, not f's param on line 0"
+        );
     }
 }

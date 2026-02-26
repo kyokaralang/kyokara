@@ -19,7 +19,12 @@ pub fn find_references(
     uri: &Url,
 ) -> Vec<Location> {
     let root = analysis.syntax_root();
-    let symbol = position::symbol_at_offset(&root, offset);
+    let symbol = position::symbol_at_offset_with_scope(
+        &root,
+        offset,
+        &analysis.module_scope,
+        &analysis.interner,
+    );
 
     let (name, kind) = match &symbol {
         SymbolAtPosition::Function { name, .. } => (name.clone(), Some(SymbolKind::Function)),
@@ -33,7 +38,7 @@ pub fn find_references(
     if let Some(kind) = kind {
         find_symbol_references(&root, &name, kind, source, uri)
     } else {
-        find_local_references(&root, &name, source, uri)
+        find_local_references(&root, &name, offset, source, uri)
     }
 }
 
@@ -127,11 +132,29 @@ fn should_include_token(parent: &SyntaxNode, kind: SymbolKind) -> bool {
 }
 
 /// Find references for local variables (all ident tokens matching the name
-/// within the same function body).
-fn find_local_references(root: &SyntaxNode, name: &str, source: &str, uri: &Url) -> Vec<Location> {
+/// within the enclosing function body).
+fn find_local_references(
+    root: &SyntaxNode,
+    name: &str,
+    offset: TextSize,
+    source: &str,
+    uri: &Url,
+) -> Vec<Location> {
+    use kyokara_syntax::ast::AstNode;
+    use kyokara_syntax::ast::nodes::FnDef;
+
+    // Scope the search to the enclosing FnDef so we don't return references
+    // from other functions.
+    let search_root = root
+        .token_at_offset(offset)
+        .left_biased()
+        .and_then(|tok| tok.parent_ancestors().find_map(FnDef::cast))
+        .map(|f| f.syntax().clone())
+        .unwrap_or_else(|| root.clone());
+
     let mut locations = Vec::new();
 
-    for element in root.descendants_with_tokens() {
+    for element in search_root.descendants_with_tokens() {
         let Some(token) = element.into_token() else {
             continue;
         };
@@ -166,6 +189,32 @@ mod tests {
         assert!(
             refs.len() >= 2,
             "expected >=2 references, got {}",
+            refs.len()
+        );
+    }
+
+    #[test]
+    fn find_local_refs_scoped_to_function() {
+        // Both functions use `x`. References for `x` in `f` should not include
+        // occurrences from `g`.
+        let source = "fn f(x: Int) -> Int { x + 1 }\nfn g(x: Int) -> Int { x + 2 }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        // Cursor on the first `x` param in f.
+        let offset = TextSize::from(source.find("x: Int").unwrap() as u32);
+        let refs = find_references(&analysis, source, offset, &test_uri());
+        // All refs should be on line 0 (inside `f`), none on line 1 (inside `g`).
+        for loc in &refs {
+            assert_eq!(
+                loc.range.start.line, 0,
+                "found reference on line {} but expected only line 0: {refs:?}",
+                loc.range.start.line
+            );
+        }
+        // Should have at least 2 refs (param + usage in body).
+        assert!(
+            refs.len() >= 2,
+            "expected >=2 references in f, got {}",
             refs.len()
         );
     }

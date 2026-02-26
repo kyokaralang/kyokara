@@ -17,7 +17,12 @@ use crate::position::{self, SymbolAtPosition};
 /// Compute hover information at the given byte offset.
 pub fn hover(analysis: &Arc<FileAnalysis>, _source: &str, offset: TextSize) -> Option<Hover> {
     let root = analysis.syntax_root();
-    let symbol = position::symbol_at_offset(&root, offset);
+    let symbol = position::symbol_at_offset_with_scope(
+        &root,
+        offset,
+        &analysis.module_scope,
+        &analysis.interner,
+    );
 
     let contents = match symbol {
         SymbolAtPosition::Function { ref name, .. } => {
