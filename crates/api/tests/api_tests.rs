@@ -1478,3 +1478,23 @@ fn record_pattern_on_non_record_scrutinee_produces_diagnostic() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn duplicate_fields_in_record_pattern_produce_diagnostic() {
+    let src = "type Point = { x: Int }\nfn f(p: Point) -> Int { match p { Point { x, x } => x } }\nfn main() -> Int { f(Point { x: 1 }) }";
+    let output = check(src, "test.ky");
+    let dups: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("duplicate") && d.message.contains("field"))
+        .collect();
+    assert!(
+        !dups.is_empty(),
+        "expected duplicate field diagnostic in record pattern, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}

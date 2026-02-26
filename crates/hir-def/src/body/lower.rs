@@ -713,6 +713,23 @@ impl BodyLowerCtx<'_> {
             }
             PatCst::Record(rp) => {
                 let path = rp.path().map(|p| self.lower_path(&p));
+                // Check for duplicate field names.
+                {
+                    let mut seen = std::collections::HashSet::new();
+                    for tok in rp.field_names() {
+                        let name = tok.text();
+                        if !seen.insert(name.to_string()) {
+                            let span = Span {
+                                file: self.file_id,
+                                range: tok.text_range(),
+                            };
+                            self.diagnostics.push(Diagnostic::error(
+                                format!("duplicate field `{name}` in record pattern"),
+                                span,
+                            ));
+                        }
+                    }
+                }
                 let fields: Vec<Name> = rp
                     .field_names()
                     .map(|tok| Name::new(self.interner, tok.text()))
