@@ -341,6 +341,17 @@ fn fmt_lambda_expr() {
     );
 }
 
+// ── Empty match arm list ────────────────────────────────────────────
+
+#[test]
+fn fmt_empty_match_arms() {
+    // Empty match arm list should not produce a trailing comma.
+    assert_fmt(
+        "fn main() -> Int { match x {} }",
+        "fn main() -> Int {\n  match x {}\n}\n",
+    );
+}
+
 // ── Error recovery ──────────────────────────────────────────────────
 
 #[test]
