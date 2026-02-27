@@ -91,7 +91,19 @@ impl<'a> InferenceCtx<'a> {
                 }
             }
 
-            Pat::Record { path: _, fields } => {
+            Pat::Record { path, fields } => {
+                if let Some(path) = path {
+                    let path_text = path
+                        .segments
+                        .iter()
+                        .map(|s| s.resolve(self.interner).to_owned())
+                        .collect::<Vec<_>>()
+                        .join(".");
+                    self.push_diag(TyDiagnosticData::UnsupportedRecordPatternPath {
+                        path: path_text,
+                    });
+                }
+
                 let resolved = self.table.resolve(expected);
                 match resolved {
                     Ty::Record {

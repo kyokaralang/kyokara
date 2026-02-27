@@ -2,15 +2,17 @@
   "project": false,
   "entry": "main.ky",
   "soundness": {
-    "mode": "known_violation",
+    "mode": "strict",
     "issue": 134,
     "require_check_rejection": true
   },
   "check": {
-    "ok": true
+    "ok": false,
+    "codes_all": ["E0017"],
+    "messages_all": ["record pattern type paths are not supported"]
   },
   "run": {
-    "ok": true,
-    "stdout_contains": ["1"]
+    "ok": false,
+    "stderr_contains": ["record pattern type paths are not supported"]
   }
 }
