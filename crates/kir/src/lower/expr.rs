@@ -475,6 +475,7 @@ impl<'a> LoweringCtx<'a> {
                         all_terminated = false;
                     }
                     self.pop_scope();
+                    break; // catch-all: subsequent arms are unreachable
                 }
                 Pat::Bind { name } => {
                     self.push_scope();
@@ -488,6 +489,7 @@ impl<'a> LoweringCtx<'a> {
                         all_terminated = false;
                     }
                     self.pop_scope();
+                    break; // catch-all: subsequent arms are unreachable
                 }
                 Pat::Record { .. } | Pat::Constructor { .. } => {
                     self.push_scope();
