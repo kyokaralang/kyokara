@@ -2074,3 +2074,32 @@ fn run_rejects_compile_invalid_programs_detected_by_check() {
         );
     }
 }
+
+#[test]
+fn run_accepts_compile_valid_let_rebinding_programs() {
+    struct Case<'a> {
+        name: &'a str,
+        src: &'a str,
+        expected: Value,
+    }
+
+    let cases = [Case {
+        name: "sequential let rebinding",
+        src: "fn main() -> Int {\n  let x = 1\n  let x = 2\n  x\n}",
+        expected: Value::Int(2),
+    }];
+
+    for case in cases {
+        assert!(
+            !check_has_compile_errors(case.src),
+            "check should accept compile-valid case `{}`",
+            case.name
+        );
+        let value = run_ok(case.src);
+        assert_eq!(
+            value, case.expected,
+            "run should evaluate case `{}` to {:?}, got {:?}",
+            case.name, case.expected, value
+        );
+    }
+}
