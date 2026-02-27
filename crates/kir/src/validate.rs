@@ -418,6 +418,15 @@ fn validate_inst_operands(
         Inst::Call { target, args } => {
             if let crate::inst::CallTarget::Indirect(val) = target {
                 check_value_exists(*val, func, block_label, fn_name, "call target", diags);
+                if is_valid_value(*val, func) {
+                    let target_ty = &func.values[*val].ty;
+                    if !matches!(target_ty, Ty::Fn { .. }) && !target_ty.is_poison() {
+                        diags.push(error(format!(
+                            "fn {}: block {} indirect call target must be Fn type",
+                            fn_name, block_label
+                        )));
+                    }
+                }
             }
             for arg in args {
                 check_value_exists(*arg, func, block_label, fn_name, "call arg", diags);
