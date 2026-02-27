@@ -374,3 +374,25 @@ fn fmt_top_level_error_node_preserved() {
         output
     );
 }
+
+#[test]
+fn fmt_trailing_comment_preserved() {
+    let input = "fn main() -> Int { 1 }\n// EOF comment";
+    let output = format_source(input);
+    assert!(
+        output.contains("// EOF comment"),
+        "trailing comment should be preserved, got: {:?}",
+        output
+    );
+}
+
+#[test]
+fn fmt_comment_only_file_preserved() {
+    let input = "// just a comment";
+    let output = format_source(input);
+    assert!(
+        output.contains("// just a comment"),
+        "comment-only file should not be emptied, got: {:?}",
+        output
+    );
+}
