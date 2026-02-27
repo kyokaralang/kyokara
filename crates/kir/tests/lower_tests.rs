@@ -843,3 +843,71 @@ fn test_adt_switch_single_catchall_still_works() {
     assert!(out.contains("const 99"), "output:\n{out}");
     assert!(out.contains("default:"), "output:\n{out}");
 }
+
+// ── Bug regression: ADT switch violates arm order after catch-all (#141) ───
+
+#[test]
+fn test_adt_switch_no_cases_after_catchall() {
+    // Bug: constructor arms after a catch-all still get added to the switch,
+    // so `A` values branch to the later arm instead of the catch-all.
+    let result = check_file(
+        "type W = | A | B
+         fn f(x: W) -> Int {
+           match x {
+             other => 1
+             A => 2
+           }
+         }",
+    );
+    let real_errors: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .filter(|(d, _)| !matches!(d, kyokara_hir::TyDiagnosticData::RedundantMatchArm))
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "unexpected type errors: {real_errors:?}"
+    );
+
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+
+    let func = module.functions.iter().next().unwrap().1;
+    let entry = &func.blocks[func.entry_block];
+    match entry.terminator.as_ref().unwrap() {
+        Terminator::Switch { cases, default, .. } => {
+            // The catch-all is the first arm, so there should be NO constructor
+            // cases in the switch — everything goes to the default.
+            assert!(
+                cases.is_empty(),
+                "switch should have no cases after catch-all, got {} cases",
+                cases.len()
+            );
+            assert!(default.is_some(), "switch should have a default target");
+        }
+        other => panic!("expected Switch terminator, got: {other:?}"),
+    }
+}
+
+#[test]
+fn test_adt_switch_constructor_before_catchall_still_works() {
+    // Guard: constructor arms BEFORE a catch-all should still be cases.
+    let out = lower_and_display(
+        "type W = | A | B
+         fn f(x: W) -> Int {
+           match x {
+             A => 1
+             other => 2
+           }
+         }",
+    );
+    // A should have its own case block.
+    assert!(out.contains("A:"), "output:\n{out}");
+    assert!(out.contains("default:"), "output:\n{out}");
+}
