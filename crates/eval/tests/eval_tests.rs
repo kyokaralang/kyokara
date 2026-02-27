@@ -2355,3 +2355,57 @@ fn run_project_dual_import_same_name_is_conflict() {
         }
     }
 }
+
+// ── Issue #69: imported pub fn calling private helper ────────────────
+
+#[test]
+fn run_project_imported_pub_fn_calls_private_helper() {
+    // pub fn foo() in util.ky calls private helper() in the same module.
+    // The interpreter must resolve helper() in util's scope, not main's.
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let util_path = dir.path().join("util.ky");
+    let mut util_file = std::fs::File::create(&util_path).unwrap();
+    writeln!(util_file, "fn helper() -> Int {{ 41 }}").unwrap();
+    writeln!(util_file, "pub fn foo() -> Int {{ helper() + 1 }}").unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import util").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ foo() }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path).expect("should succeed");
+    assert_eq!(
+        result.value,
+        Value::Int(42),
+        "foo() should call util's private helper() and return 42"
+    );
+}
+
+#[test]
+fn run_project_private_helper_not_directly_callable_from_main() {
+    // Private functions in util.ky should NOT be callable directly from main.ky.
+    // Only pub functions are imported.
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let util_path = dir.path().join("util.ky");
+    let mut util_file = std::fs::File::create(&util_path).unwrap();
+    writeln!(util_file, "fn helper() -> Int {{ 42 }}").unwrap();
+    writeln!(util_file, "pub fn foo() -> Int {{ helper() }}").unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import util").unwrap();
+    // Calling helper() directly should fail — it's private.
+    writeln!(main_file, "fn main() -> Int {{ helper() }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path);
+    assert!(
+        result.is_err(),
+        "calling private helper() directly from main should fail"
+    );
+}
