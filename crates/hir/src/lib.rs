@@ -122,12 +122,20 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
 
     // 2. Parse each file and build item trees.
     for (mod_path, file_path) in &discovered {
+        let file_id = file_map.insert(file_path.clone());
         let source = match std::fs::read_to_string(file_path) {
             Ok(s) => s,
-            Err(_) => continue,
+            Err(err) => {
+                all_lowering_diagnostics.push(kyokara_diagnostics::Diagnostic::error(
+                    format!("failed to read module `{}`: {}", file_path.display(), err),
+                    kyokara_span::Span {
+                        file: file_id,
+                        range: kyokara_span::TextRange::default(),
+                    },
+                ));
+                continue;
+            }
         };
-
-        let file_id = file_map.insert(file_path.clone());
         let parse = kyokara_syntax::parse(&source);
 
         if !parse.errors.is_empty() {
@@ -265,7 +273,7 @@ fn resolve_project_imports(
         let import_file_id = importing_info.file_id;
         for item in pub_data {
             match item {
-                PubData::Fn(fn_item) => {
+                PubData::Fn(mut fn_item) => {
                     let name = fn_item.name;
                     if importing_info.scope.functions.contains_key(&name) {
                         let name_str = name.resolve(interner);
@@ -277,6 +285,10 @@ fn resolve_project_imports(
                             },
                         ));
                     } else {
+                        // Imported functions are not source-owned by this module.
+                        // Keep them resolvable in scope but prevent duplicate
+                        // symbol-graph function nodes in the importing module.
+                        fn_item.source_range = None;
                         let idx = importing_info.item_tree.functions.alloc(fn_item);
                         importing_info.scope.functions.insert(name, idx);
                     }
