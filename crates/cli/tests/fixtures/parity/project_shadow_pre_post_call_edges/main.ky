@@ -1,0 +1,7 @@
+import math
+fn caller() -> Int {
+  add(1, 2)
+  let add = fn(x, y) => x
+  add(1, 2)
+}
+fn main() -> Int { caller() }

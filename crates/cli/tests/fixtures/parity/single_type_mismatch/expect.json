@@ -1,0 +1,13 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "check": {
+    "ok": false,
+    "codes_all": ["E0001"],
+    "messages_all": ["type mismatch"]
+  },
+  "run": {
+    "ok": false,
+    "stderr_contains": ["type mismatch"]
+  }
+}

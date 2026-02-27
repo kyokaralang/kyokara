@@ -1,0 +1,5 @@
+type Pair = | Pair(Int, Int)
+fn main() -> Int {
+  let Pair(x, x) = Pair(1, 2)
+  x
+}

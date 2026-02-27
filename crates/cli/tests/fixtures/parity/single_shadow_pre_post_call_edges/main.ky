@@ -1,0 +1,6 @@
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  foo()
+  let foo = fn() => 2
+  foo()
+}
