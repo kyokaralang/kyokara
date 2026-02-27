@@ -45,10 +45,21 @@ pub fn check_exhaustiveness(
                     wildcard_seen_at = Some(arm_idx);
                 }
             }
-            Pat::Constructor { path, .. } => {
+            Pat::Constructor { path, args } => {
                 if has_wildcard {
                     // Arms after a wildcard are redundant.
                     diags.push((TyDiagnosticData::RedundantMatchArm, match_expr_idx));
+                    continue;
+                }
+                // Conservative nested-pattern handling:
+                // only constructor arms with irrefutable argument patterns
+                // (wildcards/binds) are considered full variant coverage.
+                // Refined subpatterns (e.g. Some(1), Some(Some(x))) are not
+                // treated as covering the whole variant.
+                let args_irrefutable = args
+                    .iter()
+                    .all(|arg| matches!(&pats[*arg], Pat::Wildcard | Pat::Bind { .. }));
+                if !args_irrefutable {
                     continue;
                 }
                 // Find which variant this constructor matches.

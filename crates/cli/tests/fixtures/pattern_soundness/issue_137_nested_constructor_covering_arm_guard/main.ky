@@ -1,0 +1,7 @@
+fn main() -> Int {
+  match Some(1) {
+    Some(1) => 1
+    Some(_) => 2
+    None => 0
+  }
+}
