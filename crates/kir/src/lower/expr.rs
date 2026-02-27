@@ -343,6 +343,16 @@ impl<'a> LoweringCtx<'a> {
             }
         }
 
+        // Build a fallback target for nested pattern mismatch (default or unreachable).
+        let has_default = default_target.is_some();
+        let fallback_target = default_target.clone().unwrap_or_else(|| {
+            let dead = self.builder.new_block(None);
+            BranchTarget {
+                block: dead,
+                args: vec![],
+            }
+        });
+
         // Emit switch in the original block.
         self.builder.switch_to(switch_blk);
         self.builder.set_terminator(Terminator::Switch {
@@ -359,10 +369,41 @@ impl<'a> LoweringCtx<'a> {
 
             match &info.pat_data {
                 Pat::Constructor { args, .. } => {
+                    // Extract fields and check nested literal subpatterns.
+                    let mut field_vals = Vec::new();
                     for (i, sub_pat) in args.iter().enumerate() {
                         let field_ty = self.pat_ty(*sub_pat);
                         let field_val = self.builder.push_adt_field_get(scr, i as u32, field_ty);
-                        self.bind_pattern(*sub_pat, field_val);
+                        field_vals.push((*sub_pat, field_val));
+                    }
+
+                    // Emit equality checks for nested literal subpatterns.
+                    for &(sub_pat_idx, field_val) in &field_vals {
+                        let sub_pat = self.body.pats[sub_pat_idx].clone();
+                        if let Pat::Literal(lit) = sub_pat {
+                            let lit_const = literal_to_constant(&lit);
+                            let field_ty = self.builder.value_ty(field_val).clone();
+                            let lit_val = self.builder.push_const(lit_const, field_ty);
+                            let eq_val = self.builder.push_binary(
+                                kyokara_hir_def::expr::BinaryOp::Eq,
+                                field_val,
+                                lit_val,
+                                Ty::Bool,
+                            );
+                            // Branch: match → continue, mismatch → fallback.
+                            let continue_blk = self.builder.new_block(None);
+                            self.builder.set_branch(
+                                eq_val,
+                                BranchTarget {
+                                    block: continue_blk,
+                                    args: vec![],
+                                },
+                                fallback_target.clone(),
+                            );
+                            self.builder.switch_to(continue_blk);
+                        } else {
+                            self.bind_pattern(sub_pat_idx, field_val);
+                        }
                     }
                 }
                 Pat::Bind { name } => {
@@ -381,6 +422,14 @@ impl<'a> LoweringCtx<'a> {
                 all_terminated = false;
             }
             self.pop_scope();
+        }
+
+        // If we created a dead fallback block (no default arm), mark it unreachable.
+        if !has_default {
+            self.builder.switch_to(fallback_target.block);
+            if !self.block_has_terminator() {
+                self.builder.set_unreachable();
+            }
         }
 
         let result = self.builder.add_block_param(merge_blk, None, ty);
