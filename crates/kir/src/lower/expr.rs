@@ -104,10 +104,9 @@ impl<'a> LoweringCtx<'a> {
             return self.builder.push_hole(id, vec![], ty);
         }
 
-        // Function reference — placeholder for first-class fn values.
+        // Function reference — first-class fn value.
         if self.module_scope.functions.contains_key(&first) {
-            let id = self.next_hole_id();
-            return self.builder.push_hole(id, vec![], ty);
+            return self.builder.push_fn_ref(first, ty);
         }
 
         // Unknown — emit hole.

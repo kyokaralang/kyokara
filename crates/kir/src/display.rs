@@ -295,6 +295,9 @@ fn display_instruction(
                 field_index
             )?;
         }
+        Inst::FnRef { name } => {
+            write!(out, "fn_ref @{}", name.resolve(ctx.interner))?;
+        }
     }
 
     writeln!(out, " : {}", ty_str)?;
