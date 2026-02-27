@@ -1,0 +1,4 @@
+fn main() -> Int {
+  let p = 1
+  p
+}
