@@ -296,6 +296,12 @@ impl<'a> LoweringCtx<'a> {
         let mut arm_infos = Vec::new();
 
         for arm in arms {
+            // Once a catch-all arm is seen, all subsequent arms are
+            // unreachable — stop building switch dispatch entries.
+            if default_target.is_some() {
+                break;
+            }
+
             let pat = self.body.pats[arm.pat].clone();
             match &pat {
                 Pat::Constructor { path, .. } => {
@@ -316,12 +322,10 @@ impl<'a> LoweringCtx<'a> {
                 }
                 Pat::Wildcard | Pat::Bind { .. } => {
                     let default_blk = self.builder.new_block(Some(self.labels.default));
-                    if default_target.is_none() {
-                        default_target = Some(BranchTarget {
-                            block: default_blk,
-                            args: vec![],
-                        });
-                    }
+                    default_target = Some(BranchTarget {
+                        block: default_blk,
+                        args: vec![],
+                    });
                     arm_infos.push(ArmInfo {
                         block: default_blk,
                         body: arm.body,
