@@ -209,6 +209,32 @@ fn symbol_graph_contains_types() {
 }
 
 #[test]
+fn symbol_graph_alias_to_record_emits_record_kind_with_fields() {
+    let src = "type Point = { x: Int, y: Int }\nfn main() -> Int { 1 }\n";
+    let output = check(src, "test.ky");
+    let point = output
+        .symbol_graph
+        .types
+        .iter()
+        .find(|t| t.name == "Point")
+        .expect("should contain Point type");
+
+    assert_eq!(
+        point.kind, "record",
+        "alias-to-record should be represented as a record node"
+    );
+    assert_eq!(
+        point.fields.len(),
+        2,
+        "record fields should be preserved for alias-to-record types"
+    );
+    assert_eq!(point.fields[0].name, "x");
+    assert_eq!(point.fields[0].ty, "Int");
+    assert_eq!(point.fields[1].name, "y");
+    assert_eq!(point.fields[1].ty, "Int");
+}
+
+#[test]
 fn symbol_graph_contains_capabilities() {
     let src = r#"
         cap IO {
@@ -889,6 +915,33 @@ fn project_symbol_graph_no_duplicate_builtins() {
 }
 
 #[test]
+fn project_symbol_graph_imported_fn_not_duplicated_as_local_alias() {
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "import a\nfn main() -> Int { foo() }\n"),
+        ("a.ky", "pub fn foo() -> Int { 1 }\n"),
+    ]);
+    let output = check_project(&main_path);
+
+    let foo_nodes: Vec<_> = output
+        .symbol_graph
+        .functions
+        .iter()
+        .filter(|f| f.name == "foo")
+        .collect();
+
+    assert_eq!(
+        foo_nodes.len(),
+        1,
+        "imported function should appear once in project symbol graph, got: {:?}",
+        foo_nodes.iter().map(|f| &f.id).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        foo_nodes[0].id, "fn::a::foo",
+        "imported function should keep source-module-qualified ID"
+    );
+}
+
+#[test]
 fn project_symbol_id_uniqueness() {
     let (_dir, main_path) = write_project(&[
         (
@@ -923,6 +976,30 @@ fn project_symbol_id_uniqueness() {
         ids.len(),
         count,
         "all symbol IDs should be unique, found duplicates in: {ids:?}"
+    );
+}
+
+#[test]
+fn project_symbol_graph_duplicate_fn_defs_use_unique_ids() {
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "import math\nfn main() -> Int { add(1, 2) }\n"),
+        (
+            "math.ky",
+            "pub fn add(x: Int, y: Int) -> Int { x + y }\npub fn add(x: Int, y: Int) -> Int { x - y }\n",
+        ),
+    ]);
+    let output = check_project(&main_path);
+
+    let mut ids = std::collections::HashSet::new();
+    let mut dups = Vec::new();
+    for f in &output.symbol_graph.functions {
+        if !ids.insert(f.id.clone()) {
+            dups.push(f.id.clone());
+        }
+    }
+    assert!(
+        dups.is_empty(),
+        "duplicate function IDs should be disambiguated even in invalid programs, got: {dups:?}"
     );
 }
 
@@ -1453,6 +1530,29 @@ fn check_project_reports_unresolved_import() {
             .iter()
             .map(|d| &d.message)
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn check_project_surfaces_module_read_io_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let main_path = dir.path().join("main.ky");
+    std::fs::write(&main_path, "import bad\nfn main() -> Int { 1 }\n").expect("write main");
+
+    let bad_path = dir.path().join("bad.ky");
+    std::fs::write(&bad_path, vec![0xff, 0xfe, 0xfd]).expect("write invalid utf8 module");
+
+    let output = check_project(&main_path);
+    let io_diag = output
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains("failed to read module"))
+        .expect("expected module read I/O diagnostic");
+
+    assert!(
+        io_diag.message.contains("bad.ky"),
+        "I/O diagnostic should mention failing module path, got: {}",
+        io_diag.message
     );
 }
 
@@ -1991,6 +2091,45 @@ fn project_import_collision_produces_diagnostic() {
             .iter()
             .map(|d| &d.message)
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn project_import_collision_does_not_misattribute_call_edge_to_specific_module() {
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "import a\nimport b\nfn main() -> Int { foo() }"),
+        ("a.ky", "pub fn foo() -> Int { 1 }"),
+        ("b.ky", "pub fn foo() -> Int { 2 }"),
+    ]);
+    let output = check_project(&main_path);
+
+    let collisions: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("foo") && d.message.contains("import"))
+        .collect();
+    assert!(
+        !collisions.is_empty(),
+        "expected conflicting import diagnostic for `foo`, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    let main_fn = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "main")
+        .expect("should contain main function");
+
+    assert!(
+        !main_fn.calls.contains(&"fn::a::foo".to_string())
+            && !main_fn.calls.contains(&"fn::b::foo".to_string()),
+        "ambiguous collision call should not be attributed to a specific module, got calls: {:?}",
+        main_fn.calls
     );
 }
 

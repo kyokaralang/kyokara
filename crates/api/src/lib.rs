@@ -295,25 +295,69 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
         }
     }
 
-    // Post-process call edges: build a global fn_name → qualified_id map,
-    // then rewrite any call edge that doesn't match an emitted function ID.
-    let fn_name_to_id: std::collections::HashMap<String, String> = all_functions
-        .iter()
-        .map(|f| (f.name.clone(), f.id.clone()))
-        .collect();
+    // Post-process call edges:
+    // 1) Keep edges that already point at emitted function IDs.
+    // 2) For non-emitted IDs, rewrite by bare function name only when there is
+    //    a unique global target.
+    // 3) Drop unresolved/ambiguous edges instead of misattributing them.
+    let emitted_fn_ids: std::collections::HashSet<String> =
+        all_functions.iter().map(|f| f.id.clone()).collect();
+    let mut fn_name_to_ids: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for f in &all_functions {
+        fn_name_to_ids
+            .entry(f.name.clone())
+            .or_default()
+            .push(f.id.clone());
+    }
+    for ids in fn_name_to_ids.values_mut() {
+        ids.sort();
+        ids.dedup();
+    }
+
     for func in &mut all_functions {
-        for call in &mut func.calls {
-            // If the call ID doesn't match any emitted function, look up by name.
-            if !fn_name_to_id.values().any(|id| id == call) {
-                // Extract the callee name (last segment after "fn::").
-                let callee_name = call.strip_prefix("fn::").unwrap_or(call);
-                // Strip any module prefix to get the bare name.
-                let bare_name = callee_name.rsplit("::").next().unwrap_or(callee_name);
-                if let Some(qualified) = fn_name_to_id.get(bare_name) {
-                    *call = qualified.clone();
-                }
+        let mut rewritten_calls = Vec::with_capacity(func.calls.len());
+        for call in &func.calls {
+            // Extract bare callee name from IDs like `fn::foo` or `fn::m::foo`.
+            let callee_name = call.strip_prefix("fn::").unwrap_or(call);
+            let bare_name = callee_name.rsplit("::").next().unwrap_or(callee_name);
+
+            let Some(candidates) = fn_name_to_ids.get(bare_name) else {
+                // Unknown callee in project graph.
+                continue;
+            };
+
+            if candidates.len() == 1 {
+                rewritten_calls.push(candidates[0].clone());
+                continue;
+            }
+
+            let qualified: Vec<&String> = candidates
+                .iter()
+                .filter(|id| {
+                    id.strip_prefix("fn::")
+                        .map(|rest| rest.contains("::"))
+                        .unwrap_or(false)
+                })
+                .collect();
+
+            // If we have exactly one qualified target and the current edge is a
+            // bare `fn::name` alias, prefer the qualified definition.
+            let is_bare_fn_id = call
+                .strip_prefix("fn::")
+                .map(|rest| !rest.contains("::"))
+                .unwrap_or(false);
+            if is_bare_fn_id && qualified.len() == 1 {
+                rewritten_calls.push(qualified[0].clone());
+                continue;
+            }
+
+            // Keep already-emitted IDs when no canonical rewrite is available.
+            if emitted_fn_ids.contains(call) {
+                rewritten_calls.push(call.clone());
             }
         }
+        func.calls = rewritten_calls;
         dedupe_call_ids(&mut func.calls);
     }
 
@@ -592,7 +636,7 @@ fn build_module_symbol_graph(
     let fn_names: std::collections::HashSet<&str> = item_tree
         .functions
         .iter()
-        .filter(|(_, f)| f.source_range.is_some())
+        .filter(|(_, f)| f.source_range.is_some() || f.is_pub)
         .map(|(_, f)| f.name.resolve(interner))
         .collect();
 
@@ -618,42 +662,52 @@ fn build_module_symbol_graph(
             .collect();
 
     // Functions (excluding capability members).
-    let functions: Vec<FnNodeDto> = item_tree
-        .functions
-        .iter()
-        .filter(|(_, f)| f.source_range.is_some())
-        .filter(|(idx, _)| !cap_member_fns.contains(idx))
-        .map(|(_, fn_item)| {
-            let name = fn_item.name.resolve(interner).to_owned();
-            let params: Vec<ParamDto> = fn_item
-                .params
-                .iter()
-                .map(|p| ParamDto {
-                    name: p.name.resolve(interner).to_owned(),
-                    ty: display_type_ref(&p.ty, interner),
-                })
-                .collect();
-            let return_type = fn_item
-                .ret_type
-                .as_ref()
-                .map(|t| display_type_ref(t, interner));
-            let effects: Vec<String> = fn_item
-                .with_caps
-                .iter()
-                .filter_map(|tr| type_ref_name(tr, interner))
-                .collect();
-            let calls = call_map.get(&name).cloned().unwrap_or_default();
-            let id = symbol_id("fn", &name, module_prefix);
-            FnNodeDto {
-                id,
-                name,
-                params,
-                return_type,
-                effects,
-                calls,
-            }
-        })
-        .collect();
+    let mut functions: Vec<FnNodeDto> = Vec::new();
+    let mut fn_id_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for (idx, fn_item) in item_tree.functions.iter() {
+        if fn_item.source_range.is_none() || cap_member_fns.contains(&idx) {
+            continue;
+        }
+
+        let name = fn_item.name.resolve(interner).to_owned();
+        let params: Vec<ParamDto> = fn_item
+            .params
+            .iter()
+            .map(|p| ParamDto {
+                name: p.name.resolve(interner).to_owned(),
+                ty: display_type_ref(&p.ty, interner),
+            })
+            .collect();
+        let return_type = fn_item
+            .ret_type
+            .as_ref()
+            .map(|t| display_type_ref(t, interner));
+        let effects: Vec<String> = fn_item
+            .with_caps
+            .iter()
+            .filter_map(|tr| type_ref_name(tr, interner))
+            .collect();
+        let calls = call_map.get(&name).cloned().unwrap_or_default();
+
+        let base_id = symbol_id("fn", &name, module_prefix);
+        let count = fn_id_counts.entry(base_id.clone()).or_insert(0);
+        *count += 1;
+        let id = if *count == 1 {
+            base_id
+        } else {
+            format!("{base_id}#{}", count)
+        };
+
+        functions.push(FnNodeDto {
+            id,
+            name,
+            params,
+            return_type,
+            effects,
+            calls,
+        });
+    }
 
     // Types.
     let types: Vec<TypeNodeDto> = item_tree
@@ -667,6 +721,18 @@ fn build_module_symbol_graph(
                 .map(|n| n.resolve(interner).to_owned())
                 .collect();
             let (kind, fields, variants) = match &type_item.kind {
+                TypeDefKind::Alias(TypeRef::Record {
+                    fields: alias_fields,
+                }) => {
+                    let fs: Vec<ParamDto> = alias_fields
+                        .iter()
+                        .map(|(n, tr)| ParamDto {
+                            name: n.resolve(interner).to_owned(),
+                            ty: display_type_ref(tr, interner),
+                        })
+                        .collect();
+                    ("record".to_owned(), fs, Vec::new())
+                }
                 TypeDefKind::Alias(_) => ("alias".to_owned(), Vec::new(), Vec::new()),
                 TypeDefKind::Record { fields: def_fields } => {
                     let fs: Vec<ParamDto> = def_fields
