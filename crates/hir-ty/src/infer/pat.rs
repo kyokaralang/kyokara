@@ -38,14 +38,17 @@ impl<'a> InferenceCtx<'a> {
 
             Pat::Constructor { path, args } => {
                 if !path.is_single() {
-                    self.push_diag(TyDiagnosticData::UnresolvedConstructor {
-                        name: path
-                            .segments
-                            .iter()
-                            .map(|s| s.resolve(self.interner).to_owned())
-                            .collect::<Vec<_>>()
-                            .join("."),
-                    });
+                    self.push_pat_diag(
+                        pat_idx,
+                        TyDiagnosticData::UnresolvedConstructor {
+                            name: path
+                                .segments
+                                .iter()
+                                .map(|s| s.resolve(self.interner).to_owned())
+                                .collect::<Vec<_>>()
+                                .join("."),
+                        },
+                    );
                     for sub in &args {
                         self.infer_pat(*sub, &Ty::Error);
                     }
@@ -67,10 +70,13 @@ impl<'a> InferenceCtx<'a> {
                     self.unify_or_err(expected, &adt_ty);
 
                     if args.len() != field_tys.len() {
-                        self.push_diag(TyDiagnosticData::ArgCountMismatch {
-                            expected: field_tys.len(),
-                            actual: args.len(),
-                        });
+                        self.push_pat_diag(
+                            pat_idx,
+                            TyDiagnosticData::ArgCountMismatch {
+                                expected: field_tys.len(),
+                                actual: args.len(),
+                            },
+                        );
                         for sub in &args {
                             self.infer_pat(*sub, &Ty::Error);
                         }
@@ -81,9 +87,12 @@ impl<'a> InferenceCtx<'a> {
                     }
                     adt_ty
                 } else {
-                    self.push_diag(TyDiagnosticData::UnresolvedConstructor {
-                        name: name.resolve(self.interner).to_owned(),
-                    });
+                    self.push_pat_diag(
+                        pat_idx,
+                        TyDiagnosticData::UnresolvedConstructor {
+                            name: name.resolve(self.interner).to_owned(),
+                        },
+                    );
                     for sub in &args {
                         self.infer_pat(*sub, &Ty::Error);
                     }
@@ -99,9 +108,10 @@ impl<'a> InferenceCtx<'a> {
                         .map(|s| s.resolve(self.interner).to_owned())
                         .collect::<Vec<_>>()
                         .join(".");
-                    self.push_diag(TyDiagnosticData::UnsupportedRecordPatternPath {
-                        path: path_text,
-                    });
+                    self.push_pat_diag(
+                        pat_idx,
+                        TyDiagnosticData::UnsupportedRecordPatternPath { path: path_text },
+                    );
                 }
 
                 let resolved = self.table.resolve(expected);
@@ -115,19 +125,25 @@ impl<'a> InferenceCtx<'a> {
                                 .iter()
                                 .any(|(n, _)| n.resolve(self.interner) == field_str)
                             {
-                                self.push_diag(TyDiagnosticData::NoSuchField {
-                                    field: field_str.to_owned(),
-                                    ty: resolved.clone(),
-                                });
+                                self.push_pat_diag(
+                                    pat_idx,
+                                    TyDiagnosticData::NoSuchField {
+                                        field: field_str.to_owned(),
+                                        ty: resolved.clone(),
+                                    },
+                                );
                             }
                         }
                     }
                     Ty::Error | Ty::Var(_) => {}
                     _ => {
-                        self.push_diag(TyDiagnosticData::TypeMismatch {
-                            expected: Ty::Record { fields: vec![] },
-                            actual: resolved.clone(),
-                        });
+                        self.push_pat_diag(
+                            pat_idx,
+                            TyDiagnosticData::TypeMismatch {
+                                expected: Ty::Record { fields: vec![] },
+                                actual: resolved.clone(),
+                            },
+                        );
                     }
                 }
                 expected.clone()
