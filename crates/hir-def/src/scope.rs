@@ -38,13 +38,42 @@ impl ScopeTree {
     }
 
     pub fn define(&mut self, scope: ScopeIdx, name: Name, def: ScopeDef) {
-        self.scopes[scope].entries.insert(name, def);
+        self.scopes[scope]
+            .entries
+            .entry(name)
+            .or_default()
+            .push(def);
     }
 
     /// Look up a name starting from the given scope, walking up parents.
     pub fn lookup(&self, mut scope: ScopeIdx, name: Name) -> Option<&ScopeDef> {
         loop {
-            if let Some(def) = self.scopes[scope].entries.get(&name) {
+            if let Some(defs) = self.scopes[scope].entries.get(&name)
+                && let Some(def) = defs.last()
+            {
+                return Some(def);
+            }
+            scope = self.scopes[scope].parent?;
+        }
+    }
+
+    /// Look up a name at a specific usage position.
+    ///
+    /// The predicate is evaluated from innermost to outermost definitions
+    /// in each scope; the first visible definition is returned.
+    pub fn lookup_at<F>(
+        &self,
+        mut scope: ScopeIdx,
+        name: Name,
+        mut is_visible: F,
+    ) -> Option<&ScopeDef>
+    where
+        F: FnMut(&ScopeDef) -> bool,
+    {
+        loop {
+            if let Some(defs) = self.scopes[scope].entries.get(&name)
+                && let Some(def) = defs.iter().rev().find(|def| is_visible(def))
+            {
                 return Some(def);
             }
             scope = self.scopes[scope].parent?;
@@ -56,7 +85,7 @@ impl ScopeTree {
 #[derive(Debug, Clone)]
 pub struct ScopeData {
     pub parent: Option<ScopeIdx>,
-    pub entries: FxHashMap<Name, ScopeDef>,
+    pub entries: FxHashMap<Name, Vec<ScopeDef>>,
 }
 
 /// What a name resolves to.

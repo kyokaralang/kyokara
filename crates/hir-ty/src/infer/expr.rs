@@ -3,7 +3,7 @@
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, Stmt, UnaryOp};
 use kyokara_hir_def::item_tree::TypeDefKind;
 use kyokara_hir_def::pat::Pat;
-use kyokara_hir_def::resolver::{ResolvedName, Resolver};
+use kyokara_hir_def::resolver::ResolvedName;
 use kyokara_hir_def::scope::ScopeDef;
 
 use crate::diagnostics::TyDiagnosticData;
@@ -156,10 +156,11 @@ impl<'a> InferenceCtx<'a> {
     }
 
     fn infer_name(&mut self, name: kyokara_hir_def::name::Name, expr_idx: ExprIdx) -> Ty {
-        let scope = self.find_scope_for_expr(expr_idx);
-        let resolver = Resolver::new(self.module_scope, &self.body.scopes, scope);
-
-        match resolver.resolve_name(name) {
+        let resolved = self
+            .body
+            .resolve_name_at(self.module_scope, expr_idx, name)
+            .map(|r| r.resolved);
+        match resolved {
             Some(ResolvedName::Local(scope_def)) => match &scope_def {
                 ScopeDef::Local(pat_idx) => {
                     self.local_types.get(*pat_idx).cloned().unwrap_or(Ty::Error)
@@ -418,37 +419,12 @@ impl<'a> InferenceCtx<'a> {
         }
 
         let name = path.segments[0];
-        if self.is_shadowed_by_local_binding(callee, name) {
-            return None;
-        }
-
-        Some(name)
-    }
-
-    fn is_shadowed_by_local_binding(
-        &self,
-        callee: ExprIdx,
-        name: kyokara_hir_def::name::Name,
-    ) -> bool {
-        // Position-aware shadowing: a local `let` only shadows calls after
-        // its binding site. Params always shadow.
-        let scope = self.find_scope_for_expr(callee);
-        let resolver = Resolver::new(self.module_scope, &self.body.scopes, scope);
-        if let Some(ResolvedName::Local(scope_def)) = resolver.resolve_name(name) {
-            match scope_def {
-                ScopeDef::Param(_) => true,
-                ScopeDef::Local(pat_idx) => {
-                    let callee_range = self.body.expr_source_map.get(callee);
-                    let pat_range = self.body.pat_source_map.get(pat_idx);
-                    if let (Some(c), Some(p)) = (callee_range, pat_range) {
-                        return p.start() <= c.start();
-                    }
-                    false
-                }
-                _ => false,
-            }
-        } else {
-            false
+        match self.body.resolve_name_at(self.module_scope, callee, name) {
+            Some(resolved) => match resolved.resolved {
+                ResolvedName::Local(_) => None,
+                _ => Some(name),
+            },
+            None => None,
         }
     }
 
@@ -796,14 +772,6 @@ impl<'a> InferenceCtx<'a> {
             params: param_tys,
             ret: Box::new(body_ty),
         }
-    }
-
-    fn find_scope_for_expr(&self, expr_idx: ExprIdx) -> Option<kyokara_hir_def::scope::ScopeIdx> {
-        self.body
-            .expr_scopes
-            .get(expr_idx)
-            .copied()
-            .or(self.body.scopes.root)
     }
 
     fn collect_locals_in_scope(&self) -> Vec<(kyokara_hir_def::name::Name, Ty)> {

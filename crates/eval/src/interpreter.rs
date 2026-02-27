@@ -374,6 +374,7 @@ impl Interpreter {
                         expr_scopes: Default::default(),
                         expr_source_map: Default::default(),
                         pat_source_map: Default::default(),
+                        local_binding_meta: Default::default(),
                     }),
                     env: env.clone(),
                 }))))
@@ -608,6 +609,7 @@ impl Interpreter {
                         expr_scopes: Default::default(),
                         expr_source_map: Default::default(),
                         pat_source_map: Default::default(),
+                        local_binding_meta: Default::default(),
                     }),
                     env: self.env.clone(),
                 }))))

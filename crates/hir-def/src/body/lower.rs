@@ -17,7 +17,7 @@ use kyokara_syntax::ast::nodes::{
 };
 use kyokara_syntax::ast::traits::{HasName, HasTypeParams};
 
-use crate::body::Body;
+use crate::body::{Body, LocalBindingMeta, LocalBindingOrigin};
 use crate::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, PatIdx, Stmt, UnaryOp};
 use crate::name::Name;
 use crate::pat;
@@ -47,6 +47,7 @@ pub fn lower_body(
         expr_scopes: ArenaMap::default(),
         expr_source_map: ArenaMap::default(),
         pat_source_map: ArenaMap::default(),
+        local_binding_meta: ArenaMap::default(),
         diagnostics: Vec::new(),
         file_id,
         interner,
@@ -91,11 +92,17 @@ pub fn lower_body(
 
     let ensures = fn_def.ensures_clause().and_then(|ec| ec.expr()).map(|e| {
         // Introduce implicit `result` binding in ensures scope.
-        let ensures_scope = ctx.push_scope();
+        ctx.push_scope();
         let result_name = Name::new(ctx.interner, "result");
         let result_pat = ctx.alloc_pat(pat::Pat::Bind { name: result_name });
-        ctx.scopes
-            .define(ensures_scope, result_name, ScopeDef::Local(result_pat));
+        ctx.pat_source_map
+            .insert(result_pat, e.syntax().text_range());
+        ctx.register_local_binding(
+            result_name,
+            result_pat,
+            e.syntax().text_range(),
+            LocalBindingOrigin::ContractResult,
+        );
         let idx = ctx.lower_expr(&e);
         ctx.pop_scope();
         idx
@@ -130,6 +137,7 @@ pub fn lower_body(
             expr_scopes: ctx.expr_scopes,
             expr_source_map: ctx.expr_source_map,
             pat_source_map: ctx.pat_source_map,
+            local_binding_meta: ctx.local_binding_meta,
         },
         diagnostics: ctx.diagnostics,
     }
@@ -143,6 +151,7 @@ struct BodyLowerCtx<'a> {
     expr_scopes: ArenaMap<ExprIdx, ScopeIdx>,
     expr_source_map: ArenaMap<ExprIdx, TextRange>,
     pat_source_map: ArenaMap<PatIdx, TextRange>,
+    local_binding_meta: ArenaMap<PatIdx, LocalBindingMeta>,
     diagnostics: Vec<Diagnostic>,
     file_id: FileId,
     interner: &'a mut Interner,
@@ -184,6 +193,27 @@ impl BodyLowerCtx<'_> {
         Span {
             file: self.file_id,
             range: node.text_range(),
+        }
+    }
+
+    fn register_local_binding(
+        &mut self,
+        name: Name,
+        pat_idx: PatIdx,
+        decl_range: TextRange,
+        origin: LocalBindingOrigin,
+    ) {
+        if let Some(scope) = self.current_scope {
+            self.scopes.define(scope, name, ScopeDef::Local(pat_idx));
+            self.pat_scopes.push((pat_idx, scope));
+            self.local_binding_meta.insert(
+                pat_idx,
+                LocalBindingMeta {
+                    origin,
+                    decl_range,
+                    scope,
+                },
+            );
         }
     }
 
@@ -519,7 +549,7 @@ impl BodyLowerCtx<'_> {
                         self.pattern_bindings.clear();
                         let pat = arm
                             .pat()
-                            .map(|p| self.lower_pat(&p))
+                            .map(|p| self.lower_pat(&p, LocalBindingOrigin::MatchArmPattern))
                             .unwrap_or_else(|| self.alloc_pat(pat::Pat::Missing));
                         let body = arm
                             .body()
@@ -572,7 +602,7 @@ impl BodyLowerCtx<'_> {
                     self.pattern_bindings.clear();
                     let pat = lb
                         .pat()
-                        .map(|p| self.lower_pat(&p))
+                        .map(|p| self.lower_pat(&p, LocalBindingOrigin::LetPattern))
                         .unwrap_or_else(|| self.alloc_pat(pat::Pat::Missing));
                     let ty = lb.type_expr().map(|te| self.lower_type_ref(&te));
                     let init = lb
@@ -691,10 +721,12 @@ impl BodyLowerCtx<'_> {
                         self.pat_source_map.insert(pat_idx, p.syntax().text_range());
 
                         // Register in scope
-                        if let Some(scope) = self.current_scope {
-                            self.scopes.define(scope, name, ScopeDef::Local(pat_idx));
-                            self.pat_scopes.push((pat_idx, scope));
-                        }
+                        self.register_local_binding(
+                            name,
+                            pat_idx,
+                            p.syntax().text_range(),
+                            LocalBindingOrigin::LambdaParam,
+                        );
 
                         let ty = p.type_expr().map(|te| self.lower_type_ref(&te));
                         (pat_idx, ty)
@@ -714,7 +746,7 @@ impl BodyLowerCtx<'_> {
 
     // ── Pattern lowering ───────────────────────────────────────────
 
-    fn lower_pat(&mut self, pat_cst: &PatCst) -> PatIdx {
+    fn lower_pat(&mut self, pat_cst: &PatCst, origin: LocalBindingOrigin) -> PatIdx {
         match pat_cst {
             PatCst::Ident(ip) => {
                 let name = ip
@@ -750,20 +782,17 @@ impl BodyLowerCtx<'_> {
                     let pat_idx = self.alloc_pat(pat::Pat::Bind { name });
                     self.pat_source_map
                         .insert(pat_idx, ip.syntax().text_range());
-                    if let Some(scope) = self.current_scope {
-                        if !self.pattern_bindings.insert(name) {
-                            let span = self.node_span(ip.syntax());
-                            self.diagnostics.push(Diagnostic::error(
-                                format!(
-                                    "duplicate binding `{}` in pattern",
-                                    name.resolve(self.interner)
-                                ),
-                                span,
-                            ));
-                        }
-                        self.scopes.define(scope, name, ScopeDef::Local(pat_idx));
-                        self.pat_scopes.push((pat_idx, scope));
+                    if !self.pattern_bindings.insert(name) {
+                        let span = self.node_span(ip.syntax());
+                        self.diagnostics.push(Diagnostic::error(
+                            format!(
+                                "duplicate binding `{}` in pattern",
+                                name.resolve(self.interner)
+                            ),
+                            span,
+                        ));
                     }
+                    self.register_local_binding(name, pat_idx, ip.syntax().text_range(), origin);
                     pat_idx
                 }
             }
@@ -775,7 +804,7 @@ impl BodyLowerCtx<'_> {
 
                 // No push_scope/pop_scope — sub-pattern bindings must stay in the
                 // current (arm) scope so the arm body can resolve them.
-                let args: Vec<PatIdx> = cp.args().map(|a| self.lower_pat(&a)).collect();
+                let args: Vec<PatIdx> = cp.args().map(|a| self.lower_pat(&a, origin)).collect();
 
                 self.alloc_pat(pat::Pat::Constructor { path, args })
             }
@@ -861,13 +890,11 @@ impl BodyLowerCtx<'_> {
                     .map(|tok| Name::new(self.interner, tok.text()))
                     .collect();
                 // Record pattern fields also introduce bindings
-                if let Some(scope) = self.current_scope {
-                    for &field_name in &fields {
-                        let pat_idx = self.alloc_pat(pat::Pat::Bind { name: field_name });
-                        self.scopes
-                            .define(scope, field_name, ScopeDef::Local(pat_idx));
-                        self.pat_scopes.push((pat_idx, scope));
-                    }
+                for tok in rp.field_names() {
+                    let field_name = Name::new(self.interner, tok.text());
+                    let pat_idx = self.alloc_pat(pat::Pat::Bind { name: field_name });
+                    self.pat_source_map.insert(pat_idx, tok.text_range());
+                    self.register_local_binding(field_name, pat_idx, tok.text_range(), origin);
                 }
                 self.alloc_pat(pat::Pat::Record { path, fields })
             }
