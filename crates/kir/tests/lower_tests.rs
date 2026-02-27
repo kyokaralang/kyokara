@@ -1217,3 +1217,87 @@ fn test_sequential_match_partial_return_keeps_merge() {
         "merge should have return. merge body: {merge_body:?}\noutput:\n{out}"
     );
 }
+
+// ── Bug regression: sequential match ignores early catch-all (#149) ───
+
+#[test]
+fn test_sequential_match_wildcard_stops_dispatch() {
+    // Bug: wildcard arm doesn't stop the sequential dispatch loop, so
+    // later literal arms can still affect control flow.
+    let result = check_file(
+        "fn f(x: Int) -> Int {
+           match x {
+             _ => 1
+             0 => 2
+           }
+         }",
+    );
+    let real_errors: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .filter(|(d, _)| !matches!(d, kyokara_hir::TyDiagnosticData::RedundantMatchArm))
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "unexpected type errors: {real_errors:?}"
+    );
+
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+    let ctx = DisplayCtx::new(&interner, &result.item_tree);
+    let out = display_module(&module, &ctx);
+
+    // After the catch-all `_ => 1`, there should be no branch/eq for `0 => 2`.
+    assert!(
+        !out.contains("eq "),
+        "should not have equality check after catch-all. output:\n{out}"
+    );
+    assert!(
+        !out.contains("branch"),
+        "should not have branch after catch-all. output:\n{out}"
+    );
+}
+
+#[test]
+fn test_sequential_match_bind_stops_dispatch() {
+    // Same but with a bind pattern.
+    let result = check_file(
+        "fn f(x: Int) -> Int {
+           match x {
+             n => n
+             0 => 2
+           }
+         }",
+    );
+    let real_errors: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .filter(|(d, _)| !matches!(d, kyokara_hir::TyDiagnosticData::RedundantMatchArm))
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "unexpected type errors: {real_errors:?}"
+    );
+
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+    let ctx = DisplayCtx::new(&interner, &result.item_tree);
+    let out = display_module(&module, &ctx);
+
+    assert!(
+        !out.contains("eq "),
+        "should not have equality check after bind catch-all. output:\n{out}"
+    );
+}
