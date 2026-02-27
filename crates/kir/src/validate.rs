@@ -15,7 +15,7 @@ use kyokara_hir_ty::ty::Ty;
 use kyokara_intern::Interner;
 use kyokara_span::{FileId, Span, TextRange};
 
-use crate::block::{BranchTarget, Terminator};
+use crate::block::{BlockId, BranchTarget, Terminator};
 use crate::function::KirFunction;
 use crate::inst::Inst;
 use crate::value::ValueId;
@@ -152,6 +152,33 @@ pub fn validate_function(func: &KirFunction, interner: &Interner) -> Vec<Diagnos
         }
     }
 
+    // Check that every block with parameters has at least one predecessor edge.
+    let mut has_predecessor = FxHashSet::<BlockId>::default();
+    for (_bid, block) in func.blocks.iter() {
+        if let Some(term) = &block.terminator {
+            collect_branch_targets(term, &mut has_predecessor);
+        }
+    }
+    for (bid, block) in func.blocks.iter() {
+        if bid == func.entry_block {
+            continue;
+        }
+        // Skip blocks explicitly marked unreachable (dead merge blocks).
+        let is_unreachable = matches!(block.terminator, Some(Terminator::Unreachable));
+        if !block.params.is_empty() && !has_predecessor.contains(&bid) && !is_unreachable {
+            let block_label = block
+                .label
+                .map(|n| n.resolve(interner).to_owned())
+                .unwrap_or_else(|| format!("bb{}", bid.into_raw().into_u32()));
+            diags.push(error(format!(
+                "fn {}: block {} has {} params but no predecessor edges",
+                fn_name,
+                block_label,
+                block.params.len()
+            )));
+        }
+    }
+
     diags
 }
 
@@ -246,6 +273,32 @@ fn validate_terminator(
             }
         }
         Terminator::Unreachable => {}
+    }
+}
+
+/// Collect all block IDs that appear as branch targets in a terminator.
+fn collect_branch_targets(term: &Terminator, targets: &mut FxHashSet<BlockId>) {
+    match term {
+        Terminator::Return(_) | Terminator::Unreachable => {}
+        Terminator::Jump(t) => {
+            targets.insert(t.block);
+        }
+        Terminator::Branch {
+            then_target,
+            else_target,
+            ..
+        } => {
+            targets.insert(then_target.block);
+            targets.insert(else_target.block);
+        }
+        Terminator::Switch { cases, default, .. } => {
+            for case in cases {
+                targets.insert(case.target.block);
+            }
+            if let Some(def) = default {
+                targets.insert(def.block);
+            }
+        }
     }
 }
 
