@@ -248,6 +248,8 @@ fn add_hole_completions(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
     use crate::db::FileAnalysis;
 

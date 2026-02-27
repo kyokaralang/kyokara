@@ -124,10 +124,20 @@ pub fn rename_symbol_project(
         .collect();
 
     // 5. Check for conflicts only in affected modules.
-    let def_info = result.module_graph.get(def_mod_path).unwrap();
+    let def_info = result
+        .module_graph
+        .get(def_mod_path)
+        .ok_or(RefactorError::InternalError {
+            message: "defining module not found in module graph".into(),
+        })?;
     validate_new_name(&result.interner, &def_info.scope, new_name, kind)?;
     for imp_mod in &importing_modules {
-        let info = result.module_graph.get(imp_mod).unwrap();
+        let info = result
+            .module_graph
+            .get(imp_mod)
+            .ok_or(RefactorError::InternalError {
+                message: "importing module not found in module graph".into(),
+            })?;
         validate_new_name(&result.interner, &info.scope, new_name, kind)?;
     }
 
@@ -144,7 +154,12 @@ pub fn rename_symbol_project(
 
     // Importing modules: rename usages only.
     for imp_mod in &importing_modules {
-        let info = result.module_graph.get(imp_mod).unwrap();
+        let info = result
+            .module_graph
+            .get(imp_mod)
+            .ok_or(RefactorError::InternalError {
+                message: "importing module not found in module graph".into(),
+            })?;
         let parse = kyokara_syntax::parse(&info.source);
         let root = SyntaxNode::new_root(parse.green);
         let edits = collect_rename_edits(&root, info.file_id, old_name, new_name, kind);

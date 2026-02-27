@@ -1,4 +1,5 @@
 //! End-to-end type inference tests: parse → collect item tree → lower → type check → assert.
+#![allow(clippy::unwrap_used)]
 
 use kyokara_hir_def::item_tree::lower::collect_item_tree;
 use kyokara_hir_ty::ty::Ty;

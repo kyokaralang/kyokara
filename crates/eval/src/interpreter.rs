@@ -1395,6 +1395,8 @@ impl Interpreter {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use kyokara_hir_def::item_tree::{TypeDefKind, TypeItem, VariantDef};
     use kyokara_hir_def::path::Path;
     use kyokara_hir_def::type_ref::TypeRef;

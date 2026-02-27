@@ -289,6 +289,7 @@ impl<'a> LoweringCtx<'a> {
 
     fn lower_match_adt(&mut self, scr: ValueId, arms: &[MatchArm], ty: Ty) -> ValueId {
         let merge_blk = self.builder.new_block(Some(self.labels.merge));
+        #[allow(clippy::unwrap_used)] // lowering always starts with an entry block
         let switch_blk = self.builder.current_block().unwrap();
 
         // First pass: create case blocks, collect switch info.
@@ -313,7 +314,7 @@ impl<'a> LoweringCtx<'a> {
             let pat = self.body.pats[arm.pat].clone();
             match &pat {
                 Pat::Constructor { path, .. } => {
-                    let ctor_name = path.last().unwrap();
+                    let ctor_name = path.last().expect("constructor path must not be empty");
                     // Skip duplicate constructor arms (first match wins).
                     if !seen_variants.insert(ctor_name) {
                         continue;

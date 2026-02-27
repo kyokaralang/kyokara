@@ -12,3 +12,6 @@ kyokara-parser.workspace = true
 rowan.workspace = true
 logos.workspace = true
 smol_str.workspace = true
+
+[lints]
+workspace = true

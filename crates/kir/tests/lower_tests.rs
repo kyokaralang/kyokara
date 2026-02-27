@@ -1,4 +1,5 @@
 //! Integration tests for HIR → KIR lowering.
+#![allow(clippy::unwrap_used)]
 
 use kyokara_hir::check_file;
 use kyokara_hir_def::name::Name;

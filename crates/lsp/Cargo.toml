@@ -24,3 +24,6 @@ tower-lsp.workspace = true
 salsa.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[lints]
+workspace = true

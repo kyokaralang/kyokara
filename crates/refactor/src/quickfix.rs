@@ -92,12 +92,12 @@ fn build_match_cases_edit(
                 r.start() <= diag_range.start() && r.end() >= diag_range.end()
             })
         });
-        if fallback.is_none() {
-            return Err(RefactorError::NoDiagnosticAtOffset {
-                offset: diag_range.start().into(),
-            });
+        if let Some(fb) = fallback {
+            return build_match_edit_from_node(file_id, &fb, missing);
         }
-        return build_match_edit_from_node(file_id, &fallback.unwrap(), missing);
+        return Err(RefactorError::NoDiagnosticAtOffset {
+            offset: diag_range.start().into(),
+        });
     };
 
     build_match_edit_from_node(file_id, &match_expr, missing)

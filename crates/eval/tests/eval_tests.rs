@@ -1,4 +1,5 @@
 //! Integration tests for the tree-walking interpreter.
+#![allow(clippy::unwrap_used)]
 
 use kyokara_eval::manifest::CapabilityManifest;
 use kyokara_eval::value::Value;

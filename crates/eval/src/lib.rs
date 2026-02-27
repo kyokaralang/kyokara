@@ -219,7 +219,10 @@ pub fn run_project_with_manifest(
 
     // Also collect bodies from imported modules and map them to entry module indices.
     // Only consider modules that the entry module actually imports (#68).
-    let entry_info = project.module_graph.get(&entry_path).unwrap();
+    let entry_info = project
+        .module_graph
+        .get(&entry_path)
+        .ok_or(RuntimeError::TypeError("entry module not found".into()))?;
 
     // Build the set of module paths that the entry module imports.
     let imported_mod_paths: Vec<ModulePath> = entry_info
@@ -276,7 +279,10 @@ pub fn run_project_with_manifest(
             let src_fn_item = &mod_info.item_tree.functions[*src_fn_idx];
 
             if src_fn_item.is_pub {
-                let entry_info = project.module_graph.get(&entry_path).unwrap();
+                let entry_info = project
+                    .module_graph
+                    .get(&entry_path)
+                    .ok_or(RuntimeError::TypeError("entry module not found".into()))?;
                 if let Some(&entry_fn_idx) = entry_info.scope.functions.get(&src_fn_item.name) {
                     fn_bodies
                         .entry(entry_fn_idx)
@@ -293,7 +299,10 @@ pub fn run_project_with_manifest(
         // They stay inaccessible from `main` but callable from imported module
         // functions via module-local override maps.
         {
-            let entry_info = project.module_graph.get_mut(&entry_path).unwrap();
+            let entry_info = project
+                .module_graph
+                .get_mut(&entry_path)
+                .ok_or(RuntimeError::TypeError("entry module not found".into()))?;
             for (name, fn_item, body) in private_fns_to_splice {
                 let idx = entry_info.item_tree.functions.alloc(fn_item);
                 fn_bodies.insert(idx, body);
@@ -307,7 +316,10 @@ pub fn run_project_with_manifest(
         }
     }
 
-    let entry_info = project.module_graph.get(&entry_path).unwrap();
+    let entry_info = project
+        .module_graph
+        .get(&entry_path)
+        .ok_or(RuntimeError::TypeError("entry module not found".into()))?;
     let mut interp = Interpreter::new(
         entry_info.item_tree.clone(),
         entry_info.scope.clone(),
