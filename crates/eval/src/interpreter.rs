@@ -1134,6 +1134,12 @@ impl Interpreter {
                 _ => false,
             },
             Pat::Constructor { path, args } => {
+                if !path.is_single() {
+                    // Multi-segment constructor patterns are not resolved at runtime.
+                    // Avoid leaf-name matching (e.g. `A.Some(_)` matching `Some(_)`).
+                    return false;
+                }
+
                 let Value::Adt {
                     type_idx,
                     variant,
@@ -1384,5 +1390,124 @@ impl Interpreter {
 
         // Record literals always produce record values (see eval_record_lit).
         Ok(ControlFlow::Value(Value::Record { fields: field_vals }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use kyokara_hir_def::item_tree::{TypeDefKind, TypeItem, VariantDef};
+    use kyokara_hir_def::path::Path;
+    use kyokara_hir_def::type_ref::TypeRef;
+    use la_arena::{Arena, ArenaMap};
+
+    use super::*;
+
+    fn make_test_interpreter_and_body() -> (Interpreter, Body, TypeItemIdx, Name, Name) {
+        let mut interner = Interner::new();
+        let some_name = Name::new(&mut interner, "Some");
+        let none_name = Name::new(&mut interner, "None");
+        let a_name = Name::new(&mut interner, "A");
+        let opt_name = Name::new(&mut interner, "Option");
+
+        let mut item_tree = ItemTree::default();
+        let type_idx = item_tree.types.alloc(TypeItem {
+            name: opt_name,
+            is_pub: true,
+            type_params: Vec::new(),
+            kind: TypeDefKind::Adt {
+                variants: vec![
+                    VariantDef {
+                        name: some_name,
+                        fields: vec![TypeRef::Error],
+                    },
+                    VariantDef {
+                        name: none_name,
+                        fields: Vec::new(),
+                    },
+                ],
+            },
+        });
+
+        let mut module_scope = ModuleScope::default();
+        module_scope.constructors.insert(some_name, (type_idx, 0));
+        module_scope.constructors.insert(none_name, (type_idx, 1));
+
+        let interpreter = Interpreter::new(
+            item_tree,
+            module_scope,
+            FxHashMap::default(),
+            FxHashMap::default(),
+            interner,
+            None,
+        );
+
+        let mut exprs = Arena::new();
+        let root = exprs.alloc(Expr::Missing);
+        let body = Body {
+            exprs,
+            pats: Arena::new(),
+            root,
+            requires: None,
+            ensures: None,
+            invariant: None,
+            scopes: kyokara_hir_def::scope::ScopeTree::default(),
+            pat_scopes: Vec::new(),
+            expr_scopes: ArenaMap::default(),
+            expr_source_map: ArenaMap::default(),
+            pat_source_map: ArenaMap::default(),
+            local_binding_meta: ArenaMap::default(),
+        };
+
+        (interpreter, body, type_idx, a_name, some_name)
+    }
+
+    #[test]
+    fn dotted_constructor_pattern_does_not_match_by_leaf_name() {
+        let (interp, mut body, type_idx, a_name, some_name) = make_test_interpreter_and_body();
+
+        let wildcard = body.pats.alloc(Pat::Wildcard);
+        let dotted_ctor = body.pats.alloc(Pat::Constructor {
+            path: Path {
+                segments: vec![a_name, some_name],
+            },
+            args: vec![wildcard],
+        });
+
+        let value = Value::Adt {
+            type_idx,
+            variant: 0,
+            fields: vec![Value::Int(1)],
+        };
+        let mut bindings = Vec::new();
+
+        let matched = interp.match_pat(&body, dotted_ctor, &value, &mut bindings);
+        assert!(
+            !matched,
+            "dotted constructor pattern must not match by leaf-name constructor lookup"
+        );
+    }
+
+    #[test]
+    fn single_segment_constructor_pattern_still_matches() {
+        let (interp, mut body, type_idx, _a_name, some_name) = make_test_interpreter_and_body();
+
+        let wildcard = body.pats.alloc(Pat::Wildcard);
+        let some_ctor = body.pats.alloc(Pat::Constructor {
+            path: Path::single(some_name),
+            args: vec![wildcard],
+        });
+
+        let value = Value::Adt {
+            type_idx,
+            variant: 0,
+            fields: vec![Value::Int(1)],
+        };
+        let mut bindings = Vec::new();
+
+        let matched = interp.match_pat(&body, some_ctor, &value, &mut bindings);
+        assert!(
+            matched,
+            "single-segment constructor pattern should match corresponding ADT value"
+        );
     }
 }

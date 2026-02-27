@@ -373,14 +373,12 @@ fn has_sibling_ky_files(entry: &std::path::Path, dir: &std::path::Path) -> bool 
 /// 1. The entry file is named `main.ky` (the convention-based entry point).
 /// 2. There are sibling `.ky` files in the same directory.
 ///
-/// Use the `--project` flag to force project mode for non-`main.ky` entry files.
+/// Use the `--project` flag to force project mode whenever the entry path
+/// exists, without relying on sibling-file heuristics.
 fn should_use_project_mode(path: &std::path::Path, force_project: bool) -> bool {
     if force_project {
-        // --project flag forces project mode if there are siblings.
-        return path.is_file()
-            && path
-                .parent()
-                .is_some_and(|dir| has_sibling_ky_files(path, dir));
+        // --project is explicit user intent: bypass heuristics.
+        return path.is_file();
     }
 
     // Auto-detect: only if entry is main.ky and has siblings.
@@ -482,10 +480,29 @@ mod tests {
         let main_path = dir.join("main.ky");
         std::fs::write(&main_path, "fn foo() -> Int { 1 }").unwrap();
 
-        // --project but no siblings → NOT project mode (nothing to discover).
+        // --project always forces project mode for an existing entry file.
         assert!(
-            !should_use_project_mode(&main_path, true),
-            "--project with no siblings should not be project mode"
+            should_use_project_mode(&main_path, true),
+            "--project should force project mode even without sibling .ky files"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn force_project_with_subdir_only_modules_uses_project_mode() {
+        let dir = std::env::temp_dir().join("kyokara_autodetect_test_force_subdir_only");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("a")).unwrap();
+
+        let main_path = dir.join("main.ky");
+        let nested_mod = dir.join("a").join("b.ky");
+        std::fs::write(&main_path, "import a.b\nfn main() -> Int { foo() }").unwrap();
+        std::fs::write(&nested_mod, "pub fn foo() -> Int { 1 }").unwrap();
+
+        assert!(
+            should_use_project_mode(&main_path, true),
+            "--project should force project mode for subdir-only module layouts"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
