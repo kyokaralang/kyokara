@@ -29,4 +29,6 @@ pub struct Body {
     pub expr_scopes: ArenaMap<ExprIdx, crate::scope::ScopeIdx>,
     /// Map from expression index to its CST source text range.
     pub expr_source_map: ArenaMap<ExprIdx, kyokara_span::TextRange>,
+    /// Map from pattern index to its CST source text range.
+    pub pat_source_map: ArenaMap<PatIdx, kyokara_span::TextRange>,
 }

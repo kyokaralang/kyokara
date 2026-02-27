@@ -2152,3 +2152,79 @@ fn overflowing_int_literal_emits_diagnostic() {
         output.diagnostics
     );
 }
+
+// ── Symbol graph pre-shadow call edges (#162) ──────────────────────
+
+#[test]
+fn symbol_graph_pre_shadow_call_edge_preserved() {
+    // Bug test: call to top-level `foo()` before a same-named local should
+    // still appear as a call edge.
+    let src = r#"
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  foo()
+  let foo = fn() -> Int => 2
+  foo()
+}
+"#;
+    let output = check(src, "test.ky");
+    let main_fn = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "main")
+        .expect("should have main function");
+    assert!(
+        main_fn.calls.iter().any(|c| c.contains("foo")),
+        "pre-shadow call to top-level foo should appear in call edges, got: {:?}",
+        main_fn.calls
+    );
+}
+
+#[test]
+fn symbol_graph_post_shadow_call_not_in_edges() {
+    // Guard test: call to local `foo` after shadowing should NOT appear
+    // as a top-level call edge.
+    let src = r#"
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  let foo = fn() -> Int => 2
+  foo()
+}
+"#;
+    let output = check(src, "test.ky");
+    let main_fn = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "main")
+        .expect("should have main function");
+    assert!(
+        !main_fn.calls.iter().any(|c| c.contains("foo")),
+        "post-shadow local call should not appear as top-level call edge, got: {:?}",
+        main_fn.calls
+    );
+}
+
+#[test]
+fn symbol_graph_param_shadow_no_call_edge() {
+    // Edge case: param with same name as function always shadows.
+    let src = r#"
+fn foo() -> Int { 1 }
+fn main(foo: Int) -> Int {
+  foo
+}
+"#;
+    let output = check(src, "test.ky");
+    let main_fn = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "main")
+        .expect("should have main function");
+    assert!(
+        !main_fn.calls.iter().any(|c| c.contains("foo")),
+        "param-shadowed name should not appear as call edge, got: {:?}",
+        main_fn.calls
+    );
+}
