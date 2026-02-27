@@ -122,10 +122,12 @@ pub(crate) fn check_non_adt_exhaustiveness(
         return;
     }
 
-    if arms
-        .iter()
-        .any(|arm| matches!(&pats[arm.pat], Pat::Wildcard | Pat::Bind { .. }))
-    {
+    if arms.iter().any(|arm| {
+        matches!(
+            &pats[arm.pat],
+            Pat::Wildcard | Pat::Bind { .. } | Pat::Record { .. }
+        )
+    }) {
         return;
     }
 
