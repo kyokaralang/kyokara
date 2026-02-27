@@ -319,10 +319,12 @@ impl<'a> InferenceCtx<'a> {
         let callee_ty = self.infer_expr(callee, &Expectation::None);
         let callee_ty = self.table.resolve_deep(&callee_ty);
 
-        // Record call edges for symbol graph before checking callee type,
-        // so edges are captured even when the callee type is Ty::Error
-        // (e.g. due to scope resolution finding a later local binding).
-        self.check_callee_effects(callee);
+        // Keep call-edge attribution and effect checking independent:
+        // call edges feed symbol graph output, while effect checks emit
+        // diagnostics. Reordering one should not alter the other.
+        let call_target = self.call_target_for_attribution(callee);
+        self.record_call_edge_if_top_level(call_target);
+        self.check_call_effects_if_function(call_target);
 
         match callee_ty {
             Ty::Fn { params, ret } => {
@@ -407,64 +409,84 @@ impl<'a> InferenceCtx<'a> {
         }
     }
 
-    fn check_callee_effects(&mut self, callee: ExprIdx) {
-        let callee_expr = &self.body.exprs[callee];
-        if let Expr::Path(path) = callee_expr
-            && path.is_single()
-        {
-            let name = path.segments[0];
+    fn call_target_for_attribution(&self, callee: ExprIdx) -> Option<kyokara_hir_def::name::Name> {
+        let Expr::Path(path) = &self.body.exprs[callee] else {
+            return None;
+        };
+        if !path.is_single() {
+            return None;
+        }
 
-            // Check if the name resolves to a local (let binding, param, lambda)
-            // rather than a top-level function. If so, skip recording as a call
-            // to avoid misattributing local closure calls to same-named functions.
-            // Position-aware: a local binding only shadows calls that appear after
-            // it in source order. Params always shadow.
-            let scope = self.find_scope_for_expr(callee);
-            let resolver = Resolver::new(self.module_scope, &self.body.scopes, scope);
-            if let Some(ResolvedName::Local(scope_def)) = resolver.resolve_name(name) {
-                match scope_def {
-                    ScopeDef::Param(_) => return,
-                    ScopeDef::Local(pat_idx) => {
-                        // Only treat as local if the binding appears before this usage.
-                        let callee_range = self.body.expr_source_map.get(callee);
-                        let pat_range = self.body.pat_source_map.get(pat_idx);
-                        if let (Some(c), Some(p)) = (callee_range, pat_range)
-                            && p.start() <= c.start()
-                        {
-                            return;
-                        }
+        let name = path.segments[0];
+        if self.is_shadowed_by_local_binding(callee, name) {
+            return None;
+        }
+
+        Some(name)
+    }
+
+    fn is_shadowed_by_local_binding(
+        &self,
+        callee: ExprIdx,
+        name: kyokara_hir_def::name::Name,
+    ) -> bool {
+        // Position-aware shadowing: a local `let` only shadows calls after
+        // its binding site. Params always shadow.
+        let scope = self.find_scope_for_expr(callee);
+        let resolver = Resolver::new(self.module_scope, &self.body.scopes, scope);
+        if let Some(ResolvedName::Local(scope_def)) = resolver.resolve_name(name) {
+            match scope_def {
+                ScopeDef::Param(_) => true,
+                ScopeDef::Local(pat_idx) => {
+                    let callee_range = self.body.expr_source_map.get(callee);
+                    let pat_range = self.body.pat_source_map.get(pat_idx);
+                    if let (Some(c), Some(p)) = (callee_range, pat_range) {
+                        return p.start() <= c.start();
                     }
-                    _ => {}
+                    false
                 }
+                _ => false,
             }
+        } else {
+            false
+        }
+    }
 
-            // Record callee for symbol graph call edges.
+    fn record_call_edge_if_top_level(&mut self, call_target: Option<kyokara_hir_def::name::Name>) {
+        if let Some(name) = call_target {
             self.calls.push(name);
-            if let Some(&fn_idx) = self.module_scope.functions.get(&name) {
-                let fn_item = &self.item_tree.functions[fn_idx];
-                let env = Self::make_env(
-                    self.item_tree,
-                    self.module_scope,
-                    self.interner,
-                    &self.type_params,
-                );
-                let callee_effects = effects::EffectSet::from_with_caps(
-                    &fn_item.with_caps,
-                    &env,
-                    &mut self.table,
-                    self.interner,
-                );
+        }
+    }
 
-                let missing = callee_effects.missing_from(&self.caller_effects);
-                if !missing.is_empty() {
-                    let missing_names: Vec<String> = missing
-                        .iter()
-                        .map(|n| n.resolve(self.interner).to_owned())
-                        .collect();
-                    self.push_diag(TyDiagnosticData::EffectViolation {
-                        missing: missing_names,
-                    });
-                }
+    fn check_call_effects_if_function(&mut self, call_target: Option<kyokara_hir_def::name::Name>) {
+        let Some(name) = call_target else {
+            return;
+        };
+
+        if let Some(&fn_idx) = self.module_scope.functions.get(&name) {
+            let fn_item = &self.item_tree.functions[fn_idx];
+            let env = Self::make_env(
+                self.item_tree,
+                self.module_scope,
+                self.interner,
+                &self.type_params,
+            );
+            let callee_effects = effects::EffectSet::from_with_caps(
+                &fn_item.with_caps,
+                &env,
+                &mut self.table,
+                self.interner,
+            );
+
+            let missing = callee_effects.missing_from(&self.caller_effects);
+            if !missing.is_empty() {
+                let missing_names: Vec<String> = missing
+                    .iter()
+                    .map(|n| n.resolve(self.interner).to_owned())
+                    .collect();
+                self.push_diag(TyDiagnosticData::EffectViolation {
+                    missing: missing_names,
+                });
             }
         }
     }
