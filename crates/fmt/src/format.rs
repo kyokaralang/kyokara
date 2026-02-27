@@ -180,15 +180,22 @@ fn format_source_file(node: &SyntaxNode) -> Doc {
     let mut import_sort_keys = Vec::new();
     let mut item_docs = Vec::new();
 
-    for (child_node, child_doc) in child_nodes_iter.into_iter().zip(all_children.into_iter()) {
-        match child_node.kind() {
-            SyntaxKind::ModuleDecl => module_docs.push(child_doc),
-            SyntaxKind::ImportDecl => {
-                import_sort_keys.push(import_sort_key(&child_node));
-                import_docs.push(child_doc);
+    let mut all_iter = all_children.into_iter();
+    for child_node in child_nodes_iter {
+        if let Some(child_doc) = all_iter.next() {
+            match child_node.kind() {
+                SyntaxKind::ModuleDecl => module_docs.push(child_doc),
+                SyntaxKind::ImportDecl => {
+                    import_sort_keys.push(import_sort_key(&child_node));
+                    import_docs.push(child_doc);
+                }
+                _ => item_docs.push(child_doc),
             }
-            _ => item_docs.push(child_doc),
         }
+    }
+    // Standalone trailing comments (after the last item).
+    for trailing_doc in all_iter {
+        item_docs.push(trailing_doc);
     }
 
     // Sort imports alphabetically.
