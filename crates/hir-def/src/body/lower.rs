@@ -688,6 +688,7 @@ impl BodyLowerCtx<'_> {
                             .map(|tok| Name::new(self.interner, tok.text()))
                             .unwrap_or_else(|| Name::new(self.interner, "_"));
                         let pat_idx = self.alloc_pat(pat::Pat::Bind { name });
+                        self.pat_source_map.insert(pat_idx, p.syntax().text_range());
 
                         // Register in scope
                         if let Some(scope) = self.current_scope {

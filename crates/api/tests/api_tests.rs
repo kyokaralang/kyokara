@@ -2228,3 +2228,52 @@ fn main(foo: Int) -> Int {
         main_fn.calls
     );
 }
+
+#[test]
+fn symbol_graph_lambda_param_shadow_no_call_edge() {
+    // Bug test (#163): lambda param `foo` should shadow top-level `fn foo`,
+    // so `foo()` inside the lambda should not produce a call edge.
+    let src = r#"
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  let g = fn(foo) => foo()
+  g(fn() -> Int => 2)
+}
+"#;
+    let output = check(src, "test.ky");
+    let main_fn = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "main")
+        .expect("should have main function");
+    assert!(
+        !main_fn.calls.iter().any(|c| c.contains("foo")),
+        "lambda-param-shadowed call should not appear as call edge, got: {:?}",
+        main_fn.calls
+    );
+}
+
+#[test]
+fn symbol_graph_direct_call_still_recorded() {
+    // Guard test: a direct (non-lambda) call to a top-level fn should
+    // still produce a call edge.
+    let src = r#"
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  foo()
+}
+"#;
+    let output = check(src, "test.ky");
+    let main_fn = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "main")
+        .expect("should have main function");
+    assert!(
+        main_fn.calls.iter().any(|c| c.contains("foo")),
+        "direct call to top-level fn should produce a call edge, got: {:?}",
+        main_fn.calls
+    );
+}
