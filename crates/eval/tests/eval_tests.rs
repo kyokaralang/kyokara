@@ -2123,3 +2123,42 @@ fn run_accepts_compile_valid_let_rebinding_programs() {
         );
     }
 }
+
+// ── User-defined functions shadow intrinsics (#70) ──────────────────
+
+#[test]
+fn user_fn_shadows_intrinsic_abs() {
+    // User defines `abs` that adds 100 instead of returning the absolute value.
+    // The user version should take precedence over the builtin intrinsic.
+    let val = run_ok(
+        r#"
+        fn abs(x: Int) -> Int { x + 100 }
+        fn main() -> Int { abs(5) }
+        "#,
+    );
+    assert_eq!(val, Value::Int(105));
+}
+
+#[test]
+fn user_fn_shadows_intrinsic_min() {
+    // User defines `min` that always returns the first argument.
+    let val = run_ok(
+        r#"
+        fn min(a: Int, b: Int) -> Int { a }
+        fn main() -> Int { min(10, 3) }
+        "#,
+    );
+    assert_eq!(val, Value::Int(10));
+}
+
+#[test]
+fn user_fn_shadows_intrinsic_max() {
+    // User defines `max` that returns the sum instead of the max.
+    let val = run_ok(
+        r#"
+        fn max(a: Int, b: Int) -> Int { a + b }
+        fn main() -> Int { max(2, 3) }
+        "#,
+    );
+    assert_eq!(val, Value::Int(5));
+}
