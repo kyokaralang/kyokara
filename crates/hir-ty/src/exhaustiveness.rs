@@ -3,7 +3,7 @@
 //! v0.0: checks that all ADT constructors are covered (or a wildcard/bind
 //! pattern is present). No nested pattern decomposition.
 
-use kyokara_hir_def::expr::{ExprIdx, MatchArm};
+use kyokara_hir_def::expr::{ExprIdx, Literal, MatchArm};
 use kyokara_hir_def::item_tree::{ItemTree, TypeDefKind, TypeItemIdx};
 use kyokara_hir_def::pat::Pat;
 use kyokara_intern::Interner;
@@ -11,6 +11,7 @@ use kyokara_stdx::FxHashSet;
 use la_arena::Arena;
 
 use crate::diagnostics::TyDiagnosticData;
+use crate::ty::Ty;
 
 /// Check that a match on an ADT type is exhaustive and has no redundant arms.
 pub fn check_exhaustiveness(
@@ -81,4 +82,60 @@ pub fn check_exhaustiveness(
             match_expr_idx,
         ));
     }
+}
+
+/// Check match exhaustiveness for non-ADT scrutinees.
+///
+/// Conservative rule:
+/// - wildcard / bind arm means exhaustive
+/// - `Bool` with both `true` and `false` literal arms means exhaustive
+/// - otherwise emit `MissingMatchArms`
+pub fn check_non_adt_exhaustiveness(
+    scrutinee_ty: &Ty,
+    arms: &[MatchArm],
+    pats: &Arena<Pat>,
+    diags: &mut Vec<(TyDiagnosticData, ExprIdx)>,
+    match_expr_idx: ExprIdx,
+) {
+    if scrutinee_ty.is_poison() {
+        return;
+    }
+
+    if arms
+        .iter()
+        .any(|arm| matches!(&pats[arm.pat], Pat::Wildcard | Pat::Bind { .. }))
+    {
+        return;
+    }
+
+    if is_bool_literal_exhaustive(scrutinee_ty, arms, pats) {
+        return;
+    }
+
+    diags.push((
+        TyDiagnosticData::MissingMatchArms {
+            missing: vec!["_".to_string()],
+        },
+        match_expr_idx,
+    ));
+}
+
+fn is_bool_literal_exhaustive(scrutinee_ty: &Ty, arms: &[MatchArm], pats: &Arena<Pat>) -> bool {
+    if !matches!(scrutinee_ty, Ty::Bool) {
+        return false;
+    }
+
+    let mut has_true = false;
+    let mut has_false = false;
+    for arm in arms {
+        if let Pat::Literal(Literal::Bool(v)) = &pats[arm.pat] {
+            if *v {
+                has_true = true;
+            } else {
+                has_false = true;
+            }
+        }
+    }
+
+    has_true && has_false
 }
