@@ -205,7 +205,17 @@ impl<'a> InferenceCtx<'a> {
                     }
                     Ty::Error
                 }
-                ScopeDef::Type(_) | ScopeDef::Cap(_) | ScopeDef::Import(_) => Ty::Error,
+                ScopeDef::Type(_) => {
+                    if let Some(&(type_idx, variant_idx)) =
+                        self.module_scope.constructors.get(&name)
+                    {
+                        self.constructor_as_fn(type_idx, variant_idx)
+                    } else {
+                        self.non_value_name_in_expr("type", name)
+                    }
+                }
+                ScopeDef::Cap(_) => self.non_value_name_in_expr("capability", name),
+                ScopeDef::Import(_) => self.non_value_name_in_expr("import", name),
             },
 
             Some(ResolvedName::Fn(fn_idx)) => {
@@ -227,12 +237,26 @@ impl<'a> InferenceCtx<'a> {
                 variant_idx,
             }) => self.constructor_as_fn(type_idx, variant_idx),
 
-            Some(ResolvedName::Type(_) | ResolvedName::Cap(_) | ResolvedName::Import(_)) => {
-                Ty::Error
+            Some(ResolvedName::Type(_)) => {
+                if let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&name) {
+                    self.constructor_as_fn(type_idx, variant_idx)
+                } else {
+                    self.non_value_name_in_expr("type", name)
+                }
             }
+            Some(ResolvedName::Cap(_)) => self.non_value_name_in_expr("capability", name),
+            Some(ResolvedName::Import(_)) => self.non_value_name_in_expr("import", name),
 
             None => Ty::Error,
         }
+    }
+
+    fn non_value_name_in_expr(&mut self, kind: &str, name: kyokara_hir_def::name::Name) -> Ty {
+        self.push_diag(TyDiagnosticData::NonValueNameInExpr {
+            kind: kind.to_string(),
+            name: name.resolve(self.interner).to_owned(),
+        });
+        Ty::Error
     }
 
     fn constructor_as_fn(
