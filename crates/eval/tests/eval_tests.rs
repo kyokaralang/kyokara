@@ -2162,3 +2162,82 @@ fn user_fn_shadows_intrinsic_max() {
     );
     assert_eq!(val, Value::Int(5));
 }
+
+// ── Integer overflow tests (#71) ────────────────────────────────────
+
+#[test]
+fn overflow_add_max_plus_one() {
+    let err = run_err("fn main() -> Int { 9223372036854775807 + 1 }");
+    assert!(
+        err.contains("integer overflow"),
+        "expected overflow error, got: {err}"
+    );
+}
+
+#[test]
+fn overflow_sub_min_minus_one() {
+    let err = run_err(
+        // i64::MIN is -9223372036854775808; we express it as 0 - 9223372036854775807 - 1 - 1
+        // Actually simpler: -9223372036854775807 is the negation of MAX which is fine,
+        // then subtract 1 to get MIN, then subtract 1 more to overflow.
+        "fn main() -> Int { -9223372036854775807 - 2 }",
+    );
+    assert!(
+        err.contains("integer overflow"),
+        "expected overflow error, got: {err}"
+    );
+}
+
+#[test]
+fn overflow_mul_max_times_two() {
+    let err = run_err("fn main() -> Int { 9223372036854775807 * 2 }");
+    assert!(
+        err.contains("integer overflow"),
+        "expected overflow error, got: {err}"
+    );
+}
+
+#[test]
+fn overflow_unary_neg_of_min() {
+    // -(i64::MIN) overflows because i64::MAX is 9223372036854775807 but |i64::MIN| is 9223372036854775808.
+    // We build i64::MIN as -9223372036854775807 - 1, then negate it.
+    let err = run_err("fn main() -> Int { -(-9223372036854775807 - 1) }");
+    assert!(
+        err.contains("integer overflow"),
+        "expected overflow error, got: {err}"
+    );
+}
+
+#[test]
+fn overflow_abs_of_min() {
+    // abs(i64::MIN) overflows for the same reason as unary neg.
+    let err = run_err("fn main() -> Int { abs(-9223372036854775807 - 1) }");
+    assert!(
+        err.contains("integer overflow"),
+        "expected overflow error, got: {err}"
+    );
+}
+
+#[test]
+fn overflow_div_min_by_neg_one() {
+    // i64::MIN / -1 overflows (result would be i64::MAX + 1).
+    let err = run_err("fn main() -> Int { (-9223372036854775807 - 1) / -1 }");
+    assert!(
+        err.contains("integer overflow"),
+        "expected overflow error, got: {err}"
+    );
+}
+
+#[test]
+fn normal_arithmetic_still_works() {
+    let val = run_ok("fn main() -> Int { 100 + 200 }");
+    assert_eq!(val, Value::Int(300));
+    let val = run_ok("fn main() -> Int { 100 - 200 }");
+    assert_eq!(val, Value::Int(-100));
+    let val = run_ok("fn main() -> Int { 100 * 200 }");
+    assert_eq!(val, Value::Int(20000));
+    let val = run_ok("fn main() -> Int { -42 }");
+    assert_eq!(val, Value::Int(-42));
+    let val = run_ok("fn main() -> Int { abs(-42) }");
+    assert_eq!(val, Value::Int(42));
+}
