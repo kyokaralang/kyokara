@@ -40,6 +40,11 @@ pub enum RuntimeError {
         function: String,
     },
 
+    #[error(
+        "unsupported manifest constraint: {capability}.{field} (fine-grained constraints are not enforced yet)"
+    )]
+    UnsupportedManifestConstraint { capability: String, field: String },
+
     #[error("integer overflow")]
     IntegerOverflow,
 }
