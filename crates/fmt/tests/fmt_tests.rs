@@ -396,3 +396,56 @@ fn fmt_comment_only_file_preserved() {
         output
     );
 }
+
+// ── Comment-only match arm list (#160) ─────────────────────────────
+
+#[test]
+fn fmt_match_comment_only_no_dangling_comma() {
+    // Bug test: comment-only match arm list should NOT emit a dangling comma.
+    let input = "fn main() -> Int { match x { // keep\n } }";
+    let output = format_source(input);
+    assert!(
+        !output.contains(","),
+        "comment-only match arm list should not produce a comma, got: {:?}",
+        output
+    );
+    assert!(
+        output.contains("// keep"),
+        "comment should be preserved, got: {:?}",
+        output
+    );
+}
+
+#[test]
+fn fmt_match_arms_with_comment_still_has_commas() {
+    // Guard test: real arms with a comment should still get commas.
+    let input = "fn main() -> Int { match x { // note\n 1 => 2, _ => 3 } }";
+    let output = format_source(input);
+    assert!(
+        output.contains(","),
+        "match with real arms should still have commas, got: {:?}",
+        output
+    );
+    assert!(
+        output.contains("// note"),
+        "leading comment should be preserved, got: {:?}",
+        output
+    );
+}
+
+#[test]
+fn fmt_match_trailing_comment_after_arms() {
+    // Edge case: comment after last arm should be preserved, commas present.
+    let input = "fn main() -> Int { match x { 1 => 2 // trailing\n } }";
+    let output = format_source(input);
+    assert!(
+        output.contains(","),
+        "match with arms should have commas, got: {:?}",
+        output
+    );
+    assert!(
+        output.contains("// trailing"),
+        "trailing comment should be preserved, got: {:?}",
+        output
+    );
+}
