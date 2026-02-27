@@ -776,10 +776,10 @@ impl Interpreter {
         //    Only resolve as a user function if it has a body — intrinsic stubs
         //    are registered in module_scope.functions for type checking but lack
         //    bodies, so they fall through to step 4.
-        if let Some(&fn_idx) = self.module_scope.functions.get(&name) {
-            if self.fn_bodies.contains_key(&fn_idx) {
-                return Ok(Value::Fn(Box::new(FnValue::User(fn_idx))));
-            }
+        if let Some(&fn_idx) = self.module_scope.functions.get(&name)
+            && self.fn_bodies.contains_key(&fn_idx)
+        {
+            return Ok(Value::Fn(Box::new(FnValue::User(fn_idx))));
         }
 
         // 4. Intrinsics (fallback for names that have no user-defined body).
