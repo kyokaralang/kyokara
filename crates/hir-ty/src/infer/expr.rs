@@ -348,6 +348,30 @@ impl<'a> InferenceCtx<'a> {
         }
     }
 
+    /// Look up the parameter names for a callee expression by resolving it to
+    /// a function definition. Returns `None` if the callee is not a simple
+    /// function path or the definition cannot be found.
+    fn callee_param_names(&self, callee: ExprIdx) -> Option<Vec<kyokara_hir_def::name::Name>> {
+        let Expr::Path(path) = &self.body.exprs[callee] else {
+            return None;
+        };
+        if !path.is_single() {
+            return None;
+        }
+        let name = path.segments[0];
+        let resolved = self
+            .body
+            .resolve_name_at(self.module_scope, callee, name)
+            .map(|r| r.resolved)?;
+        let fn_idx = match resolved {
+            ResolvedName::Fn(idx) => idx,
+            ResolvedName::Local(ScopeDef::Fn(idx)) => idx,
+            _ => return None,
+        };
+        let fn_item = &self.item_tree.functions[fn_idx];
+        Some(fn_item.params.iter().map(|p| p.name).collect())
+    }
+
     fn infer_call(&mut self, callee: ExprIdx, args: &[CallArg]) -> Ty {
         let callee_ty = self.infer_expr(callee, &Expectation::None);
         let callee_ty = self.table.resolve_deep(&callee_ty);
@@ -361,14 +385,12 @@ impl<'a> InferenceCtx<'a> {
 
         match callee_ty {
             Ty::Fn { params, ret } => {
-                let positional_count = args
-                    .iter()
-                    .filter(|a| matches!(a, CallArg::Positional(_)))
-                    .count();
-                if positional_count != params.len() {
+                // Count all arguments (positional + named) for arity check.
+                let total_arg_count = args.len();
+                if total_arg_count != params.len() {
                     self.push_diag(TyDiagnosticData::ArgCountMismatch {
                         expected: params.len(),
-                        actual: positional_count,
+                        actual: total_arg_count,
                     });
                     // Still infer args for completeness.
                     for arg in args {
@@ -381,6 +403,10 @@ impl<'a> InferenceCtx<'a> {
                     return Ty::Error;
                 }
 
+                // Resolve callee parameter names so named args can be matched
+                // to the correct parameter type.
+                let param_names = self.callee_param_names(callee);
+
                 let mut pos = 0;
                 for arg in args {
                     match arg {
@@ -392,8 +418,16 @@ impl<'a> InferenceCtx<'a> {
                             }
                             pos += 1;
                         }
-                        CallArg::Named { value, .. } => {
-                            self.infer_expr(*value, &Expectation::None);
+                        CallArg::Named { name, value } => {
+                            // Try to find the parameter index by name.
+                            let expectation = if let Some(ref pnames) = param_names
+                                && let Some(idx) = pnames.iter().position(|pn| pn == name)
+                            {
+                                Expectation::Has(params[idx].clone())
+                            } else {
+                                Expectation::None
+                            };
+                            self.infer_expr(*value, &expectation);
                         }
                     }
                 }

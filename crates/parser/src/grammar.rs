@@ -53,3 +53,14 @@ pub(crate) fn parse_path(p: &mut Parser<'_>) -> CompletedMarker {
     }
     m.complete(p, Path)
 }
+
+/// Parse a single-segment path (just one `Ident`).
+///
+/// Used in value expression position so that `p.x` is parsed as a field
+/// access (`FieldExpr`) via the postfix-`.` loop rather than a
+/// two-segment path.
+pub(crate) fn parse_single_path(p: &mut Parser<'_>) -> CompletedMarker {
+    let m = p.open();
+    p.expect(Ident);
+    m.complete(p, Path)
+}

@@ -390,7 +390,9 @@ impl IntrinsicFn {
                 let Value::Int(n) = &args[0] else {
                     return Err(RuntimeError::TypeError("abs expects an Int".into()));
                 };
-                Ok(Value::Int(n.abs()))
+                n.checked_abs()
+                    .map(Value::Int)
+                    .ok_or(RuntimeError::IntegerOverflow)
             }
             IntrinsicFn::Min => {
                 let Value::Int(a) = &args[0] else {
