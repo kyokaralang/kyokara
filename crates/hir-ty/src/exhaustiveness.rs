@@ -3,7 +3,7 @@
 //! v0.0: checks that all ADT constructors are covered (or a wildcard/bind
 //! pattern is present). No nested pattern decomposition.
 
-use kyokara_hir_def::expr::{ExprIdx, MatchArm};
+use kyokara_hir_def::expr::{ExprIdx, Literal, MatchArm};
 use kyokara_hir_def::item_tree::{ItemTree, TypeDefKind, TypeItemIdx};
 use kyokara_hir_def::pat::Pat;
 use kyokara_intern::Interner;
@@ -11,15 +11,17 @@ use kyokara_stdx::FxHashSet;
 use la_arena::Arena;
 
 use crate::diagnostics::TyDiagnosticData;
+use crate::infer::DiagLoc;
+use crate::ty::Ty;
 
 /// Check that a match on an ADT type is exhaustive and has no redundant arms.
-pub fn check_exhaustiveness(
+pub(crate) fn check_exhaustiveness(
     type_idx: TypeItemIdx,
     arms: &[MatchArm],
     pats: &Arena<Pat>,
     item_tree: &ItemTree,
     interner: &Interner,
-    diags: &mut Vec<(TyDiagnosticData, ExprIdx)>,
+    diags: &mut Vec<(TyDiagnosticData, DiagLoc)>,
     match_expr_idx: ExprIdx,
 ) {
     let type_item = &item_tree.types[type_idx];
@@ -37,17 +39,34 @@ pub fn check_exhaustiveness(
         match pat {
             Pat::Wildcard | Pat::Bind { .. } => {
                 if has_wildcard || covered.len() == variants.len() {
-                    diags.push((TyDiagnosticData::RedundantMatchArm, match_expr_idx));
+                    diags.push((
+                        TyDiagnosticData::RedundantMatchArm,
+                        DiagLoc::Expr(match_expr_idx),
+                    ));
                 }
                 if !has_wildcard {
                     has_wildcard = true;
                     wildcard_seen_at = Some(arm_idx);
                 }
             }
-            Pat::Constructor { path, .. } => {
+            Pat::Constructor { path, args } => {
                 if has_wildcard {
                     // Arms after a wildcard are redundant.
-                    diags.push((TyDiagnosticData::RedundantMatchArm, match_expr_idx));
+                    diags.push((
+                        TyDiagnosticData::RedundantMatchArm,
+                        DiagLoc::Expr(match_expr_idx),
+                    ));
+                    continue;
+                }
+                // Conservative nested-pattern handling:
+                // only constructor arms with irrefutable argument patterns
+                // (wildcards/binds) are considered full variant coverage.
+                // Refined subpatterns (e.g. Some(1), Some(Some(x))) are not
+                // treated as covering the whole variant.
+                let args_irrefutable = args
+                    .iter()
+                    .all(|arg| matches!(&pats[*arg], Pat::Wildcard | Pat::Bind { .. }));
+                if !args_irrefutable {
                     continue;
                 }
                 // Find which variant this constructor matches.
@@ -57,7 +76,10 @@ pub fn check_exhaustiveness(
                         .position(|v| v.name.resolve(interner) == name.resolve(interner))
                     && !covered.insert(variant_idx)
                 {
-                    diags.push((TyDiagnosticData::RedundantMatchArm, match_expr_idx));
+                    diags.push((
+                        TyDiagnosticData::RedundantMatchArm,
+                        DiagLoc::Expr(match_expr_idx),
+                    ));
                 }
             }
             Pat::Literal(_) => {
@@ -78,7 +100,63 @@ pub fn check_exhaustiveness(
             .collect();
         diags.push((
             TyDiagnosticData::MissingMatchArms { missing },
-            match_expr_idx,
+            DiagLoc::Expr(match_expr_idx),
         ));
     }
+}
+
+/// Check match exhaustiveness for non-ADT scrutinees.
+///
+/// Conservative rule:
+/// - wildcard / bind arm means exhaustive
+/// - `Bool` with both `true` and `false` literal arms means exhaustive
+/// - otherwise emit `MissingMatchArms`
+pub(crate) fn check_non_adt_exhaustiveness(
+    scrutinee_ty: &Ty,
+    arms: &[MatchArm],
+    pats: &Arena<Pat>,
+    diags: &mut Vec<(TyDiagnosticData, DiagLoc)>,
+    match_expr_idx: ExprIdx,
+) {
+    if scrutinee_ty.is_poison() {
+        return;
+    }
+
+    if arms
+        .iter()
+        .any(|arm| matches!(&pats[arm.pat], Pat::Wildcard | Pat::Bind { .. }))
+    {
+        return;
+    }
+
+    if is_bool_literal_exhaustive(scrutinee_ty, arms, pats) {
+        return;
+    }
+
+    diags.push((
+        TyDiagnosticData::MissingMatchArms {
+            missing: vec!["_".to_string()],
+        },
+        DiagLoc::Expr(match_expr_idx),
+    ));
+}
+
+fn is_bool_literal_exhaustive(scrutinee_ty: &Ty, arms: &[MatchArm], pats: &Arena<Pat>) -> bool {
+    if !matches!(scrutinee_ty, Ty::Bool) {
+        return false;
+    }
+
+    let mut has_true = false;
+    let mut has_false = false;
+    for arm in arms {
+        if let Pat::Literal(Literal::Bool(v)) = &pats[arm.pat] {
+            if *v {
+                has_true = true;
+            } else {
+                has_false = true;
+            }
+        }
+    }
+
+    has_true && has_false
 }

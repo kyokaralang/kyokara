@@ -1,0 +1,12 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "check": {
+    "ok": false,
+    "messages_all": ["property bodies are not semantically checked"]
+  },
+  "run": {
+    "ok": false,
+    "stderr_contains": ["property bodies are not semantically checked"]
+  }
+}

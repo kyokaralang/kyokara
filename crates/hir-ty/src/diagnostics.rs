@@ -36,6 +36,14 @@ pub enum TyDiagnosticData {
     UnresolvedType { name: String },
     /// Unresolved constructor name in pattern.
     UnresolvedConstructor { name: String },
+    /// Refutable pattern used in a `let` binding.
+    RefutableLetPattern,
+    /// Non-value symbol used in expression position.
+    NonValueNameInExpr { kind: String, name: String },
+    /// Multi-segment expression path used where only value names are supported.
+    MultiSegmentValuePath { path: String },
+    /// Record pattern with an explicit type path is not supported yet.
+    UnsupportedRecordPatternPath { path: String },
 }
 
 impl TyDiagnosticData {
@@ -55,6 +63,10 @@ impl TyDiagnosticData {
             TyDiagnosticData::EffectViolation { .. } => "E0011",
             TyDiagnosticData::UnresolvedType { .. } => "E0012",
             TyDiagnosticData::UnresolvedConstructor { .. } => "E0013",
+            TyDiagnosticData::RefutableLetPattern => "E0014",
+            TyDiagnosticData::NonValueNameInExpr { .. } => "E0015",
+            TyDiagnosticData::MultiSegmentValuePath { .. } => "E0016",
+            TyDiagnosticData::UnsupportedRecordPatternPath { .. } => "E0017",
         }
     }
 
@@ -132,6 +144,18 @@ impl TyDiagnosticData {
             }
             TyDiagnosticData::UnresolvedConstructor { name } => {
                 format!("unresolved constructor `{name}`")
+            }
+            TyDiagnosticData::RefutableLetPattern => {
+                "refutable let pattern: use an irrefutable pattern or a match".into()
+            }
+            TyDiagnosticData::NonValueNameInExpr { kind, name } => {
+                format!("{kind} name `{name}` used as value")
+            }
+            TyDiagnosticData::MultiSegmentValuePath { path } => {
+                format!("multi-segment value path `{path}` is not supported")
+            }
+            TyDiagnosticData::UnsupportedRecordPatternPath { path } => {
+                format!("record pattern type paths are not supported yet: `{path}`")
             }
         };
         Diagnostic::error(message, span)

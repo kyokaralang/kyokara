@@ -9,7 +9,7 @@
 
 use kyokara_diagnostics::Severity;
 use kyokara_hir::{
-    display_ty_with_tree, CheckResult, HoleInfo, TyDiagnosticData, TypeDefKind, TypeRef,
+    CheckResult, HoleInfo, TyDiagnosticData, TypeDefKind, TypeRef, display_ty_with_tree,
 };
 use kyokara_intern::Interner;
 use serde::Serialize;
@@ -587,9 +587,12 @@ fn build_module_symbol_graph(
     // later in `check_project` via a global name→ID map.
     // Build the set of known function names so we can filter out constructor
     // calls (e.g. Some, Ok, Err) that the inference engine records as callees.
+    // Keep symbol-graph function nodes focused on source-defined functions.
+    // Synthetic builtins (e.g. injected intrinsics) have no source range.
     let fn_names: std::collections::HashSet<&str> = item_tree
         .functions
         .iter()
+        .filter(|(_, f)| f.source_range.is_some())
         .map(|(_, f)| f.name.resolve(interner))
         .collect();
 
@@ -618,6 +621,7 @@ fn build_module_symbol_graph(
     let functions: Vec<FnNodeDto> = item_tree
         .functions
         .iter()
+        .filter(|(_, f)| f.source_range.is_some())
         .filter(|(idx, _)| !cap_member_fns.contains(idx))
         .map(|(_, fn_item)| {
             let name = fn_item.name.resolve(interner).to_owned();

@@ -49,6 +49,14 @@ impl<'a> InferenceCtx<'a> {
 
             Expr::Path(path) => {
                 if !path.is_single() {
+                    self.push_diag(TyDiagnosticData::MultiSegmentValuePath {
+                        path: path
+                            .segments
+                            .iter()
+                            .map(|s| s.resolve(self.interner).to_owned())
+                            .collect::<Vec<_>>()
+                            .join("."),
+                    });
                     return Ty::Error;
                 }
                 let name = path.segments[0];
@@ -205,7 +213,17 @@ impl<'a> InferenceCtx<'a> {
                     }
                     Ty::Error
                 }
-                ScopeDef::Type(_) | ScopeDef::Cap(_) | ScopeDef::Import(_) => Ty::Error,
+                ScopeDef::Type(_) => {
+                    if let Some(&(type_idx, variant_idx)) =
+                        self.module_scope.constructors.get(&name)
+                    {
+                        self.constructor_as_fn(type_idx, variant_idx)
+                    } else {
+                        self.non_value_name_in_expr("type", name)
+                    }
+                }
+                ScopeDef::Cap(_) => self.non_value_name_in_expr("capability", name),
+                ScopeDef::Import(_) => self.non_value_name_in_expr("import", name),
             },
 
             Some(ResolvedName::Fn(fn_idx)) => {
@@ -227,12 +245,26 @@ impl<'a> InferenceCtx<'a> {
                 variant_idx,
             }) => self.constructor_as_fn(type_idx, variant_idx),
 
-            Some(ResolvedName::Type(_) | ResolvedName::Cap(_) | ResolvedName::Import(_)) => {
-                Ty::Error
+            Some(ResolvedName::Type(_)) => {
+                if let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&name) {
+                    self.constructor_as_fn(type_idx, variant_idx)
+                } else {
+                    self.non_value_name_in_expr("type", name)
+                }
             }
+            Some(ResolvedName::Cap(_)) => self.non_value_name_in_expr("capability", name),
+            Some(ResolvedName::Import(_)) => self.non_value_name_in_expr("import", name),
 
             None => Ty::Error,
         }
+    }
+
+    fn non_value_name_in_expr(&mut self, kind: &str, name: kyokara_hir_def::name::Name) -> Ty {
+        self.push_diag(TyDiagnosticData::NonValueNameInExpr {
+            kind: kind.to_string(),
+            name: name.resolve(self.interner).to_owned(),
+        });
+        Ty::Error
     }
 
     fn constructor_as_fn(
@@ -596,6 +628,14 @@ impl<'a> InferenceCtx<'a> {
                 &mut self.diags,
                 match_expr_idx,
             );
+        } else {
+            crate::exhaustiveness::check_non_adt_exhaustiveness(
+                &resolved_scrutinee,
+                arms,
+                &self.body.pats,
+                &mut self.diags,
+                match_expr_idx,
+            );
         }
 
         result_ty.unwrap_or(Ty::Unit)
@@ -623,6 +663,10 @@ impl<'a> InferenceCtx<'a> {
                     };
 
                     self.infer_pat(*pat, &init_ty);
+                    if !self.is_irrefutable_let_pattern(*pat, &init_ty) {
+                        self.current_expr = Some(*init);
+                        self.push_diag(TyDiagnosticData::RefutableLetPattern);
+                    }
                 }
                 Stmt::Expr(e) => {
                     self.infer_expr(*e, &Expectation::None);
@@ -634,6 +678,68 @@ impl<'a> InferenceCtx<'a> {
             self.infer_expr(tail_idx, expected)
         } else {
             Ty::Unit
+        }
+    }
+
+    fn is_irrefutable_let_pattern(&mut self, pat_idx: la_arena::Idx<Pat>, expected: &Ty) -> bool {
+        let expected = self.table.resolve_deep(expected);
+        if expected.is_poison() {
+            return true;
+        }
+
+        match self.body.pats[pat_idx].clone() {
+            Pat::Missing | Pat::Wildcard | Pat::Bind { .. } => true,
+            Pat::Literal(_) => false,
+            Pat::Record { fields, .. } => match expected {
+                Ty::Record {
+                    fields: ref rec_fields,
+                } => fields
+                    .iter()
+                    .all(|f| rec_fields.iter().any(|(name, _)| name == f)),
+                _ => false,
+            },
+            Pat::Constructor { path, args } => {
+                if !path.is_single() {
+                    return false;
+                }
+                let ctor = path.segments[0];
+                let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&ctor)
+                else {
+                    return false;
+                };
+
+                let Ty::Adt { def, .. } = expected else {
+                    return false;
+                };
+                if def != type_idx {
+                    return false;
+                }
+
+                let TypeDefKind::Adt { variants } = &self.item_tree.types[type_idx].kind else {
+                    return false;
+                };
+                // Constructor patterns are irrefutable only for single-variant ADTs.
+                if variants.len() != 1 {
+                    return false;
+                }
+
+                let env = Self::make_env(
+                    self.item_tree,
+                    self.module_scope,
+                    self.interner,
+                    &self.type_params,
+                );
+                let (field_tys, _adt_ty) =
+                    instantiate_constructor(type_idx, variant_idx, &env, &mut self.table);
+
+                if args.len() != field_tys.len() {
+                    return false;
+                }
+
+                args.iter()
+                    .zip(field_tys.iter())
+                    .all(|(sub_pat, field_ty)| self.is_irrefutable_let_pattern(*sub_pat, field_ty))
+            }
         }
     }
 

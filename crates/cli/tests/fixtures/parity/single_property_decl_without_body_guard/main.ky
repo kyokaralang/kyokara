@@ -1,0 +1,5 @@
+property p(x: Int)
+
+fn main() -> Int {
+  1
+}

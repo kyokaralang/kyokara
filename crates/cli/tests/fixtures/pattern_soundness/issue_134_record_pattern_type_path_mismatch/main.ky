@@ -1,4 +1,4 @@
 type A = { x: Int }
 type B = { x: Int }
-fn f(a: A) -> Int { match a { B { x } => x } }
+fn f(a: A) -> Int { match a { B { x } => x, _ => 0 } }
 fn main() -> Int { f(A { x: 1 }) }
