@@ -50,6 +50,28 @@ pub fn validate_function(func: &KirFunction, interner: &Interner) -> Vec<Diagnos
         )));
     }
 
+    // Validate contract value references
+    for (i, vid) in func.contracts.requires.iter().enumerate() {
+        if !is_valid_value(*vid, func) {
+            diags.push(error(format!(
+                "fn {}: requires[{}] references invalid value %{}",
+                fn_name,
+                i,
+                vid.into_raw().into_u32()
+            )));
+        }
+    }
+    for (i, vid) in func.contracts.ensures.iter().enumerate() {
+        if !is_valid_value(*vid, func) {
+            diags.push(error(format!(
+                "fn {}: ensures[{}] references invalid value %{}",
+                fn_name,
+                i,
+                vid.into_raw().into_u32()
+            )));
+        }
+    }
+
     // Check each block
     for (bid, block) in func.blocks.iter() {
         let block_label = block

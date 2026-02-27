@@ -800,3 +800,42 @@ fn test_validator_invalid_entry_block_does_not_panic() {
         diags
     );
 }
+
+#[test]
+fn test_validator_invalid_contract_value_ids() {
+    let mut interner = mk_interner();
+    let fn_name = mk_name(&mut interner, "contract_func");
+
+    let mut b = KirBuilder::new();
+    let entry = b.new_block(None);
+    b.switch_to(entry);
+    let v = b.push_const(Constant::Int(0), Ty::Int);
+    b.set_return(v);
+
+    // Build with bogus contract ValueIds.
+    let bogus_value: kyokara_kir::value::ValueId = Idx::from_raw(la_arena::RawIdx::from_u32(999));
+    let contracts = KirContracts {
+        requires: vec![bogus_value],
+        ensures: vec![bogus_value],
+    };
+    let func = b.build(
+        fn_name,
+        vec![],
+        Ty::Int,
+        EffectSet::default(),
+        entry,
+        contracts,
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.iter().any(|d| d.message.contains("requires")),
+        "expected diagnostic for invalid requires ValueId, got: {:?}",
+        diags
+    );
+    assert!(
+        diags.iter().any(|d| d.message.contains("ensures")),
+        "expected diagnostic for invalid ensures ValueId, got: {:?}",
+        diags
+    );
+}
