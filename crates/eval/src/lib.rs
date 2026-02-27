@@ -278,7 +278,9 @@ pub fn run_project_with_manifest(
             if src_fn_item.is_pub {
                 let entry_info = project.module_graph.get(&entry_path).unwrap();
                 if let Some(&entry_fn_idx) = entry_info.scope.functions.get(&src_fn_item.name) {
-                    fn_bodies.entry(entry_fn_idx).or_insert_with(|| body.clone());
+                    fn_bodies
+                        .entry(entry_fn_idx)
+                        .or_insert_with(|| body.clone());
                     module_fn_map.insert(src_fn_item.name, entry_fn_idx);
                 }
                 continue;

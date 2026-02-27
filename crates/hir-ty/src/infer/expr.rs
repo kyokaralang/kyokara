@@ -1,5 +1,7 @@
 //! Expression type inference for all [`Expr`] variants.
 
+use std::collections::HashSet;
+
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, Stmt, UnaryOp};
 use kyokara_hir_def::item_tree::TypeDefKind;
 use kyokara_hir_def::pat::Pat;
@@ -352,24 +354,79 @@ impl<'a> InferenceCtx<'a> {
     /// a function definition. Returns `None` if the callee is not a simple
     /// function path or the definition cannot be found.
     fn callee_param_names(&self, callee: ExprIdx) -> Option<Vec<kyokara_hir_def::name::Name>> {
-        let Expr::Path(path) = &self.body.exprs[callee] else {
-            return None;
-        };
-        if !path.is_single() {
+        let mut visited_locals = HashSet::new();
+        self.param_names_for_expr(callee, &mut visited_locals)
+    }
+
+    fn param_names_for_expr(
+        &self,
+        expr_idx: ExprIdx,
+        visited_locals: &mut HashSet<kyokara_hir_def::expr::PatIdx>,
+    ) -> Option<Vec<kyokara_hir_def::name::Name>> {
+        match &self.body.exprs[expr_idx] {
+            Expr::Lambda { params, .. } => {
+                let mut names = Vec::with_capacity(params.len());
+                for (pat_idx, _) in params {
+                    match &self.body.pats[*pat_idx] {
+                        Pat::Bind { name } => names.push(*name),
+                        _ => return None,
+                    }
+                }
+                Some(names)
+            }
+            Expr::Path(path) => {
+                if !path.is_single() {
+                    return None;
+                }
+
+                let name = path.segments[0];
+                let resolved = self
+                    .body
+                    .resolve_name_at(self.module_scope, expr_idx, name)
+                    .map(|r| r.resolved)?;
+
+                let fn_idx = match resolved {
+                    ResolvedName::Fn(idx) | ResolvedName::Local(ScopeDef::Fn(idx)) => idx,
+                    ResolvedName::Local(ScopeDef::Local(pat_idx)) => {
+                        return self.local_binding_param_names(pat_idx, visited_locals);
+                    }
+                    _ => return None,
+                };
+                let fn_item = &self.item_tree.functions[fn_idx];
+                Some(fn_item.params.iter().map(|p| p.name).collect())
+            }
+            _ => None,
+        }
+    }
+
+    fn local_binding_param_names(
+        &self,
+        pat_idx: kyokara_hir_def::expr::PatIdx,
+        visited_locals: &mut HashSet<kyokara_hir_def::expr::PatIdx>,
+    ) -> Option<Vec<kyokara_hir_def::name::Name>> {
+        if !visited_locals.insert(pat_idx) {
             return None;
         }
-        let name = path.segments[0];
-        let resolved = self
-            .body
-            .resolve_name_at(self.module_scope, callee, name)
-            .map(|r| r.resolved)?;
-        let fn_idx = match resolved {
-            ResolvedName::Fn(idx) => idx,
-            ResolvedName::Local(ScopeDef::Fn(idx)) => idx,
-            _ => return None,
-        };
-        let fn_item = &self.item_tree.functions[fn_idx];
-        Some(fn_item.params.iter().map(|p| p.name).collect())
+        let init = self.local_binding_init_expr(pat_idx)?;
+        self.param_names_for_expr(init, visited_locals)
+    }
+
+    fn local_binding_init_expr(
+        &self,
+        local_pat: kyokara_hir_def::expr::PatIdx,
+    ) -> Option<kyokara_hir_def::expr::ExprIdx> {
+        for (_, expr) in self.body.exprs.iter() {
+            if let Expr::Block { stmts, .. } = expr {
+                for stmt in stmts {
+                    if let Stmt::Let { pat, init, .. } = stmt
+                        && *pat == local_pat
+                    {
+                        return Some(*init);
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn infer_call(&mut self, callee: ExprIdx, args: &[CallArg]) -> Ty {

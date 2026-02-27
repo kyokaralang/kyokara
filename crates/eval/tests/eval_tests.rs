@@ -2102,6 +2102,11 @@ fn run_rejects_compile_invalid_programs_detected_by_check() {
             src: "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(x: 1, x: 2) }",
             run_fragment: "duplicate named argument",
         },
+        Case {
+            name: "unknown named argument on local fn value",
+            src: "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { let f = add\n f(z: 1, y: 2) }",
+            run_fragment: "unknown named argument",
+        },
     ];
 
     for case in cases {
@@ -2421,6 +2426,39 @@ fn eval_positional_args_still_work() {
     assert_eq!(val, Value::Int(-7));
 }
 
+#[test]
+fn eval_named_args_reordered_direct_lambda() {
+    let val = run_ok(
+        "fn main() -> Int {
+           (fn(x: Int, y: Int) => x - y)(y: 10, x: 3)
+         }",
+    );
+    assert_eq!(val, Value::Int(-7));
+}
+
+#[test]
+fn eval_named_args_reordered_local_fn_value() {
+    let val = run_ok(
+        "fn sub(x: Int, y: Int) -> Int { x - y }
+         fn main() -> Int {
+           let f = sub
+           f(y: 10, x: 3)
+         }",
+    );
+    assert_eq!(val, Value::Int(-7));
+}
+
+#[test]
+fn eval_named_args_reordered_local_lambda_value() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let f = fn(x: Int, y: Int) => x - y
+           f(y: 10, x: 3)
+         }",
+    );
+    assert_eq!(val, Value::Int(-7));
+}
+
 // ── Issue #68: wrong imported function body when sibling modules export same name ──
 
 #[test]
@@ -2487,6 +2525,41 @@ fn run_project_dual_import_same_name_is_conflict() {
     }
 }
 
+#[test]
+fn run_project_rejects_ambiguous_import_last_segment() {
+    // import math is ambiguous when both a/math.ky and b/math.ky exist.
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("a")).unwrap();
+    std::fs::create_dir_all(dir.path().join("b")).unwrap();
+
+    let a_math_path = dir.path().join("a").join("math.ky");
+    let mut a_math_file = std::fs::File::create(&a_math_path).unwrap();
+    writeln!(a_math_file, "pub fn value() -> Int {{ 1 }}").unwrap();
+
+    let b_math_path = dir.path().join("b").join("math.ky");
+    let mut b_math_file = std::fs::File::create(&b_math_path).unwrap();
+    writeln!(b_math_file, "pub fn value() -> Int {{ 2 }}").unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import math").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ value() }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path);
+    match result {
+        Ok(_) => panic!("expected ambiguous import error"),
+        Err(e) => {
+            let err = e.to_string();
+            assert!(
+                err.contains("ambiguous import"),
+                "expected 'ambiguous import' in message, got: {err}"
+            );
+        }
+    }
+}
+
 // ── Issue #69: imported pub fn calling private helper ────────────────
 
 #[test]
@@ -2539,6 +2612,40 @@ fn run_project_imported_private_helper_name_does_not_capture_entry_fn() {
         result.value,
         Value::Int(42),
         "foo() should resolve helper() in util module scope, not entry module scope"
+    );
+}
+
+#[test]
+fn run_project_imported_deep_private_call_chains_across_modules() {
+    // Both imported modules have private `base`/`mid` chains; public entry points
+    // must resolve private calls within each source module.
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let util_a_path = dir.path().join("util_a.ky");
+    let mut util_a_file = std::fs::File::create(&util_a_path).unwrap();
+    writeln!(util_a_file, "fn base() -> Int {{ 20 }}").unwrap();
+    writeln!(util_a_file, "fn mid() -> Int {{ base() + 1 }}").unwrap();
+    writeln!(util_a_file, "pub fn foo() -> Int {{ mid() + 1 }}").unwrap();
+
+    let util_b_path = dir.path().join("util_b.ky");
+    let mut util_b_file = std::fs::File::create(&util_b_path).unwrap();
+    writeln!(util_b_file, "fn base() -> Int {{ 30 }}").unwrap();
+    writeln!(util_b_file, "fn mid() -> Int {{ base() + 1 }}").unwrap();
+    writeln!(util_b_file, "pub fn bar() -> Int {{ mid() + 1 }}").unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import util_a").unwrap();
+    writeln!(main_file, "import util_b").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ foo() + bar() }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path).expect("should succeed");
+    assert_eq!(
+        result.value,
+        Value::Int(54),
+        "each imported module should keep private call-chain resolution module-local"
     );
 }
 

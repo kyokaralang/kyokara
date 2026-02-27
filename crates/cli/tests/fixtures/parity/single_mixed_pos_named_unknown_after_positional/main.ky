@@ -1,0 +1,5 @@
+fn encode(a: Int, b: Int, c: Int) -> Int { a * 100 + b * 10 + c }
+
+fn main() -> Int {
+  encode(1, z: 2, c: 3)
+}

@@ -1,0 +1,4 @@
+import util_a
+import util_b
+
+fn main() -> Int { foo() + bar() }

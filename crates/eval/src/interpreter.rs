@@ -132,26 +132,28 @@ impl Interpreter {
         self.call_fn(main_idx, Args::new())
     }
 
+    fn args_in_call_order(&self, args: &[CallArg]) -> Vec<ExprIdx> {
+        args.iter()
+            .map(|a| match a {
+                CallArg::Positional(idx) => *idx,
+                CallArg::Named { value, .. } => *value,
+            })
+            .collect()
+    }
+
     /// Reorder call arguments to match parameter order when named args are present.
     ///
-    /// Given a mix of positional and named `CallArg`s and the function's parameter
-    /// list, returns expression indices in parameter order. Positional args fill
+    /// Given a mix of positional and named `CallArg`s and the callable's parameter
+    /// names, returns expression indices in parameter order. Positional args fill
     /// slots left-to-right; named args are placed at the matching parameter index.
-    fn reorder_args_for_fn(&self, args: &[CallArg], params: &[FnParam]) -> Vec<ExprIdx> {
+    fn reorder_args_for_names(&self, args: &[CallArg], param_names: &[Name]) -> Vec<ExprIdx> {
         let has_named = args.iter().any(|a| matches!(a, CallArg::Named { .. }));
         if !has_named {
-            // Fast path: all positional, return as-is.
-            return args
-                .iter()
-                .map(|a| match a {
-                    CallArg::Positional(idx) => *idx,
-                    CallArg::Named { value, .. } => *value,
-                })
-                .collect();
+            return self.args_in_call_order(args);
         }
 
         // Build a slot array in parameter order.
-        let mut slots: Vec<Option<ExprIdx>> = vec![None; params.len()];
+        let mut slots: Vec<Option<ExprIdx>> = vec![None; param_names.len()];
         let mut pos = 0;
         for arg in args {
             match arg {
@@ -166,7 +168,7 @@ impl Interpreter {
                     }
                 }
                 CallArg::Named { name, value } => {
-                    if let Some(i) = params.iter().position(|p| p.name == *name) {
+                    if let Some(i) = param_names.iter().position(|p| *p == *name) {
                         slots[i] = Some(*value);
                     }
                 }
@@ -176,6 +178,26 @@ impl Interpreter {
         // Return expression indices in parameter order, falling back to the
         // value expr if a slot wasn't filled (shouldn't happen with valid code).
         slots.into_iter().flatten().collect()
+    }
+
+    fn reorder_args_for_fn(&self, args: &[CallArg], params: &[FnParam]) -> Vec<ExprIdx> {
+        let names: Vec<Name> = params.iter().map(|p| p.name).collect();
+        self.reorder_args_for_names(args, &names)
+    }
+
+    fn lambda_param_names(
+        &self,
+        body: &Body,
+        params: &[kyokara_hir_def::expr::PatIdx],
+    ) -> Option<Vec<Name>> {
+        let mut names = Vec::with_capacity(params.len());
+        for pat_idx in params {
+            match &body.pats[*pat_idx] {
+                Pat::Bind { name } => names.push(*name),
+                _ => return None,
+            }
+        }
+        Some(names)
     }
 
     /// Call a user-defined function by index.
@@ -340,25 +362,30 @@ impl Interpreter {
                 let args = args.clone();
                 let callee_val = eval_propagate!(self, env, body, callee_idx);
 
-                // When calling a user function with named args, reorder
-                // argument expressions to match parameter order.
+                // When calling a user function or lambda with named args,
+                // reorder argument expressions to match parameter order.
                 let ordered: Vec<ExprIdx>;
                 let arg_exprs: &[ExprIdx];
                 if let Value::Fn(ref fv) = callee_val
-                    && let FnValue::User(fn_idx) = **fv
                     && args.iter().any(|a| matches!(a, CallArg::Named { .. }))
                 {
-                    let params = &self.item_tree.functions[fn_idx].params;
-                    ordered = self.reorder_args_for_fn(&args, params);
+                    ordered = match &**fv {
+                        FnValue::User(fn_idx) => {
+                            let params = &self.item_tree.functions[*fn_idx].params;
+                            self.reorder_args_for_fn(&args, params)
+                        }
+                        FnValue::Lambda { params, body, .. } => {
+                            if let Some(param_names) = self.lambda_param_names(body, params) {
+                                self.reorder_args_for_names(&args, &param_names)
+                            } else {
+                                self.args_in_call_order(&args)
+                            }
+                        }
+                        _ => self.args_in_call_order(&args),
+                    };
                     arg_exprs = &ordered;
                 } else {
-                    ordered = args
-                        .iter()
-                        .map(|a| match a {
-                            CallArg::Positional(idx) => *idx,
-                            CallArg::Named { value, .. } => *value,
-                        })
-                        .collect();
+                    ordered = self.args_in_call_order(&args);
                     arg_exprs = &ordered;
                 }
 
@@ -593,18 +620,31 @@ impl Interpreter {
                 }
 
                 // Non-user-function call (intrinsic, lambda, constructor).
-                let mut arg_vals = Args::with_capacity(args.len());
-                for arg in args {
-                    match arg {
-                        CallArg::Positional(idx) => {
-                            let v = eval_propagate_shared!(self, body, *idx);
-                            arg_vals.push(v);
+                let ordered_non_user: Vec<ExprIdx>;
+                let arg_exprs: &[ExprIdx];
+                if let Value::Fn(ref fv) = callee_val
+                    && args.iter().any(|a| matches!(a, CallArg::Named { .. }))
+                {
+                    ordered_non_user = match &**fv {
+                        FnValue::Lambda { params, body, .. } => {
+                            if let Some(param_names) = self.lambda_param_names(body, params) {
+                                self.reorder_args_for_names(args, &param_names)
+                            } else {
+                                self.args_in_call_order(args)
+                            }
                         }
-                        CallArg::Named { value, .. } => {
-                            let v = eval_propagate_shared!(self, body, *value);
-                            arg_vals.push(v);
-                        }
-                    }
+                        _ => self.args_in_call_order(args),
+                    };
+                    arg_exprs = &ordered_non_user;
+                } else {
+                    ordered_non_user = self.args_in_call_order(args);
+                    arg_exprs = &ordered_non_user;
+                }
+
+                let mut arg_vals = Args::with_capacity(arg_exprs.len());
+                for idx in arg_exprs {
+                    let v = eval_propagate_shared!(self, body, *idx);
+                    arg_vals.push(v);
                 }
                 self.call_value(callee_val, arg_vals)
                     .map(ControlFlow::Value)

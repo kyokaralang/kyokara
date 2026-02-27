@@ -1,0 +1,3 @@
+import math
+
+fn main() -> Int { value() }

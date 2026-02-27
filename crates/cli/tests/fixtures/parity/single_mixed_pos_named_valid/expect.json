@@ -1,0 +1,11 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "check": {
+    "ok": true
+  },
+  "run": {
+    "ok": true,
+    "stdout_contains": ["123"]
+  }
+}
