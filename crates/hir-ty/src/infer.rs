@@ -60,6 +60,13 @@ pub struct InferenceResult {
     pub ret_ty: Ty,
 }
 
+/// Source location attached to a type-check diagnostic.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum DiagLoc {
+    Expr(ExprIdx),
+    Pat(la_arena::Idx<Pat>),
+}
+
 /// Mutable inference context, threaded through expression/pattern inference.
 pub(crate) struct InferenceCtx<'a> {
     pub table: UnificationTable,
@@ -67,7 +74,7 @@ pub(crate) struct InferenceCtx<'a> {
     pub pat_types: ArenaMap<la_arena::Idx<Pat>, Ty>,
     pub holes: Vec<HoleInfo>,
     /// Diagnostics paired with the expression that caused them.
-    pub diags: Vec<(TyDiagnosticData, ExprIdx)>,
+    pub diags: Vec<(TyDiagnosticData, DiagLoc)>,
     /// Names of functions called from this body (for symbol graph edges).
     pub calls: Vec<Name>,
 
@@ -97,11 +104,16 @@ impl<'a> InferenceCtx<'a> {
     /// Record a diagnostic at the current expression.
     pub(crate) fn push_diag(&mut self, data: TyDiagnosticData) {
         if let Some(expr_idx) = self.current_expr {
-            self.diags.push((data, expr_idx));
+            self.diags.push((data, DiagLoc::Expr(expr_idx)));
         } else {
             // Fallback: use body root (shouldn't happen in practice).
-            self.diags.push((data, self.body.root));
+            self.diags.push((data, DiagLoc::Expr(self.body.root)));
         }
+    }
+
+    /// Record a diagnostic at a specific pattern site.
+    pub(crate) fn push_pat_diag(&mut self, pat_idx: la_arena::Idx<Pat>, data: TyDiagnosticData) {
+        self.diags.push((data, DiagLoc::Pat(pat_idx)));
     }
 
     /// Unify two types, emitting a type mismatch diagnostic on failure.
@@ -178,14 +190,14 @@ pub fn infer_body(
     let caller_effects = EffectSet::from_with_caps(&fn_item.with_caps, &env, &mut table, interner);
 
     // Validate capability names.
-    let mut diags: Vec<(TyDiagnosticData, ExprIdx)> = Vec::new();
+    let mut diags: Vec<(TyDiagnosticData, DiagLoc)> = Vec::new();
     for cap_name in &caller_effects.caps {
         if !module_scope.caps.contains_key(cap_name) {
             diags.push((
                 TyDiagnosticData::UnresolvedType {
                     name: cap_name.resolve(interner).to_owned(),
                 },
-                body.root,
+                DiagLoc::Expr(body.root),
             ));
         }
     }
@@ -273,12 +285,12 @@ pub fn infer_body(
     let raw_diagnostics: Vec<(TyDiagnosticData, Span)> = ctx
         .diags
         .iter()
-        .map(|(d, expr_idx)| {
-            let range = body
-                .expr_source_map
-                .get(*expr_idx)
-                .copied()
-                .unwrap_or(fn_span.range);
+        .map(|(d, loc)| {
+            let range = match loc {
+                DiagLoc::Expr(expr_idx) => body.expr_source_map.get(*expr_idx).copied(),
+                DiagLoc::Pat(pat_idx) => body.pat_source_map.get(*pat_idx).copied(),
+            }
+            .unwrap_or(fn_span.range);
             (
                 d.clone(),
                 Span {
@@ -293,12 +305,12 @@ pub fn infer_body(
     let diagnostics: Vec<Diagnostic> = ctx
         .diags
         .into_iter()
-        .map(|(d, expr_idx)| {
-            let range = body
-                .expr_source_map
-                .get(expr_idx)
-                .copied()
-                .unwrap_or(fn_span.range);
+        .map(|(d, loc)| {
+            let range = match loc {
+                DiagLoc::Expr(expr_idx) => body.expr_source_map.get(expr_idx).copied(),
+                DiagLoc::Pat(pat_idx) => body.pat_source_map.get(pat_idx).copied(),
+            }
+            .unwrap_or(fn_span.range);
             let span = Span {
                 file: fn_span.file,
                 range,
@@ -332,7 +344,7 @@ fn collect_unresolved_type_names(
     type_ref: &TypeRef,
     interner: &Interner,
     expr_idx: ExprIdx,
-    diags: &mut Vec<(TyDiagnosticData, ExprIdx)>,
+    diags: &mut Vec<(TyDiagnosticData, DiagLoc)>,
 ) {
     match type_ref {
         TypeRef::Path { path, args } => {
@@ -342,7 +354,7 @@ fn collect_unresolved_type_names(
                     TyDiagnosticData::UnresolvedType {
                         name: name_str.to_owned(),
                     },
-                    expr_idx,
+                    DiagLoc::Expr(expr_idx),
                 ));
             }
             for arg in args {

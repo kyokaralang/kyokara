@@ -11,16 +11,17 @@ use kyokara_stdx::FxHashSet;
 use la_arena::Arena;
 
 use crate::diagnostics::TyDiagnosticData;
+use crate::infer::DiagLoc;
 use crate::ty::Ty;
 
 /// Check that a match on an ADT type is exhaustive and has no redundant arms.
-pub fn check_exhaustiveness(
+pub(crate) fn check_exhaustiveness(
     type_idx: TypeItemIdx,
     arms: &[MatchArm],
     pats: &Arena<Pat>,
     item_tree: &ItemTree,
     interner: &Interner,
-    diags: &mut Vec<(TyDiagnosticData, ExprIdx)>,
+    diags: &mut Vec<(TyDiagnosticData, DiagLoc)>,
     match_expr_idx: ExprIdx,
 ) {
     let type_item = &item_tree.types[type_idx];
@@ -38,7 +39,10 @@ pub fn check_exhaustiveness(
         match pat {
             Pat::Wildcard | Pat::Bind { .. } => {
                 if has_wildcard || covered.len() == variants.len() {
-                    diags.push((TyDiagnosticData::RedundantMatchArm, match_expr_idx));
+                    diags.push((
+                        TyDiagnosticData::RedundantMatchArm,
+                        DiagLoc::Expr(match_expr_idx),
+                    ));
                 }
                 if !has_wildcard {
                     has_wildcard = true;
@@ -48,7 +52,10 @@ pub fn check_exhaustiveness(
             Pat::Constructor { path, args } => {
                 if has_wildcard {
                     // Arms after a wildcard are redundant.
-                    diags.push((TyDiagnosticData::RedundantMatchArm, match_expr_idx));
+                    diags.push((
+                        TyDiagnosticData::RedundantMatchArm,
+                        DiagLoc::Expr(match_expr_idx),
+                    ));
                     continue;
                 }
                 // Conservative nested-pattern handling:
@@ -69,7 +76,10 @@ pub fn check_exhaustiveness(
                         .position(|v| v.name.resolve(interner) == name.resolve(interner))
                     && !covered.insert(variant_idx)
                 {
-                    diags.push((TyDiagnosticData::RedundantMatchArm, match_expr_idx));
+                    diags.push((
+                        TyDiagnosticData::RedundantMatchArm,
+                        DiagLoc::Expr(match_expr_idx),
+                    ));
                 }
             }
             Pat::Literal(_) => {
@@ -90,7 +100,7 @@ pub fn check_exhaustiveness(
             .collect();
         diags.push((
             TyDiagnosticData::MissingMatchArms { missing },
-            match_expr_idx,
+            DiagLoc::Expr(match_expr_idx),
         ));
     }
 }
@@ -101,11 +111,11 @@ pub fn check_exhaustiveness(
 /// - wildcard / bind arm means exhaustive
 /// - `Bool` with both `true` and `false` literal arms means exhaustive
 /// - otherwise emit `MissingMatchArms`
-pub fn check_non_adt_exhaustiveness(
+pub(crate) fn check_non_adt_exhaustiveness(
     scrutinee_ty: &Ty,
     arms: &[MatchArm],
     pats: &Arena<Pat>,
-    diags: &mut Vec<(TyDiagnosticData, ExprIdx)>,
+    diags: &mut Vec<(TyDiagnosticData, DiagLoc)>,
     match_expr_idx: ExprIdx,
 ) {
     if scrutinee_ty.is_poison() {
@@ -127,7 +137,7 @@ pub fn check_non_adt_exhaustiveness(
         TyDiagnosticData::MissingMatchArms {
             missing: vec!["_".to_string()],
         },
-        match_expr_idx,
+        DiagLoc::Expr(match_expr_idx),
     ));
 }
 

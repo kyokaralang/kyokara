@@ -762,7 +762,8 @@ fn assert_project_metamorphic_equivalent(
     let original_edges = call_edges_by_caller_id(&original);
     let transformed_edges = call_edges_by_caller_id(&transformed);
     assert_eq!(
-        original_edges, transformed_edges,
+        original_edges,
+        transformed_edges,
         "project metamorphic call-edge mismatch\n--- original project ---\n{}\n--- transformed project ---\n{}\n--- original edges ---\n{:?}\n--- transformed edges ---\n{:?}",
         render_project_sources(original_files),
         render_project_sources(transformed_files),
@@ -773,7 +774,8 @@ fn assert_project_metamorphic_equivalent(
     let original_diags = diagnostic_signatures(&original);
     let transformed_diags = diagnostic_signatures(&transformed);
     assert_eq!(
-        original_diags, transformed_diags,
+        original_diags,
+        transformed_diags,
         "project metamorphic diagnostics mismatch\n--- original project ---\n{}\n--- transformed project ---\n{}\n--- original diagnostics ---\n{:?}\n--- transformed diagnostics ---\n{:?}",
         render_project_sources(original_files),
         render_project_sources(transformed_files),
@@ -826,7 +828,8 @@ fn assert_diagnostic_code_delta(
         .collect();
 
     assert_eq!(
-        actual_delta, expected,
+        actual_delta,
+        expected,
         "diagnostic delta mismatch\n--- original source ---\n{}\n--- transformed source ---\n{}\n--- original diagnostics ---\n{:?}\n--- transformed diagnostics ---\n{:?}\n--- original counts ---\n{:?}\n--- transformed counts ---\n{:?}\n--- actual delta ---\n{:?}\n--- expected delta ---\n{:?}",
         original_src,
         transformed_src,
@@ -1605,6 +1608,54 @@ fn unknown_constructor_pattern_emits_diagnostic() {
         unresolved[0].message.contains("Nope"),
         "diagnostic should mention the unknown constructor name, got: {}",
         unresolved[0].message
+    );
+}
+
+#[test]
+fn unknown_constructor_pattern_diagnostic_uses_pattern_span() {
+    let src = "fn main() -> Int { match Some(1) { Nope(x) => x, _ => 0 } }";
+    let output = check(src, "test.ky");
+    let diag = output
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "E0013")
+        .expect("expected E0013 for unknown constructor");
+
+    let pat = "Nope(x)";
+    let pat_start = src.find(pat).expect("pattern should exist in source") as u32;
+    let pat_end = pat_start + pat.len() as u32;
+    assert!(
+        diag.span.start >= pat_start && diag.span.end <= pat_end,
+        "expected E0013 span within pattern `{}` [{}..{}], got [{}..{}]",
+        pat,
+        pat_start,
+        pat_end,
+        diag.span.start,
+        diag.span.end
+    );
+}
+
+#[test]
+fn constructor_pattern_arity_mismatch_diagnostic_uses_pattern_span() {
+    let src = "fn main() -> Int { match Some(1) { Some(_, _) => 0, None => 1 } }";
+    let output = check(src, "test.ky");
+    let diag = output
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "E0007")
+        .expect("expected E0007 for constructor arity mismatch");
+
+    let pat = "Some(_, _)";
+    let pat_start = src.find(pat).expect("pattern should exist in source") as u32;
+    let pat_end = pat_start + pat.len() as u32;
+    assert!(
+        diag.span.start >= pat_start && diag.span.end <= pat_end,
+        "expected E0007 span within pattern `{}` [{}..{}], got [{}..{}]",
+        pat,
+        pat_start,
+        pat_end,
+        diag.span.start,
+        diag.span.end
     );
 }
 
