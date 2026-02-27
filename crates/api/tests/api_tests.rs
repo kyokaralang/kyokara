@@ -2304,3 +2304,62 @@ fn main() -> Int {
         main_fn.calls
     );
 }
+
+#[test]
+fn symbol_graph_nested_block_shadow_respects_lexical_scope() {
+    // Nested block local `foo` should shadow only within the block.
+    // We expect one top-level edge from the final outer `foo()` call.
+    let src = r#"
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  {
+    let foo = fn() -> Int => 2
+    foo()
+  }
+  foo()
+}
+"#;
+    let output = check(src, "test.ky");
+    let main_fn = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "main")
+        .expect("should have main function");
+    let foo_edges = main_fn.calls.iter().filter(|c| c.as_str() == "fn::foo").count();
+    assert_eq!(
+        foo_edges, 1,
+        "expected exactly one top-level fn::foo edge (outer lexical scope), got: {:?}",
+        main_fn.calls
+    );
+}
+
+#[test]
+fn project_symbol_graph_pre_post_shadow_with_imported_function() {
+    // Project mode: imported `math::add` should be recorded before local shadowing,
+    // and local post-shadow call should not create an extra call edge.
+    let (_dir, main_path) = write_project(&[
+        (
+            "main.ky",
+            "import math\nfn caller() -> Int {\n  add(1, 2)\n  let add = fn(x: Int, y: Int) -> Int => x\n  add(1, 2)\n}\n",
+        ),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
+    ]);
+    let output = check_project(&main_path);
+    let caller = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "caller")
+        .expect("should have caller function");
+    let imported_edges = caller
+        .calls
+        .iter()
+        .filter(|c| c.as_str() == "fn::math::add")
+        .count();
+    assert_eq!(
+        imported_edges, 1,
+        "expected exactly one fn::math::add edge (pre-shadow imported call), got: {:?}",
+        caller.calls
+    );
+}
