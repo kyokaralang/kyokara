@@ -24,6 +24,12 @@ pub enum TyDiagnosticData {
     NotAFunction { ty: Ty },
     /// Wrong number of arguments in function call.
     ArgCountMismatch { expected: usize, actual: usize },
+    /// Unknown named argument in function call.
+    UnknownNamedArg { name: String },
+    /// Duplicate named argument in function call.
+    DuplicateNamedArg { name: String },
+    /// Required parameter not provided by call arguments.
+    MissingNamedArg { name: String },
     /// Field access on non-record type.
     NoSuchField { field: String, ty: Ty },
     /// Missing match arms for an ADT.
@@ -57,6 +63,9 @@ impl TyDiagnosticData {
             TyDiagnosticData::InvalidNotOperand { .. } => "E0005",
             TyDiagnosticData::NotAFunction { .. } => "E0006",
             TyDiagnosticData::ArgCountMismatch { .. } => "E0007",
+            TyDiagnosticData::UnknownNamedArg { .. } => "E0018",
+            TyDiagnosticData::DuplicateNamedArg { .. } => "E0019",
+            TyDiagnosticData::MissingNamedArg { .. } => "E0020",
             TyDiagnosticData::NoSuchField { .. } => "E0008",
             TyDiagnosticData::MissingMatchArms { .. } => "E0009",
             TyDiagnosticData::RedundantMatchArm => "E0010",
@@ -125,6 +134,15 @@ impl TyDiagnosticData {
             }
             TyDiagnosticData::ArgCountMismatch { expected, actual } => {
                 format!("expected {expected} argument(s), found {actual}")
+            }
+            TyDiagnosticData::UnknownNamedArg { name } => {
+                format!("unknown named argument `{name}`")
+            }
+            TyDiagnosticData::DuplicateNamedArg { name } => {
+                format!("duplicate named argument `{name}`")
+            }
+            TyDiagnosticData::MissingNamedArg { name } => {
+                format!("missing argument for parameter `{name}`")
             }
             TyDiagnosticData::NoSuchField { field, ty } => {
                 format!("no field `{field}` on type `{}`", dt(ty),)

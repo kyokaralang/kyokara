@@ -2092,6 +2092,16 @@ fn run_rejects_compile_invalid_programs_detected_by_check() {
             src: "fn main() -> Foo { 1 }",
             run_fragment: "unresolved type",
         },
+        Case {
+            name: "unknown named argument",
+            src: "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(z: 1, y: 2) }",
+            run_fragment: "unknown named argument",
+        },
+        Case {
+            name: "duplicate named argument",
+            src: "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(x: 1, x: 2) }",
+            run_fragment: "duplicate named argument",
+        },
     ];
 
     for case in cases {
@@ -2138,6 +2148,11 @@ fn run_compile_gating_uses_structured_error_classes() {
         Case {
             name: "type",
             src: "fn main() -> Int { \"x\" }",
+            class_prefix: "compile type errors:",
+        },
+        Case {
+            name: "named arg validation",
+            src: "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(z: 1, y: 2) }",
             class_prefix: "compile type errors:",
         },
     ];
@@ -2497,6 +2512,33 @@ fn run_project_imported_pub_fn_calls_private_helper() {
         result.value,
         Value::Int(42),
         "foo() should call util's private helper() and return 42"
+    );
+}
+
+#[test]
+fn run_project_imported_private_helper_name_does_not_capture_entry_fn() {
+    // Regression guard: if entry module also defines `helper`, util::foo must
+    // still resolve util::helper, not main::helper.
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let util_path = dir.path().join("util.ky");
+    let mut util_file = std::fs::File::create(&util_path).unwrap();
+    writeln!(util_file, "fn helper() -> Int {{ 41 }}").unwrap();
+    writeln!(util_file, "pub fn foo() -> Int {{ helper() + 1 }}").unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import util").unwrap();
+    writeln!(main_file, "fn helper() -> Int {{ 100 }}").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ foo() }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path).expect("should succeed");
+    assert_eq!(
+        result.value,
+        Value::Int(42),
+        "foo() should resolve helper() in util module scope, not entry module scope"
     );
 }
 

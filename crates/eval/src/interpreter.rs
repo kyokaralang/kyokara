@@ -22,6 +22,9 @@ pub struct Interpreter {
     item_tree: ItemTree,
     module_scope: ModuleScope,
     fn_bodies: FxHashMap<FnItemIdx, Body>,
+    /// Per-function module-level function overrides used for project mode.
+    /// Maps `current_fn_idx -> (name -> resolved fn_idx)`.
+    fn_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, FnItemIdx>>,
     interner: Interner,
     intrinsics: FxHashMap<Name, IntrinsicFn>,
     /// Snapshot of the environment at function entry, used by `old()` in ensures clauses.
@@ -34,6 +37,8 @@ pub struct Interpreter {
     manifest: Option<CapabilityManifest>,
     /// Shared environment used across all function calls to avoid per-call allocation.
     env: Env,
+    /// Current user function being evaluated (used to select scope overrides).
+    current_fn: Option<FnItemIdx>,
 }
 
 /// Used to implement early return from functions.
@@ -81,6 +86,7 @@ impl Interpreter {
         item_tree: ItemTree,
         module_scope: ModuleScope,
         fn_bodies: FxHashMap<FnItemIdx, Body>,
+        fn_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, FnItemIdx>>,
         mut interner: Interner,
         manifest: Option<CapabilityManifest>,
     ) -> Self {
@@ -96,6 +102,7 @@ impl Interpreter {
             item_tree,
             module_scope,
             fn_bodies,
+            fn_scope_overrides,
             interner,
             intrinsics,
             old_env: None,
@@ -103,6 +110,7 @@ impl Interpreter {
             option_none,
             manifest,
             env: Env::new(),
+            current_fn: None,
         }
     }
 
@@ -172,6 +180,13 @@ impl Interpreter {
 
     /// Call a user-defined function by index.
     fn call_fn(&mut self, fn_idx: FnItemIdx, args: Args) -> Result<Value, RuntimeError> {
+        let prev_fn = self.current_fn.replace(fn_idx);
+        let result = self.call_fn_impl(fn_idx, args);
+        self.current_fn = prev_fn;
+        result
+    }
+
+    fn call_fn_impl(&mut self, fn_idx: FnItemIdx, args: Args) -> Result<Value, RuntimeError> {
         let body = self
             .fn_bodies
             .get(&fn_idx)
@@ -547,21 +562,25 @@ impl Interpreter {
                         // SAFETY: eval_expr_shared never mutates item_tree.
                         let params_ptr = &fn_item.params as *const Vec<FnParam>;
                         let params = unsafe { &*params_ptr };
-
-                        self.env.push_scope();
-                        for (i, arg_idx) in reordered.iter().enumerate() {
-                            let val = eval_propagate_shared!(self, body, *arg_idx);
-                            if let Some(param) = params.get(i) {
-                                self.env.bind(param.name, val);
+                        let prev_fn = self.current_fn.replace(fn_idx);
+                        let fast_result = (|| -> Result<ControlFlow, RuntimeError> {
+                            self.env.push_scope();
+                            for (i, arg_idx) in reordered.iter().enumerate() {
+                                let val = eval_propagate_shared!(self, body, *arg_idx);
+                                if let Some(param) = params.get(i) {
+                                    self.env.bind(param.name, val);
+                                }
                             }
-                        }
 
-                        let result = self.eval_expr_shared(fn_body, fn_body.root);
-                        self.env.pop_scope();
-                        let return_val = match result? {
-                            ControlFlow::Value(v) | ControlFlow::Return(v) => v,
-                        };
-                        return Ok(ControlFlow::Value(return_val));
+                            let result = self.eval_expr_shared(fn_body, fn_body.root);
+                            self.env.pop_scope();
+                            let return_val = match result? {
+                                ControlFlow::Value(v) | ControlFlow::Return(v) => v,
+                            };
+                            Ok(ControlFlow::Value(return_val))
+                        })();
+                        self.current_fn = prev_fn;
+                        return fast_result;
                     }
 
                     // Slow path: contracts present — collect args into SmallVec.
@@ -703,24 +722,33 @@ impl Interpreter {
             return Ok(val.clone());
         }
 
-        // 2. Module-level functions (checked before intrinsics so that user-defined
+        // 2. Function-local module overrides (project mode): resolve names in the
+        // source module of the currently executing function before global scope.
+        if let Some(cur_fn) = self.current_fn
+            && let Some(overrides) = self.fn_scope_overrides.get(&cur_fn)
+            && let Some(&fn_idx) = overrides.get(&name)
+        {
+            return Ok(Value::Fn(Box::new(FnValue::User(fn_idx))));
+        }
+
+        // 3. Module-level functions (checked before intrinsics so that user-defined
         //    functions can shadow builtins like `abs`, `min`, `max`).
         //    Only resolve as a user function if it has a body — intrinsic stubs
         //    are registered in module_scope.functions for type checking but lack
-        //    bodies, so they fall through to step 3.
+        //    bodies, so they fall through to step 4.
         if let Some(&fn_idx) = self.module_scope.functions.get(&name) {
             if self.fn_bodies.contains_key(&fn_idx) {
                 return Ok(Value::Fn(Box::new(FnValue::User(fn_idx))));
             }
         }
 
-        // 3. Intrinsics (fallback for names that have no user-defined body).
+        // 4. Intrinsics (fallback for names that have no user-defined body).
         if let Some(&intr) = self.intrinsics.get(&name) {
             return Ok(Value::Fn(Box::new(FnValue::Intrinsic(intr))));
         }
 
-        // 4. Module-level functions without bodies (shouldn't normally happen
-        //    after step 2+3, but kept as a fallback for robustness).
+        // 5. Module-level functions without bodies (shouldn't normally happen
+        //    after step 3+4, but kept as a fallback for robustness).
         if let Some(&fn_idx) = self.module_scope.functions.get(&name) {
             return Ok(Value::Fn(Box::new(FnValue::User(fn_idx))));
         }
