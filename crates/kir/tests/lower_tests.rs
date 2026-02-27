@@ -1374,3 +1374,79 @@ fn test_fn_ref_guard_hole_stays_hole() {
         "typed hole should remain a hole. output:\n{out}"
     );
 }
+
+// ── #151: validator should detect unbound block params ──────────────
+
+#[test]
+fn test_validator_rejects_block_params_with_no_predecessors() {
+    // Bug: a block with params but no incoming edges passes validation.
+    // Construct KIR manually: entry -> return, orphan block with a param.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    let orphan = builder.new_block(None);
+
+    builder.switch_to(entry);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    // orphan block has a param but nobody jumps to it
+    let _param = builder.add_block_param(orphan, None, Ty::Int);
+    builder.switch_to(orphan);
+    let dead = builder.push_const(Constant::Int(0), Ty::Int);
+    builder.set_return(dead);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.iter().any(|d| d.message.contains("no predecessor")),
+        "should reject block with params but no predecessors. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validator_accepts_block_params_with_predecessors() {
+    // Guard: block with params that has an incoming jump should be fine.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    let target = builder.new_block(None);
+
+    builder.switch_to(entry);
+    let val = builder.push_const(Constant::Int(42), Ty::Int);
+    builder.set_jump(BranchTarget {
+        block: target,
+        args: vec![val],
+    });
+
+    let param = builder.add_block_param(target, None, Ty::Int);
+    builder.switch_to(target);
+    builder.set_return(param);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Int,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.is_empty(),
+        "block with params and a predecessor should pass. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
