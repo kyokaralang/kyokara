@@ -1,9 +1,15 @@
 //! Integration tests for HIR → KIR lowering.
 
 use kyokara_hir::check_file;
-use kyokara_kir::block::Terminator;
+use kyokara_hir_def::name::Name;
+use kyokara_hir_ty::effects::EffectSet;
+use kyokara_hir_ty::ty::Ty;
+use kyokara_intern::Interner;
+use kyokara_kir::block::{BranchTarget, SwitchCase, Terminator};
+use kyokara_kir::build::KirBuilder;
 use kyokara_kir::display::{DisplayCtx, display_module};
-use kyokara_kir::inst::Inst;
+use kyokara_kir::function::KirContracts;
+use kyokara_kir::inst::{Constant, Inst};
 use kyokara_kir::lower::lower_module;
 use kyokara_kir::validate::validate_function;
 
@@ -1022,4 +1028,84 @@ fn test_adt_switch_first_dup_case_wins() {
         }
         other => panic!("expected Const, got: {other:?}"),
     }
+}
+
+// ── Validator: duplicate switch-case check (#143) ───
+
+#[test]
+fn test_validator_rejects_duplicate_switch_cases() {
+    // Build a KIR function with a Switch that has duplicate variants.
+    let mut interner = Interner::new();
+    let fn_name = Name::new(&mut interner, "test_fn");
+    let variant_a = Name::new(&mut interner, "A");
+
+    let mut builder = KirBuilder::new();
+    let entry_name = Name::new(&mut interner, "entry");
+    let entry = builder.new_block(Some(entry_name));
+    builder.switch_to(entry);
+
+    let scr = builder.alloc_value(Ty::Int, Inst::FnParam { index: 0 });
+    let case1_blk = builder.new_block(None);
+    let case2_blk = builder.new_block(None);
+
+    // Two switch cases with the same variant name.
+    builder.set_terminator(Terminator::Switch {
+        scrutinee: scr,
+        cases: vec![
+            SwitchCase {
+                variant: variant_a,
+                target: BranchTarget {
+                    block: case1_blk,
+                    args: vec![],
+                },
+            },
+            SwitchCase {
+                variant: variant_a,
+                target: BranchTarget {
+                    block: case2_blk,
+                    args: vec![],
+                },
+            },
+        ],
+        default: None,
+    });
+
+    // Terminate case blocks.
+    builder.switch_to(case1_blk);
+    let c1 = builder.push_const(Constant::Int(1), Ty::Int);
+    builder.set_return(c1);
+    builder.switch_to(case2_blk);
+    let c2 = builder.push_const(Constant::Int(2), Ty::Int);
+    builder.set_return(c2);
+
+    let func = builder.build(
+        fn_name,
+        vec![(Name::new(&mut interner, "x"), Ty::Int)],
+        Ty::Int,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.iter().any(|d| d.message.contains("duplicate case")),
+        "validator should reject duplicate switch cases, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_validator_accepts_unique_switch_cases() {
+    // Guard: unique switch cases should pass validation.
+    let out = lower_and_display(
+        "type W = | A | B
+         fn f(x: W) -> Int {
+           match x {
+             A => 1
+             B => 2
+           }
+         }",
+    );
+    // lower_and_display already validates; just confirm output is well-formed.
+    assert!(out.contains("switch"), "output:\n{out}");
 }

@@ -8,6 +8,8 @@
 //! - Return value types match function return type
 //! - BlockParam instructions match their block's parameter declarations
 
+use rustc_hash::FxHashSet;
+
 use kyokara_diagnostics::{Diagnostic, Severity};
 use kyokara_hir_ty::ty::Ty;
 use kyokara_intern::Interner;
@@ -146,7 +148,7 @@ pub fn validate_function(func: &KirFunction, interner: &Interner) -> Vec<Diagnos
 
         // Validate terminator references
         if let Some(term) = &block.terminator {
-            validate_terminator(term, func, &block_label, fn_name, &mut diags);
+            validate_terminator(term, func, &block_label, fn_name, interner, &mut diags);
         }
     }
 
@@ -158,6 +160,7 @@ fn validate_terminator(
     func: &KirFunction,
     block_label: &str,
     fn_name: &str,
+    interner: &Interner,
     diags: &mut Vec<Diagnostic>,
 ) {
     match term {
@@ -219,7 +222,16 @@ fn validate_terminator(
                 "switch scrutinee",
                 diags,
             );
+            // Check for duplicate case variants.
+            let mut seen_variants = FxHashSet::default();
             for case in cases {
+                let variant_str = case.variant.resolve(interner);
+                if !seen_variants.insert(case.variant) {
+                    diags.push(error(format!(
+                        "fn {}: block {} switch has duplicate case for variant `{}`",
+                        fn_name, block_label, variant_str
+                    )));
+                }
                 validate_branch_target(
                     &case.target,
                     func,
