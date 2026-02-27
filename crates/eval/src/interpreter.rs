@@ -1194,7 +1194,7 @@ impl Interpreter {
         &mut self,
         env: &mut Env,
         body: &Body,
-        path: Option<&kyokara_hir_def::path::Path>,
+        _path: Option<&kyokara_hir_def::path::Path>,
         fields: &[(Name, ExprIdx)],
     ) -> Result<ControlFlow, RuntimeError> {
         let mut field_vals = Vec::with_capacity(fields.len());
@@ -1203,19 +1203,10 @@ impl Interpreter {
             field_vals.push((*name, val));
         }
 
-        // If there's a path, it's an ADT record constructor.
-        if let Some(path) = path
-            && let Some(ctor_name) = path.last()
-            && let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&ctor_name)
-        {
-            let vals: Vec<Value> = field_vals.into_iter().map(|(_, v)| v).collect();
-            return Ok(ControlFlow::Value(Value::Adt {
-                type_idx,
-                variant: variant_idx,
-                fields: vals,
-            }));
-        }
-
+        // Record literals (`Name { field: value }`) always produce record
+        // values. ADT constructors are handled separately through the call
+        // path (`Name(value)`). This avoids misinterpreting record literals
+        // as ADT constructors when names collide (issue #127).
         Ok(ControlFlow::Value(Value::Record { fields: field_vals }))
     }
 
@@ -1314,7 +1305,7 @@ impl Interpreter {
     fn eval_record_lit_shared(
         &mut self,
         body: &Body,
-        path: Option<&kyokara_hir_def::path::Path>,
+        _path: Option<&kyokara_hir_def::path::Path>,
         fields: &[(Name, ExprIdx)],
     ) -> Result<ControlFlow, RuntimeError> {
         let mut field_vals = Vec::with_capacity(fields.len());
@@ -1323,18 +1314,7 @@ impl Interpreter {
             field_vals.push((*name, val));
         }
 
-        if let Some(path) = path
-            && let Some(ctor_name) = path.last()
-            && let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&ctor_name)
-        {
-            let vals: Vec<Value> = field_vals.into_iter().map(|(_, v)| v).collect();
-            return Ok(ControlFlow::Value(Value::Adt {
-                type_idx,
-                variant: variant_idx,
-                fields: vals,
-            }));
-        }
-
+        // Record literals always produce record values (see eval_record_lit).
         Ok(ControlFlow::Value(Value::Record { fields: field_vals }))
     }
 }

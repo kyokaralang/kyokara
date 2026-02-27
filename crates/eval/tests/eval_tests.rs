@@ -359,6 +359,22 @@ fn eval_record_literal() {
     assert!(matches!(val, Value::Int(7)));
 }
 
+#[test]
+fn eval_record_literal_not_confused_with_adt_constructor() {
+    // Regression test for issue #127: when a record type alias and an ADT
+    // constructor share the same name, `Point { x: 1 }` must produce a
+    // record value (not an ADT), and field access on it must work.
+    let val = run_ok(
+        "type Point = { x: Int }
+         type Wrap = | Point(Int)
+         fn main() -> Int {
+           let p = Point { x: 1 }
+           p.x
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
 // ── Recursion tests ──────────────────────────────────────────────────
 
 #[test]
