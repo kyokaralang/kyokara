@@ -1,0 +1,13 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "check": {
+    "ok": false,
+    "codes_all": ["E0015"],
+    "messages_all": ["type name", "used as value"]
+  },
+  "run": {
+    "ok": false,
+    "stderr_contains": ["type name", "used as value"]
+  }
+}

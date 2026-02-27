@@ -38,6 +38,8 @@ pub enum TyDiagnosticData {
     UnresolvedConstructor { name: String },
     /// Refutable pattern used in a `let` binding.
     RefutableLetPattern,
+    /// Non-value symbol used in expression position.
+    NonValueNameInExpr { kind: String, name: String },
 }
 
 impl TyDiagnosticData {
@@ -58,6 +60,7 @@ impl TyDiagnosticData {
             TyDiagnosticData::UnresolvedType { .. } => "E0012",
             TyDiagnosticData::UnresolvedConstructor { .. } => "E0013",
             TyDiagnosticData::RefutableLetPattern => "E0014",
+            TyDiagnosticData::NonValueNameInExpr { .. } => "E0015",
         }
     }
 
@@ -138,6 +141,9 @@ impl TyDiagnosticData {
             }
             TyDiagnosticData::RefutableLetPattern => {
                 "refutable let pattern: use an irrefutable pattern or a match".into()
+            }
+            TyDiagnosticData::NonValueNameInExpr { kind, name } => {
+                format!("{kind} name `{name}` used as value")
             }
         };
         Diagnostic::error(message, span)
