@@ -110,14 +110,12 @@ pub fn run_with_manifest(
         &mut interner,
     );
 
-    // Check body_lowering_diagnostics for errors (e.g. unresolved names).
-    // Filter out known false positives:
-    //   - "duplicate binding" from constructor pattern scope bug
+    // Check body_lowering_diagnostics for errors (e.g. unresolved names,
+    // duplicate bindings).
     let body_errors: Vec<String> = type_check
         .body_lowering_diagnostics
         .iter()
         .filter(|d| d.severity == kyokara_diagnostics::Severity::Error)
-        .filter(|d| !d.message.starts_with("duplicate binding"))
         .map(|d| d.message.clone())
         .collect();
     if !body_errors.is_empty() {

@@ -52,6 +52,7 @@ pub fn lower_body(
         module_scope,
         current_scope: None,
         in_contract: false,
+        pattern_bindings: std::collections::HashSet::new(),
     };
 
     // Create root scope
@@ -145,6 +146,10 @@ struct BodyLowerCtx<'a> {
     module_scope: &'a ModuleScope,
     current_scope: Option<ScopeIdx>,
     in_contract: bool,
+    /// Names bound within the current pattern tree, used to detect
+    /// duplicate bindings like `Pair(x, x)` without flagging sequential
+    /// let-rebindings like `let x = 1; let x = 2`.
+    pattern_bindings: std::collections::HashSet<Name>,
 }
 
 impl BodyLowerCtx<'_> {
@@ -508,6 +513,7 @@ impl BodyLowerCtx<'_> {
                 al.arms()
                     .map(|arm| {
                         self.push_scope();
+                        self.pattern_bindings.clear();
                         let pat = arm
                             .pat()
                             .map(|p| self.lower_pat(&p))
@@ -560,6 +566,7 @@ impl BodyLowerCtx<'_> {
             let is_last = i == items.len() - 1;
             match item {
                 BlockItem::LetBinding(lb) => {
+                    self.pattern_bindings.clear();
                     let pat = lb
                         .pat()
                         .map(|p| self.lower_pat(&p))
@@ -738,7 +745,7 @@ impl BodyLowerCtx<'_> {
                     // Binding pattern — introduces name into scope
                     let pat_idx = self.alloc_pat(pat::Pat::Bind { name });
                     if let Some(scope) = self.current_scope {
-                        if self.scopes.scopes[scope].entries.contains_key(&name) {
+                        if !self.pattern_bindings.insert(name) {
                             let span = self.node_span(ip.syntax());
                             self.diagnostics.push(Diagnostic::error(
                                 format!(
