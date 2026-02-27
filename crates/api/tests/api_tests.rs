@@ -73,6 +73,56 @@ fn check_hole_inputs_no_duplicate_names() {
 }
 
 #[test]
+fn check_hole_inputs_exclude_out_of_scope_inner_binding_issue_132() {
+    let src = r#"
+fn main(x: Int) -> Int {
+  if true {
+    let z = 1
+    0
+  } else {
+    0
+  }
+  _
+}
+"#;
+    let output = check(src, "test.ky");
+    assert_eq!(output.holes.len(), 1);
+    let hole = &output.holes[0];
+    assert!(
+        hole.inputs.iter().any(|v| v.name == "x" && v.ty == "Int"),
+        "expected in-scope param `x: Int`, got: {:?}",
+        hole.inputs
+    );
+    assert!(
+        hole.inputs.iter().all(|v| v.name != "z"),
+        "out-of-scope branch local `z` must not appear in hole inputs: {:?}",
+        hole.inputs
+    );
+}
+
+#[test]
+fn check_hole_inputs_include_in_scope_branch_binding_issue_132_guard() {
+    let src = r#"
+fn main() -> Int {
+  if true {
+    let z = 1
+    _
+  } else {
+    0
+  }
+}
+"#;
+    let output = check(src, "test.ky");
+    assert_eq!(output.holes.len(), 1);
+    let hole = &output.holes[0];
+    assert!(
+        hole.inputs.iter().any(|v| v.name == "z" && v.ty == "Int"),
+        "expected in-scope branch local `z: Int`, got: {:?}",
+        hole.inputs
+    );
+}
+
+#[test]
 fn check_effect_violation_code() {
     let src = r#"
         cap Console {
@@ -1950,6 +2000,41 @@ fn duplicate_fields_in_record_pattern_produce_diagnostic() {
             .iter()
             .map(|d| &d.message)
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn record_pattern_binding_is_typed_for_not_a_function_issue_133() {
+    let src = r#"
+type Point = { x: Int }
+fn f(p: Point) -> Int { match p { { x } => x("oops"), _ => 0 } }
+fn main() -> Int { f(Point { x: 1 }) }
+"#;
+    let output = check(src, "test.ky");
+    let errs: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0006")
+        .collect();
+    assert!(
+        !errs.is_empty(),
+        "expected NotAFunction diagnostic (E0006) for record-bound `x`, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn record_pattern_binding_typed_field_still_allows_valid_use_issue_133_guard() {
+    let src = r#"
+type Point = { x: Int }
+fn f(p: Point) -> Int { match p { { x } => x + 1, _ => 0 } }
+fn main() -> Int { f(Point { x: 1 }) }
+"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected valid typed record binding usage, got: {:?}",
+        output.diagnostics
     );
 }
 

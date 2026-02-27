@@ -130,7 +130,7 @@ impl<'a> InferenceCtx<'a> {
                     .clone()
                     .unwrap_or_else(|| self.table.fresh_var());
 
-                let locals = self.collect_locals_in_scope();
+                let locals = self.collect_locals_in_scope(idx);
 
                 let hole_span = self
                     .body
@@ -1024,7 +1024,7 @@ impl<'a> InferenceCtx<'a> {
         }
     }
 
-    fn collect_locals_in_scope(&self) -> Vec<(kyokara_hir_def::name::Name, Ty)> {
+    fn collect_locals_in_scope(&self, expr_idx: ExprIdx) -> Vec<(kyokara_hir_def::name::Name, Ty)> {
         // Use an ordered map to deduplicate by name (last binding per name wins).
         let mut seen = rustc_hash::FxHashMap::default();
         let mut order = Vec::new();
@@ -1043,6 +1043,17 @@ impl<'a> InferenceCtx<'a> {
             if let Pat::Bind { name } = &self.body.pats[*pat_idx]
                 && let Some(ty) = self.local_types.get(*pat_idx)
             {
+                let is_visible_here = matches!(
+                    self.body
+                        .resolve_name_at(self.module_scope, expr_idx, *name)
+                        .map(|resolved| resolved.resolved),
+                    Some(ResolvedName::Local(ScopeDef::Local(visible_pat_idx)))
+                        if visible_pat_idx == *pat_idx
+                );
+                if !is_visible_here {
+                    continue;
+                }
+
                 let resolved = self.table.resolve_deep(ty);
                 if seen.insert(*name, resolved.clone()).is_none() {
                     order.push(*name);
