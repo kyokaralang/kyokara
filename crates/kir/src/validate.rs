@@ -400,6 +400,7 @@ fn validate_inst_operands(
                 diags,
             );
         }
+        Inst::FnRef { .. } => {}
     }
 }
 

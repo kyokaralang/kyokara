@@ -131,6 +131,10 @@ impl KirBuilder {
         self.push_value(ty, Inst::AdtFieldGet { base, field_index })
     }
 
+    pub fn push_fn_ref(&mut self, name: Name, ty: Ty) -> ValueId {
+        self.push_value(ty, Inst::FnRef { name })
+    }
+
     // ── Query helpers ─────────────────────────────────────────────
 
     pub fn current_block(&self) -> Option<BlockId> {

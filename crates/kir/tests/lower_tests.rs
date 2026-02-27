@@ -1342,3 +1342,35 @@ fn test_adt_match_nested_bind_still_works() {
         "should not have equality check for bind pattern. output:\n{out}"
     );
 }
+
+// ── #155: callable values should emit fn_ref, not hole ──────────────
+
+#[test]
+fn test_fn_ref_emitted_for_function_value() {
+    // Bug: `let f = inc` emits `hole` instead of `fn_ref @inc`.
+    let out = lower_and_display(
+        "fn inc(x: Int) -> Int { x + 1 }
+         fn apply(x: Int) -> Int {
+           let f = inc
+           f(x)
+         }",
+    );
+    assert!(
+        out.contains("fn_ref @inc"),
+        "should emit fn_ref for function reference. output:\n{out}"
+    );
+    assert!(
+        !out.contains("hole #"),
+        "function reference should not be a hole. output:\n{out}"
+    );
+}
+
+#[test]
+fn test_fn_ref_guard_hole_stays_hole() {
+    // Guard: typed holes should still emit hole instructions, not fn_ref.
+    let out = lower_and_display("fn f(x: Int) -> Int { x + ?todo }");
+    assert!(
+        out.contains("hole #"),
+        "typed hole should remain a hole. output:\n{out}"
+    );
+}
