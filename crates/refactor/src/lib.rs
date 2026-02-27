@@ -94,6 +94,9 @@ pub enum RefactorError {
     IoError {
         message: String,
     },
+    InternalError {
+        message: String,
+    },
 }
 
 impl std::fmt::Display for RefactorError {
@@ -123,6 +126,9 @@ impl std::fmt::Display for RefactorError {
             }
             RefactorError::IoError { message } => {
                 write!(f, "I/O error: {message}")
+            }
+            RefactorError::InternalError { message } => {
+                write!(f, "internal error: {message}")
             }
         }
     }

@@ -13,3 +13,6 @@ kyokara-diagnostics.workspace = true
 kyokara-syntax.workspace = true
 la-arena.workspace = true
 rustc-hash.workspace = true
+
+[lints]
+workspace = true

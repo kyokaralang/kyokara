@@ -25,6 +25,8 @@ pub fn format_document(source: &str) -> Vec<TextEdit> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
 
     #[test]

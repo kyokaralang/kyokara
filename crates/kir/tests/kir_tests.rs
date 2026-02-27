@@ -1,4 +1,5 @@
 //! Tests for KIR data structures, builder, display, and validator.
+#![allow(clippy::unwrap_used)]
 
 use kyokara_hir_def::expr::{BinaryOp, UnaryOp};
 use kyokara_hir_def::item_tree::ItemTree;

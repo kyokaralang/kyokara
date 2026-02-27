@@ -1,4 +1,5 @@
 //! Integration tests for the refactor engine.
+#![allow(clippy::unwrap_used)]
 
 use kyokara_refactor::{
     RefactorAction, RefactorError, SymbolKind, VerificationStatus, apply_edits, verify_single,

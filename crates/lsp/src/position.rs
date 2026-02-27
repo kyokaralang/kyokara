@@ -253,6 +253,8 @@ pub fn symbol_at_offset_with_scope(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
 
     #[test]

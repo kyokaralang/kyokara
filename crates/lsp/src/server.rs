@@ -45,7 +45,9 @@ impl KyokaraLanguageServer {
     async fn on_change(&self, uri: Url, text: String) {
         // Check if salsa detects a change (text equality).
         let needs_recompute = {
+            #[allow(clippy::unwrap_used)] // Mutex::lock — standard pattern, poisoning is fatal
             let mut db = self.db.lock().unwrap();
+            #[allow(clippy::unwrap_used)]
             let mut files = self.files.lock().unwrap();
 
             if let Some(existing) = files.get(&uri) {

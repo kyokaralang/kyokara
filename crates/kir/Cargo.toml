@@ -16,3 +16,6 @@ rustc-hash.workspace = true
 
 [dev-dependencies]
 kyokara-hir.workspace = true
+
+[lints]
+workspace = true

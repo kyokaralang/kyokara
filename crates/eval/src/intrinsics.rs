@@ -145,8 +145,13 @@ impl IntrinsicFn {
             IntrinsicFn::ListNew => Ok(Value::List(Vec::new())),
             IntrinsicFn::ListPush => {
                 let mut args = args;
-                let val = args.pop().unwrap();
-                let Value::List(mut xs) = args.pop().unwrap() else {
+                let val = args.pop().ok_or(RuntimeError::TypeError(
+                    "list_push: missing value argument".into(),
+                ))?;
+                let Value::List(mut xs) = args.pop().ok_or(RuntimeError::TypeError(
+                    "list_push: missing list argument".into(),
+                ))?
+                else {
                     return Err(RuntimeError::TypeError("list_push expects a List".into()));
                 };
                 xs.push(val);
