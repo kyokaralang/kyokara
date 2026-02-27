@@ -563,6 +563,136 @@ fn project_rename_with_import_renames_both_modules() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn project_rename_alias_shadow_does_not_rename_unrelated_alias_import() {
+    // main imports util as `math`; this must not count as importing math.ky.
+    let dir = std::env::temp_dir().join("kyokara_refactor_alias_shadow_no_overrename");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let main_path = dir.join("main.ky");
+    let util_path = dir.join("util.ky");
+    let math_path = dir.join("math.ky");
+
+    std::fs::write(
+        &main_path,
+        "import util as math\nfn main() -> Int { add(1, 2) }\n",
+    )
+    .unwrap();
+    std::fs::write(&util_path, "pub fn add(x: Int, y: Int) -> Int { x + y }\n").unwrap();
+    std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x - y }\n").unwrap();
+
+    let result = kyokara_hir::check_project(&main_path);
+    let action = RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: SymbolKind::Function,
+        target_file: Some(math_path.display().to_string()),
+    };
+    let refactor = kyokara_refactor::refactor_project(&result, action).unwrap();
+
+    let main_edits: Vec<_> = refactor
+        .edits
+        .iter()
+        .filter(|e| {
+            result
+                .file_map
+                .path(e.file_id)
+                .is_some_and(|p| p == &main_path)
+        })
+        .cloned()
+        .collect();
+    assert!(
+        main_edits.is_empty(),
+        "main.ky should not be edited when renaming math.ky symbol, got edits: {main_edits:?}"
+    );
+
+    let math_src = std::fs::read_to_string(&math_path).unwrap();
+    let math_edits: Vec<_> = refactor
+        .edits
+        .iter()
+        .filter(|e| {
+            result
+                .file_map
+                .path(e.file_id)
+                .is_some_and(|p| p == &math_path)
+        })
+        .cloned()
+        .collect();
+    let new_math = apply_edits(&math_src, &math_edits);
+    assert!(
+        new_math.contains("fn sum("),
+        "math.ky should be renamed: {new_math}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn project_rename_alias_import_still_renames_true_import_source() {
+    // main imports util as `math`; renaming util::add should still update main usage.
+    let dir = std::env::temp_dir().join("kyokara_refactor_alias_shadow_true_import");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let main_path = dir.join("main.ky");
+    let util_path = dir.join("util.ky");
+    let math_path = dir.join("math.ky");
+
+    std::fs::write(
+        &main_path,
+        "import util as math\nfn main() -> Int { add(1, 2) }\n",
+    )
+    .unwrap();
+    std::fs::write(&util_path, "pub fn add(x: Int, y: Int) -> Int { x + y }\n").unwrap();
+    std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x - y }\n").unwrap();
+
+    let result = kyokara_hir::check_project(&main_path);
+    let action = RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: SymbolKind::Function,
+        target_file: Some(util_path.display().to_string()),
+    };
+    let refactor = kyokara_refactor::refactor_project(&result, action).unwrap();
+
+    let main_src = std::fs::read_to_string(&main_path).unwrap();
+    let main_edits: Vec<_> = refactor
+        .edits
+        .iter()
+        .filter(|e| {
+            result
+                .file_map
+                .path(e.file_id)
+                .is_some_and(|p| p == &main_path)
+        })
+        .cloned()
+        .collect();
+    let new_main = apply_edits(&main_src, &main_edits);
+    assert!(
+        new_main.contains("sum(1, 2)"),
+        "main.ky call should be renamed for util import: {new_main}"
+    );
+
+    let math_edits: Vec<_> = refactor
+        .edits
+        .iter()
+        .filter(|e| {
+            result
+                .file_map
+                .path(e.file_id)
+                .is_some_and(|p| p == &math_path)
+        })
+        .cloned()
+        .collect();
+    assert!(
+        math_edits.is_empty(),
+        "math.ky should not be edited when renaming util.ky symbol"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ── Verification ────────────────────────────────────────────────────
 
 #[test]
