@@ -101,4 +101,48 @@ impl<'a> Resolver<'a> {
 
         None
     }
+
+    /// Look up a name with usage-position visibility for locals.
+    ///
+    /// The `local_visible` predicate decides whether each candidate local
+    /// scope definition is visible at the usage site.
+    pub fn resolve_name_at<F>(&self, name: Name, mut local_visible: F) -> Option<ResolvedName>
+    where
+        F: FnMut(&ScopeDef) -> bool,
+    {
+        // 1. Local scopes (innermost → outermost), position-aware.
+        if let Some(scope) = self.current_scope
+            && let Some(def) = self
+                .scope_tree
+                .lookup_at(scope, name, |def| local_visible(def))
+        {
+            return Some(ResolvedName::Local(def.clone()));
+        }
+
+        // 2. Module-level items
+        if let Some(&idx) = self.module.functions.get(&name) {
+            return Some(ResolvedName::Fn(idx));
+        }
+        if let Some(&idx) = self.module.types.get(&name) {
+            return Some(ResolvedName::Type(idx));
+        }
+        if let Some(&idx) = self.module.caps.get(&name) {
+            return Some(ResolvedName::Cap(idx));
+        }
+
+        // 3. Constructors
+        if let Some(&(type_idx, variant_idx)) = self.module.constructors.get(&name) {
+            return Some(ResolvedName::Constructor {
+                type_idx,
+                variant_idx,
+            });
+        }
+
+        // 4. Imports
+        if let Some(&idx) = self.module.imports.get(&name) {
+            return Some(ResolvedName::Import(idx));
+        }
+
+        None
+    }
 }
