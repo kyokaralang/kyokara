@@ -2241,3 +2241,35 @@ fn normal_arithmetic_still_works() {
     let val = run_ok("fn main() -> Int { abs(-42) }");
     assert_eq!(val, Value::Int(42));
 }
+
+// ── Named argument tests ────────────────────────────────────────────
+
+#[test]
+fn eval_named_args_basic() {
+    // Named args in order should work.
+    let val = run_ok(
+        "fn add(x: Int, y: Int) -> Int { x + y }
+         fn main() -> Int { add(x: 1, y: 2) }",
+    );
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_named_args_reordered() {
+    // Reordered named args: sub(y: 10, x: 3) should bind x=3, y=10 → 3 - 10 = -7.
+    let val = run_ok(
+        "fn sub(x: Int, y: Int) -> Int { x - y }
+         fn main() -> Int { sub(y: 10, x: 3) }",
+    );
+    assert_eq!(val, Value::Int(-7));
+}
+
+#[test]
+fn eval_positional_args_still_work() {
+    // Guard: positional args should remain correct.
+    let val = run_ok(
+        "fn sub(x: Int, y: Int) -> Int { x - y }
+         fn main() -> Int { sub(3, 10) }",
+    );
+    assert_eq!(val, Value::Int(-7));
+}

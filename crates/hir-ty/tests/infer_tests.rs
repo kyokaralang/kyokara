@@ -551,3 +551,32 @@ fn diagnostic_span_is_expression_precise() {
         "diagnostic span ({diag_range:?}) should be smaller than function span ({fn_range:?})"
     );
 }
+
+// ── Named argument tests ────────────────────────────────────────────
+
+#[test]
+fn named_args_satisfy_arity() {
+    // All-named call should type-check without arity errors.
+    check_ok(
+        "fn add(x: Int, y: Int) -> Int { x + y }
+         fn main() -> Int { add(x: 1, y: 2) }",
+    );
+}
+
+#[test]
+fn named_args_reordered_type_checks() {
+    // Reordered named args should still satisfy arity and type-check.
+    check_ok(
+        "fn sub(x: Int, y: Int) -> Int { x - y }
+         fn main() -> Int { sub(y: 10, x: 3) }",
+    );
+}
+
+#[test]
+fn positional_args_still_work() {
+    // Guard: positional args should continue to work as before.
+    check_ok(
+        "fn add(x: Int, y: Int) -> Int { x + y }
+         fn main() -> Int { add(1, 2) }",
+    );
+}
