@@ -313,7 +313,11 @@ Given wedge (automation), start with:
 
 KyokaraIR is the low-level **Intermediate Representation (IR)** — a compiler-internal form of the program that sits between the HIR (High-level IR, used for type checking and analysis) and the final codegen target (WASM). It is fully typed, SSA-based, and designed for optimization and verification.
 
-**Implementation status:** The `kir` crate implements the data structures, text format printer, well-formedness validator, builder API, and HIR→KIR lowering pass. Key design choices: block parameters instead of phi nodes (Cranelift/MLIR style), reuses `hir_ty::Ty` directly (no parallel type system), arena-based storage via `la_arena`. The lowering pass walks the typed HIR expression tree and emits flat SSA instructions with explicit control-flow blocks — if/else becomes Branch+merge, match becomes Switch (ADT) or chained Branch (sequential), contracts become Assert instructions.
+**Implementation status:** The `kir` crate implements the data structures, text format printer, well-formedness validator, builder API, and HIR→KIR lowering pass. Key design choices: block parameters instead of phi nodes (Cranelift/MLIR style), reuses `hir_ty::Ty` directly (no parallel type system), arena-based storage via `la_arena`. The lowering pass walks the typed HIR expression tree and emits flat SSA instructions with explicit control-flow blocks — if/else becomes Branch+merge, match becomes Switch (ADT) or chained Branch (sequential), contracts become Assert instructions with `old()` pre-state preservation, function references become FnRef values.
+
+**Validator invariants:** The well-formedness validator enforces: value reference validity, block parameter count/type matching against branch arguments, terminator presence, entry block has zero parameters, return type consistency, Bool type for Branch/Assert conditions, Record/Adt base type for field access, Adt base type for ADT field extraction, Fn type for indirect call targets, no duplicate Switch case variants, and no block parameters without predecessor edges (excluding unreachable blocks).
+
+**Lowering details:** The HIR→KIR lowering pass reads param types and return type from `InferenceResult` (not from expression types). ADT match lowering deduplicates constructor cases, stops after catch-all arms, and falls back to sequential lowering when arms contain unsupported patterns. Sequential match lowering marks the merge block unreachable when all arms terminate early and stops dispatch after wildcard/bind arms. Nested literal subpatterns inside ADT constructors emit equality checks with branch-to-fallback on mismatch.
 
 ### 6.1 Requirements
 
@@ -328,9 +332,10 @@ KyokaraIR must be:
 
 * constants, vars
 * record construct/access/update
-* ADT construct
+* ADT construct + field extraction
 * `switch` on ADT tags with binder unpacking
-* calls
+* calls (direct, indirect, intrinsic)
+* function references (first-class `FnRef`)
 * explicit error-return paths
 * `assert` nodes (contracts)
 
