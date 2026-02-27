@@ -54,7 +54,6 @@ pub fn lower_body(
         module_scope,
         current_scope: None,
         in_contract: false,
-        pattern_bindings: std::collections::HashSet::new(),
     };
 
     // Create root scope
@@ -158,10 +157,6 @@ struct BodyLowerCtx<'a> {
     module_scope: &'a ModuleScope,
     current_scope: Option<ScopeIdx>,
     in_contract: bool,
-    /// Names bound within the current pattern tree, used to detect
-    /// duplicate bindings like `Pair(x, x)` without flagging sequential
-    /// let-rebindings like `let x = 1; let x = 2`.
-    pattern_bindings: std::collections::HashSet<Name>,
 }
 
 impl BodyLowerCtx<'_> {
@@ -546,7 +541,6 @@ impl BodyLowerCtx<'_> {
                 al.arms()
                     .map(|arm| {
                         self.push_scope();
-                        self.pattern_bindings.clear();
                         let pat = arm
                             .pat()
                             .map(|p| self.lower_pat(&p, LocalBindingOrigin::MatchArmPattern))
@@ -599,7 +593,6 @@ impl BodyLowerCtx<'_> {
             let is_last = i == items.len() - 1;
             match item {
                 BlockItem::LetBinding(lb) => {
-                    self.pattern_bindings.clear();
                     let pat = lb
                         .pat()
                         .map(|p| self.lower_pat(&p, LocalBindingOrigin::LetPattern))
@@ -747,6 +740,16 @@ impl BodyLowerCtx<'_> {
     // ── Pattern lowering ───────────────────────────────────────────
 
     fn lower_pat(&mut self, pat_cst: &PatCst, origin: LocalBindingOrigin) -> PatIdx {
+        let mut binders = std::collections::HashSet::new();
+        self.lower_pat_with_binders(pat_cst, origin, &mut binders)
+    }
+
+    fn lower_pat_with_binders(
+        &mut self,
+        pat_cst: &PatCst,
+        origin: LocalBindingOrigin,
+        binders: &mut std::collections::HashSet<Name>,
+    ) -> PatIdx {
         match pat_cst {
             PatCst::Ident(ip) => {
                 let name = ip
@@ -784,7 +787,7 @@ impl BodyLowerCtx<'_> {
                     let pat_idx = self.alloc_pat(pat::Pat::Bind { name });
                     self.pat_source_map
                         .insert(pat_idx, ip.syntax().text_range());
-                    if !self.pattern_bindings.insert(name) {
+                    if !binders.insert(name) {
                         let span = self.node_span(ip.syntax());
                         self.diagnostics.push(Diagnostic::error(
                             format!(
@@ -806,7 +809,10 @@ impl BodyLowerCtx<'_> {
 
                 // No push_scope/pop_scope — sub-pattern bindings must stay in the
                 // current (arm) scope so the arm body can resolve them.
-                let args: Vec<PatIdx> = cp.args().map(|a| self.lower_pat(&a, origin)).collect();
+                let args: Vec<PatIdx> = cp
+                    .args()
+                    .map(|a| self.lower_pat_with_binders(&a, origin, binders))
+                    .collect();
 
                 let pat_idx = self.alloc_pat(pat::Pat::Constructor { path, args });
                 self.pat_source_map

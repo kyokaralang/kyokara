@@ -2076,6 +2076,122 @@ fn run_rejects_compile_invalid_programs_detected_by_check() {
 }
 
 #[test]
+fn run_compile_gating_uses_structured_error_classes() {
+    struct Case<'a> {
+        name: &'a str,
+        src: &'a str,
+        class_prefix: &'a str,
+    }
+
+    let cases = [
+        Case {
+            name: "parse",
+            src: "fn main( -> Int { 1 }",
+            class_prefix: "compile parse errors:",
+        },
+        Case {
+            name: "lowering item",
+            src: "fn foo() -> Int { 1 }\nfn foo() -> Int { 2 }\nfn main() -> Int { foo() }",
+            class_prefix: "compile lowering errors:",
+        },
+        Case {
+            name: "lowering body",
+            src: "fn main() -> Int { unknown_name }",
+            class_prefix: "compile lowering errors:",
+        },
+        Case {
+            name: "type",
+            src: "fn main() -> Int { \"x\" }",
+            class_prefix: "compile type errors:",
+        },
+    ];
+
+    for case in cases {
+        let err = run_err(case.src);
+        assert!(
+            err.contains(case.class_prefix),
+            "run should classify `{}` as `{}`; got: {}",
+            case.name,
+            case.class_prefix,
+            err
+        );
+    }
+}
+
+#[test]
+fn run_project_compile_gating_uses_structured_error_classes() {
+    use std::io::Write;
+
+    struct Case<'a> {
+        name: &'a str,
+        files: Vec<(&'a str, &'a str)>,
+        class_prefix: &'a str,
+    }
+
+    let cases = [
+        Case {
+            name: "parse",
+            files: vec![
+                ("main.ky", "fn main() -> Int { 42 }\n"),
+                ("bad.ky", "pub fn bad( -> Int { 42 }\n"),
+            ],
+            class_prefix: "compile parse errors:",
+        },
+        Case {
+            name: "lowering item",
+            files: vec![
+                ("main.ky", "fn main() -> Int { 42 }\n"),
+                (
+                    "dup.ky",
+                    "pub fn foo() -> Int { 1 }\npub fn foo() -> Int { 2 }\n",
+                ),
+            ],
+            class_prefix: "compile lowering errors:",
+        },
+        Case {
+            name: "lowering body",
+            files: vec![
+                ("main.ky", "fn main() -> Int { 42 }\n"),
+                ("bad.ky", "pub fn oops() -> Int { unknown_name }\n"),
+            ],
+            class_prefix: "compile lowering errors:",
+        },
+        Case {
+            name: "type",
+            files: vec![
+                ("main.ky", "import util\nfn main() -> Int { util() }\n"),
+                ("util.ky", "pub fn util() -> Int { true }\n"),
+            ],
+            class_prefix: "compile type errors:",
+        },
+    ];
+
+    for case in cases {
+        let dir = tempfile::tempdir().unwrap();
+        for (rel, src) in &case.files {
+            let path = dir.path().join(rel);
+            let mut file = std::fs::File::create(&path).unwrap();
+            write!(file, "{}", src).unwrap();
+        }
+        let main_path = dir.path().join("main.ky");
+        let err = match kyokara_eval::run_project(&main_path) {
+            Ok(result) => panic!(
+                "expected compile-time rejection for `{}`, got {:?}",
+                case.name, result.value
+            ),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains(case.class_prefix),
+            "run_project should classify `{}` as `{}`; got: {}",
+            case.name,
+            case.class_prefix,
+            err
+        );
+    }
+}
+
+#[test]
 fn run_accepts_compile_valid_let_rebinding_programs() {
     struct Case<'a> {
         name: &'a str,
