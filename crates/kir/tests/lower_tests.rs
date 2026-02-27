@@ -9,7 +9,7 @@ use kyokara_kir::block::{BranchTarget, SwitchCase, Terminator};
 use kyokara_kir::build::KirBuilder;
 use kyokara_kir::display::{DisplayCtx, display_module};
 use kyokara_kir::function::KirContracts;
-use kyokara_kir::inst::{Constant, Inst};
+use kyokara_kir::inst::{CallTarget, Constant, Inst};
 use kyokara_kir::lower::lower_module;
 use kyokara_kir::validate::validate_function;
 
@@ -1812,5 +1812,79 @@ fn test_validator_accepts_adt_field_get_on_adt() {
         afg_diags.is_empty(),
         "adt_field_get on Adt base should not produce adt_field_get errors. diags: {:?}",
         afg_diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+// ── #157: validator should check indirect call target is Fn type ────
+
+#[test]
+fn test_validator_rejects_indirect_call_on_int() {
+    // Bug: indirect call with Int target passes validation.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+
+    let int_val = builder.push_const(Constant::Int(1), Ty::Int);
+    let _call = builder.push_call(CallTarget::Indirect(int_val), vec![], Ty::Error);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message.contains("indirect call target")),
+        "should reject indirect call on Int. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validator_accepts_indirect_call_on_fn() {
+    // Guard: indirect call with Fn target should pass.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+
+    let fn_ty = Ty::Fn {
+        params: vec![],
+        ret: Box::new(Ty::Unit),
+    };
+    let fn_val = builder.push_const(Constant::Unit, fn_ty); // placeholder
+    let _call = builder.push_call(CallTarget::Indirect(fn_val), vec![], Ty::Unit);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    let call_diags: Vec<_> = diags
+        .iter()
+        .filter(|d| d.message.contains("indirect call"))
+        .collect();
+    assert!(
+        call_diags.is_empty(),
+        "indirect call on Fn should pass. diags: {:?}",
+        call_diags.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
 }
