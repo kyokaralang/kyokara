@@ -2036,3 +2036,19 @@ fn unresolved_param_type_emits_diagnostic() {
         output.diagnostics
     );
 }
+
+#[test]
+fn overflowing_int_literal_emits_diagnostic() {
+    // i64::MAX + 1 = 9223372036854775808 should produce a diagnostic.
+    let output = check("fn main() -> Int { 9223372036854775808 }", "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("overflow")
+                || d.message.contains("out of range")
+                || d.message.contains("invalid")),
+        "expected a diagnostic for overflowing int literal, got: {:?}",
+        output.diagnostics
+    );
+}
