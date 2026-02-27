@@ -16,6 +16,7 @@ members = [
     "crates/api",
     "crates/cli",
     "crates/kir",
+    "crates/codegen",
     "crates/lsp",
     "xtask",
 ]
@@ -42,6 +43,7 @@ kyokara-fmt = { path = "crates/fmt" }
 kyokara-refactor = { path = "crates/refactor" }
 kyokara-api = { path = "crates/api" }
 kyokara-kir = { path = "crates/kir" }
+kyokara-codegen = { path = "crates/codegen" }
 kyokara-lsp = { path = "crates/lsp" }
 
 # External dependencies
@@ -53,6 +55,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
+wasm-encoder = "0.225"
+wasmtime = "29"
 rustc-hash = "2"
 smol_str = "0.3"
 smallvec = { version = "1", features = ["union"] }
