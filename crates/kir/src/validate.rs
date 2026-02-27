@@ -219,6 +219,15 @@ fn validate_terminator(
                 "branch condition",
                 diags,
             );
+            if is_valid_value(*condition, func) {
+                let cond_ty = &func.values[*condition].ty;
+                if !types_compatible(cond_ty, &Ty::Bool) {
+                    diags.push(error(format!(
+                        "fn {}: block {} branch condition must be Bool",
+                        fn_name, block_label
+                    )));
+                }
+            }
             validate_branch_target(
                 then_target,
                 func,
@@ -414,6 +423,15 @@ fn validate_inst_operands(
                 "assert condition",
                 diags,
             );
+            if is_valid_value(*condition, func) {
+                let cond_ty = &func.values[*condition].ty;
+                if !types_compatible(cond_ty, &Ty::Bool) {
+                    diags.push(error(format!(
+                        "fn {}: block {} assert condition must be Bool",
+                        fn_name, block_label
+                    )));
+                }
+            }
         }
         Inst::Hole { .. } => {}
         Inst::BlockParam { block, index } => {

@@ -1507,3 +1507,165 @@ fn test_adt_match_all_supported_still_uses_switch() {
         "normal ADT match should use switch lowering. output:\n{out}"
     );
 }
+
+// ── #153: validator should check Bool types for branch/assert ───────
+
+#[test]
+fn test_validator_rejects_non_bool_branch_condition() {
+    // Bug: branch with Int condition passes validation.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    let then_blk = builder.new_block(None);
+    let else_blk = builder.new_block(None);
+
+    builder.switch_to(entry);
+    let int_val = builder.push_const(Constant::Int(1), Ty::Int);
+    builder.set_branch(
+        int_val,
+        BranchTarget {
+            block: then_blk,
+            args: vec![],
+        },
+        BranchTarget {
+            block: else_blk,
+            args: vec![],
+        },
+    );
+
+    builder.switch_to(then_blk);
+    let unit1 = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit1);
+
+    builder.switch_to(else_blk);
+    let unit2 = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit2);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.iter().any(|d| d.message.contains("Bool")),
+        "should reject non-Bool branch condition. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validator_accepts_bool_branch_condition() {
+    // Guard: branch with Bool condition should pass.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    let then_blk = builder.new_block(None);
+    let else_blk = builder.new_block(None);
+
+    builder.switch_to(entry);
+    let bool_val = builder.push_const(Constant::Bool(true), Ty::Bool);
+    builder.set_branch(
+        bool_val,
+        BranchTarget {
+            block: then_blk,
+            args: vec![],
+        },
+        BranchTarget {
+            block: else_blk,
+            args: vec![],
+        },
+    );
+
+    builder.switch_to(then_blk);
+    let unit1 = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit1);
+
+    builder.switch_to(else_blk);
+    let unit2 = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit2);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.is_empty(),
+        "Bool branch condition should pass. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validator_rejects_non_bool_assert_condition() {
+    // Bug: assert with Int condition passes validation.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+
+    let int_val = builder.push_const(Constant::Int(1), Ty::Int);
+    let _assert = builder.push_assert(int_val, "test".to_string(), Ty::Unit);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.iter().any(|d| d.message.contains("Bool")),
+        "should reject non-Bool assert condition. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validator_accepts_bool_assert_condition() {
+    // Guard: assert with Bool condition should pass.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+
+    let bool_val = builder.push_const(Constant::Bool(true), Ty::Bool);
+    let _assert = builder.push_assert(bool_val, "test".to_string(), Ty::Unit);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.is_empty(),
+        "Bool assert condition should pass. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
