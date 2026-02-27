@@ -26,6 +26,57 @@ use crate::interpreter::Interpreter;
 use crate::manifest::CapabilityManifest;
 use crate::value::Value;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompileErrorClass {
+    Parse,
+    Lowering,
+    Type,
+}
+
+impl CompileErrorClass {
+    fn label(self) -> &'static str {
+        match self {
+            CompileErrorClass::Parse => "compile parse errors",
+            CompileErrorClass::Lowering => "compile lowering errors",
+            CompileErrorClass::Type => "compile type errors",
+        }
+    }
+}
+
+#[derive(Default)]
+struct CompileGateErrors {
+    parse: Vec<String>,
+    lowering: Vec<String>,
+    type_errors: Vec<String>,
+}
+
+impl CompileGateErrors {
+    fn add(&mut self, class: CompileErrorClass, msg: String) {
+        match class {
+            CompileErrorClass::Parse => self.parse.push(msg),
+            CompileErrorClass::Lowering => self.lowering.push(msg),
+            CompileErrorClass::Type => self.type_errors.push(msg),
+        }
+    }
+
+    fn into_runtime_error(self) -> Option<RuntimeError> {
+        let (class, msgs) = if !self.parse.is_empty() {
+            (CompileErrorClass::Parse, self.parse)
+        } else if !self.lowering.is_empty() {
+            (CompileErrorClass::Lowering, self.lowering)
+        } else if !self.type_errors.is_empty() {
+            (CompileErrorClass::Type, self.type_errors)
+        } else {
+            return None;
+        };
+        Some(RuntimeError::TypeError(format!(
+            "{}: {}",
+            class.label(),
+            msgs.join("; ")
+        )))
+    }
+}
+
 /// Result of running a Kyokara program.
 pub struct RunResult {
     pub value: Value,
@@ -55,13 +106,6 @@ pub fn run_with_manifest(
 
     // 1. Parse.
     let parse = kyokara_syntax::parse(source);
-    if !parse.errors.is_empty() {
-        let msgs: Vec<String> = parse.errors.iter().map(|e| format!("{e:?}")).collect();
-        return Err(RuntimeError::TypeError(format!(
-            "parse errors: {}",
-            msgs.join("; ")
-        )));
-    }
 
     // 2. Build CST.
     let root = SyntaxNode::new_root(parse.green);
@@ -70,22 +114,6 @@ pub fn run_with_manifest(
     // 3. Collect item tree.
     let mut interner = Interner::new();
     let mut item_result = collect_item_tree(&sf, file_id, &mut interner);
-
-    if item_result
-        .diagnostics
-        .iter()
-        .any(|d| d.severity == kyokara_diagnostics::Severity::Error)
-    {
-        let msgs: Vec<String> = item_result
-            .diagnostics
-            .iter()
-            .map(|d| d.message.clone())
-            .collect();
-        return Err(RuntimeError::TypeError(format!(
-            "lowering errors: {}",
-            msgs.join("; ")
-        )));
-    }
 
     // 4. Register builtin types (Option, Result) before intrinsics and type-checking.
     register_builtin_types(
@@ -110,40 +138,17 @@ pub fn run_with_manifest(
         &mut interner,
     );
 
-    // Check body_lowering_diagnostics for errors (e.g. unresolved names,
-    // duplicate bindings).
-    let body_errors: Vec<String> = type_check
-        .body_lowering_diagnostics
-        .iter()
-        .filter(|d| d.severity == kyokara_diagnostics::Severity::Error)
-        .map(|d| d.message.clone())
-        .collect();
-    if !body_errors.is_empty() {
-        return Err(RuntimeError::TypeError(format!(
-            "lowering errors: {}",
-            body_errors.join("; ")
-        )));
-    }
-
-    // Check raw_diagnostics for real type errors.
-    if !type_check.raw_diagnostics.is_empty() {
-        let msgs: Vec<String> = type_check
-            .raw_diagnostics
-            .iter()
-            .map(|(data, _span)| {
-                data.clone()
-                    .into_diagnostic(
-                        kyokara_span::Span {
-                            file: file_id,
-                            range: Default::default(),
-                        },
-                        &interner,
-                        &item_result.tree,
-                    )
-                    .message
-            })
-            .collect();
-        return Err(RuntimeError::TypeError(msgs.join("; ")));
+    if let Some(err) = collect_single_file_compile_errors(
+        &parse.errors,
+        &item_result.diagnostics,
+        &type_check.body_lowering_diagnostics,
+        &type_check.raw_diagnostics,
+        &interner,
+        &item_result.tree,
+    )
+    .into_runtime_error()
+    {
+        return Err(err);
     }
 
     // 7. Interpret.
@@ -177,62 +182,8 @@ pub fn run_project_with_manifest(
 ) -> Result<RunResult, RuntimeError> {
     let mut project = check_project(entry_file);
 
-    // Check for parse errors across all modules.
-    if !project.parse_errors.is_empty() {
-        let msgs: Vec<String> = project
-            .parse_errors
-            .iter()
-            .flat_map(|(_mod_path, errs)| errs.iter().map(|e| format!("{e:?}")))
-            .collect();
-        return Err(RuntimeError::TypeError(format!(
-            "parse errors: {}",
-            msgs.join("; ")
-        )));
-    }
-
-    // Check for lowering diagnostics (e.g. duplicate definitions).
-    let lowering_errors: Vec<&kyokara_diagnostics::Diagnostic> = project
-        .lowering_diagnostics
-        .iter()
-        .filter(|d| d.severity == kyokara_diagnostics::Severity::Error)
-        .collect();
-    if !lowering_errors.is_empty() {
-        let msgs: Vec<String> = lowering_errors.iter().map(|d| d.message.clone()).collect();
-        return Err(RuntimeError::TypeError(format!(
-            "lowering errors: {}",
-            msgs.join("; ")
-        )));
-    }
-
-    // Check for body lowering errors (e.g. unresolved names) across all modules.
-    let mut body_lowering_errors = Vec::new();
-    for (_mod_path, tc) in &project.type_checks {
-        for diag in &tc.body_lowering_diagnostics {
-            if diag.severity == kyokara_diagnostics::Severity::Error {
-                body_lowering_errors.push(diag.message.clone());
-            }
-        }
-    }
-    if !body_lowering_errors.is_empty() {
-        return Err(RuntimeError::TypeError(format!(
-            "lowering errors: {}",
-            body_lowering_errors.join("; ")
-        )));
-    }
-
-    // Check for type errors across all modules.
-    let mut type_errors = Vec::new();
-    for (_mod_path, tc) in &project.type_checks {
-        for (data, _span) in &tc.raw_diagnostics {
-            let msg = format!("{data:?}");
-            type_errors.push(msg);
-        }
-    }
-    if !type_errors.is_empty() {
-        return Err(RuntimeError::TypeError(format!(
-            "type error at compile time: {}",
-            type_errors.join("; ")
-        )));
+    if let Some(err) = collect_project_compile_errors(&project).into_runtime_error() {
+        return Err(err);
     }
 
     // Find the entry module.
@@ -359,4 +310,80 @@ pub fn run_project_with_manifest(
     let value = interp.run_main()?;
     let interner = interp.into_interner();
     Ok(RunResult { value, interner })
+}
+
+fn collect_single_file_compile_errors(
+    parse_errors: &[impl std::fmt::Debug],
+    lowering_diagnostics: &[kyokara_diagnostics::Diagnostic],
+    body_lowering_diagnostics: &[kyokara_diagnostics::Diagnostic],
+    type_diagnostics: &[(kyokara_hir::TyDiagnosticData, kyokara_span::Span)],
+    interner: &Interner,
+    item_tree: &kyokara_hir::ItemTree,
+) -> CompileGateErrors {
+    let mut errors = CompileGateErrors::default();
+
+    for err in parse_errors {
+        errors.add(CompileErrorClass::Parse, format!("{err:?}"));
+    }
+
+    for diag in lowering_diagnostics {
+        if diag.severity == kyokara_diagnostics::Severity::Error {
+            errors.add(CompileErrorClass::Lowering, diag.message.clone());
+        }
+    }
+
+    for diag in body_lowering_diagnostics {
+        if diag.severity == kyokara_diagnostics::Severity::Error {
+            errors.add(CompileErrorClass::Lowering, diag.message.clone());
+        }
+    }
+
+    for (data, span) in type_diagnostics {
+        let msg = data
+            .clone()
+            .into_diagnostic(*span, interner, item_tree)
+            .message;
+        errors.add(CompileErrorClass::Type, msg);
+    }
+
+    errors
+}
+
+fn collect_project_compile_errors(project: &kyokara_hir::ProjectCheckResult) -> CompileGateErrors {
+    let mut errors = CompileGateErrors::default();
+
+    for (_mod_path, errs) in &project.parse_errors {
+        for err in errs {
+            errors.add(CompileErrorClass::Parse, format!("{err:?}"));
+        }
+    }
+
+    for diag in &project.lowering_diagnostics {
+        if diag.severity == kyokara_diagnostics::Severity::Error {
+            errors.add(CompileErrorClass::Lowering, diag.message.clone());
+        }
+    }
+
+    for (_mod_path, tc) in &project.type_checks {
+        for diag in &tc.body_lowering_diagnostics {
+            if diag.severity == kyokara_diagnostics::Severity::Error {
+                errors.add(CompileErrorClass::Lowering, diag.message.clone());
+            }
+        }
+    }
+
+    for (mod_path, tc) in &project.type_checks {
+        let Some(mod_info) = project.module_graph.get(mod_path) else {
+            continue;
+        };
+        for (data, span) in &tc.raw_diagnostics {
+            let msg = data
+                .clone()
+                .into_diagnostic(*span, &project.interner, &mod_info.item_tree)
+                .message;
+            errors.add(CompileErrorClass::Type, msg);
+        }
+    }
+
+    errors
 }

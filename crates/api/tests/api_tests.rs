@@ -2013,6 +2013,46 @@ fn duplicate_bindings_in_constructor_pattern_produce_diagnostic() {
 }
 
 #[test]
+fn duplicate_binding_detection_is_local_to_each_match_arm_pattern() {
+    let src = "type Pair = | Pair(Int, Int)\nfn f(p: Pair) -> Int { match p { Pair(x, x) => x, Pair(x, y) => x } }\nfn main() -> Int { f(Pair(1, 2)) }";
+    let output = check(src, "test.ky");
+    let dup_binding_diags: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("duplicate binding"))
+        .collect();
+    assert_eq!(
+        dup_binding_diags.len(),
+        1,
+        "duplicate-binding detection should not leak across match arms, got: {:?}",
+        dup_binding_diags
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn duplicate_binding_detection_is_local_to_each_let_pattern() {
+    let src = "type Pair = | Pair(Int, Int)\nfn main() -> Int { let Pair(x, x) = Pair(1, 2)\n let Pair(x, y) = Pair(3, 4)\n x + y }";
+    let output = check(src, "test.ky");
+    let dup_binding_diags: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("duplicate binding"))
+        .collect();
+    assert_eq!(
+        dup_binding_diags.len(),
+        1,
+        "duplicate-binding detection should not leak across let patterns, got: {:?}",
+        dup_binding_diags
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn unknown_capability_in_with_clause_produces_diagnostic() {
     let src = "fn main() -> Int with Nope { 1 }";
     let output = check(src, "test.ky");
