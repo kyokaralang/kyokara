@@ -393,6 +393,7 @@ impl<'a> LoweringCtx<'a> {
 
     fn lower_match_sequential(&mut self, scr: ValueId, arms: &[MatchArm], ty: Ty) -> ValueId {
         let merge_blk = self.builder.new_block(Some(self.labels.merge));
+        let mut all_terminated = true;
 
         for (i, arm) in arms.iter().enumerate() {
             let pat = self.body.pats[arm.pat].clone();
@@ -454,6 +455,7 @@ impl<'a> LoweringCtx<'a> {
                             block: merge_blk,
                             args: vec![body_val],
                         });
+                        all_terminated = false;
                     }
                     self.pop_scope();
 
@@ -470,6 +472,7 @@ impl<'a> LoweringCtx<'a> {
                             block: merge_blk,
                             args: vec![body_val],
                         });
+                        all_terminated = false;
                     }
                     self.pop_scope();
                 }
@@ -482,6 +485,7 @@ impl<'a> LoweringCtx<'a> {
                             block: merge_blk,
                             args: vec![body_val],
                         });
+                        all_terminated = false;
                     }
                     self.pop_scope();
                 }
@@ -494,6 +498,7 @@ impl<'a> LoweringCtx<'a> {
                             block: merge_blk,
                             args: vec![body_val],
                         });
+                        all_terminated = false;
                     }
                     self.pop_scope();
                 }
@@ -503,6 +508,9 @@ impl<'a> LoweringCtx<'a> {
 
         let result = self.builder.add_block_param(merge_blk, None, ty);
         self.builder.switch_to(merge_blk);
+        if all_terminated {
+            self.builder.set_unreachable();
+        }
         result
     }
 
