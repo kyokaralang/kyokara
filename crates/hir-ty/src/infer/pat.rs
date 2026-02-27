@@ -121,10 +121,18 @@ impl<'a> InferenceCtx<'a> {
                     } => {
                         for field_name in &fields {
                             let field_str = field_name.resolve(self.interner);
-                            if !rec_fields
+                            if let Some((_, field_ty)) = rec_fields
                                 .iter()
-                                .any(|(n, _)| n.resolve(self.interner) == field_str)
+                                .find(|(n, _)| n.resolve(self.interner) == field_str)
                             {
+                                let bind_ty = self.table.resolve_deep(field_ty);
+                                for bind_pat_idx in
+                                    self.record_field_bind_pats_in_range(pat_idx, *field_name)
+                                {
+                                    self.local_types.insert(bind_pat_idx, bind_ty.clone());
+                                    self.pat_types.insert(bind_pat_idx, bind_ty.clone());
+                                }
+                            } else {
                                 self.push_pat_diag(
                                     pat_idx,
                                     TyDiagnosticData::NoSuchField {
@@ -151,5 +159,32 @@ impl<'a> InferenceCtx<'a> {
         };
 
         self.pat_types.insert(pat_idx, ty);
+    }
+
+    fn record_field_bind_pats_in_range(
+        &self,
+        record_pat_idx: la_arena::Idx<Pat>,
+        field_name: kyokara_hir_def::name::Name,
+    ) -> Vec<la_arena::Idx<Pat>> {
+        let Some(record_range) = self.body.pat_source_map.get(record_pat_idx).copied() else {
+            return Vec::new();
+        };
+
+        self.body
+            .local_binding_meta
+            .iter()
+            .filter_map(|(bind_pat_idx, meta)| {
+                if meta.decl_range.start() < record_range.start()
+                    || meta.decl_range.end() > record_range.end()
+                {
+                    return None;
+                }
+
+                match &self.body.pats[bind_pat_idx] {
+                    Pat::Bind { name } if *name == field_name => Some(bind_pat_idx),
+                    _ => None,
+                }
+            })
+            .collect()
     }
 }
