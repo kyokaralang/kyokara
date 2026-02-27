@@ -351,6 +351,14 @@ impl ItemTreeCtx<'_> {
 
         let has_body = p.body().is_some();
 
+        if has_body {
+            let span = self.node_span(p.syntax());
+            self.diagnostics.push(Diagnostic::error(
+                "property bodies are not semantically checked yet".to_string(),
+                span,
+            ));
+        }
+
         self.tree.properties.alloc(PropertyItem {
             name,
             params,
