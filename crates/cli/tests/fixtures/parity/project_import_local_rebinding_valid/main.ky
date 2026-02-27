@@ -1,0 +1,7 @@
+import math
+
+fn main() -> Int {
+  let x = add(1, 2)
+  let x = 2
+  x
+}

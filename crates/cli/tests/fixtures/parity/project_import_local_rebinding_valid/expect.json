@@ -1,0 +1,21 @@
+{
+  "project": true,
+  "entry": "main.ky",
+  "check": {
+    "ok": true,
+    "codes_all": [],
+    "call_edges": [
+      {
+        "caller": "main",
+        "contains": ["fn::math::add"],
+        "counts": {
+          "fn::math::add": 1
+        }
+      }
+    ]
+  },
+  "run": {
+    "ok": true,
+    "stdout_contains": ["2"]
+  }
+}
