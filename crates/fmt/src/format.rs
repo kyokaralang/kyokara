@@ -1027,6 +1027,19 @@ fn format_match_arm_list(node: &SyntaxNode) -> Doc {
     if arm_docs.is_empty() {
         return Doc::text("{}");
     }
+    let has_real_arms = node.children().any(|c| c.kind() == SyntaxKind::MatchArm);
+    if !has_real_arms {
+        // Comment-only arm list: emit comments without commas.
+        return Doc::concat(vec![
+            Doc::text("{"),
+            Doc::indent(
+                INDENT,
+                Doc::concat(vec![Doc::HardLine, Doc::concat(arm_docs)]),
+            ),
+            Doc::HardLine,
+            Doc::text("}"),
+        ]);
+    }
     Doc::concat(vec![
         Doc::text("{"),
         Doc::indent(
