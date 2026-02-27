@@ -54,6 +54,8 @@ pub struct InferenceResult {
     pub raw_diagnostics: Vec<(TyDiagnosticData, Span)>,
     /// Names of functions called from this function body.
     pub calls: Vec<Name>,
+    /// Resolved types for each function parameter, by index.
+    pub param_types: Vec<Ty>,
 }
 
 /// Mutable inference context, threaded through expression/pattern inference.
@@ -303,6 +305,12 @@ pub fn infer_body(
         })
         .collect();
 
+    let resolved_param_types = ctx
+        .param_types
+        .iter()
+        .map(|ty| ctx.table.resolve_deep(ty))
+        .collect();
+
     InferenceResult {
         expr_types,
         pat_types,
@@ -310,6 +318,7 @@ pub fn infer_body(
         diagnostics,
         raw_diagnostics,
         calls: ctx.calls,
+        param_types: resolved_param_types,
     }
 }
 

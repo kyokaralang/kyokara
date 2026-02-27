@@ -12,7 +12,6 @@ use kyokara_hir_def::body::Body;
 use kyokara_hir_def::expr::ExprIdx;
 use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree};
 use kyokara_hir_def::name::Name;
-use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::resolver::ModuleScope;
 use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_hir_ty::TypeCheckResult;
@@ -283,23 +282,16 @@ pub fn lower_function(
 
 fn resolve_param_types(
     fn_item: &kyokara_hir_def::item_tree::FnItem,
-    body: &Body,
+    _body: &Body,
     infer: &InferenceResult,
 ) -> Vec<Ty> {
+    // Use the resolved param types from inference directly.
+    // Fall back to Ty::Error for any missing entries.
     fn_item
         .params
         .iter()
-        .map(|param| {
-            for (pat_idx, _) in &body.pat_scopes {
-                if let Pat::Bind { name } = &body.pats[*pat_idx]
-                    && *name == param.name
-                    && let Some(ty) = infer.pat_types.get(*pat_idx)
-                {
-                    return ty.clone();
-                }
-            }
-            Ty::Error
-        })
+        .enumerate()
+        .map(|(i, _)| infer.param_types.get(i).cloned().unwrap_or(Ty::Error))
         .collect()
 }
 

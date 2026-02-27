@@ -1109,3 +1109,31 @@ fn test_validator_accepts_unique_switch_cases() {
     // lower_and_display already validates; just confirm output is well-formed.
     assert!(out.contains("switch"), "output:\n{out}");
 }
+
+// ── Bug regression: param types lowered as <error> (#146) ───
+
+#[test]
+fn test_param_types_not_error() {
+    // Bug: resolve_param_types scanned pat_scopes for params, which didn't
+    // include top-level function params. Result: `x: <error>`.
+    let out = lower_and_display("fn f(x: Int) -> Int { x }");
+    // The param type should be Int, not <error>.
+    assert!(
+        out.contains("x: Int"),
+        "param type should be Int, not <error>. output:\n{out}"
+    );
+    assert!(
+        !out.contains("<error>"),
+        "should have no <error> types. output:\n{out}"
+    );
+}
+
+#[test]
+fn test_multi_param_types_resolved() {
+    // Guard: multiple params should all get correct types.
+    let out = lower_and_display("fn add(a: Int, b: Int) -> Int { a + b }");
+    assert!(
+        out.contains("a: Int") && out.contains("b: Int"),
+        "all param types should be resolved. output:\n{out}"
+    );
+}
