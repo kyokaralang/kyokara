@@ -373,6 +373,7 @@ impl Interpreter {
                         pat_scopes: Vec::new(),
                         expr_scopes: Default::default(),
                         expr_source_map: Default::default(),
+                        pat_source_map: Default::default(),
                     }),
                     env: env.clone(),
                 }))))
@@ -606,6 +607,7 @@ impl Interpreter {
                         pat_scopes: Vec::new(),
                         expr_scopes: Default::default(),
                         expr_source_map: Default::default(),
+                        pat_source_map: Default::default(),
                     }),
                     env: self.env.clone(),
                 }))))

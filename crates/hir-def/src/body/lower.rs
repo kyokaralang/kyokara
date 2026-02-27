@@ -46,6 +46,7 @@ pub fn lower_body(
         pat_scopes: Vec::new(),
         expr_scopes: ArenaMap::default(),
         expr_source_map: ArenaMap::default(),
+        pat_source_map: ArenaMap::default(),
         diagnostics: Vec::new(),
         file_id,
         interner,
@@ -128,6 +129,7 @@ pub fn lower_body(
             pat_scopes: ctx.pat_scopes,
             expr_scopes: ctx.expr_scopes,
             expr_source_map: ctx.expr_source_map,
+            pat_source_map: ctx.pat_source_map,
         },
         diagnostics: ctx.diagnostics,
     }
@@ -140,6 +142,7 @@ struct BodyLowerCtx<'a> {
     pat_scopes: Vec<(PatIdx, ScopeIdx)>,
     expr_scopes: ArenaMap<ExprIdx, ScopeIdx>,
     expr_source_map: ArenaMap<ExprIdx, TextRange>,
+    pat_source_map: ArenaMap<PatIdx, TextRange>,
     diagnostics: Vec<Diagnostic>,
     file_id: FileId,
     interner: &'a mut Interner,
@@ -744,6 +747,8 @@ impl BodyLowerCtx<'_> {
                     }
                     // Binding pattern — introduces name into scope
                     let pat_idx = self.alloc_pat(pat::Pat::Bind { name });
+                    self.pat_source_map
+                        .insert(pat_idx, ip.syntax().text_range());
                     if let Some(scope) = self.current_scope {
                         if !self.pattern_bindings.insert(name) {
                             let span = self.node_span(ip.syntax());

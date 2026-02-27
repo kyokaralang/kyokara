@@ -319,6 +319,11 @@ impl<'a> InferenceCtx<'a> {
         let callee_ty = self.infer_expr(callee, &Expectation::None);
         let callee_ty = self.table.resolve_deep(&callee_ty);
 
+        // Record call edges for symbol graph before checking callee type,
+        // so edges are captured even when the callee type is Ty::Error
+        // (e.g. due to scope resolution finding a later local binding).
+        self.check_callee_effects(callee);
+
         match callee_ty {
             Ty::Fn { params, ret } => {
                 let positional_count = args
@@ -357,8 +362,6 @@ impl<'a> InferenceCtx<'a> {
                         }
                     }
                 }
-
-                self.check_callee_effects(callee);
 
                 *ret
             }
@@ -414,11 +417,25 @@ impl<'a> InferenceCtx<'a> {
             // Check if the name resolves to a local (let binding, param, lambda)
             // rather than a top-level function. If so, skip recording as a call
             // to avoid misattributing local closure calls to same-named functions.
+            // Position-aware: a local binding only shadows calls that appear after
+            // it in source order. Params always shadow.
             let scope = self.find_scope_for_expr(callee);
             let resolver = Resolver::new(self.module_scope, &self.body.scopes, scope);
-            let is_local = matches!(resolver.resolve_name(name), Some(ResolvedName::Local(_)));
-            if is_local {
-                return;
+            if let Some(ResolvedName::Local(scope_def)) = resolver.resolve_name(name) {
+                match scope_def {
+                    ScopeDef::Param(_) => return,
+                    ScopeDef::Local(pat_idx) => {
+                        // Only treat as local if the binding appears before this usage.
+                        let callee_range = self.body.expr_source_map.get(callee);
+                        let pat_range = self.body.pat_source_map.get(pat_idx);
+                        if let (Some(c), Some(p)) = (callee_range, pat_range)
+                            && p.start() <= c.start()
+                        {
+                            return;
+                        }
+                    }
+                    _ => {}
+                }
             }
 
             // Record callee for symbol graph call edges.
