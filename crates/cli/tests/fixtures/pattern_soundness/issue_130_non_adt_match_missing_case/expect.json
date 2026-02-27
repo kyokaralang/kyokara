@@ -2,14 +2,16 @@
   "project": false,
   "entry": "main.ky",
   "soundness": {
-    "mode": "known_violation",
+    "mode": "strict",
     "issue": 130
   },
   "check": {
-    "ok": true
+    "ok": false,
+    "codes_all": ["E0009"],
+    "messages_all": ["non-exhaustive match"]
   },
   "run": {
     "ok": false,
-    "stderr_contains": ["pattern match failure: no arm matched"]
+    "stderr_contains": ["non-exhaustive match"]
   }
 }

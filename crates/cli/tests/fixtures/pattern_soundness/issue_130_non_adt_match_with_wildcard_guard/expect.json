@@ -1,0 +1,15 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "soundness": {
+    "mode": "strict",
+    "issue": 130
+  },
+  "check": {
+    "ok": true
+  },
+  "run": {
+    "ok": true,
+    "stdout_contains": ["3"]
+  }
+}

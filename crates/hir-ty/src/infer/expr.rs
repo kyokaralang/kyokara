@@ -596,6 +596,14 @@ impl<'a> InferenceCtx<'a> {
                 &mut self.diags,
                 match_expr_idx,
             );
+        } else {
+            crate::exhaustiveness::check_non_adt_exhaustiveness(
+                &resolved_scrutinee,
+                arms,
+                &self.body.pats,
+                &mut self.diags,
+                match_expr_idx,
+            );
         }
 
         result_ty.unwrap_or(Ty::Unit)
