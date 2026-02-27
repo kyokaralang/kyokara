@@ -367,6 +367,12 @@ impl ItemTreeCtx<'_> {
     }
 
     fn lower_let_binding(&mut self, l: &LetBinding) {
+        let span = self.node_span(l.syntax());
+        self.diagnostics.push(Diagnostic::error(
+            "top-level let bindings are not semantically checked yet".to_string(),
+            span,
+        ));
+
         // For top-level lets, extract the name from the pattern.
         let name = l
             .pat()
