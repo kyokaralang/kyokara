@@ -1,5 +1,7 @@
 //! Expression lowering: HIR `Expr` → KIR instructions.
 
+use rustc_hash::FxHashSet;
+
 use kyokara_hir_def::expr::{CallArg, Expr, ExprIdx, Literal, MatchArm, Stmt};
 use kyokara_hir_def::item_tree::TypeDefKind;
 use kyokara_hir_def::pat::Pat;
@@ -287,6 +289,7 @@ impl<'a> LoweringCtx<'a> {
         // First pass: create case blocks, collect switch info.
         let mut cases = Vec::new();
         let mut default_target = None;
+        let mut seen_variants = FxHashSet::default();
 
         struct ArmInfo {
             block: crate::block::BlockId,
@@ -306,6 +309,10 @@ impl<'a> LoweringCtx<'a> {
             match &pat {
                 Pat::Constructor { path, .. } => {
                     let ctor_name = path.last().unwrap();
+                    // Skip duplicate constructor arms (first match wins).
+                    if !seen_variants.insert(ctor_name) {
+                        continue;
+                    }
                     let case_blk = self.builder.new_block(Some(ctor_name));
                     cases.push(SwitchCase {
                         variant: ctor_name,
