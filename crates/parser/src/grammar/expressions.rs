@@ -133,7 +133,13 @@ fn hole_expr(p: &mut Parser<'_>) -> CompletedMarker {
 fn paren_expr(p: &mut Parser<'_>) -> CompletedMarker {
     let m = p.open();
     p.bump(); // (
+    // `expr_no_record` disables `Path { .. }` at the immediate parse site to
+    // avoid ambiguity with blocks, but parenthesized expressions should still
+    // be able to contain record literals.
+    let old = p.no_record_expr;
+    p.no_record_expr = false;
     expr(p);
+    p.no_record_expr = old;
     p.expect(RParen);
     m.complete(p, ParenExpr)
 }
@@ -145,9 +151,11 @@ pub(super) fn block_expr(p: &mut Parser<'_>) -> CompletedMarker {
     while !p.at(RBrace) && !p.at_eof() {
         if p.at(LetKw) {
             super::items::let_binding(p);
+            while p.eat(Semicolon) {}
         } else if expr(p).is_some() {
             // Expression statement — optionally followed by semicolons
             // (we don't require semicolons in the grammar)
+            while p.eat(Semicolon) {}
         } else {
             // Couldn't parse expression or let — skip one token for recovery
             break;
