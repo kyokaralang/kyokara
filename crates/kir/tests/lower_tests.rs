@@ -1161,3 +1161,59 @@ fn test_implicit_return_ret_ty_preserved() {
     let out = lower_and_display("fn f(x: Int) -> Int { x }");
     assert!(out.contains("-> Int"), "output:\n{out}");
 }
+
+// ── Bug regression: sequential match unbound merge param (#148) ───
+
+#[test]
+fn test_sequential_match_all_return_marks_merge_unreachable() {
+    // Bug: lower_match_sequential always creates merge block + param, but
+    // when all arms return, no one jumps to merge, leaving an unbound param.
+    let out = lower_and_display(
+        "fn f(x: Int) -> Int {
+           match x {
+             0 => return 1
+             _ => return 2
+           }
+         }",
+    );
+    // The merge block should be marked unreachable, not have `return %N`.
+    let lines: Vec<&str> = out.lines().collect();
+    let merge_idx = lines
+        .iter()
+        .position(|l| l.trim().starts_with("merge("))
+        .expect("merge block should exist");
+    let merge_next = lines[merge_idx + 1].trim();
+    assert!(
+        merge_next == "unreachable",
+        "merge block should be unreachable when all arms return, got: `{merge_next}`\noutput:\n{out}"
+    );
+}
+
+#[test]
+fn test_sequential_match_partial_return_keeps_merge() {
+    // Guard: if some arms don't return, merge should be reachable.
+    let out = lower_and_display(
+        "fn f(x: Int) -> Int {
+           match x {
+             0 => return 1
+             _ => 2
+           }
+         }",
+    );
+    // merge block should have a return (not unreachable).
+    let lines: Vec<&str> = out.lines().collect();
+    let merge_idx = lines
+        .iter()
+        .position(|l| l.trim().starts_with("merge("))
+        .expect("merge block should exist");
+    // Lines after merge should eventually have `return`, not `unreachable`.
+    let merge_body: Vec<&&str> = lines[merge_idx + 1..]
+        .iter()
+        .take_while(|l| !l.trim().is_empty() && !l.starts_with("  bb") && !l.starts_with("  merge"))
+        .collect();
+    let has_return = merge_body.iter().any(|l| l.contains("return"));
+    assert!(
+        has_return,
+        "merge should have return. merge body: {merge_body:?}\noutput:\n{out}"
+    );
+}
