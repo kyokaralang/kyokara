@@ -1,7 +1,15 @@
 //! Integration tests for HIR → KIR lowering.
 
 use kyokara_hir::check_file;
+use kyokara_hir_def::name::Name;
+use kyokara_hir_ty::effects::EffectSet;
+use kyokara_hir_ty::ty::Ty;
+use kyokara_intern::Interner;
+use kyokara_kir::block::{BranchTarget, SwitchCase, Terminator};
+use kyokara_kir::build::KirBuilder;
 use kyokara_kir::display::{DisplayCtx, display_module};
+use kyokara_kir::function::KirContracts;
+use kyokara_kir::inst::{CallTarget, Constant, Inst};
 use kyokara_kir::lower::lower_module;
 use kyokara_kir::validate::validate_function;
 
@@ -701,4 +709,1182 @@ fn test_constructor_in_if_branches() {
     let out = lower_and_display(source);
     assert!(out.contains("adt_construct Val("), "output:\n{out}");
     assert!(out.contains("adt_construct Empty()"), "output:\n{out}");
+}
+
+// ── Bug regression: old() semantics erased in contracts (#72) ───
+
+#[test]
+fn test_old_in_ensures_with_explicit_return() {
+    // Bug: old(x) lowers as just `lower_expr(inner)`, resolving x in current
+    // scope. With explicit `return` inside a block where x is rebound,
+    // ensures is emitted at the return site while the rebinding is still in
+    // scope — so old(x) incorrectly references the rebound value.
+    let out = lower_and_display(
+        "fn f(x: Int) -> Int ensures old(x) > 0 {
+           let x = x + 1
+           return x
+         }",
+    );
+    assert!(
+        out.contains("assert"),
+        "ensures assert missing. output:\n{out}"
+    );
+    assert!(
+        out.contains("ensures"),
+        "ensures label missing. output:\n{out}"
+    );
+    // The gt instruction for the ensures should reference param `x` (displayed
+    // as `x`), NOT the rebound value `%N`. With the bug, we'd see `gt %2,`
+    // instead of `gt x,`.
+    let lines: Vec<&str> = out.lines().collect();
+    let gt_line = lines
+        .iter()
+        .find(|l| l.contains(" gt "))
+        .unwrap_or_else(|| panic!("no gt instruction found for ensures. output:\n{out}"));
+    assert!(
+        gt_line.contains("gt x,"),
+        "old(x) should reference original param `x`, not a computed value. got: {gt_line}\nfull output:\n{out}"
+    );
+}
+
+#[test]
+fn test_ensures_without_old_still_works() {
+    // Guard: ensures clause without old() should continue to work.
+    let out = lower_and_display("fn f(x: Int) -> Int ensures result > 0 { x }");
+    assert!(out.contains("assert"), "output:\n{out}");
+    assert!(out.contains("ensures"), "output:\n{out}");
+    assert!(!out.contains("hole"), "output:\n{out}");
+}
+
+#[test]
+fn test_old_without_rebinding_references_param() {
+    // Guard: old(x) where x is NOT rebound — should reference the original
+    // param regardless (trivially correct, verifies old() doesn't break).
+    let out = lower_and_display("fn f(x: Int) -> Int ensures old(x) > 0 { x }");
+    assert!(out.contains("assert"), "output:\n{out}");
+    assert!(out.contains("ensures"), "output:\n{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    let gt_line = lines
+        .iter()
+        .find(|l| l.contains(" gt "))
+        .unwrap_or_else(|| panic!("no gt instruction found. output:\n{out}"));
+    assert!(
+        gt_line.contains("gt x,"),
+        "old(x) should reference param `x`. got: {gt_line}\nfull output:\n{out}"
+    );
+}
+
+// ── Bug regression: ADT switch default routes to last catch-all (#140) ───
+
+#[test]
+fn test_adt_switch_default_uses_first_catchall() {
+    // Bug: lower_match_adt overwrites default_target for every wildcard/bind
+    // arm, so the last catch-all wins instead of the first.
+    let result = check_file(
+        "type W = | A | B
+         fn f(x: W) -> Int {
+           match x {
+             A => 1
+             _ => 2
+             _ => 3
+           }
+         }",
+    );
+    // Allow RedundantMatchArm but nothing else.
+    let real_errors: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .filter(|(d, _)| !matches!(d, kyokara_hir::TyDiagnosticData::RedundantMatchArm))
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "unexpected type errors: {real_errors:?}"
+    );
+
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+
+    // Inspect the switch terminator directly.
+    let func = module.functions.iter().next().unwrap().1;
+    let entry = &func.blocks[func.entry_block];
+    let switch_default_block = match entry.terminator.as_ref().unwrap() {
+        Terminator::Switch { default, .. } => default.as_ref().unwrap().block,
+        other => panic!("expected Switch terminator, got: {other:?}"),
+    };
+
+    // The default target block's first instruction should be const 2
+    // (the first catch-all arm), not const 3 (the last).
+    let default_block = &func.blocks[switch_default_block];
+    let first_val = default_block.body[0];
+    match &func.values[first_val].inst {
+        Inst::Const(c) => {
+            let display = format!("{c:?}");
+            assert!(
+                display.contains("2"),
+                "switch default should route to first catch-all (const 2), got: {display}"
+            );
+        }
+        other => panic!("expected Const in default block, got: {other:?}"),
+    }
+}
+
+#[test]
+fn test_adt_switch_single_catchall_still_works() {
+    // Guard: single catch-all arm should work as before.
+    let out = lower_and_display(
+        "type W = | A | B
+         fn f(x: W) -> Int {
+           match x {
+             A => 1
+             _ => 99
+           }
+         }",
+    );
+    assert!(out.contains("const 99"), "output:\n{out}");
+    assert!(out.contains("default:"), "output:\n{out}");
+}
+
+// ── Bug regression: ADT switch violates arm order after catch-all (#141) ───
+
+#[test]
+fn test_adt_switch_no_cases_after_catchall() {
+    // Bug: constructor arms after a catch-all still get added to the switch,
+    // so `A` values branch to the later arm instead of the catch-all.
+    let result = check_file(
+        "type W = | A | B
+         fn f(x: W) -> Int {
+           match x {
+             other => 1
+             A => 2
+           }
+         }",
+    );
+    let real_errors: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .filter(|(d, _)| !matches!(d, kyokara_hir::TyDiagnosticData::RedundantMatchArm))
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "unexpected type errors: {real_errors:?}"
+    );
+
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+
+    let func = module.functions.iter().next().unwrap().1;
+    let entry = &func.blocks[func.entry_block];
+    match entry.terminator.as_ref().unwrap() {
+        Terminator::Switch { cases, default, .. } => {
+            // The catch-all is the first arm, so there should be NO constructor
+            // cases in the switch — everything goes to the default.
+            assert!(
+                cases.is_empty(),
+                "switch should have no cases after catch-all, got {} cases",
+                cases.len()
+            );
+            assert!(default.is_some(), "switch should have a default target");
+        }
+        other => panic!("expected Switch terminator, got: {other:?}"),
+    }
+}
+
+#[test]
+fn test_adt_switch_constructor_before_catchall_still_works() {
+    // Guard: constructor arms BEFORE a catch-all should still be cases.
+    let out = lower_and_display(
+        "type W = | A | B
+         fn f(x: W) -> Int {
+           match x {
+             A => 1
+             other => 2
+           }
+         }",
+    );
+    // A should have its own case block.
+    assert!(out.contains("A:"), "output:\n{out}");
+    assert!(out.contains("default:"), "output:\n{out}");
+}
+
+// ── Bug regression: ADT switch emits duplicate cases (#142) ───
+
+#[test]
+fn test_adt_switch_no_duplicate_cases() {
+    // Bug: redundant constructor arms emit duplicate SwitchCase entries.
+    let result = check_file(
+        "type W = | A | B
+         fn f(x: W) -> Int {
+           match x {
+             A => 1
+             A => 2
+             B => 3
+           }
+         }",
+    );
+    let real_errors: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .filter(|(d, _)| !matches!(d, kyokara_hir::TyDiagnosticData::RedundantMatchArm))
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "unexpected type errors: {real_errors:?}"
+    );
+
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+
+    let func = module.functions.iter().next().unwrap().1;
+    let entry = &func.blocks[func.entry_block];
+    match entry.terminator.as_ref().unwrap() {
+        Terminator::Switch { cases, .. } => {
+            // Each variant should appear at most once.
+            let variant_names: Vec<_> =
+                cases.iter().map(|c| c.variant.resolve(&interner)).collect();
+            let unique: std::collections::HashSet<_> = variant_names.iter().collect();
+            assert_eq!(
+                variant_names.len(),
+                unique.len(),
+                "switch has duplicate cases: {variant_names:?}"
+            );
+        }
+        other => panic!("expected Switch terminator, got: {other:?}"),
+    }
+}
+
+#[test]
+fn test_adt_switch_first_dup_case_wins() {
+    // Guard: when deduplicating, the first constructor arm should win.
+    let result = check_file(
+        "type W = | A | B
+         fn f(x: W) -> Int {
+           match x {
+             A => 10
+             A => 20
+             B => 30
+           }
+         }",
+    );
+    let real_errors: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .filter(|(d, _)| !matches!(d, kyokara_hir::TyDiagnosticData::RedundantMatchArm))
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "unexpected type errors: {real_errors:?}"
+    );
+
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+
+    let func = module.functions.iter().next().unwrap().1;
+    let entry = &func.blocks[func.entry_block];
+    let a_block = match entry.terminator.as_ref().unwrap() {
+        Terminator::Switch { cases, .. } => {
+            let a_case = cases
+                .iter()
+                .find(|c| c.variant.resolve(&interner) == "A")
+                .expect("should have A case");
+            a_case.target.block
+        }
+        other => panic!("expected Switch, got: {other:?}"),
+    };
+
+    // The A case block body should produce const 10 (first arm), not const 20.
+    let a_blk = &func.blocks[a_block];
+    let first_val = a_blk.body[0];
+    match &func.values[first_val].inst {
+        Inst::Const(c) => {
+            let display = format!("{c:?}");
+            assert!(
+                display.contains("10"),
+                "first A arm should produce const 10, got: {display}"
+            );
+        }
+        other => panic!("expected Const, got: {other:?}"),
+    }
+}
+
+// ── Validator: duplicate switch-case check (#143) ───
+
+#[test]
+fn test_validator_rejects_duplicate_switch_cases() {
+    // Build a KIR function with a Switch that has duplicate variants.
+    let mut interner = Interner::new();
+    let fn_name = Name::new(&mut interner, "test_fn");
+    let variant_a = Name::new(&mut interner, "A");
+
+    let mut builder = KirBuilder::new();
+    let entry_name = Name::new(&mut interner, "entry");
+    let entry = builder.new_block(Some(entry_name));
+    builder.switch_to(entry);
+
+    let scr = builder.alloc_value(Ty::Int, Inst::FnParam { index: 0 });
+    let case1_blk = builder.new_block(None);
+    let case2_blk = builder.new_block(None);
+
+    // Two switch cases with the same variant name.
+    builder.set_terminator(Terminator::Switch {
+        scrutinee: scr,
+        cases: vec![
+            SwitchCase {
+                variant: variant_a,
+                target: BranchTarget {
+                    block: case1_blk,
+                    args: vec![],
+                },
+            },
+            SwitchCase {
+                variant: variant_a,
+                target: BranchTarget {
+                    block: case2_blk,
+                    args: vec![],
+                },
+            },
+        ],
+        default: None,
+    });
+
+    // Terminate case blocks.
+    builder.switch_to(case1_blk);
+    let c1 = builder.push_const(Constant::Int(1), Ty::Int);
+    builder.set_return(c1);
+    builder.switch_to(case2_blk);
+    let c2 = builder.push_const(Constant::Int(2), Ty::Int);
+    builder.set_return(c2);
+
+    let func = builder.build(
+        fn_name,
+        vec![(Name::new(&mut interner, "x"), Ty::Int)],
+        Ty::Int,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.iter().any(|d| d.message.contains("duplicate case")),
+        "validator should reject duplicate switch cases, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_validator_accepts_unique_switch_cases() {
+    // Guard: unique switch cases should pass validation.
+    let out = lower_and_display(
+        "type W = | A | B
+         fn f(x: W) -> Int {
+           match x {
+             A => 1
+             B => 2
+           }
+         }",
+    );
+    // lower_and_display already validates; just confirm output is well-formed.
+    assert!(out.contains("switch"), "output:\n{out}");
+}
+
+// ── Bug regression: param types lowered as <error> (#146) ───
+
+#[test]
+fn test_param_types_not_error() {
+    // Bug: resolve_param_types scanned pat_scopes for params, which didn't
+    // include top-level function params. Result: `x: <error>`.
+    let out = lower_and_display("fn f(x: Int) -> Int { x }");
+    // The param type should be Int, not <error>.
+    assert!(
+        out.contains("x: Int"),
+        "param type should be Int, not <error>. output:\n{out}"
+    );
+    assert!(
+        !out.contains("<error>"),
+        "should have no <error> types. output:\n{out}"
+    );
+}
+
+#[test]
+fn test_multi_param_types_resolved() {
+    // Guard: multiple params should all get correct types.
+    let out = lower_and_display("fn add(a: Int, b: Int) -> Int { a + b }");
+    assert!(
+        out.contains("a: Int") && out.contains("b: Int"),
+        "all param types should be resolved. output:\n{out}"
+    );
+}
+
+// ── Bug regression: ret_ty is Never for explicit return (#147) ───
+
+#[test]
+fn test_explicit_return_ret_ty_not_never() {
+    // Bug: lower_function used expr_ty(body.root) for ret_ty. When the root
+    // expression is `return x`, its type is Never, not the declared type.
+    let out = lower_and_display("fn f(x: Int) -> Int { return x }");
+    assert!(
+        out.contains("-> Int"),
+        "return type should be Int, not Never. output:\n{out}"
+    );
+    assert!(
+        !out.contains("-> Never"),
+        "return type should not be Never. output:\n{out}"
+    );
+}
+
+#[test]
+fn test_implicit_return_ret_ty_preserved() {
+    // Guard: implicit return should still work correctly.
+    let out = lower_and_display("fn f(x: Int) -> Int { x }");
+    assert!(out.contains("-> Int"), "output:\n{out}");
+}
+
+// ── Bug regression: sequential match unbound merge param (#148) ───
+
+#[test]
+fn test_sequential_match_all_return_marks_merge_unreachable() {
+    // Bug: lower_match_sequential always creates merge block + param, but
+    // when all arms return, no one jumps to merge, leaving an unbound param.
+    let out = lower_and_display(
+        "fn f(x: Int) -> Int {
+           match x {
+             0 => return 1
+             _ => return 2
+           }
+         }",
+    );
+    // The merge block should be marked unreachable, not have `return %N`.
+    let lines: Vec<&str> = out.lines().collect();
+    let merge_idx = lines
+        .iter()
+        .position(|l| l.trim().starts_with("merge("))
+        .expect("merge block should exist");
+    let merge_next = lines[merge_idx + 1].trim();
+    assert!(
+        merge_next == "unreachable",
+        "merge block should be unreachable when all arms return, got: `{merge_next}`\noutput:\n{out}"
+    );
+}
+
+#[test]
+fn test_sequential_match_partial_return_keeps_merge() {
+    // Guard: if some arms don't return, merge should be reachable.
+    let out = lower_and_display(
+        "fn f(x: Int) -> Int {
+           match x {
+             0 => return 1
+             _ => 2
+           }
+         }",
+    );
+    // merge block should have a return (not unreachable).
+    let lines: Vec<&str> = out.lines().collect();
+    let merge_idx = lines
+        .iter()
+        .position(|l| l.trim().starts_with("merge("))
+        .expect("merge block should exist");
+    // Lines after merge should eventually have `return`, not `unreachable`.
+    let merge_body: Vec<&&str> = lines[merge_idx + 1..]
+        .iter()
+        .take_while(|l| !l.trim().is_empty() && !l.starts_with("  bb") && !l.starts_with("  merge"))
+        .collect();
+    let has_return = merge_body.iter().any(|l| l.contains("return"));
+    assert!(
+        has_return,
+        "merge should have return. merge body: {merge_body:?}\noutput:\n{out}"
+    );
+}
+
+// ── Bug regression: sequential match ignores early catch-all (#149) ───
+
+#[test]
+fn test_sequential_match_wildcard_stops_dispatch() {
+    // Bug: wildcard arm doesn't stop the sequential dispatch loop, so
+    // later literal arms can still affect control flow.
+    let result = check_file(
+        "fn f(x: Int) -> Int {
+           match x {
+             _ => 1
+             0 => 2
+           }
+         }",
+    );
+    let real_errors: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .filter(|(d, _)| !matches!(d, kyokara_hir::TyDiagnosticData::RedundantMatchArm))
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "unexpected type errors: {real_errors:?}"
+    );
+
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+    let ctx = DisplayCtx::new(&interner, &result.item_tree);
+    let out = display_module(&module, &ctx);
+
+    // After the catch-all `_ => 1`, there should be no branch/eq for `0 => 2`.
+    assert!(
+        !out.contains("eq "),
+        "should not have equality check after catch-all. output:\n{out}"
+    );
+    assert!(
+        !out.contains("branch"),
+        "should not have branch after catch-all. output:\n{out}"
+    );
+}
+
+#[test]
+fn test_sequential_match_bind_stops_dispatch() {
+    // Same but with a bind pattern.
+    let result = check_file(
+        "fn f(x: Int) -> Int {
+           match x {
+             n => n
+             0 => 2
+           }
+         }",
+    );
+    let real_errors: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .filter(|(d, _)| !matches!(d, kyokara_hir::TyDiagnosticData::RedundantMatchArm))
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "unexpected type errors: {real_errors:?}"
+    );
+
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+    let ctx = DisplayCtx::new(&interner, &result.item_tree);
+    let out = display_module(&module, &ctx);
+
+    assert!(
+        !out.contains("eq "),
+        "should not have equality check after bind catch-all. output:\n{out}"
+    );
+}
+
+// ── Bug regression: ADT switch ignores nested subpatterns (#150) ───
+
+#[test]
+fn test_adt_match_nested_literal_check() {
+    // Bug: ADT switch dispatches on outer constructor but doesn't emit
+    // equality checks for nested literal subpatterns like `Some(1)`.
+    let out = lower_and_display(
+        "type O = | Some(Int) | None
+         fn f(x: O) -> Int {
+           match x {
+             Some(1) => 10
+             _ => 0
+           }
+         }",
+    );
+    // After extracting the field from Some, there should be an equality check.
+    assert!(
+        out.contains("eq "),
+        "should have equality check for nested literal `1`. output:\n{out}"
+    );
+}
+
+#[test]
+fn test_adt_match_nested_bind_still_works() {
+    // Guard: nested bind patterns (no literal) should NOT produce eq checks.
+    let out = lower_and_display(
+        "type O = | Some(Int) | None
+         fn f(x: O) -> Int {
+           match x {
+             Some(n) => n
+             None => 0
+           }
+         }",
+    );
+    // No equality checks needed — just field extraction and binding.
+    assert!(
+        !out.contains("eq "),
+        "should not have equality check for bind pattern. output:\n{out}"
+    );
+}
+
+// ── #155: callable values should emit fn_ref, not hole ──────────────
+
+#[test]
+fn test_fn_ref_emitted_for_function_value() {
+    // Bug: `let f = inc` emits `hole` instead of `fn_ref @inc`.
+    let out = lower_and_display(
+        "fn inc(x: Int) -> Int { x + 1 }
+         fn apply(x: Int) -> Int {
+           let f = inc
+           f(x)
+         }",
+    );
+    assert!(
+        out.contains("fn_ref @inc"),
+        "should emit fn_ref for function reference. output:\n{out}"
+    );
+    assert!(
+        !out.contains("hole #"),
+        "function reference should not be a hole. output:\n{out}"
+    );
+}
+
+#[test]
+fn test_fn_ref_guard_hole_stays_hole() {
+    // Guard: typed holes should still emit hole instructions, not fn_ref.
+    let out = lower_and_display("fn f(x: Int) -> Int { x + ?todo }");
+    assert!(
+        out.contains("hole #"),
+        "typed hole should remain a hole. output:\n{out}"
+    );
+}
+
+// ── #151: validator should detect unbound block params ──────────────
+
+#[test]
+fn test_validator_rejects_block_params_with_no_predecessors() {
+    // Bug: a block with params but no incoming edges passes validation.
+    // Construct KIR manually: entry -> return, orphan block with a param.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    let orphan = builder.new_block(None);
+
+    builder.switch_to(entry);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    // orphan block has a param but nobody jumps to it
+    let _param = builder.add_block_param(orphan, None, Ty::Int);
+    builder.switch_to(orphan);
+    let dead = builder.push_const(Constant::Int(0), Ty::Int);
+    builder.set_return(dead);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.iter().any(|d| d.message.contains("no predecessor")),
+        "should reject block with params but no predecessors. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validator_accepts_block_params_with_predecessors() {
+    // Guard: block with params that has an incoming jump should be fine.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    let target = builder.new_block(None);
+
+    builder.switch_to(entry);
+    let val = builder.push_const(Constant::Int(42), Ty::Int);
+    builder.set_jump(BranchTarget {
+        block: target,
+        args: vec![val],
+    });
+
+    let param = builder.add_block_param(target, None, Ty::Int);
+    builder.switch_to(target);
+    builder.set_return(param);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Int,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.is_empty(),
+        "block with params and a predecessor should pass. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+// ── #152: ADT match must not silently drop unsupported patterns ─────
+
+#[test]
+fn test_adt_match_unsupported_pattern_falls_back_to_sequential() {
+    // Bug: a literal pattern arm on an ADT match gets silently dropped.
+    // With the fix, is_adt_match returns false and sequential lowering
+    // handles it, so both arms produce code.
+    //
+    // This source has a type error (literal on ADT) but lowering runs anyway.
+    let source = "type O = | Some(Int) | None
+         fn f(x: O) -> Int {
+           match x {
+             1 => 1
+             Some(n) => n
+             _ => 0
+           }
+         }";
+    let result = check_file(source);
+    // Has type errors — skip the assertion on diagnostics.
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+
+    let ctx = DisplayCtx::new(&interner, &result.item_tree);
+    let out = display_module(&module, &ctx);
+
+    // The output should NOT contain a switch (would mean ADT path was used).
+    // Sequential lowering uses eq/branch.
+    assert!(
+        !out.contains("switch "),
+        "should fall back to sequential lowering, not ADT switch. output:\n{out}"
+    );
+}
+
+#[test]
+fn test_adt_match_all_supported_still_uses_switch() {
+    // Guard: a normal ADT match with only constructor/wildcard/bind should
+    // still use the switch-based lowering path.
+    let out = lower_and_display(
+        "type O = | Some(Int) | None
+         fn f(x: O) -> Int {
+           match x {
+             Some(n) => n
+             None => 0
+           }
+         }",
+    );
+    assert!(
+        out.contains("switch "),
+        "normal ADT match should use switch lowering. output:\n{out}"
+    );
+}
+
+// ── #153: validator should check Bool types for branch/assert ───────
+
+#[test]
+fn test_validator_rejects_non_bool_branch_condition() {
+    // Bug: branch with Int condition passes validation.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    let then_blk = builder.new_block(None);
+    let else_blk = builder.new_block(None);
+
+    builder.switch_to(entry);
+    let int_val = builder.push_const(Constant::Int(1), Ty::Int);
+    builder.set_branch(
+        int_val,
+        BranchTarget {
+            block: then_blk,
+            args: vec![],
+        },
+        BranchTarget {
+            block: else_blk,
+            args: vec![],
+        },
+    );
+
+    builder.switch_to(then_blk);
+    let unit1 = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit1);
+
+    builder.switch_to(else_blk);
+    let unit2 = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit2);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.iter().any(|d| d.message.contains("Bool")),
+        "should reject non-Bool branch condition. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validator_accepts_bool_branch_condition() {
+    // Guard: branch with Bool condition should pass.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    let then_blk = builder.new_block(None);
+    let else_blk = builder.new_block(None);
+
+    builder.switch_to(entry);
+    let bool_val = builder.push_const(Constant::Bool(true), Ty::Bool);
+    builder.set_branch(
+        bool_val,
+        BranchTarget {
+            block: then_blk,
+            args: vec![],
+        },
+        BranchTarget {
+            block: else_blk,
+            args: vec![],
+        },
+    );
+
+    builder.switch_to(then_blk);
+    let unit1 = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit1);
+
+    builder.switch_to(else_blk);
+    let unit2 = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit2);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.is_empty(),
+        "Bool branch condition should pass. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validator_rejects_non_bool_assert_condition() {
+    // Bug: assert with Int condition passes validation.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+
+    let int_val = builder.push_const(Constant::Int(1), Ty::Int);
+    let _assert = builder.push_assert(int_val, "test".to_string(), Ty::Unit);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.iter().any(|d| d.message.contains("Bool")),
+        "should reject non-Bool assert condition. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validator_accepts_bool_assert_condition() {
+    // Guard: assert with Bool condition should pass.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+
+    let bool_val = builder.push_const(Constant::Bool(true), Ty::Bool);
+    let _assert = builder.push_assert(bool_val, "test".to_string(), Ty::Unit);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.is_empty(),
+        "Bool assert condition should pass. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+// ── #156: validator should check base types for field_get/adt_field_get ──
+
+#[test]
+fn test_validator_rejects_field_get_on_int() {
+    // Bug: field_get on Int base passes validation.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+
+    let int_val = builder.push_const(Constant::Int(1), Ty::Int);
+    let field = Name::new(&mut interner, "x");
+    let _fg = builder.push_field_get(int_val, field, Ty::Error);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.iter().any(|d| d.message.contains("field_get")),
+        "should reject field_get on Int base. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validator_accepts_field_get_on_record() {
+    // Guard: field_get on Record base should pass.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+
+    let field_name = Name::new(&mut interner, "x");
+    let record_ty = Ty::Record {
+        fields: vec![(field_name, Ty::Int)],
+    };
+    let rec = builder.push_const(Constant::Unit, record_ty); // placeholder const
+    let _fg = builder.push_field_get(rec, field_name, Ty::Int);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    let field_diags: Vec<_> = diags
+        .iter()
+        .filter(|d| d.message.contains("field_get"))
+        .collect();
+    assert!(
+        field_diags.is_empty(),
+        "field_get on Record base should not produce field_get errors. diags: {:?}",
+        field_diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validator_rejects_adt_field_get_on_int() {
+    // Bug: adt_field_get on Int base passes validation.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+
+    let int_val = builder.push_const(Constant::Int(1), Ty::Int);
+    let _afg = builder.push_adt_field_get(int_val, 0, Ty::Error);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.iter().any(|d| d.message.contains("adt_field_get")),
+        "should reject adt_field_get on Int base. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validator_accepts_adt_field_get_on_adt() {
+    // Guard: adt_field_get on Adt base should pass.
+    use kyokara_hir_def::item_tree::TypeItemIdx;
+
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+
+    let adt_ty = Ty::Adt {
+        def: TypeItemIdx::from_raw(la_arena::RawIdx::from_u32(0)),
+        args: vec![],
+    };
+    let adt_val = builder.push_const(Constant::Unit, adt_ty); // placeholder
+    let _afg = builder.push_adt_field_get(adt_val, 0, Ty::Int);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    let afg_diags: Vec<_> = diags
+        .iter()
+        .filter(|d| d.message.contains("adt_field_get"))
+        .collect();
+    assert!(
+        afg_diags.is_empty(),
+        "adt_field_get on Adt base should not produce adt_field_get errors. diags: {:?}",
+        afg_diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+// ── #157: validator should check indirect call target is Fn type ────
+
+#[test]
+fn test_validator_rejects_indirect_call_on_int() {
+    // Bug: indirect call with Int target passes validation.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+
+    let int_val = builder.push_const(Constant::Int(1), Ty::Int);
+    let _call = builder.push_call(CallTarget::Indirect(int_val), vec![], Ty::Error);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message.contains("indirect call target")),
+        "should reject indirect call on Int. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validator_accepts_indirect_call_on_fn() {
+    // Guard: indirect call with Fn target should pass.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+
+    let fn_ty = Ty::Fn {
+        params: vec![],
+        ret: Box::new(Ty::Unit),
+    };
+    let fn_val = builder.push_const(Constant::Unit, fn_ty); // placeholder
+    let _call = builder.push_call(CallTarget::Indirect(fn_val), vec![], Ty::Unit);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    let call_diags: Vec<_> = diags
+        .iter()
+        .filter(|d| d.message.contains("indirect call"))
+        .collect();
+    assert!(
+        call_diags.is_empty(),
+        "indirect call on Fn should pass. diags: {:?}",
+        call_diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
 }

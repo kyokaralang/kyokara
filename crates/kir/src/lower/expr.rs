@@ -1,5 +1,7 @@
 //! Expression lowering: HIR `Expr` → KIR instructions.
 
+use rustc_hash::FxHashSet;
+
 use kyokara_hir_def::expr::{CallArg, Expr, ExprIdx, Literal, MatchArm, Stmt};
 use kyokara_hir_def::item_tree::TypeDefKind;
 use kyokara_hir_def::pat::Pat;
@@ -48,7 +50,7 @@ impl<'a> LoweringCtx<'a> {
                 let id = self.next_hole_id();
                 self.builder.push_hole(id, vec![], ty)
             }
-            Expr::Old(inner) => self.lower_expr(inner),
+            Expr::Old(inner) => self.lower_expr_in_old_scope(inner),
             Expr::Hole => {
                 let id = self.next_hole_id();
                 self.builder.push_hole(id, vec![], ty)
@@ -102,10 +104,9 @@ impl<'a> LoweringCtx<'a> {
             return self.builder.push_hole(id, vec![], ty);
         }
 
-        // Function reference — placeholder for first-class fn values.
+        // Function reference — first-class fn value.
         if self.module_scope.functions.contains_key(&first) {
-            let id = self.next_hole_id();
-            return self.builder.push_hole(id, vec![], ty);
+            return self.builder.push_fn_ref(first, ty);
         }
 
         // Unknown — emit hole.
@@ -278,6 +279,12 @@ impl<'a> LoweringCtx<'a> {
             && arms
                 .iter()
                 .any(|arm| matches!(&self.body.pats[arm.pat], Pat::Constructor { .. }))
+            && arms.iter().all(|arm| {
+                matches!(
+                    &self.body.pats[arm.pat],
+                    Pat::Constructor { .. } | Pat::Wildcard | Pat::Bind { .. }
+                )
+            })
     }
 
     fn lower_match_adt(&mut self, scr: ValueId, arms: &[MatchArm], ty: Ty) -> ValueId {
@@ -287,6 +294,7 @@ impl<'a> LoweringCtx<'a> {
         // First pass: create case blocks, collect switch info.
         let mut cases = Vec::new();
         let mut default_target = None;
+        let mut seen_variants = FxHashSet::default();
 
         struct ArmInfo {
             block: crate::block::BlockId,
@@ -296,10 +304,20 @@ impl<'a> LoweringCtx<'a> {
         let mut arm_infos = Vec::new();
 
         for arm in arms {
+            // Once a catch-all arm is seen, all subsequent arms are
+            // unreachable — stop building switch dispatch entries.
+            if default_target.is_some() {
+                break;
+            }
+
             let pat = self.body.pats[arm.pat].clone();
             match &pat {
                 Pat::Constructor { path, .. } => {
                     let ctor_name = path.last().unwrap();
+                    // Skip duplicate constructor arms (first match wins).
+                    if !seen_variants.insert(ctor_name) {
+                        continue;
+                    }
                     let case_blk = self.builder.new_block(Some(ctor_name));
                     cases.push(SwitchCase {
                         variant: ctor_name,
@@ -330,6 +348,16 @@ impl<'a> LoweringCtx<'a> {
             }
         }
 
+        // Build a fallback target for nested pattern mismatch (default or unreachable).
+        let has_default = default_target.is_some();
+        let fallback_target = default_target.clone().unwrap_or_else(|| {
+            let dead = self.builder.new_block(None);
+            BranchTarget {
+                block: dead,
+                args: vec![],
+            }
+        });
+
         // Emit switch in the original block.
         self.builder.switch_to(switch_blk);
         self.builder.set_terminator(Terminator::Switch {
@@ -346,10 +374,41 @@ impl<'a> LoweringCtx<'a> {
 
             match &info.pat_data {
                 Pat::Constructor { args, .. } => {
+                    // Extract fields and check nested literal subpatterns.
+                    let mut field_vals = Vec::new();
                     for (i, sub_pat) in args.iter().enumerate() {
                         let field_ty = self.pat_ty(*sub_pat);
                         let field_val = self.builder.push_adt_field_get(scr, i as u32, field_ty);
-                        self.bind_pattern(*sub_pat, field_val);
+                        field_vals.push((*sub_pat, field_val));
+                    }
+
+                    // Emit equality checks for nested literal subpatterns.
+                    for &(sub_pat_idx, field_val) in &field_vals {
+                        let sub_pat = self.body.pats[sub_pat_idx].clone();
+                        if let Pat::Literal(lit) = sub_pat {
+                            let lit_const = literal_to_constant(&lit);
+                            let field_ty = self.builder.value_ty(field_val).clone();
+                            let lit_val = self.builder.push_const(lit_const, field_ty);
+                            let eq_val = self.builder.push_binary(
+                                kyokara_hir_def::expr::BinaryOp::Eq,
+                                field_val,
+                                lit_val,
+                                Ty::Bool,
+                            );
+                            // Branch: match → continue, mismatch → fallback.
+                            let continue_blk = self.builder.new_block(None);
+                            self.builder.set_branch(
+                                eq_val,
+                                BranchTarget {
+                                    block: continue_blk,
+                                    args: vec![],
+                                },
+                                fallback_target.clone(),
+                            );
+                            self.builder.switch_to(continue_blk);
+                        } else {
+                            self.bind_pattern(sub_pat_idx, field_val);
+                        }
                     }
                 }
                 Pat::Bind { name } => {
@@ -370,6 +429,14 @@ impl<'a> LoweringCtx<'a> {
             self.pop_scope();
         }
 
+        // If we created a dead fallback block (no default arm), mark it unreachable.
+        if !has_default {
+            self.builder.switch_to(fallback_target.block);
+            if !self.block_has_terminator() {
+                self.builder.set_unreachable();
+            }
+        }
+
         let result = self.builder.add_block_param(merge_blk, None, ty);
         self.builder.switch_to(merge_blk);
         if all_terminated {
@@ -380,6 +447,7 @@ impl<'a> LoweringCtx<'a> {
 
     fn lower_match_sequential(&mut self, scr: ValueId, arms: &[MatchArm], ty: Ty) -> ValueId {
         let merge_blk = self.builder.new_block(Some(self.labels.merge));
+        let mut all_terminated = true;
 
         for (i, arm) in arms.iter().enumerate() {
             let pat = self.body.pats[arm.pat].clone();
@@ -441,6 +509,7 @@ impl<'a> LoweringCtx<'a> {
                             block: merge_blk,
                             args: vec![body_val],
                         });
+                        all_terminated = false;
                     }
                     self.pop_scope();
 
@@ -457,8 +526,10 @@ impl<'a> LoweringCtx<'a> {
                             block: merge_blk,
                             args: vec![body_val],
                         });
+                        all_terminated = false;
                     }
                     self.pop_scope();
+                    break; // catch-all: subsequent arms are unreachable
                 }
                 Pat::Bind { name } => {
                     self.push_scope();
@@ -469,8 +540,10 @@ impl<'a> LoweringCtx<'a> {
                             block: merge_blk,
                             args: vec![body_val],
                         });
+                        all_terminated = false;
                     }
                     self.pop_scope();
+                    break; // catch-all: subsequent arms are unreachable
                 }
                 Pat::Record { .. } | Pat::Constructor { .. } => {
                     self.push_scope();
@@ -481,6 +554,7 @@ impl<'a> LoweringCtx<'a> {
                             block: merge_blk,
                             args: vec![body_val],
                         });
+                        all_terminated = false;
                     }
                     self.pop_scope();
                 }
@@ -490,6 +564,9 @@ impl<'a> LoweringCtx<'a> {
 
         let result = self.builder.add_block_param(merge_blk, None, ty);
         self.builder.switch_to(merge_blk);
+        if all_terminated {
+            self.builder.set_unreachable();
+        }
         result
     }
 
