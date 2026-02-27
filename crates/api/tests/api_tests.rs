@@ -2012,3 +2012,27 @@ fn symbol_graph_local_lambda_not_in_function_calls() {
         main_fn.calls
     );
 }
+
+#[test]
+fn unresolved_return_type_emits_diagnostic() {
+    let output = check("fn main() -> Foo { 1 }", "test.ky");
+    assert!(
+        output.diagnostics.iter().any(|d| d.code == "E0012"
+            && d.message.contains("unresolved type")
+            && d.message.contains("Foo")),
+        "expected E0012 unresolved type for `Foo`, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn unresolved_param_type_emits_diagnostic() {
+    let output = check("fn main(x: Bar) -> Int { 1 }", "test.ky");
+    assert!(
+        output.diagnostics.iter().any(|d| d.code == "E0012"
+            && d.message.contains("unresolved type")
+            && d.message.contains("Bar")),
+        "expected E0012 unresolved type for `Bar`, got: {:?}",
+        output.diagnostics
+    );
+}
