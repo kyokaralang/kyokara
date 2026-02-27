@@ -301,11 +301,11 @@ fn main() {
             if apply && (output.status == "typechecked" || output.status == "skipped") {
                 // Use patched sources from the transaction when available.
                 if let Some(patched) = &output.patched_sources {
+                    if let Err(e) = apply_patched_sources_atomically(patched) {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    }
                     for ps in patched {
-                        if let Err(e) = std::fs::write(&ps.file, &ps.source) {
-                            eprintln!("error: cannot write `{}`: {e}", ps.file);
-                            std::process::exit(1);
-                        }
                         eprintln!("wrote {}", ps.file);
                     }
                 }
@@ -350,6 +350,68 @@ fn main() {
     }
 }
 
+fn apply_patched_sources_atomically(
+    patched: &[kyokara_api::PatchedSourceDto],
+) -> Result<(), String> {
+    apply_patched_sources_with_ops(
+        patched,
+        |path| std::fs::read_to_string(path),
+        |path, source| std::fs::write(path, source),
+    )
+}
+
+fn apply_patched_sources_with_ops<Read, Write>(
+    patched: &[kyokara_api::PatchedSourceDto],
+    mut read: Read,
+    mut write: Write,
+) -> Result<(), String>
+where
+    Read: FnMut(&str) -> std::io::Result<String>,
+    Write: FnMut(&str, &str) -> std::io::Result<()>,
+{
+    let mut originals = Vec::with_capacity(patched.len());
+    for ps in patched {
+        let original =
+            read(&ps.file).map_err(|e| format!("cannot read `{}` before apply: {e}", ps.file))?;
+        originals.push((ps.file.as_str(), original));
+    }
+
+    let mut applied_indices = Vec::new();
+    for (idx, ps) in patched.iter().enumerate() {
+        if let Err(e) = write(&ps.file, &ps.source) {
+            let rollback_errors =
+                rollback_applied_sources(&applied_indices, &originals, &mut write);
+            let mut msg = format!("cannot write `{}`: {e}", ps.file);
+            if !rollback_errors.is_empty() {
+                msg.push_str("; ");
+                msg.push_str(&rollback_errors.join("; "));
+            }
+            return Err(msg);
+        }
+        applied_indices.push(idx);
+    }
+
+    Ok(())
+}
+
+fn rollback_applied_sources<Write>(
+    applied_indices: &[usize],
+    originals: &[(&str, String)],
+    write: &mut Write,
+) -> Vec<String>
+where
+    Write: FnMut(&str, &str) -> std::io::Result<()>,
+{
+    let mut rollback_errors = Vec::new();
+    for &idx in applied_indices.iter().rev() {
+        let (file, original) = &originals[idx];
+        if let Err(e) = write(file, original) {
+            rollback_errors.push(format!("cannot rollback `{file}`: {e}"));
+        }
+    }
+    rollback_errors
+}
+
 /// Check if there are other `.ky` files alongside the given file.
 fn has_sibling_ky_files(entry: &std::path::Path, dir: &std::path::Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -392,6 +454,110 @@ fn should_use_project_mode(path: &std::path::Path, force_project: bool) -> bool 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::io;
+
+    fn patched(file: &str, source: &str) -> kyokara_api::PatchedSourceDto {
+        kyokara_api::PatchedSourceDto {
+            file: file.to_string(),
+            source: source.to_string(),
+        }
+    }
+
+    #[test]
+    fn apply_patched_sources_rolls_back_on_late_write_failure() {
+        let files = RefCell::new(BTreeMap::from([
+            ("a.ky".to_string(), "fn a() -> Int { 1 }\n".to_string()),
+            ("b.ky".to_string(), "fn b() -> Int { 2 }\n".to_string()),
+        ]));
+        let writes = RefCell::new(Vec::<(String, String)>::new());
+        let patched = vec![
+            patched("a.ky", "fn a() -> Int { 10 }\n"),
+            patched("b.ky", "fn b() -> Int { 20 }\n"),
+        ];
+
+        let err = apply_patched_sources_with_ops(
+            &patched,
+            |path| {
+                files.borrow().get(path).cloned().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::NotFound, format!("missing file {path}"))
+                })
+            },
+            |path, source| {
+                writes
+                    .borrow_mut()
+                    .push((path.to_string(), source.to_string()));
+                if path == "b.ky" && source == "fn b() -> Int { 20 }\n" {
+                    return Err(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
+                }
+                files
+                    .borrow_mut()
+                    .insert(path.to_string(), source.to_string());
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert!(
+            err.contains("cannot write `b.ky`"),
+            "expected write error for b.ky, got: {err}"
+        );
+
+        let files = files.borrow();
+        assert_eq!(
+            files.get("a.ky").map(String::as_str),
+            Some("fn a() -> Int { 1 }\n"),
+            "first file should be rolled back after later write failure"
+        );
+        assert_eq!(
+            files.get("b.ky").map(String::as_str),
+            Some("fn b() -> Int { 2 }\n"),
+            "failing file should keep original content"
+        );
+
+        let writes = writes.borrow();
+        assert_eq!(
+            writes.as_slice(),
+            &[
+                ("a.ky".to_string(), "fn a() -> Int { 10 }\n".to_string()),
+                ("b.ky".to_string(), "fn b() -> Int { 20 }\n".to_string()),
+                ("a.ky".to_string(), "fn a() -> Int { 1 }\n".to_string()),
+            ],
+            "expected rollback write to restore already-applied files"
+        );
+    }
+
+    #[test]
+    fn apply_patched_sources_successfully_writes_all_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let a_path = dir.path().join("a.ky");
+        let b_path = dir.path().join("b.ky");
+        std::fs::write(&a_path, "fn a() -> Int { 1 }\n").unwrap();
+        std::fs::write(&b_path, "fn b() -> Int { 2 }\n").unwrap();
+
+        let patched = vec![
+            kyokara_api::PatchedSourceDto {
+                file: a_path.display().to_string(),
+                source: "fn a() -> Int { 10 }\n".to_string(),
+            },
+            kyokara_api::PatchedSourceDto {
+                file: b_path.display().to_string(),
+                source: "fn b() -> Int { 20 }\n".to_string(),
+            },
+        ];
+
+        apply_patched_sources_atomically(&patched).expect("apply should succeed");
+
+        assert_eq!(
+            std::fs::read_to_string(&a_path).unwrap(),
+            "fn a() -> Int { 10 }\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&b_path).unwrap(),
+            "fn b() -> Int { 20 }\n"
+        );
+    }
 
     #[test]
     fn auto_detect_requires_main_ky() {
