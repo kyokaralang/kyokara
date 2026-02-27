@@ -268,8 +268,12 @@ fn lambda_param(p: &mut Parser<'_>) {
 }
 
 /// Parse ident, then decide: path expr, record expr, or plain ident expr.
+///
+/// Uses `parse_single_path` (single ident) so that a trailing `.field`
+/// is handled by the postfix-dot loop in `expr_bp` as `FieldExpr`,
+/// rather than being greedily consumed into a multi-segment `Path`.
 fn ident_or_path_or_record(p: &mut Parser<'_>) -> CompletedMarker {
-    let path_cm = super::parse_path(p);
+    let path_cm = super::parse_single_path(p);
 
     match p.current() {
         LBrace if !p.no_record_expr => {
