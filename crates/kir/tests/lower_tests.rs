@@ -911,3 +911,115 @@ fn test_adt_switch_constructor_before_catchall_still_works() {
     assert!(out.contains("A:"), "output:\n{out}");
     assert!(out.contains("default:"), "output:\n{out}");
 }
+
+// ── Bug regression: ADT switch emits duplicate cases (#142) ───
+
+#[test]
+fn test_adt_switch_no_duplicate_cases() {
+    // Bug: redundant constructor arms emit duplicate SwitchCase entries.
+    let result = check_file(
+        "type W = | A | B
+         fn f(x: W) -> Int {
+           match x {
+             A => 1
+             A => 2
+             B => 3
+           }
+         }",
+    );
+    let real_errors: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .filter(|(d, _)| !matches!(d, kyokara_hir::TyDiagnosticData::RedundantMatchArm))
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "unexpected type errors: {real_errors:?}"
+    );
+
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+
+    let func = module.functions.iter().next().unwrap().1;
+    let entry = &func.blocks[func.entry_block];
+    match entry.terminator.as_ref().unwrap() {
+        Terminator::Switch { cases, .. } => {
+            // Each variant should appear at most once.
+            let variant_names: Vec<_> =
+                cases.iter().map(|c| c.variant.resolve(&interner)).collect();
+            let unique: std::collections::HashSet<_> = variant_names.iter().collect();
+            assert_eq!(
+                variant_names.len(),
+                unique.len(),
+                "switch has duplicate cases: {variant_names:?}"
+            );
+        }
+        other => panic!("expected Switch terminator, got: {other:?}"),
+    }
+}
+
+#[test]
+fn test_adt_switch_first_dup_case_wins() {
+    // Guard: when deduplicating, the first constructor arm should win.
+    let result = check_file(
+        "type W = | A | B
+         fn f(x: W) -> Int {
+           match x {
+             A => 10
+             A => 20
+             B => 30
+           }
+         }",
+    );
+    let real_errors: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .filter(|(d, _)| !matches!(d, kyokara_hir::TyDiagnosticData::RedundantMatchArm))
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "unexpected type errors: {real_errors:?}"
+    );
+
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+
+    let func = module.functions.iter().next().unwrap().1;
+    let entry = &func.blocks[func.entry_block];
+    let a_block = match entry.terminator.as_ref().unwrap() {
+        Terminator::Switch { cases, .. } => {
+            let a_case = cases
+                .iter()
+                .find(|c| c.variant.resolve(&interner) == "A")
+                .expect("should have A case");
+            a_case.target.block
+        }
+        other => panic!("expected Switch, got: {other:?}"),
+    };
+
+    // The A case block body should produce const 10 (first arm), not const 20.
+    let a_blk = &func.blocks[a_block];
+    let first_val = a_blk.body[0];
+    match &func.values[first_val].inst {
+        Inst::Const(c) => {
+            let display = format!("{c:?}");
+            assert!(
+                display.contains("10"),
+                "first A arm should produce const 10, got: {display}"
+            );
+        }
+        other => panic!("expected Const, got: {other:?}"),
+    }
+}
