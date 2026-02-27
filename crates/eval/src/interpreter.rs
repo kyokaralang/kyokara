@@ -124,6 +124,52 @@ impl Interpreter {
         self.call_fn(main_idx, Args::new())
     }
 
+    /// Reorder call arguments to match parameter order when named args are present.
+    ///
+    /// Given a mix of positional and named `CallArg`s and the function's parameter
+    /// list, returns expression indices in parameter order. Positional args fill
+    /// slots left-to-right; named args are placed at the matching parameter index.
+    fn reorder_args_for_fn(&self, args: &[CallArg], params: &[FnParam]) -> Vec<ExprIdx> {
+        let has_named = args.iter().any(|a| matches!(a, CallArg::Named { .. }));
+        if !has_named {
+            // Fast path: all positional, return as-is.
+            return args
+                .iter()
+                .map(|a| match a {
+                    CallArg::Positional(idx) => *idx,
+                    CallArg::Named { value, .. } => *value,
+                })
+                .collect();
+        }
+
+        // Build a slot array in parameter order.
+        let mut slots: Vec<Option<ExprIdx>> = vec![None; params.len()];
+        let mut pos = 0;
+        for arg in args {
+            match arg {
+                CallArg::Positional(idx) => {
+                    // Skip slots already filled by named args.
+                    while pos < slots.len() && slots[pos].is_some() {
+                        pos += 1;
+                    }
+                    if pos < slots.len() {
+                        slots[pos] = Some(*idx);
+                        pos += 1;
+                    }
+                }
+                CallArg::Named { name, value } => {
+                    if let Some(i) = params.iter().position(|p| p.name == *name) {
+                        slots[i] = Some(*value);
+                    }
+                }
+            }
+        }
+
+        // Return expression indices in parameter order, falling back to the
+        // value expr if a slot wasn't filled (shouldn't happen with valid code).
+        slots.into_iter().flatten().collect()
+    }
+
     /// Call a user-defined function by index.
     fn call_fn(&mut self, fn_idx: FnItemIdx, args: Args) -> Result<Value, RuntimeError> {
         let body = self
@@ -278,18 +324,33 @@ impl Interpreter {
                 let callee_idx = *callee;
                 let args = args.clone();
                 let callee_val = eval_propagate!(self, env, body, callee_idx);
-                let mut arg_vals = Args::with_capacity(args.len());
-                for arg in &args {
-                    match arg {
-                        CallArg::Positional(idx) => {
-                            let v = eval_propagate!(self, env, body, *idx);
-                            arg_vals.push(v);
-                        }
-                        CallArg::Named { value, .. } => {
-                            let v = eval_propagate!(self, env, body, *value);
-                            arg_vals.push(v);
-                        }
-                    }
+
+                // When calling a user function with named args, reorder
+                // argument expressions to match parameter order.
+                let ordered: Vec<ExprIdx>;
+                let arg_exprs: &[ExprIdx];
+                if let Value::Fn(ref fv) = callee_val
+                    && let FnValue::User(fn_idx) = **fv
+                    && args.iter().any(|a| matches!(a, CallArg::Named { .. }))
+                {
+                    let params = &self.item_tree.functions[fn_idx].params;
+                    ordered = self.reorder_args_for_fn(&args, params);
+                    arg_exprs = &ordered;
+                } else {
+                    ordered = args
+                        .iter()
+                        .map(|a| match a {
+                            CallArg::Positional(idx) => *idx,
+                            CallArg::Named { value, .. } => *value,
+                        })
+                        .collect();
+                    arg_exprs = &ordered;
+                }
+
+                let mut arg_vals = Args::with_capacity(arg_exprs.len());
+                for idx in arg_exprs {
+                    let v = eval_propagate!(self, env, body, *idx);
+                    arg_vals.push(v);
                 }
                 self.call_value(callee_val, arg_vals)
                     .map(ControlFlow::Value)
@@ -471,6 +532,10 @@ impl Interpreter {
                         }
                     }
 
+                    // Reorder args when named args are present so values match
+                    // parameter order instead of call-site order.
+                    let reordered = self.reorder_args_for_fn(args, &fn_item.params);
+
                     let has_contracts = fn_body.requires.is_some()
                         || fn_body.ensures.is_some()
                         || fn_body.invariant.is_some();
@@ -484,12 +549,8 @@ impl Interpreter {
                         let params = unsafe { &*params_ptr };
 
                         self.env.push_scope();
-                        for (i, arg) in args.iter().enumerate() {
-                            let arg_idx = match arg {
-                                CallArg::Positional(idx) => *idx,
-                                CallArg::Named { value, .. } => *value,
-                            };
-                            let val = eval_propagate_shared!(self, body, arg_idx);
+                        for (i, arg_idx) in reordered.iter().enumerate() {
+                            let val = eval_propagate_shared!(self, body, *arg_idx);
                             if let Some(param) = params.get(i) {
                                 self.env.bind(param.name, val);
                             }
@@ -504,13 +565,9 @@ impl Interpreter {
                     }
 
                     // Slow path: contracts present — collect args into SmallVec.
-                    let mut args_vec = Args::with_capacity(args.len());
-                    for arg in args {
-                        let arg_idx = match arg {
-                            CallArg::Positional(idx) => *idx,
-                            CallArg::Named { value, .. } => *value,
-                        };
-                        let v = eval_propagate_shared!(self, body, arg_idx);
+                    let mut args_vec = Args::with_capacity(reordered.len());
+                    for arg_idx in &reordered {
+                        let v = eval_propagate_shared!(self, body, *arg_idx);
                         args_vec.push(v);
                     }
                     return self.call_fn(fn_idx, args_vec).map(ControlFlow::Value);
@@ -646,14 +703,24 @@ impl Interpreter {
             return Ok(val.clone());
         }
 
-        // 2. Intrinsics (checked before module functions because intrinsic names
-        //    are also registered in module_scope.functions for type checking, but
-        //    lack bodies — resolving them as User functions would fail at call time).
+        // 2. Module-level functions (checked before intrinsics so that user-defined
+        //    functions can shadow builtins like `abs`, `min`, `max`).
+        //    Only resolve as a user function if it has a body — intrinsic stubs
+        //    are registered in module_scope.functions for type checking but lack
+        //    bodies, so they fall through to step 3.
+        if let Some(&fn_idx) = self.module_scope.functions.get(&name) {
+            if self.fn_bodies.contains_key(&fn_idx) {
+                return Ok(Value::Fn(Box::new(FnValue::User(fn_idx))));
+            }
+        }
+
+        // 3. Intrinsics (fallback for names that have no user-defined body).
         if let Some(&intr) = self.intrinsics.get(&name) {
             return Ok(Value::Fn(Box::new(FnValue::Intrinsic(intr))));
         }
 
-        // 3. Module-level functions.
+        // 4. Module-level functions without bodies (shouldn't normally happen
+        //    after step 2+3, but kept as a fallback for robustness).
         if let Some(&fn_idx) = self.module_scope.functions.get(&name) {
             return Ok(Value::Fn(Box::new(FnValue::User(fn_idx))));
         }
@@ -685,12 +752,24 @@ impl Interpreter {
     #[inline(always)]
     fn eval_binary(&self, op: BinaryOp, lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
         match (op, &lhs, &rhs) {
-            // Int arithmetic.
-            (BinaryOp::Add, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
-            (BinaryOp::Sub, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
-            (BinaryOp::Mul, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
+            // Int arithmetic (checked to prevent overflow panics).
+            (BinaryOp::Add, Value::Int(a), Value::Int(b)) => a
+                .checked_add(*b)
+                .map(Value::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
+            (BinaryOp::Sub, Value::Int(a), Value::Int(b)) => a
+                .checked_sub(*b)
+                .map(Value::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
+            (BinaryOp::Mul, Value::Int(a), Value::Int(b)) => a
+                .checked_mul(*b)
+                .map(Value::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
             (BinaryOp::Div, Value::Int(_), Value::Int(0)) => Err(RuntimeError::DivisionByZero),
-            (BinaryOp::Div, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
+            (BinaryOp::Div, Value::Int(a), Value::Int(b)) => a
+                .checked_div(*b)
+                .map(Value::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
 
             // Float arithmetic.
             (BinaryOp::Add, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
@@ -727,6 +806,10 @@ impl Interpreter {
             (BinaryOp::Eq, Value::String(a), Value::String(b)) => Ok(Value::Bool(a == b)),
             (BinaryOp::NotEq, Value::String(a), Value::String(b)) => Ok(Value::Bool(a != b)),
 
+            // Char equality.
+            (BinaryOp::Eq, Value::Char(a), Value::Char(b)) => Ok(Value::Bool(a == b)),
+            (BinaryOp::NotEq, Value::Char(a), Value::Char(b)) => Ok(Value::Bool(a != b)),
+
             _ => Err(RuntimeError::TypeError(format!(
                 "cannot apply {op:?} to {:?} and {:?}",
                 std::mem::discriminant(&lhs),
@@ -738,7 +821,10 @@ impl Interpreter {
     #[inline(always)]
     fn eval_unary(&self, op: UnaryOp, val: Value) -> Result<Value, RuntimeError> {
         match (op, &val) {
-            (UnaryOp::Neg, Value::Int(n)) => Ok(Value::Int(-n)),
+            (UnaryOp::Neg, Value::Int(n)) => n
+                .checked_neg()
+                .map(Value::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
             (UnaryOp::Neg, Value::Float(f)) => Ok(Value::Float(-f)),
             (UnaryOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
             _ => Err(RuntimeError::TypeError(format!(
@@ -1108,7 +1194,7 @@ impl Interpreter {
         &mut self,
         env: &mut Env,
         body: &Body,
-        path: Option<&kyokara_hir_def::path::Path>,
+        _path: Option<&kyokara_hir_def::path::Path>,
         fields: &[(Name, ExprIdx)],
     ) -> Result<ControlFlow, RuntimeError> {
         let mut field_vals = Vec::with_capacity(fields.len());
@@ -1117,19 +1203,10 @@ impl Interpreter {
             field_vals.push((*name, val));
         }
 
-        // If there's a path, it's an ADT record constructor.
-        if let Some(path) = path
-            && let Some(ctor_name) = path.last()
-            && let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&ctor_name)
-        {
-            let vals: Vec<Value> = field_vals.into_iter().map(|(_, v)| v).collect();
-            return Ok(ControlFlow::Value(Value::Adt {
-                type_idx,
-                variant: variant_idx,
-                fields: vals,
-            }));
-        }
-
+        // Record literals (`Name { field: value }`) always produce record
+        // values. ADT constructors are handled separately through the call
+        // path (`Name(value)`). This avoids misinterpreting record literals
+        // as ADT constructors when names collide (issue #127).
         Ok(ControlFlow::Value(Value::Record { fields: field_vals }))
     }
 
@@ -1228,7 +1305,7 @@ impl Interpreter {
     fn eval_record_lit_shared(
         &mut self,
         body: &Body,
-        path: Option<&kyokara_hir_def::path::Path>,
+        _path: Option<&kyokara_hir_def::path::Path>,
         fields: &[(Name, ExprIdx)],
     ) -> Result<ControlFlow, RuntimeError> {
         let mut field_vals = Vec::with_capacity(fields.len());
@@ -1237,18 +1314,7 @@ impl Interpreter {
             field_vals.push((*name, val));
         }
 
-        if let Some(path) = path
-            && let Some(ctor_name) = path.last()
-            && let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&ctor_name)
-        {
-            let vals: Vec<Value> = field_vals.into_iter().map(|(_, v)| v).collect();
-            return Ok(ControlFlow::Value(Value::Adt {
-                type_idx,
-                variant: variant_idx,
-                fields: vals,
-            }));
-        }
-
+        // Record literals always produce record values (see eval_record_lit).
         Ok(ControlFlow::Value(Value::Record { fields: field_vals }))
     }
 }

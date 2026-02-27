@@ -241,6 +241,26 @@ fn eval_bool_equality() {
     assert!(matches!(val, Value::Bool(false)));
 }
 
+// ── Char equality tests ──────────────────────────────────────────────
+
+#[test]
+fn eval_char_eq_same() {
+    let val = run_ok("fn main() -> Bool { 'a' == 'a' }");
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_char_eq_different() {
+    let val = run_ok("fn main() -> Bool { 'a' == 'b' }");
+    assert!(matches!(val, Value::Bool(false)));
+}
+
+#[test]
+fn eval_char_neq() {
+    let val = run_ok("fn main() -> Bool { 'a' != 'b' }");
+    assert!(matches!(val, Value::Bool(true)));
+}
+
 // ── Unary operator tests ─────────────────────────────────────────────
 
 #[test]
@@ -337,6 +357,22 @@ fn eval_record_literal() {
          }",
     );
     assert!(matches!(val, Value::Int(7)));
+}
+
+#[test]
+fn eval_record_literal_not_confused_with_adt_constructor() {
+    // Regression test for issue #127: when a record type alias and an ADT
+    // constructor share the same name, `Point { x: 1 }` must produce a
+    // record value (not an ADT), and field access on it must work.
+    let val = run_ok(
+        "type Point = { x: Int }
+         type Wrap = | Point(Int)
+         fn main() -> Int {
+           let p = Point { x: 1 }
+           p.x
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
 }
 
 // ── Recursion tests ──────────────────────────────────────────────────
@@ -2102,4 +2138,274 @@ fn run_accepts_compile_valid_let_rebinding_programs() {
             case.name, case.expected, value
         );
     }
+}
+
+// ── User-defined functions shadow intrinsics (#70) ──────────────────
+
+#[test]
+fn user_fn_shadows_intrinsic_abs() {
+    // User defines `abs` that adds 100 instead of returning the absolute value.
+    // The user version should take precedence over the builtin intrinsic.
+    let val = run_ok(
+        r#"
+        fn abs(x: Int) -> Int { x + 100 }
+        fn main() -> Int { abs(5) }
+        "#,
+    );
+    assert_eq!(val, Value::Int(105));
+}
+
+#[test]
+fn user_fn_shadows_intrinsic_min() {
+    // User defines `min` that always returns the first argument.
+    let val = run_ok(
+        r#"
+        fn min(a: Int, b: Int) -> Int { a }
+        fn main() -> Int { min(10, 3) }
+        "#,
+    );
+    assert_eq!(val, Value::Int(10));
+}
+
+#[test]
+fn user_fn_shadows_intrinsic_max() {
+    // User defines `max` that returns the sum instead of the max.
+    let val = run_ok(
+        r#"
+        fn max(a: Int, b: Int) -> Int { a + b }
+        fn main() -> Int { max(2, 3) }
+        "#,
+    );
+    assert_eq!(val, Value::Int(5));
+}
+
+// ── Integer overflow tests (#71) ────────────────────────────────────
+
+#[test]
+fn overflow_add_max_plus_one() {
+    let err = run_err("fn main() -> Int { 9223372036854775807 + 1 }");
+    assert!(
+        err.contains("integer overflow"),
+        "expected overflow error, got: {err}"
+    );
+}
+
+#[test]
+fn overflow_sub_min_minus_one() {
+    let err = run_err(
+        // i64::MIN is -9223372036854775808; we express it as 0 - 9223372036854775807 - 1 - 1
+        // Actually simpler: -9223372036854775807 is the negation of MAX which is fine,
+        // then subtract 1 to get MIN, then subtract 1 more to overflow.
+        "fn main() -> Int { -9223372036854775807 - 2 }",
+    );
+    assert!(
+        err.contains("integer overflow"),
+        "expected overflow error, got: {err}"
+    );
+}
+
+#[test]
+fn overflow_mul_max_times_two() {
+    let err = run_err("fn main() -> Int { 9223372036854775807 * 2 }");
+    assert!(
+        err.contains("integer overflow"),
+        "expected overflow error, got: {err}"
+    );
+}
+
+#[test]
+fn overflow_unary_neg_of_min() {
+    // -(i64::MIN) overflows because i64::MAX is 9223372036854775807 but |i64::MIN| is 9223372036854775808.
+    // We build i64::MIN as -9223372036854775807 - 1, then negate it.
+    let err = run_err("fn main() -> Int { -(-9223372036854775807 - 1) }");
+    assert!(
+        err.contains("integer overflow"),
+        "expected overflow error, got: {err}"
+    );
+}
+
+#[test]
+fn overflow_abs_of_min() {
+    // abs(i64::MIN) overflows for the same reason as unary neg.
+    let err = run_err("fn main() -> Int { abs(-9223372036854775807 - 1) }");
+    assert!(
+        err.contains("integer overflow"),
+        "expected overflow error, got: {err}"
+    );
+}
+
+#[test]
+fn overflow_div_min_by_neg_one() {
+    // i64::MIN / -1 overflows (result would be i64::MAX + 1).
+    let err = run_err("fn main() -> Int { (-9223372036854775807 - 1) / -1 }");
+    assert!(
+        err.contains("integer overflow"),
+        "expected overflow error, got: {err}"
+    );
+}
+
+#[test]
+fn normal_arithmetic_still_works() {
+    let val = run_ok("fn main() -> Int { 100 + 200 }");
+    assert_eq!(val, Value::Int(300));
+    let val = run_ok("fn main() -> Int { 100 - 200 }");
+    assert_eq!(val, Value::Int(-100));
+    let val = run_ok("fn main() -> Int { 100 * 200 }");
+    assert_eq!(val, Value::Int(20000));
+    let val = run_ok("fn main() -> Int { -42 }");
+    assert_eq!(val, Value::Int(-42));
+    let val = run_ok("fn main() -> Int { abs(-42) }");
+    assert_eq!(val, Value::Int(42));
+}
+
+// ── Named argument tests ────────────────────────────────────────────
+
+#[test]
+fn eval_named_args_basic() {
+    // Named args in order should work.
+    let val = run_ok(
+        "fn add(x: Int, y: Int) -> Int { x + y }
+         fn main() -> Int { add(x: 1, y: 2) }",
+    );
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_named_args_reordered() {
+    // Reordered named args: sub(y: 10, x: 3) should bind x=3, y=10 → 3 - 10 = -7.
+    let val = run_ok(
+        "fn sub(x: Int, y: Int) -> Int { x - y }
+         fn main() -> Int { sub(y: 10, x: 3) }",
+    );
+    assert_eq!(val, Value::Int(-7));
+}
+
+#[test]
+fn eval_positional_args_still_work() {
+    // Guard: positional args should remain correct.
+    let val = run_ok(
+        "fn sub(x: Int, y: Int) -> Int { x - y }
+         fn main() -> Int { sub(3, 10) }",
+    );
+    assert_eq!(val, Value::Int(-7));
+}
+
+// ── Issue #68: wrong imported function body when sibling modules export same name ──
+
+#[test]
+fn run_project_uses_imported_module_body_not_sibling() {
+    // When main.ky imports util, and both util.ky and other.ky export
+    // `pub fn foo() -> Int`, only util's body should be used.
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let util_path = dir.path().join("util.ky");
+    let mut util_file = std::fs::File::create(&util_path).unwrap();
+    writeln!(util_file, "pub fn foo() -> Int {{ 42 }}").unwrap();
+
+    let other_path = dir.path().join("other.ky");
+    let mut other_file = std::fs::File::create(&other_path).unwrap();
+    writeln!(other_file, "pub fn foo() -> Int {{ 999 }}").unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import util").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ foo() }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path).expect("should succeed");
+    assert_eq!(
+        result.value,
+        Value::Int(42),
+        "foo() should resolve to util::foo() (42), not other::foo() (999)"
+    );
+}
+
+#[test]
+fn run_project_dual_import_same_name_is_conflict() {
+    // When main.ky imports both util and other, and both export `foo`,
+    // the second import should produce a conflicting-import error.
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let util_path = dir.path().join("util.ky");
+    let mut util_file = std::fs::File::create(&util_path).unwrap();
+    writeln!(util_file, "pub fn foo() -> Int {{ 42 }}").unwrap();
+
+    let other_path = dir.path().join("other.ky");
+    let mut other_file = std::fs::File::create(&other_path).unwrap();
+    writeln!(other_file, "pub fn foo() -> Int {{ 999 }}").unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import util").unwrap();
+    writeln!(main_file, "import other").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ foo() }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path);
+    match result {
+        Ok(_) => panic!("expected conflicting import error"),
+        Err(e) => {
+            let err = e.to_string();
+            assert!(
+                err.contains("conflicting import"),
+                "expected 'conflicting import' in message, got: {err}"
+            );
+        }
+    }
+}
+
+// ── Issue #69: imported pub fn calling private helper ────────────────
+
+#[test]
+fn run_project_imported_pub_fn_calls_private_helper() {
+    // pub fn foo() in util.ky calls private helper() in the same module.
+    // The interpreter must resolve helper() in util's scope, not main's.
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let util_path = dir.path().join("util.ky");
+    let mut util_file = std::fs::File::create(&util_path).unwrap();
+    writeln!(util_file, "fn helper() -> Int {{ 41 }}").unwrap();
+    writeln!(util_file, "pub fn foo() -> Int {{ helper() + 1 }}").unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import util").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ foo() }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path).expect("should succeed");
+    assert_eq!(
+        result.value,
+        Value::Int(42),
+        "foo() should call util's private helper() and return 42"
+    );
+}
+
+#[test]
+fn run_project_private_helper_not_directly_callable_from_main() {
+    // Private functions in util.ky should NOT be callable directly from main.ky.
+    // Only pub functions are imported.
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let util_path = dir.path().join("util.ky");
+    let mut util_file = std::fs::File::create(&util_path).unwrap();
+    writeln!(util_file, "fn helper() -> Int {{ 42 }}").unwrap();
+    writeln!(util_file, "pub fn foo() -> Int {{ helper() }}").unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import util").unwrap();
+    // Calling helper() directly should fail — it's private.
+    writeln!(main_file, "fn main() -> Int {{ helper() }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path);
+    assert!(
+        result.is_err(),
+        "calling private helper() directly from main should fail"
+    );
 }

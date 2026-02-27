@@ -266,31 +266,84 @@ pub fn run_project_with_manifest(
     }
 
     // Also collect bodies from imported modules and map them to entry module indices.
+    // Only consider modules that the entry module actually imports (#68).
     let entry_info = project.module_graph.get(&entry_path).unwrap();
-    let entry_tree = &entry_info.item_tree;
-    let entry_scope = &entry_info.scope;
+
+    // Build the set of module paths that the entry module imports.
+    let imported_mod_paths: Vec<ModulePath> = entry_info
+        .item_tree
+        .imports
+        .iter()
+        .filter_map(|imp| {
+            let target_name = imp.path.last()?;
+            // Resolve to the actual module path, same as resolve_project_imports does.
+            for (mod_path, _) in project.module_graph.iter() {
+                if mod_path.last() == Some(target_name) {
+                    return Some(mod_path.clone());
+                }
+            }
+            None
+        })
+        .collect();
+
+    // Collect private function items + bodies from imported modules so that
+    // public functions can call private helpers in their own module (#69).
+    // We accumulate (FnItem, Body) pairs to splice into the entry module later.
+    let mut private_fns_to_splice: Vec<(
+        kyokara_hir_def::item_tree::FnItem,
+        kyokara_hir_def::body::Body,
+    )> = Vec::new();
 
     for (mod_path, tc) in &project.type_checks {
         if *mod_path == entry_path {
+            continue;
+        }
+        // Only process modules that the entry module actually imported.
+        if !imported_mod_paths.contains(mod_path) {
             continue;
         }
         let Some(mod_info) = project.module_graph.get(mod_path) else {
             continue;
         };
 
-        // For each body in this module, check if the entry module imported it.
+        let entry_info = project.module_graph.get(&entry_path).unwrap();
+        let entry_tree = &entry_info.item_tree;
+        let entry_scope = &entry_info.scope;
+
+        // For each body in this module, check if the entry module imported it (pub fn).
         for (src_fn_idx, body) in &tc.fn_bodies {
             let src_fn_item = &mod_info.item_tree.functions[*src_fn_idx];
-            // Find matching function in entry module's tree by name
-            // that doesn't already have a body (from the entry module's own check).
+
+            // Check if this function was cloned into the entry module's tree (pub).
+            let mut matched_entry = false;
             for (entry_fn_idx, entry_fn_item) in entry_tree.functions.iter() {
                 if entry_fn_item.name == src_fn_item.name
                     && !fn_bodies.contains_key(&entry_fn_idx)
                     && entry_scope.functions.get(&entry_fn_item.name) == Some(&entry_fn_idx)
                 {
                     fn_bodies.insert(entry_fn_idx, body.clone());
+                    matched_entry = true;
                 }
             }
+
+            // If it wasn't matched (private fn), collect it for splicing.
+            if !matched_entry && !src_fn_item.is_pub {
+                private_fns_to_splice.push((src_fn_item.clone(), body.clone()));
+            }
+        }
+    }
+
+    // Splice private helper functions into the entry module's item tree and scope
+    // so that imported public functions can resolve their private callees at
+    // runtime. The type checker already prevents direct access from main (#69).
+    let entry_info = project.module_graph.get_mut(&entry_path).unwrap();
+    for (fn_item, body) in private_fns_to_splice {
+        let name = fn_item.name;
+        // Only add if there's no name conflict with the entry module's own functions.
+        if !entry_info.scope.functions.contains_key(&name) {
+            let idx = entry_info.item_tree.functions.alloc(fn_item);
+            entry_info.scope.functions.insert(name, idx);
+            fn_bodies.insert(idx, body);
         }
     }
 

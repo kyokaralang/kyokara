@@ -39,4 +39,7 @@ pub enum RuntimeError {
         capability: String,
         function: String,
     },
+
+    #[error("integer overflow")]
+    IntegerOverflow,
 }
