@@ -1,7 +1,9 @@
 //! Integration tests for HIR → KIR lowering.
 
 use kyokara_hir::check_file;
+use kyokara_kir::block::Terminator;
 use kyokara_kir::display::{DisplayCtx, display_module};
+use kyokara_kir::inst::Inst;
 use kyokara_kir::lower::lower_module;
 use kyokara_kir::validate::validate_function;
 
@@ -764,4 +766,80 @@ fn test_old_without_rebinding_references_param() {
         gt_line.contains("gt x,"),
         "old(x) should reference param `x`. got: {gt_line}\nfull output:\n{out}"
     );
+}
+
+// ── Bug regression: ADT switch default routes to last catch-all (#140) ───
+
+#[test]
+fn test_adt_switch_default_uses_first_catchall() {
+    // Bug: lower_match_adt overwrites default_target for every wildcard/bind
+    // arm, so the last catch-all wins instead of the first.
+    let result = check_file(
+        "type W = | A | B
+         fn f(x: W) -> Int {
+           match x {
+             A => 1
+             _ => 2
+             _ => 3
+           }
+         }",
+    );
+    // Allow RedundantMatchArm but nothing else.
+    let real_errors: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .filter(|(d, _)| !matches!(d, kyokara_hir::TyDiagnosticData::RedundantMatchArm))
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "unexpected type errors: {real_errors:?}"
+    );
+
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+
+    // Inspect the switch terminator directly.
+    let func = module.functions.iter().next().unwrap().1;
+    let entry = &func.blocks[func.entry_block];
+    let switch_default_block = match entry.terminator.as_ref().unwrap() {
+        Terminator::Switch { default, .. } => default.as_ref().unwrap().block,
+        other => panic!("expected Switch terminator, got: {other:?}"),
+    };
+
+    // The default target block's first instruction should be const 2
+    // (the first catch-all arm), not const 3 (the last).
+    let default_block = &func.blocks[switch_default_block];
+    let first_val = default_block.body[0];
+    match &func.values[first_val].inst {
+        Inst::Const(c) => {
+            let display = format!("{c:?}");
+            assert!(
+                display.contains("2"),
+                "switch default should route to first catch-all (const 2), got: {display}"
+            );
+        }
+        other => panic!("expected Const in default block, got: {other:?}"),
+    }
+}
+
+#[test]
+fn test_adt_switch_single_catchall_still_works() {
+    // Guard: single catch-all arm should work as before.
+    let out = lower_and_display(
+        "type W = | A | B
+         fn f(x: W) -> Int {
+           match x {
+             A => 1
+             _ => 99
+           }
+         }",
+    );
+    assert!(out.contains("const 99"), "output:\n{out}");
+    assert!(out.contains("default:"), "output:\n{out}");
 }
