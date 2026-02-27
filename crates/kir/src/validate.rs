@@ -8,12 +8,14 @@
 //! - Return value types match function return type
 //! - BlockParam instructions match their block's parameter declarations
 
+use rustc_hash::FxHashSet;
+
 use kyokara_diagnostics::{Diagnostic, Severity};
 use kyokara_hir_ty::ty::Ty;
 use kyokara_intern::Interner;
 use kyokara_span::{FileId, Span, TextRange};
 
-use crate::block::{BranchTarget, Terminator};
+use crate::block::{BlockId, BranchTarget, Terminator};
 use crate::function::KirFunction;
 use crate::inst::Inst;
 use crate::value::ValueId;
@@ -146,7 +148,34 @@ pub fn validate_function(func: &KirFunction, interner: &Interner) -> Vec<Diagnos
 
         // Validate terminator references
         if let Some(term) = &block.terminator {
-            validate_terminator(term, func, &block_label, fn_name, &mut diags);
+            validate_terminator(term, func, &block_label, fn_name, interner, &mut diags);
+        }
+    }
+
+    // Check that every block with parameters has at least one predecessor edge.
+    let mut has_predecessor = FxHashSet::<BlockId>::default();
+    for (_bid, block) in func.blocks.iter() {
+        if let Some(term) = &block.terminator {
+            collect_branch_targets(term, &mut has_predecessor);
+        }
+    }
+    for (bid, block) in func.blocks.iter() {
+        if bid == func.entry_block {
+            continue;
+        }
+        // Skip blocks explicitly marked unreachable (dead merge blocks).
+        let is_unreachable = matches!(block.terminator, Some(Terminator::Unreachable));
+        if !block.params.is_empty() && !has_predecessor.contains(&bid) && !is_unreachable {
+            let block_label = block
+                .label
+                .map(|n| n.resolve(interner).to_owned())
+                .unwrap_or_else(|| format!("bb{}", bid.into_raw().into_u32()));
+            diags.push(error(format!(
+                "fn {}: block {} has {} params but no predecessor edges",
+                fn_name,
+                block_label,
+                block.params.len()
+            )));
         }
     }
 
@@ -158,6 +187,7 @@ fn validate_terminator(
     func: &KirFunction,
     block_label: &str,
     fn_name: &str,
+    interner: &Interner,
     diags: &mut Vec<Diagnostic>,
 ) {
     match term {
@@ -189,6 +219,15 @@ fn validate_terminator(
                 "branch condition",
                 diags,
             );
+            if is_valid_value(*condition, func) {
+                let cond_ty = &func.values[*condition].ty;
+                if !types_compatible(cond_ty, &Ty::Bool) {
+                    diags.push(error(format!(
+                        "fn {}: block {} branch condition must be Bool",
+                        fn_name, block_label
+                    )));
+                }
+            }
             validate_branch_target(
                 then_target,
                 func,
@@ -219,7 +258,16 @@ fn validate_terminator(
                 "switch scrutinee",
                 diags,
             );
+            // Check for duplicate case variants.
+            let mut seen_variants = FxHashSet::default();
             for case in cases {
+                let variant_str = case.variant.resolve(interner);
+                if !seen_variants.insert(case.variant) {
+                    diags.push(error(format!(
+                        "fn {}: block {} switch has duplicate case for variant `{}`",
+                        fn_name, block_label, variant_str
+                    )));
+                }
                 validate_branch_target(
                     &case.target,
                     func,
@@ -234,6 +282,32 @@ fn validate_terminator(
             }
         }
         Terminator::Unreachable => {}
+    }
+}
+
+/// Collect all block IDs that appear as branch targets in a terminator.
+fn collect_branch_targets(term: &Terminator, targets: &mut FxHashSet<BlockId>) {
+    match term {
+        Terminator::Return(_) | Terminator::Unreachable => {}
+        Terminator::Jump(t) => {
+            targets.insert(t.block);
+        }
+        Terminator::Branch {
+            then_target,
+            else_target,
+            ..
+        } => {
+            targets.insert(then_target.block);
+            targets.insert(else_target.block);
+        }
+        Terminator::Switch { cases, default, .. } => {
+            for case in cases {
+                targets.insert(case.target.block);
+            }
+            if let Some(def) = default {
+                targets.insert(def.block);
+            }
+        }
     }
 }
 
@@ -306,6 +380,15 @@ fn validate_inst_operands(
         }
         Inst::FieldGet { base, .. } => {
             check_value_exists(*base, func, block_label, fn_name, "field_get base", diags);
+            if is_valid_value(*base, func) {
+                let base_ty = &func.values[*base].ty;
+                if !matches!(base_ty, Ty::Record { .. } | Ty::Adt { .. }) && !base_ty.is_poison() {
+                    diags.push(error(format!(
+                        "fn {}: block {} field_get base must be Record or Adt, got non-record type",
+                        fn_name, block_label
+                    )));
+                }
+            }
         }
         Inst::RecordUpdate { base, updates } => {
             check_value_exists(
@@ -335,6 +418,15 @@ fn validate_inst_operands(
         Inst::Call { target, args } => {
             if let crate::inst::CallTarget::Indirect(val) = target {
                 check_value_exists(*val, func, block_label, fn_name, "call target", diags);
+                if is_valid_value(*val, func) {
+                    let target_ty = &func.values[*val].ty;
+                    if !matches!(target_ty, Ty::Fn { .. }) && !target_ty.is_poison() {
+                        diags.push(error(format!(
+                            "fn {}: block {} indirect call target must be Fn type",
+                            fn_name, block_label
+                        )));
+                    }
+                }
             }
             for arg in args {
                 check_value_exists(*arg, func, block_label, fn_name, "call arg", diags);
@@ -349,6 +441,15 @@ fn validate_inst_operands(
                 "assert condition",
                 diags,
             );
+            if is_valid_value(*condition, func) {
+                let cond_ty = &func.values[*condition].ty;
+                if !types_compatible(cond_ty, &Ty::Bool) {
+                    diags.push(error(format!(
+                        "fn {}: block {} assert condition must be Bool",
+                        fn_name, block_label
+                    )));
+                }
+            }
         }
         Inst::Hole { .. } => {}
         Inst::BlockParam { block, index } => {
@@ -387,7 +488,17 @@ fn validate_inst_operands(
                 "adt_field_get base",
                 diags,
             );
+            if is_valid_value(*base, func) {
+                let base_ty = &func.values[*base].ty;
+                if !matches!(base_ty, Ty::Adt { .. }) && !base_ty.is_poison() {
+                    diags.push(error(format!(
+                        "fn {}: block {} adt_field_get base must be Adt type",
+                        fn_name, block_label
+                    )));
+                }
+            }
         }
+        Inst::FnRef { .. } => {}
     }
 }
 

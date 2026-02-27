@@ -97,4 +97,7 @@ pub enum Inst {
 
     /// Extract a positional field from an ADT value (for destructuring).
     AdtFieldGet { base: ValueId, field_index: u32 },
+
+    /// Reference to a top-level function as a first-class value.
+    FnRef { name: Name },
 }
