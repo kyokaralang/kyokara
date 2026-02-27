@@ -254,6 +254,34 @@ fn symbol_graph_call_edges() {
 }
 
 #[test]
+fn symbol_graph_repeated_direct_calls_are_deduped() {
+    let src = r#"
+        fn callee() -> Int { 42 }
+        fn caller() -> Int {
+            callee()
+            callee()
+        }
+    "#;
+    let output = check(src, "test.ky");
+    let caller_node = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "caller")
+        .expect("should have 'caller' function node");
+    let callee_edges = caller_node
+        .calls
+        .iter()
+        .filter(|c| c.as_str() == "fn::callee")
+        .count();
+    assert_eq!(
+        callee_edges, 1,
+        "repeated direct calls should dedupe to one edge, got: {:?}",
+        caller_node.calls
+    );
+}
+
+#[test]
 fn symbol_graph_effect_annotations() {
     let src = r#"
         cap IO {
@@ -911,6 +939,34 @@ fn project_call_edges_use_qualified_ids() {
     assert!(
         caller.calls.contains(&"fn::math::add".to_string()),
         "expected caller to call fn::math::add, got: {:?}",
+        caller.calls
+    );
+}
+
+#[test]
+fn project_symbol_graph_repeated_import_calls_are_deduped() {
+    let (_dir, main_path) = write_project(&[
+        (
+            "main.ky",
+            "import math\nfn caller() -> Int {\n  add(1, 2)\n  add(3, 4)\n}\n",
+        ),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
+    ]);
+    let output = check_project(&main_path);
+    let caller = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "caller")
+        .expect("should have 'caller' function");
+    let add_edges = caller
+        .calls
+        .iter()
+        .filter(|c| c.as_str() == "fn::math::add")
+        .count();
+    assert_eq!(
+        add_edges, 1,
+        "repeated imported calls should dedupe to one edge, got: {:?}",
         caller.calls
     );
 }

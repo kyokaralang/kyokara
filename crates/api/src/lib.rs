@@ -9,7 +9,7 @@
 
 use kyokara_diagnostics::Severity;
 use kyokara_hir::{
-    CheckResult, HoleInfo, TyDiagnosticData, TypeDefKind, TypeRef, display_ty_with_tree,
+    display_ty_with_tree, CheckResult, HoleInfo, TyDiagnosticData, TypeDefKind, TypeRef,
 };
 use kyokara_intern::Interner;
 use serde::Serialize;
@@ -97,6 +97,7 @@ pub struct FnNodeDto {
     pub params: Vec<ParamDto>,
     pub return_type: Option<String>,
     pub effects: Vec<String>,
+    /// Unique callee function IDs (set semantics; no duplicates per caller).
     pub calls: Vec<String>,
 }
 
@@ -313,6 +314,7 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
                 }
             }
         }
+        dedupe_call_ids(&mut func.calls);
     }
 
     CheckOutput {
@@ -397,6 +399,9 @@ fn convert_result(result: &CheckResult, file_name: &str) -> CheckOutput {
 
     // Build symbol graph.
     let mut symbol_graph = build_symbol_graph(result);
+    for func in &mut symbol_graph.functions {
+        dedupe_call_ids(&mut func.calls);
+    }
     symbol_graph.partial = !result.parse_errors.is_empty();
 
     CheckOutput {
@@ -757,6 +762,11 @@ fn build_module_symbol_graph(
         types,
         capabilities,
     }
+}
+
+fn dedupe_call_ids(calls: &mut Vec<String>) {
+    let mut seen = std::collections::HashSet::new();
+    calls.retain(|call| seen.insert(call.clone()));
 }
 
 /// Render a surface-level TypeRef as a human-readable string (for the symbol graph).
