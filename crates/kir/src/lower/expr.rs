@@ -279,6 +279,12 @@ impl<'a> LoweringCtx<'a> {
             && arms
                 .iter()
                 .any(|arm| matches!(&self.body.pats[arm.pat], Pat::Constructor { .. }))
+            && arms.iter().all(|arm| {
+                matches!(
+                    &self.body.pats[arm.pat],
+                    Pat::Constructor { .. } | Pat::Wildcard | Pat::Bind { .. }
+                )
+            })
     }
 
     fn lower_match_adt(&mut self, scr: ValueId, arms: &[MatchArm], ty: Ty) -> ValueId {

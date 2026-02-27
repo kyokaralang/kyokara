@@ -1450,3 +1450,60 @@ fn test_validator_accepts_block_params_with_predecessors() {
         diags.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
 }
+
+// ── #152: ADT match must not silently drop unsupported patterns ─────
+
+#[test]
+fn test_adt_match_unsupported_pattern_falls_back_to_sequential() {
+    // Bug: a literal pattern arm on an ADT match gets silently dropped.
+    // With the fix, is_adt_match returns false and sequential lowering
+    // handles it, so both arms produce code.
+    //
+    // This source has a type error (literal on ADT) but lowering runs anyway.
+    let source = "type O = | Some(Int) | None
+         fn f(x: O) -> Int {
+           match x {
+             1 => 1
+             Some(n) => n
+             _ => 0
+           }
+         }";
+    let result = check_file(source);
+    // Has type errors — skip the assertion on diagnostics.
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+
+    let ctx = DisplayCtx::new(&interner, &result.item_tree);
+    let out = display_module(&module, &ctx);
+
+    // The output should NOT contain a switch (would mean ADT path was used).
+    // Sequential lowering uses eq/branch.
+    assert!(
+        !out.contains("switch "),
+        "should fall back to sequential lowering, not ADT switch. output:\n{out}"
+    );
+}
+
+#[test]
+fn test_adt_match_all_supported_still_uses_switch() {
+    // Guard: a normal ADT match with only constructor/wildcard/bind should
+    // still use the switch-based lowering path.
+    let out = lower_and_display(
+        "type O = | Some(Int) | None
+         fn f(x: O) -> Int {
+           match x {
+             Some(n) => n
+             None => 0
+           }
+         }",
+    );
+    assert!(
+        out.contains("switch "),
+        "normal ADT match should use switch lowering. output:\n{out}"
+    );
+}
