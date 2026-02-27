@@ -40,6 +40,8 @@ pub enum TyDiagnosticData {
     RefutableLetPattern,
     /// Non-value symbol used in expression position.
     NonValueNameInExpr { kind: String, name: String },
+    /// Multi-segment expression path used where only value names are supported.
+    MultiSegmentValuePath { path: String },
 }
 
 impl TyDiagnosticData {
@@ -61,6 +63,7 @@ impl TyDiagnosticData {
             TyDiagnosticData::UnresolvedConstructor { .. } => "E0013",
             TyDiagnosticData::RefutableLetPattern => "E0014",
             TyDiagnosticData::NonValueNameInExpr { .. } => "E0015",
+            TyDiagnosticData::MultiSegmentValuePath { .. } => "E0016",
         }
     }
 
@@ -144,6 +147,9 @@ impl TyDiagnosticData {
             }
             TyDiagnosticData::NonValueNameInExpr { kind, name } => {
                 format!("{kind} name `{name}` used as value")
+            }
+            TyDiagnosticData::MultiSegmentValuePath { path } => {
+                format!("multi-segment value path `{path}` is not supported")
             }
         };
         Diagnostic::error(message, span)

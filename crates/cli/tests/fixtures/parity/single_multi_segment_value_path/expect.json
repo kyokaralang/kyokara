@@ -1,0 +1,13 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "check": {
+    "ok": false,
+    "codes_all": ["E0016"],
+    "messages_all": ["multi-segment value path"]
+  },
+  "run": {
+    "ok": false,
+    "stderr_contains": ["multi-segment value path"]
+  }
+}

@@ -49,6 +49,14 @@ impl<'a> InferenceCtx<'a> {
 
             Expr::Path(path) => {
                 if !path.is_single() {
+                    self.push_diag(TyDiagnosticData::MultiSegmentValuePath {
+                        path: path
+                            .segments
+                            .iter()
+                            .map(|s| s.resolve(self.interner).to_owned())
+                            .collect::<Vec<_>>()
+                            .join("."),
+                    });
                     return Ty::Error;
                 }
                 let name = path.segments[0];
