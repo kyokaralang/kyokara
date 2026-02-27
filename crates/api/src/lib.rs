@@ -823,7 +823,6 @@ fn build_module_symbol_graph(
         .collect();
 
     // Merge cap member fn nodes into the function list.
-    let mut functions = functions;
     functions.extend(cap_member_fn_nodes);
 
     SymbolGraphDto {
