@@ -707,8 +707,21 @@ fn matrix_source(prelude: &str, match_ty: &str, arms: &str, scrutinee: &str) -> 
 }
 
 fn run_source_case(bin: &Path, name: &str, source: &str) -> Observation {
-    let temp_dir = make_temp_dir(name);
-    let file = temp_dir.join("main.ky");
+    let mut prefix = String::from("kyokara_pattern_soundness_");
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            prefix.push(ch);
+        } else {
+            prefix.push('_');
+        }
+    }
+
+    let temp_dir = tempfile::Builder::new()
+        .prefix(&prefix)
+        .tempdir()
+        .unwrap_or_else(|e| panic!("failed to create temporary directory for `{name}`: {e}"));
+
+    let file = temp_dir.path().join("main.ky");
     fs::write(&file, source).unwrap_or_else(|e| {
         panic!(
             "failed to write temporary source for `{}` at {}: {e}",
@@ -720,39 +733,7 @@ fn run_source_case(bin: &Path, name: &str, source: &str) -> Observation {
     let check = run_check(bin, false, &file, name);
     let run = run_run(bin, false, &file, name);
 
-    let _ = fs::remove_dir_all(&temp_dir);
-
     Observation { check, run }
-}
-
-fn make_temp_dir(prefix: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock should be monotonic")
-        .as_nanos();
-    let mut sanitized = String::with_capacity(prefix.len());
-    for ch in prefix.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
-            sanitized.push(ch);
-        } else {
-            sanitized.push('_');
-        }
-    }
-
-    let dir = std::env::temp_dir().join(format!(
-        "kyokara_pattern_soundness_{}_{}_{}",
-        sanitized,
-        std::process::id(),
-        nanos
-    ));
-    fs::create_dir_all(&dir).unwrap_or_else(|e| {
-        panic!(
-            "failed to create temporary directory for `{}` at {}: {e}",
-            prefix,
-            dir.display()
-        )
-    });
-    dir
 }
 
 fn assert_metamorphic_equivalent(
