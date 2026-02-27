@@ -241,6 +241,26 @@ fn eval_bool_equality() {
     assert!(matches!(val, Value::Bool(false)));
 }
 
+// ── Char equality tests ──────────────────────────────────────────────
+
+#[test]
+fn eval_char_eq_same() {
+    let val = run_ok("fn main() -> Bool { 'a' == 'a' }");
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_char_eq_different() {
+    let val = run_ok("fn main() -> Bool { 'a' == 'b' }");
+    assert!(matches!(val, Value::Bool(false)));
+}
+
+#[test]
+fn eval_char_neq() {
+    let val = run_ok("fn main() -> Bool { 'a' != 'b' }");
+    assert!(matches!(val, Value::Bool(true)));
+}
+
 // ── Unary operator tests ─────────────────────────────────────────────
 
 #[test]

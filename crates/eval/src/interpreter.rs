@@ -727,6 +727,10 @@ impl Interpreter {
             (BinaryOp::Eq, Value::String(a), Value::String(b)) => Ok(Value::Bool(a == b)),
             (BinaryOp::NotEq, Value::String(a), Value::String(b)) => Ok(Value::Bool(a != b)),
 
+            // Char equality.
+            (BinaryOp::Eq, Value::Char(a), Value::Char(b)) => Ok(Value::Bool(a == b)),
+            (BinaryOp::NotEq, Value::Char(a), Value::Char(b)) => Ok(Value::Bool(a != b)),
+
             _ => Err(RuntimeError::TypeError(format!(
                 "cannot apply {op:?} to {:?} and {:?}",
                 std::mem::discriminant(&lhs),
