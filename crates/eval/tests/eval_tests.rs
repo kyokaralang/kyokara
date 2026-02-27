@@ -1950,3 +1950,54 @@ fn run_project_rejects_body_lowering_error_in_sibling_module() {
         }
     }
 }
+
+// ── Duplicate binding rejection (#161) ─────────────────────────────
+
+#[test]
+fn run_rejects_duplicate_binding_in_pattern() {
+    // Bug test: duplicate binding in constructor pattern must be rejected.
+    let src = r#"
+type Pair = | Pair(Int, Int)
+fn main() -> Int {
+  let Pair(x, x) = Pair(1, 2)
+  x
+}
+"#;
+    let err = run_err(src);
+    assert!(
+        err.contains("duplicate binding"),
+        "expected duplicate binding error, got: {err}"
+    );
+}
+
+#[test]
+fn run_accepts_distinct_bindings_in_pattern() {
+    // Guard test: distinct bindings in constructor pattern should work fine.
+    let src = r#"
+type Pair = | Pair(Int, Int)
+fn main() -> Int {
+  let Pair(a, b) = Pair(1, 2)
+  a + b
+}
+"#;
+    let result = run_ok(src);
+    assert_eq!(result, Value::Int(3));
+}
+
+#[test]
+fn run_rejects_duplicate_binding_in_match_arm() {
+    // Edge case: duplicate binding in match arm pattern.
+    let src = r#"
+type Pair = | Pair(Int, Int)
+fn main() -> Int {
+  match Pair(1, 2) {
+    Pair(x, x) => x,
+  }
+}
+"#;
+    let err = run_err(src);
+    assert!(
+        err.contains("duplicate binding"),
+        "expected duplicate binding error in match arm, got: {err}"
+    );
+}
