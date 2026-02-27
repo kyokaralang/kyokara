@@ -479,6 +479,7 @@ fn test_regression_last_literal_arm_uses_branch() {
            match x {
              0 => 100
              1 => 200
+             _ => -1
            }
          }",
     );
