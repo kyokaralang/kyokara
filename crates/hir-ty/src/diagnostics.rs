@@ -34,6 +34,8 @@ pub enum TyDiagnosticData {
     EffectViolation { missing: Vec<String> },
     /// Unresolved type name.
     UnresolvedType { name: String },
+    /// Unresolved constructor name in pattern.
+    UnresolvedConstructor { name: String },
 }
 
 impl TyDiagnosticData {
@@ -52,6 +54,7 @@ impl TyDiagnosticData {
             TyDiagnosticData::RedundantMatchArm => "E0010",
             TyDiagnosticData::EffectViolation { .. } => "E0011",
             TyDiagnosticData::UnresolvedType { .. } => "E0012",
+            TyDiagnosticData::UnresolvedConstructor { .. } => "E0013",
         }
     }
 
@@ -126,6 +129,9 @@ impl TyDiagnosticData {
             }
             TyDiagnosticData::UnresolvedType { name } => {
                 format!("unresolved type `{name}`")
+            }
+            TyDiagnosticData::UnresolvedConstructor { name } => {
+                format!("unresolved constructor `{name}`")
             }
         };
         Diagnostic::error(message, span)
