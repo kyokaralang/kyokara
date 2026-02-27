@@ -154,7 +154,7 @@ Source → Lexer (logos) → Parser (tree-agnostic) → CST (rowan, lossless)
      → API (structured JSON output)
 ```
 
-**Glossary:** **CST** = Concrete Syntax Tree (lossless, preserves whitespace/comments). **HIR** = High-level Intermediate Representation (desugared, typed, used for analysis). **KIR** (KyokaraIR) = SSA-based IR with block parameters, reuses HIR types directly. Data structures, text format, validator, and HIR→KIR lowering pass live in the `kir` crate.
+**Glossary:** **CST** = Concrete Syntax Tree (lossless, preserves whitespace/comments). **HIR** = High-level Intermediate Representation (desugared, typed, used for analysis). **KIR** (KyokaraIR) = SSA-based IR with block parameters, reuses HIR types directly. Instructions include Const, Binary, Unary, record/ADT ops, Call (direct/indirect/intrinsic), Assert, Hole, FnRef, BlockParam, FnParam, AdtFieldGet. The validator enforces type invariants (Bool conditions, Fn call targets, Record/Adt field access bases), structural invariants (predecessor edges, duplicate cases), and reference validity. The lowering pass handles ADT switch with dedup/catch-all/nested-literal checks, sequential match with early termination, contract `old()` pre-state, and function references.
 
 The parser emits events, not trees — so it can be tested without a CST library. The HIR is split into data definitions, type checking, and a query facade — so the interpreter can use the data without the checker. The API crate owns all serialization — so internal types stay clean.
 
