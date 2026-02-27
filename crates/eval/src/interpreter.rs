@@ -646,14 +646,24 @@ impl Interpreter {
             return Ok(val.clone());
         }
 
-        // 2. Intrinsics (checked before module functions because intrinsic names
-        //    are also registered in module_scope.functions for type checking, but
-        //    lack bodies — resolving them as User functions would fail at call time).
+        // 2. Module-level functions (checked before intrinsics so that user-defined
+        //    functions can shadow builtins like `abs`, `min`, `max`).
+        //    Only resolve as a user function if it has a body — intrinsic stubs
+        //    are registered in module_scope.functions for type checking but lack
+        //    bodies, so they fall through to step 3.
+        if let Some(&fn_idx) = self.module_scope.functions.get(&name) {
+            if self.fn_bodies.contains_key(&fn_idx) {
+                return Ok(Value::Fn(Box::new(FnValue::User(fn_idx))));
+            }
+        }
+
+        // 3. Intrinsics (fallback for names that have no user-defined body).
         if let Some(&intr) = self.intrinsics.get(&name) {
             return Ok(Value::Fn(Box::new(FnValue::Intrinsic(intr))));
         }
 
-        // 3. Module-level functions.
+        // 4. Module-level functions without bodies (shouldn't normally happen
+        //    after step 2+3, but kept as a fallback for robustness).
         if let Some(&fn_idx) = self.module_scope.functions.get(&name) {
             return Ok(Value::Fn(Box::new(FnValue::User(fn_idx))));
         }
