@@ -712,6 +712,105 @@ fn assert_metamorphic_equivalent(original_src: &str, transformed_src: &str) {
     );
 }
 
+fn render_project_sources(files: &[(&str, &str)]) -> String {
+    let mut entries: Vec<(&str, &str)> = files.to_vec();
+    entries.sort_by_key(|(path, _)| *path);
+    entries
+        .into_iter()
+        .map(|(path, src)| format!("--- {path} ---\n{src}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn assert_project_metamorphic_equivalent(
+    original_files: &[(&str, &str)],
+    transformed_files: &[(&str, &str)],
+) {
+    let (_dir_a, main_a) = write_project(original_files);
+    let (_dir_b, main_b) = write_project(transformed_files);
+    let original = check_project(&main_a);
+    let transformed = check_project(&main_b);
+
+    let original_edges = call_edges_by_caller_id(&original);
+    let transformed_edges = call_edges_by_caller_id(&transformed);
+    assert_eq!(
+        original_edges, transformed_edges,
+        "project metamorphic call-edge mismatch\n--- original project ---\n{}\n--- transformed project ---\n{}\n--- original edges ---\n{:?}\n--- transformed edges ---\n{:?}",
+        render_project_sources(original_files),
+        render_project_sources(transformed_files),
+        original_edges,
+        transformed_edges
+    );
+
+    let original_diags = diagnostic_signatures(&original);
+    let transformed_diags = diagnostic_signatures(&transformed);
+    assert_eq!(
+        original_diags, transformed_diags,
+        "project metamorphic diagnostics mismatch\n--- original project ---\n{}\n--- transformed project ---\n{}\n--- original diagnostics ---\n{:?}\n--- transformed diagnostics ---\n{:?}",
+        render_project_sources(original_files),
+        render_project_sources(transformed_files),
+        original_diags,
+        transformed_diags
+    );
+}
+
+fn diagnostic_code_counts(output: &kyokara_api::CheckOutput) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for diag in &output.diagnostics {
+        *counts.entry(diag.code.clone()).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn code_count_delta(
+    base: &BTreeMap<String, usize>,
+    transformed: &BTreeMap<String, usize>,
+) -> BTreeMap<String, isize> {
+    let mut keys = BTreeSet::new();
+    keys.extend(base.keys().cloned());
+    keys.extend(transformed.keys().cloned());
+
+    let mut delta = BTreeMap::new();
+    for code in keys {
+        let before = *base.get(&code).unwrap_or(&0) as isize;
+        let after = *transformed.get(&code).unwrap_or(&0) as isize;
+        let diff = after - before;
+        if diff != 0 {
+            delta.insert(code, diff);
+        }
+    }
+    delta
+}
+
+fn assert_diagnostic_code_delta(
+    original_src: &str,
+    transformed_src: &str,
+    expected_delta: &[(&str, isize)],
+) {
+    let original = check(original_src, "test.ky");
+    let transformed = check(transformed_src, "test.ky");
+    let original_counts = diagnostic_code_counts(&original);
+    let transformed_counts = diagnostic_code_counts(&transformed);
+    let actual_delta = code_count_delta(&original_counts, &transformed_counts);
+    let expected: BTreeMap<String, isize> = expected_delta
+        .iter()
+        .map(|(code, delta)| ((*code).to_string(), *delta))
+        .collect();
+
+    assert_eq!(
+        actual_delta, expected,
+        "diagnostic delta mismatch\n--- original source ---\n{}\n--- transformed source ---\n{}\n--- original diagnostics ---\n{:?}\n--- transformed diagnostics ---\n{:?}\n--- original counts ---\n{:?}\n--- transformed counts ---\n{:?}\n--- actual delta ---\n{:?}\n--- expected delta ---\n{:?}",
+        original_src,
+        transformed_src,
+        diagnostic_signatures(&original),
+        diagnostic_signatures(&transformed),
+        original_counts,
+        transformed_counts,
+        actual_delta,
+        expected
+    );
+}
+
 #[test]
 fn project_symbol_ids_are_module_qualified() {
     let (_dir, main_path) = write_project(&[
@@ -2760,4 +2859,122 @@ fn main() -> Int {
 }
 "#;
     assert_metamorphic_equivalent(original, transformed);
+}
+
+// ── Project-mode metamorphic tests (#174) ──────────────────────────
+
+#[test]
+fn project_metamorphic_local_alpha_rename_preserves_edges_and_diagnostics() {
+    let original = [
+        (
+            "main.ky",
+            "import math\n\
+             fn main() -> Int {\n\
+               let local = fn() => 0\n\
+               local()\n\
+               add(1, 2)\n\
+             }\n",
+        ),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
+    ];
+    let transformed = [
+        (
+            "main.ky",
+            "import math\n\
+             fn main() -> Int {\n\
+               let renamed_local = fn() => 0\n\
+               renamed_local()\n\
+               add(1, 2)\n\
+             }\n",
+        ),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
+    ];
+    assert_project_metamorphic_equivalent(&original, &transformed);
+}
+
+#[test]
+fn project_metamorphic_nested_block_shadow_preserves_outer_import_attribution() {
+    let original = [
+        ("main.ky", "import math\nfn main() -> Int { add(1, 2) }\n"),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
+    ];
+    let transformed = [
+        (
+            "main.ky",
+            "import math\n\
+             fn main() -> Int {\n\
+               {\n\
+                 let add = fn(x, y) => x\n\
+                 add(1, 2)\n\
+               }\n\
+               add(1, 2)\n\
+             }\n",
+        ),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
+    ];
+    assert_project_metamorphic_equivalent(&original, &transformed);
+}
+
+#[test]
+fn project_metamorphic_lambda_param_rename_preserves_edges_and_diagnostics() {
+    let original = [
+        (
+            "main.ky",
+            "import math\n\
+             fn main() -> Int {\n\
+               add(1, 2)\n\
+               let g = fn(add) => add(1, 2)\n\
+               g(fn(x, y) => x)\n\
+             }\n",
+        ),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
+    ];
+    let transformed = [
+        (
+            "main.ky",
+            "import math\n\
+             fn main() -> Int {\n\
+               add(1, 2)\n\
+               let g = fn(callback) => callback(1, 2)\n\
+               g(fn(x, y) => x)\n\
+             }\n",
+        ),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
+    ];
+    assert_project_metamorphic_equivalent(&original, &transformed);
+}
+
+// ── Diagnostic-delta metamorphic tests (#175) ──────────────────────
+
+#[test]
+fn diagnostic_delta_duplicate_pattern_binding_adds_one_e0102() {
+    let original = r#"
+type Pair = | Pair(Int, Int)
+fn main() -> Int {
+  let Pair(a, b) = Pair(1, 2)
+  a + b
+}
+"#;
+    let transformed = r#"
+type Pair = | Pair(Int, Int)
+fn main() -> Int {
+  let Pair(x, x) = Pair(1, 2)
+  x
+}
+"#;
+    assert_diagnostic_code_delta(original, transformed, &[("E0102", 1)]);
+}
+
+#[test]
+fn diagnostic_delta_unresolved_return_type_adds_one_e0012() {
+    let original = "fn main() -> Int { 1 }";
+    let transformed = "fn main() -> MissingType { 1 }";
+    assert_diagnostic_code_delta(original, transformed, &[("E0012", 1)]);
+}
+
+#[test]
+fn diagnostic_delta_type_mismatch_adds_one_e0001() {
+    let original = "fn main() -> Int { 1 }";
+    let transformed = r#"fn main() -> Int { "x" }"#;
+    assert_diagnostic_code_delta(original, transformed, &[("E0001", 1)]);
 }
