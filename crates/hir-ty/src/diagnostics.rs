@@ -36,6 +36,8 @@ pub enum TyDiagnosticData {
     UnresolvedType { name: String },
     /// Unresolved constructor name in pattern.
     UnresolvedConstructor { name: String },
+    /// Refutable pattern used in a `let` binding.
+    RefutableLetPattern,
 }
 
 impl TyDiagnosticData {
@@ -55,6 +57,7 @@ impl TyDiagnosticData {
             TyDiagnosticData::EffectViolation { .. } => "E0011",
             TyDiagnosticData::UnresolvedType { .. } => "E0012",
             TyDiagnosticData::UnresolvedConstructor { .. } => "E0013",
+            TyDiagnosticData::RefutableLetPattern => "E0014",
         }
     }
 
@@ -132,6 +135,9 @@ impl TyDiagnosticData {
             }
             TyDiagnosticData::UnresolvedConstructor { name } => {
                 format!("unresolved constructor `{name}`")
+            }
+            TyDiagnosticData::RefutableLetPattern => {
+                "refutable let pattern: use an irrefutable pattern or a match".into()
             }
         };
         Diagnostic::error(message, span)

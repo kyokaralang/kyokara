@@ -631,6 +631,10 @@ impl<'a> InferenceCtx<'a> {
                     };
 
                     self.infer_pat(*pat, &init_ty);
+                    if !self.is_irrefutable_let_pattern(*pat, &init_ty) {
+                        self.current_expr = Some(*init);
+                        self.push_diag(TyDiagnosticData::RefutableLetPattern);
+                    }
                 }
                 Stmt::Expr(e) => {
                     self.infer_expr(*e, &Expectation::None);
@@ -642,6 +646,68 @@ impl<'a> InferenceCtx<'a> {
             self.infer_expr(tail_idx, expected)
         } else {
             Ty::Unit
+        }
+    }
+
+    fn is_irrefutable_let_pattern(&mut self, pat_idx: la_arena::Idx<Pat>, expected: &Ty) -> bool {
+        let expected = self.table.resolve_deep(expected);
+        if expected.is_poison() {
+            return true;
+        }
+
+        match self.body.pats[pat_idx].clone() {
+            Pat::Missing | Pat::Wildcard | Pat::Bind { .. } => true,
+            Pat::Literal(_) => false,
+            Pat::Record { fields, .. } => match expected {
+                Ty::Record {
+                    fields: ref rec_fields,
+                } => fields
+                    .iter()
+                    .all(|f| rec_fields.iter().any(|(name, _)| name == f)),
+                _ => false,
+            },
+            Pat::Constructor { path, args } => {
+                if !path.is_single() {
+                    return false;
+                }
+                let ctor = path.segments[0];
+                let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&ctor)
+                else {
+                    return false;
+                };
+
+                let Ty::Adt { def, .. } = expected else {
+                    return false;
+                };
+                if def != type_idx {
+                    return false;
+                }
+
+                let TypeDefKind::Adt { variants } = &self.item_tree.types[type_idx].kind else {
+                    return false;
+                };
+                // Constructor patterns are irrefutable only for single-variant ADTs.
+                if variants.len() != 1 {
+                    return false;
+                }
+
+                let env = Self::make_env(
+                    self.item_tree,
+                    self.module_scope,
+                    self.interner,
+                    &self.type_params,
+                );
+                let (field_tys, _adt_ty) =
+                    instantiate_constructor(type_idx, variant_idx, &env, &mut self.table);
+
+                if args.len() != field_tys.len() {
+                    return false;
+                }
+
+                args.iter()
+                    .zip(field_tys.iter())
+                    .all(|(sub_pat, field_ty)| self.is_irrefutable_let_pattern(*sub_pat, field_ty))
+            }
         }
     }
 

@@ -2,14 +2,16 @@
   "project": false,
   "entry": "main.ky",
   "soundness": {
-    "mode": "known_violation",
+    "mode": "strict",
     "issue": 131
   },
   "check": {
-    "ok": true
+    "ok": false,
+    "codes_all": ["E0014"],
+    "messages_all": ["refutable let pattern"]
   },
   "run": {
     "ok": false,
-    "stderr_contains": ["pattern match failure: no arm matched"]
+    "stderr_contains": ["refutable let pattern"]
   }
 }
