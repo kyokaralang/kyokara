@@ -13,6 +13,7 @@ use kyokara_hir_def::item_tree::{FnItem, FnItemIdx, ItemTree};
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::resolver::ModuleScope;
+use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_intern::Interner;
 use kyokara_span::Span;
 use la_arena::ArenaMap;
@@ -173,16 +174,23 @@ pub fn infer_body(
     let caller_effects = EffectSet::from_with_caps(&fn_item.with_caps, &env, &mut table, interner);
 
     // Validate capability names.
-    let mut cap_diags: Vec<(TyDiagnosticData, ExprIdx)> = Vec::new();
+    let mut diags: Vec<(TyDiagnosticData, ExprIdx)> = Vec::new();
     for cap_name in &caller_effects.caps {
         if !module_scope.caps.contains_key(cap_name) {
-            cap_diags.push((
+            diags.push((
                 TyDiagnosticData::UnresolvedType {
                     name: cap_name.resolve(interner).to_owned(),
                 },
                 body.root,
             ));
         }
+    }
+
+    // Emit diagnostic for unresolved return type.
+    if ret_ty == Ty::Error
+        && let Some(type_ref) = &fn_item.ret_type
+    {
+        collect_unresolved_type_names(type_ref, interner, body.root, &mut diags);
     }
 
     // Resolve parameter types eagerly (stored by index for ScopeDef::Param lookups).
@@ -195,7 +203,11 @@ pub fn infer_body(
             type_params: type_params.clone(),
             resolving_aliases: vec![],
         };
-        param_tys.push(param_env.resolve_type_ref(&param.ty, &mut table));
+        let ty = param_env.resolve_type_ref(&param.ty, &mut table);
+        if ty == Ty::Error && param.ty != TypeRef::Error {
+            collect_unresolved_type_names(&param.ty, interner, body.root, &mut diags);
+        }
+        param_tys.push(ty);
     }
 
     let mut ctx = InferenceCtx {
@@ -203,7 +215,7 @@ pub fn infer_body(
         expr_types: ArenaMap::default(),
         pat_types: ArenaMap::default(),
         holes: Vec::new(),
-        diags: cap_diags,
+        diags,
         calls: Vec::new(),
         body,
         item_tree,
@@ -298,5 +310,46 @@ pub fn infer_body(
         diagnostics,
         raw_diagnostics,
         calls: ctx.calls,
+    }
+}
+
+/// Walk a [`TypeRef`] and collect `UnresolvedType` diagnostics for any
+/// single-segment path names that are not built-in or resolvable.
+fn collect_unresolved_type_names(
+    type_ref: &TypeRef,
+    interner: &Interner,
+    expr_idx: ExprIdx,
+    diags: &mut Vec<(TyDiagnosticData, ExprIdx)>,
+) {
+    match type_ref {
+        TypeRef::Path { path, args } => {
+            if path.is_single() {
+                let name_str = path.segments[0].resolve(interner);
+                diags.push((
+                    TyDiagnosticData::UnresolvedType {
+                        name: name_str.to_owned(),
+                    },
+                    expr_idx,
+                ));
+            }
+            for arg in args {
+                collect_unresolved_type_names(arg, interner, expr_idx, diags);
+            }
+        }
+        TypeRef::Fn { params, ret } => {
+            for p in params {
+                collect_unresolved_type_names(p, interner, expr_idx, diags);
+            }
+            collect_unresolved_type_names(ret, interner, expr_idx, diags);
+        }
+        TypeRef::Record { fields } => {
+            for (_, t) in fields {
+                collect_unresolved_type_names(t, interner, expr_idx, diags);
+            }
+        }
+        TypeRef::Refined { base, .. } => {
+            collect_unresolved_type_names(base, interner, expr_idx, diags);
+        }
+        TypeRef::Error => {}
     }
 }
