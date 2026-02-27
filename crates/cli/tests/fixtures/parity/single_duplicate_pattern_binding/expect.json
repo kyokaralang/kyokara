@@ -1,0 +1,13 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "check": {
+    "ok": false,
+    "codes_all": ["E0102"],
+    "messages_all": ["duplicate binding"]
+  },
+  "run": {
+    "ok": false,
+    "stderr_contains": ["lowering errors:", "duplicate binding"]
+  }
+}

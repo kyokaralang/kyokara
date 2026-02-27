@@ -1,0 +1,12 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "check": {
+    "ok": false,
+    "codes_all": ["E0100"]
+  },
+  "run": {
+    "ok": false,
+    "stderr_contains": ["parse errors:"]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "check": {
+    "ok": true,
+    "call_edges": [
+      {
+        "caller": "main",
+        "contains": ["fn::foo"],
+        "counts": {"fn::foo": 1}
+      }
+    ]
+  },
+  "run": {
+    "ok": true,
+    "stdout_contains": ["1"]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "check": {
+    "ok": false,
+    "codes_all": ["E0012"],
+    "messages_all": ["unresolved type"]
+  },
+  "run": {
+    "ok": false,
+    "stderr_contains": ["unresolved type"]
+  }
+}
