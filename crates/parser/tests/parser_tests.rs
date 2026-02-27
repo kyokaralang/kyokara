@@ -235,6 +235,31 @@ fn match_expr() {
 }
 
 #[test]
+fn match_expr_parenthesized_record_scrutinee() {
+    // let x = match (Point { x: 1 }) { _ => 0 }
+    let (events, errors) = parse_tokens(&[
+        LetKw, Ident, Eq, MatchKw, LParen, Ident, LBrace, Ident, Colon, IntLiteral, RBrace, RParen,
+        LBrace, Underscore, FatArrow, IntLiteral, RBrace,
+    ]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, MatchExpr));
+    assert!(has_node(&events, RecordExpr));
+}
+
+#[test]
+fn if_expr_parenthesized_record_condition() {
+    // let x = if (Point { x: 1 }) == (Point { x: 1 }) { 1 } else { 0 }
+    let (events, errors) = parse_tokens(&[
+        LetKw, Ident, Eq, IfKw, LParen, Ident, LBrace, Ident, Colon, IntLiteral, RBrace, RParen,
+        EqEq, LParen, Ident, LBrace, Ident, Colon, IntLiteral, RBrace, RParen, LBrace, IntLiteral,
+        RBrace, ElseKw, LBrace, IntLiteral, RBrace,
+    ]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, IfExpr));
+    assert_eq!(count_start_nodes(&events, RecordExpr), 2);
+}
+
+#[test]
 fn return_expr() {
     // fn foo() { return 42 }
     let (events, errors) = parse_tokens(&[
@@ -272,6 +297,18 @@ fn old_expr() {
     assert!(has_no_errors(&errors));
     assert!(has_node(&events, OldExpr));
     assert!(has_node(&events, EnsuresClause));
+}
+
+#[test]
+fn block_expr_allows_semicolon_separators() {
+    // fn main() -> Int { let x = 1; x; }
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, LBrace, LetKw, Ident, Eq, IntLiteral, Semicolon,
+        Ident, Semicolon, RBrace,
+    ]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, FnDef));
+    assert!(has_node(&events, BlockExpr));
 }
 
 // ── Patterns ────────────────────────────────────────────────────────
