@@ -1926,7 +1926,7 @@ fn symbol_graph_not_partial_on_clean_file() {
 
 #[test]
 fn rename_function_does_not_rename_shadowing_local() {
-    // A local variable `foo` shadows the function `foo` inside the body.
+    // Bug test: local `foo` declared BEFORE usage shadows the function.
     // Renaming function `foo` → `bar` should NOT touch the local binding or its usages.
     let src = "fn foo() -> Int {\n  let foo = 1\n  foo\n}\n\nfn main() -> Int { foo() }";
     let action = kyokara_refactor::RefactorAction::RenameSymbol {
@@ -1941,8 +1941,6 @@ fn rename_function_does_not_rename_shadowing_local() {
         .as_ref()
         .expect("should have patched sources")[0]
         .source;
-    // The function def should be renamed, and the call in main() should be renamed,
-    // but the local `let foo = 1` and `foo` usage inside the body should NOT be renamed.
     assert!(
         patched.contains("fn bar()"),
         "function definition should be renamed, got: {patched}"
@@ -1955,12 +1953,114 @@ fn rename_function_does_not_rename_shadowing_local() {
         patched.contains("let foo = 1"),
         "local binding should NOT be renamed, got: {patched}"
     );
-    // The local usage `foo` on line 3 should remain `foo`, not become `bar`.
     let lines: Vec<&str> = patched.lines().collect();
     assert_eq!(
         lines[2].trim(),
         "foo",
         "local variable usage should NOT be renamed, got: {patched}"
+    );
+}
+
+#[test]
+fn rename_function_renames_call_before_same_named_local() {
+    // Guard test (#158): local `foo` declared AFTER call site should NOT
+    // suppress renaming of the call. The call resolves to the function,
+    // not the later local.
+    let src = "fn foo() -> Int { 1 }\n\nfn main() -> Int {\n  foo()\n  let foo = 2\n  foo\n}";
+    let action = kyokara_refactor::RefactorAction::RenameSymbol {
+        old_name: "foo".into(),
+        new_name: "bar".into(),
+        kind: kyokara_refactor::SymbolKind::Function,
+        target_file: None,
+    };
+    let output = refactor(src, "test.ky", action, false);
+    let patched = &output
+        .patched_sources
+        .as_ref()
+        .expect("should have patched sources")[0]
+        .source;
+    assert!(
+        patched.contains("fn bar()"),
+        "function definition should be renamed, got: {patched}"
+    );
+    // Check specifically inside main's body for the renamed call.
+    // (Don't just check for "bar()" which also matches "fn bar() -> ...")
+    let main_body = patched.split("fn main()").nth(1).expect("should have main");
+    assert!(
+        main_body.contains("bar()"),
+        "call site BEFORE local should be renamed in main body, got: {patched}"
+    );
+    assert!(
+        patched.contains("let foo = 2"),
+        "local binding should NOT be renamed, got: {patched}"
+    );
+}
+
+#[test]
+fn rename_function_mixed_shadow_and_call() {
+    // Edge case: same function has a call BEFORE the local, a local binding,
+    // a local usage AFTER the binding, and another call AFTER the local usage.
+    // The call before should be renamed; local binding + usage should not;
+    // the call after the local should NOT be renamed (local shadows it).
+    let src = "fn foo() -> Int { 1 }\n\nfn main() -> Int {\n  let a = foo()\n  let foo = 2\n  let b = foo\n  a + b\n}";
+    let action = kyokara_refactor::RefactorAction::RenameSymbol {
+        old_name: "foo".into(),
+        new_name: "bar".into(),
+        kind: kyokara_refactor::SymbolKind::Function,
+        target_file: None,
+    };
+    let output = refactor(src, "test.ky", action, false);
+    let patched = &output
+        .patched_sources
+        .as_ref()
+        .expect("should have patched sources")[0]
+        .source;
+    assert!(
+        patched.contains("fn bar()"),
+        "function definition should be renamed, got: {patched}"
+    );
+    assert!(
+        patched.contains("let a = bar()"),
+        "call BEFORE local binding should be renamed, got: {patched}"
+    );
+    assert!(
+        patched.contains("let foo = 2"),
+        "local binding should NOT be renamed, got: {patched}"
+    );
+    assert!(
+        patched.contains("let b = foo"),
+        "local usage after binding should NOT be renamed, got: {patched}"
+    );
+}
+
+#[test]
+fn rename_function_param_shadows_entire_body() {
+    // Edge case: a parameter named `foo` shadows the function for the
+    // entire body — all usages inside should be skipped.
+    let src = "fn foo() -> Int { 1 }\n\nfn main(foo: Int) -> Int { foo + foo }";
+    let action = kyokara_refactor::RefactorAction::RenameSymbol {
+        old_name: "foo".into(),
+        new_name: "bar".into(),
+        kind: kyokara_refactor::SymbolKind::Function,
+        target_file: None,
+    };
+    let output = refactor(src, "test.ky", action, false);
+    let patched = &output
+        .patched_sources
+        .as_ref()
+        .expect("should have patched sources")[0]
+        .source;
+    assert!(
+        patched.contains("fn bar()"),
+        "function definition should be renamed, got: {patched}"
+    );
+    assert!(
+        patched.contains("main(foo: Int)"),
+        "param name should NOT be renamed, got: {patched}"
+    );
+    assert!(
+        patched.contains("foo + foo"),
+        "param usages should NOT be renamed, got: {patched}"
     );
 }
 

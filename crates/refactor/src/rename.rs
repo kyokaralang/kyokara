@@ -404,11 +404,12 @@ fn is_locally_shadowed(token: &SyntaxToken, name: &str) -> bool {
         return false;
     }
 
+    let usage_offset = token.text_range().start();
+
     // Look for Param or LetBinding nodes within this FnDef that bind the same name.
     for node in fn_def.descendants() {
         match node.kind() {
-            // Param structure: Param > Ident "name" > Colon > TypeExpr
-            // The first Ident child is the parameter name.
+            // Params shadow the entire function body regardless of position.
             SyntaxKind::Param => {
                 for child in node.children_with_tokens() {
                     if let Some(t) = child.into_token()
@@ -421,9 +422,11 @@ fn is_locally_shadowed(token: &SyntaxToken, name: &str) -> bool {
                     }
                 }
             }
-            // LetBinding structure: LetKw > IdentPat > ... > Eq > Expr
-            // Only check the IdentPat child (the pattern), not the initializer.
+            // LetBindings only shadow usages that appear AFTER the binding.
             SyntaxKind::LetBinding => {
+                if node.text_range().start() > usage_offset {
+                    continue; // Binding is after usage — doesn't shadow it.
+                }
                 for child in node.children() {
                     if child.kind() == SyntaxKind::IdentPat {
                         for element in child.descendants_with_tokens() {
