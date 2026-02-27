@@ -228,12 +228,38 @@ impl BodyLowerCtx<'_> {
                 SyntaxKind::IntLiteral => {
                     self.validate_numeric_underscores(tok.text(), tok.text_range());
                     let text = tok.text().replace('_', "");
-                    Literal::Int(text.parse().unwrap_or(0))
+                    match text.parse::<i64>() {
+                        Ok(v) => Literal::Int(v),
+                        Err(_) => {
+                            let span = Span {
+                                file: self.file_id,
+                                range: tok.text_range(),
+                            };
+                            self.diagnostics.push(Diagnostic::error(
+                                format!("integer literal `{}` is out of range", tok.text()),
+                                span,
+                            ));
+                            Literal::Int(0)
+                        }
+                    }
                 }
                 SyntaxKind::FloatLiteral => {
                     self.validate_numeric_underscores(tok.text(), tok.text_range());
                     let text = tok.text().replace('_', "");
-                    Literal::Float(text.parse().unwrap_or(0.0))
+                    match text.parse::<f64>() {
+                        Ok(v) => Literal::Float(v),
+                        Err(_) => {
+                            let span = Span {
+                                file: self.file_id,
+                                range: tok.text_range(),
+                            };
+                            self.diagnostics.push(Diagnostic::error(
+                                format!("float literal `{}` is out of range", tok.text()),
+                                span,
+                            ));
+                            Literal::Float(0.0)
+                        }
+                    }
                 }
                 SyntaxKind::StringLiteral => {
                     let text = tok.text();
@@ -741,12 +767,38 @@ impl BodyLowerCtx<'_> {
                         SyntaxKind::IntLiteral => {
                             self.validate_numeric_underscores(tok.text(), tok.text_range());
                             let text = tok.text().replace('_', "");
-                            Literal::Int(text.parse().unwrap_or(0))
+                            match text.parse::<i64>() {
+                                Ok(v) => Literal::Int(v),
+                                Err(_) => {
+                                    let span = Span {
+                                        file: self.file_id,
+                                        range: tok.text_range(),
+                                    };
+                                    self.diagnostics.push(Diagnostic::error(
+                                        format!("integer literal `{}` is out of range", tok.text()),
+                                        span,
+                                    ));
+                                    Literal::Int(0)
+                                }
+                            }
                         }
                         SyntaxKind::FloatLiteral => {
                             self.validate_numeric_underscores(tok.text(), tok.text_range());
                             let text = tok.text().replace('_', "");
-                            Literal::Float(text.parse().unwrap_or(0.0))
+                            match text.parse::<f64>() {
+                                Ok(v) => Literal::Float(v),
+                                Err(_) => {
+                                    let span = Span {
+                                        file: self.file_id,
+                                        range: tok.text_range(),
+                                    };
+                                    self.diagnostics.push(Diagnostic::error(
+                                        format!("float literal `{}` is out of range", tok.text()),
+                                        span,
+                                    ));
+                                    Literal::Float(0.0)
+                                }
+                            }
                         }
                         SyntaxKind::StringLiteral => {
                             let text = tok.text();
