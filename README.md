@@ -28,6 +28,10 @@ fn fetch_rate(base: Currency, quote: Currency) -> Result[Float, HttpError] with 
 
 A pure function has no `with` clause. It *cannot* do I/O. This isn't a convention — it's a compiler guarantee.
 
+Current runtime scope:
+- Manifest checks are enforced for capability presence (`IO` intrinsics + user `with Cap` functions).
+- Fine-grained manifest fields (`allow_domains`, `allow_tables`, `allow_keys`) are fail-closed right now: if any are present, execution is rejected until resource-aware host operations are implemented.
+
 ### 2. Deterministic Replay
 
 Every effectful execution produces a replay log. The runtime executes effects through a single handler interface that records each request and response. Run the same log back and get identical behavior.
