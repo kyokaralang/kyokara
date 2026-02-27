@@ -1,0 +1,5 @@
+import util
+
+fn helper() -> Int { 100 }
+
+fn main() -> Int { foo() }

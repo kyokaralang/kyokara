@@ -580,3 +580,30 @@ fn positional_args_still_work() {
          fn main() -> Int { add(1, 2) }",
     );
 }
+
+#[test]
+fn named_args_unknown_name_is_diagnostic() {
+    check_err(
+        "fn add(x: Int, y: Int) -> Int { x + y }
+         fn main() -> Int { add(z: 1, y: 2) }",
+        "unknown named argument",
+    );
+}
+
+#[test]
+fn named_args_duplicate_name_is_diagnostic() {
+    check_err(
+        "fn add(x: Int, y: Int) -> Int { x + y }
+         fn main() -> Int { add(x: 1, x: 2) }",
+        "duplicate named argument",
+    );
+}
+
+#[test]
+fn named_args_missing_parameter_is_diagnostic() {
+    check_err(
+        "fn add(x: Int, y: Int) -> Int { x + y }
+         fn main() -> Int { add(x: 1, x: 2) }",
+        "missing argument for parameter `y`",
+    );
+}

@@ -156,6 +156,7 @@ pub fn run_with_manifest(
         item_result.tree,
         item_result.module_scope,
         type_check.fn_bodies,
+        FxHashMap::default(),
         interner,
         manifest,
     );
@@ -237,13 +238,13 @@ pub fn run_project_with_manifest(
         })
         .collect();
 
-    // Collect private function items + bodies from imported modules so that
-    // public functions can call private helpers in their own module (#69).
-    // We accumulate (FnItem, Body) pairs to splice into the entry module later.
-    let mut private_fns_to_splice: Vec<(
-        kyokara_hir_def::item_tree::FnItem,
-        kyokara_hir_def::body::Body,
-    )> = Vec::new();
+    // Per-function module override maps used by the interpreter so imported
+    // functions can resolve private helpers in their source module without
+    // leaking names into entry scope.
+    let mut fn_scope_overrides: FxHashMap<
+        kyokara_hir_def::item_tree::FnItemIdx,
+        FxHashMap<kyokara_hir_def::name::Name, kyokara_hir_def::item_tree::FnItemIdx>,
+    > = FxHashMap::default();
 
     for (mod_path, tc) in &project.type_checks {
         if *mod_path == entry_path {
@@ -257,44 +258,50 @@ pub fn run_project_with_manifest(
             continue;
         };
 
-        let entry_info = project.module_graph.get(&entry_path).unwrap();
-        let entry_tree = &entry_info.item_tree;
-        let entry_scope = &entry_info.scope;
+        // Build a module-local name -> runtime fn index map.
+        let mut module_fn_map: FxHashMap<
+            kyokara_hir_def::name::Name,
+            kyokara_hir_def::item_tree::FnItemIdx,
+        > = FxHashMap::default();
+
+        // Collect private function items + bodies to splice after immutable borrows end.
+        let mut private_fns_to_splice: Vec<(
+            kyokara_hir_def::name::Name,
+            kyokara_hir_def::item_tree::FnItem,
+            kyokara_hir_def::body::Body,
+        )> = Vec::new();
 
         // For each body in this module, check if the entry module imported it (pub fn).
         for (src_fn_idx, body) in &tc.fn_bodies {
             let src_fn_item = &mod_info.item_tree.functions[*src_fn_idx];
 
-            // Check if this function was cloned into the entry module's tree (pub).
-            let mut matched_entry = false;
-            for (entry_fn_idx, entry_fn_item) in entry_tree.functions.iter() {
-                if entry_fn_item.name == src_fn_item.name
-                    && !fn_bodies.contains_key(&entry_fn_idx)
-                    && entry_scope.functions.get(&entry_fn_item.name) == Some(&entry_fn_idx)
-                {
-                    fn_bodies.insert(entry_fn_idx, body.clone());
-                    matched_entry = true;
+            if src_fn_item.is_pub {
+                let entry_info = project.module_graph.get(&entry_path).unwrap();
+                if let Some(&entry_fn_idx) = entry_info.scope.functions.get(&src_fn_item.name) {
+                    fn_bodies.entry(entry_fn_idx).or_insert_with(|| body.clone());
+                    module_fn_map.insert(src_fn_item.name, entry_fn_idx);
                 }
+                continue;
             }
 
-            // If it wasn't matched (private fn), collect it for splicing.
-            if !matched_entry && !src_fn_item.is_pub {
-                private_fns_to_splice.push((src_fn_item.clone(), body.clone()));
+            private_fns_to_splice.push((src_fn_item.name, src_fn_item.clone(), body.clone()));
+        }
+
+        // Splice private helpers into the entry item tree (not entry scope).
+        // They stay inaccessible from `main` but callable from imported module
+        // functions via module-local override maps.
+        {
+            let entry_info = project.module_graph.get_mut(&entry_path).unwrap();
+            for (name, fn_item, body) in private_fns_to_splice {
+                let idx = entry_info.item_tree.functions.alloc(fn_item);
+                fn_bodies.insert(idx, body);
+                module_fn_map.insert(name, idx);
             }
         }
-    }
 
-    // Splice private helper functions into the entry module's item tree and scope
-    // so that imported public functions can resolve their private callees at
-    // runtime. The type checker already prevents direct access from main (#69).
-    let entry_info = project.module_graph.get_mut(&entry_path).unwrap();
-    for (fn_item, body) in private_fns_to_splice {
-        let name = fn_item.name;
-        // Only add if there's no name conflict with the entry module's own functions.
-        if !entry_info.scope.functions.contains_key(&name) {
-            let idx = entry_info.item_tree.functions.alloc(fn_item);
-            entry_info.scope.functions.insert(name, idx);
-            fn_bodies.insert(idx, body);
+        // Attach the same module-local map to every function from this module.
+        for &fn_idx in module_fn_map.values() {
+            fn_scope_overrides.insert(fn_idx, module_fn_map.clone());
         }
     }
 
@@ -303,6 +310,7 @@ pub fn run_project_with_manifest(
         entry_info.item_tree.clone(),
         entry_info.scope.clone(),
         fn_bodies,
+        fn_scope_overrides,
         project.interner,
         manifest,
     );

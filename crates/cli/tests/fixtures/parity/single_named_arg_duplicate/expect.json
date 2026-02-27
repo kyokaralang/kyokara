@@ -1,0 +1,13 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "check": {
+    "ok": false,
+    "codes_all": ["E0019", "E0020"],
+    "messages_all": ["duplicate named argument", "missing argument for parameter"]
+  },
+  "run": {
+    "ok": false,
+    "stderr_contains": ["compile type errors:", "duplicate named argument"]
+  }
+}

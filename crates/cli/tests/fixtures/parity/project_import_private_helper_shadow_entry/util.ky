@@ -1,0 +1,3 @@
+fn helper() -> Int { 41 }
+
+pub fn foo() -> Int { helper() + 1 }

@@ -407,29 +407,72 @@ impl<'a> InferenceCtx<'a> {
                 // to the correct parameter type.
                 let param_names = self.callee_param_names(callee);
 
-                let mut pos = 0;
+                let mut seen = vec![false; params.len()];
+                let mut next_pos = 0;
+                let mut has_named_arg_errors = false;
                 for arg in args {
                     match arg {
                         CallArg::Positional(arg_idx) => {
-                            if pos < params.len() {
-                                self.infer_expr(*arg_idx, &Expectation::Has(params[pos].clone()));
+                            while next_pos < seen.len() && seen[next_pos] {
+                                next_pos += 1;
+                            }
+                            if next_pos < params.len() {
+                                seen[next_pos] = true;
+                                self.infer_expr(
+                                    *arg_idx,
+                                    &Expectation::Has(params[next_pos].clone()),
+                                );
                             } else {
+                                has_named_arg_errors = true;
                                 self.infer_expr(*arg_idx, &Expectation::None);
                             }
-                            pos += 1;
+                            next_pos += 1;
                         }
                         CallArg::Named { name, value } => {
                             // Try to find the parameter index by name.
-                            let expectation = if let Some(ref pnames) = param_names
-                                && let Some(idx) = pnames.iter().position(|pn| pn == name)
-                            {
-                                Expectation::Has(params[idx].clone())
+                            let expectation = if let Some(ref pnames) = param_names {
+                                if let Some(idx) = pnames.iter().position(|pn| pn == name) {
+                                    if seen[idx] {
+                                        has_named_arg_errors = true;
+                                        self.push_diag(TyDiagnosticData::DuplicateNamedArg {
+                                            name: name.resolve(self.interner).to_string(),
+                                        });
+                                    } else {
+                                        seen[idx] = true;
+                                    }
+                                    Expectation::Has(params[idx].clone())
+                                } else {
+                                    has_named_arg_errors = true;
+                                    self.push_diag(TyDiagnosticData::UnknownNamedArg {
+                                        name: name.resolve(self.interner).to_string(),
+                                    });
+                                    Expectation::None
+                                }
                             } else {
+                                has_named_arg_errors = true;
+                                self.push_diag(TyDiagnosticData::UnknownNamedArg {
+                                    name: name.resolve(self.interner).to_string(),
+                                });
                                 Expectation::None
                             };
                             self.infer_expr(*value, &expectation);
                         }
                     }
+                }
+
+                if let Some(ref pnames) = param_names {
+                    for (idx, provided) in seen.iter().enumerate() {
+                        if !provided {
+                            has_named_arg_errors = true;
+                            self.push_diag(TyDiagnosticData::MissingNamedArg {
+                                name: pnames[idx].resolve(self.interner).to_string(),
+                            });
+                        }
+                    }
+                }
+
+                if has_named_arg_errors {
+                    return Ty::Error;
                 }
 
                 *ret
