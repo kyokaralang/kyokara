@@ -1,6 +1,7 @@
 //! End-to-end API tests: source → `check()` → verify structured output.
 
 use kyokara_api::{check, check_project, refactor, refactor_project};
+use std::collections::{BTreeMap, BTreeSet};
 
 #[test]
 fn check_clean_program_no_diagnostics() {
@@ -600,6 +601,115 @@ fn write_project(files: &[(&str, &str)]) -> (tempfile::TempDir, std::path::PathB
     }
     let main_path = dir.path().join("main.ky");
     (dir, main_path)
+}
+
+fn find_function_by_id<'a>(
+    output: &'a kyokara_api::CheckOutput,
+    id: &str,
+) -> &'a kyokara_api::FnNodeDto {
+    output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.id == id)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected function id `{id}` in symbol graph, got: {:?}",
+                output
+                    .symbol_graph
+                    .functions
+                    .iter()
+                    .map(|f| f.id.as_str())
+                    .collect::<Vec<_>>()
+            )
+        })
+}
+
+fn sorted_calls(fn_node: &kyokara_api::FnNodeDto) -> Vec<String> {
+    let mut calls = fn_node.calls.clone();
+    calls.sort();
+    calls
+}
+
+fn call_edges_by_caller_id(output: &kyokara_api::CheckOutput) -> BTreeMap<String, Vec<String>> {
+    output
+        .symbol_graph
+        .functions
+        .iter()
+        .map(|f| (f.id.clone(), sorted_calls(f)))
+        .collect()
+}
+
+fn diagnostic_signatures(output: &kyokara_api::CheckOutput) -> Vec<(String, String)> {
+    let mut diags: Vec<(String, String)> = output
+        .diagnostics
+        .iter()
+        .map(|d| (d.code.clone(), d.message.clone()))
+        .collect();
+    diags.sort();
+    diags
+}
+
+fn assert_call_edges_target_existing_functions(output: &kyokara_api::CheckOutput) {
+    let function_ids: BTreeSet<&str> = output
+        .symbol_graph
+        .functions
+        .iter()
+        .map(|f| f.id.as_str())
+        .collect();
+
+    for caller in &output.symbol_graph.functions {
+        for callee in &caller.calls {
+            assert!(
+                function_ids.contains(callee.as_str()),
+                "dangling call edge: caller `{}` ({}) -> `{}`; known IDs: {:?}",
+                caller.name,
+                caller.id,
+                callee,
+                function_ids
+            );
+        }
+    }
+}
+
+fn assert_no_duplicate_call_edges_per_caller(output: &kyokara_api::CheckOutput) {
+    for caller in &output.symbol_graph.functions {
+        let mut seen = BTreeSet::new();
+        let mut duplicates = Vec::new();
+        for callee in &caller.calls {
+            if !seen.insert(callee.clone()) {
+                duplicates.push(callee.clone());
+            }
+        }
+        assert!(
+            duplicates.is_empty(),
+            "duplicate call edges for caller `{}` ({}) -> {:?}; full calls: {:?}",
+            caller.name,
+            caller.id,
+            duplicates,
+            caller.calls
+        );
+    }
+}
+
+fn assert_metamorphic_equivalent(original_src: &str, transformed_src: &str) {
+    let original = check(original_src, "test.ky");
+    let transformed = check(transformed_src, "test.ky");
+    let original_edges = call_edges_by_caller_id(&original);
+    let transformed_edges = call_edges_by_caller_id(&transformed);
+    assert_eq!(
+        original_edges, transformed_edges,
+        "metamorphic call-edge mismatch\n--- original source ---\n{}\n--- transformed source ---\n{}\n--- original edges ---\n{:?}\n--- transformed edges ---\n{:?}",
+        original_src, transformed_src, original_edges, transformed_edges
+    );
+
+    let original_diags = diagnostic_signatures(&original);
+    let transformed_diags = diagnostic_signatures(&transformed);
+    assert_eq!(
+        original_diags, transformed_diags,
+        "metamorphic diagnostics mismatch\n--- original source ---\n{}\n--- transformed source ---\n{}\n--- original diagnostics ---\n{:?}\n--- transformed diagnostics ---\n{:?}",
+        original_src, transformed_src, original_diags, transformed_diags
+    );
 }
 
 #[test]
@@ -2297,7 +2407,11 @@ fn main() -> Int {
         .iter()
         .find(|f| f.name == "main")
         .expect("should have main function");
-    let foo_edges = main_fn.calls.iter().filter(|c| c.as_str() == "fn::foo").count();
+    let foo_edges = main_fn
+        .calls
+        .iter()
+        .filter(|c| c.as_str() == "fn::foo")
+        .count();
     assert_eq!(
         foo_edges, 1,
         "expected exactly one top-level fn::foo edge (outer direct call only), got: {:?}",
@@ -2326,7 +2440,11 @@ fn main() -> Int {
         .iter()
         .find(|f| f.name == "main")
         .expect("should have main function");
-    let foo_edges = main_fn.calls.iter().filter(|c| c.as_str() == "fn::foo").count();
+    let foo_edges = main_fn
+        .calls
+        .iter()
+        .filter(|c| c.as_str() == "fn::foo")
+        .count();
     assert_eq!(
         foo_edges, 1,
         "expected exactly one top-level fn::foo edge (outer lexical scope), got: {:?}",
@@ -2362,4 +2480,284 @@ fn project_symbol_graph_pre_post_shadow_with_imported_function() {
         "expected exactly one fn::math::add edge (pre-shadow imported call), got: {:?}",
         caller.calls
     );
+}
+
+// ── Symbol graph call-edge invariants harness (#171) ───────────────
+
+#[test]
+fn symbol_graph_call_edge_invariants_single_file_shadowing_matrix() {
+    let src = r#"
+fn foo() -> Int { 1 }
+fn pre_shadow() -> Int {
+  foo()
+  let foo = fn() => 2
+  foo()
+}
+fn lambda_param_shadow() -> Int {
+  let g = fn(foo) => foo()
+  g(fn() => 2)
+}
+fn nested_block_shadow() -> Int {
+  {
+    let foo = fn() => 2
+    foo()
+  }
+  foo()
+}
+"#;
+    let output = check(src, "test.ky");
+    assert_call_edges_target_existing_functions(&output);
+    assert_no_duplicate_call_edges_per_caller(&output);
+
+    assert_eq!(
+        sorted_calls(find_function_by_id(&output, "fn::pre_shadow")),
+        vec!["fn::foo".to_string()],
+        "pre-shadow function should keep exactly one top-level foo edge"
+    );
+    assert_eq!(
+        sorted_calls(find_function_by_id(&output, "fn::lambda_param_shadow")),
+        Vec::<String>::new(),
+        "lambda param shadow should not produce top-level foo edge"
+    );
+    assert_eq!(
+        sorted_calls(find_function_by_id(&output, "fn::nested_block_shadow")),
+        vec!["fn::foo".to_string()],
+        "nested block local shadow should not affect outer foo attribution"
+    );
+}
+
+#[test]
+fn symbol_graph_call_edge_invariants_project_import_shadow_matrix() {
+    let (_dir, main_path) = write_project(&[
+        (
+            "main.ky",
+            "import math\n\
+             fn imported_shadow() -> Int {\n\
+               add(1, 2)\n\
+               let add = fn(x, y) => x\n\
+               add(1, 2)\n\
+             }\n\
+             fn imported_lambda_param_shadow() -> Int {\n\
+               let g = fn(add) => add(1, 2)\n\
+               g(fn(x, y) => x)\n\
+             }\n\
+             fn imported_nested_block_shadow() -> Int {\n\
+               {\n\
+                 let add = fn(x, y) => x\n\
+                 add(1, 2)\n\
+               }\n\
+               add(1, 2)\n\
+             }\n",
+        ),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
+    ]);
+    let output = check_project(&main_path);
+    assert_call_edges_target_existing_functions(&output);
+    assert_no_duplicate_call_edges_per_caller(&output);
+
+    assert_eq!(
+        sorted_calls(find_function_by_id(&output, "fn::imported_shadow")),
+        vec!["fn::math::add".to_string()],
+        "imported call before local shadow should be attributed once"
+    );
+    assert_eq!(
+        sorted_calls(find_function_by_id(
+            &output,
+            "fn::imported_lambda_param_shadow"
+        )),
+        Vec::<String>::new(),
+        "lambda param shadow should not emit imported add edge"
+    );
+    assert_eq!(
+        sorted_calls(find_function_by_id(
+            &output,
+            "fn::imported_nested_block_shadow"
+        )),
+        vec!["fn::math::add".to_string()],
+        "nested block local shadow should preserve outer imported edge attribution"
+    );
+}
+
+#[test]
+fn symbol_graph_call_edges_stable_under_local_only_edits_single_file() {
+    let original = r#"
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  let local = fn() => 2
+  local()
+  foo()
+}
+"#;
+    let transformed = r#"
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  let renamed_local = fn() => 2
+  renamed_local()
+  foo()
+}
+"#;
+    let original_output = check(original, "test.ky");
+    let transformed_output = check(transformed, "test.ky");
+    assert_call_edges_target_existing_functions(&original_output);
+    assert_call_edges_target_existing_functions(&transformed_output);
+    assert_no_duplicate_call_edges_per_caller(&original_output);
+    assert_no_duplicate_call_edges_per_caller(&transformed_output);
+
+    assert_eq!(
+        call_edges_by_caller_id(&original_output),
+        call_edges_by_caller_id(&transformed_output),
+        "local-only rename should not change call-edge attribution"
+    );
+}
+
+#[test]
+fn symbol_graph_call_edges_stable_under_local_only_edits_project_mode() {
+    let (dir_a, main_a) = write_project(&[
+        (
+            "main.ky",
+            "import math\n\
+             fn main() -> Int {\n\
+               let local = fn() => 0\n\
+               local()\n\
+               add(1, 2)\n\
+             }\n",
+        ),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
+    ]);
+    let output_a = check_project(&main_a);
+
+    let (dir_b, main_b) = write_project(&[
+        (
+            "main.ky",
+            "import math\n\
+             fn main() -> Int {\n\
+               let renamed_local = fn() => 0\n\
+               renamed_local()\n\
+               add(1, 2)\n\
+             }\n",
+        ),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
+    ]);
+    let output_b = check_project(&main_b);
+
+    assert_call_edges_target_existing_functions(&output_a);
+    assert_call_edges_target_existing_functions(&output_b);
+    assert_no_duplicate_call_edges_per_caller(&output_a);
+    assert_no_duplicate_call_edges_per_caller(&output_b);
+    assert_eq!(
+        call_edges_by_caller_id(&output_a),
+        call_edges_by_caller_id(&output_b),
+        "project local-only rename should not change call-edge attribution"
+    );
+
+    drop(dir_a);
+    drop(dir_b);
+}
+
+// ── Metamorphic shadowing tests (#172) ─────────────────────────────
+
+#[test]
+fn metamorphic_alpha_rename_local_binder_preserves_edges_and_diagnostics() {
+    let original = r#"
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  foo()
+  let local = fn() => 2
+  local()
+}
+"#;
+    let transformed = r#"
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  foo()
+  let closure_local = fn() => 2
+  closure_local()
+}
+"#;
+    assert_metamorphic_equivalent(original, transformed);
+}
+
+#[test]
+fn metamorphic_binding_order_change_toggles_shadow_call_attribution() {
+    let pre_shadow = r#"
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  foo()
+  let foo = fn() => 2
+  foo()
+}
+"#;
+    let post_shadow_only = r#"
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  let foo = fn() => 2
+  foo()
+}
+"#;
+    let pre_output = check(pre_shadow, "test.ky");
+    let post_output = check(post_shadow_only, "test.ky");
+
+    let pre_main = find_function_by_id(&pre_output, "fn::main");
+    let post_main = find_function_by_id(&post_output, "fn::main");
+    let pre_foo_edges = pre_main
+        .calls
+        .iter()
+        .filter(|c| c.as_str() == "fn::foo")
+        .count();
+    let post_foo_edges = post_main
+        .calls
+        .iter()
+        .filter(|c| c.as_str() == "fn::foo")
+        .count();
+
+    assert_eq!(
+        pre_foo_edges, 1,
+        "pre-shadow source should have one top-level foo edge\nsource:\n{}\nmain calls: {:?}",
+        pre_shadow, pre_main.calls
+    );
+    assert_eq!(
+        post_foo_edges, 0,
+        "post-shadow-only source should have zero top-level foo edges\nsource:\n{}\nmain calls: {:?}",
+        post_shadow_only, post_main.calls
+    );
+}
+
+#[test]
+fn metamorphic_nested_block_introduction_preserves_outer_call_edges() {
+    let original = r#"
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  foo()
+}
+"#;
+    let transformed = r#"
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  {
+    let foo = fn() => 2
+    foo()
+  }
+  foo()
+}
+"#;
+    assert_metamorphic_equivalent(original, transformed);
+}
+
+#[test]
+fn metamorphic_lambda_param_rename_preserves_edges_and_diagnostics() {
+    let original = r#"
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  let g = fn(foo) => foo()
+  g(fn() => 2)
+}
+"#;
+    let transformed = r#"
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  let g = fn(callback) => callback()
+  g(fn() => 2)
+}
+"#;
+    assert_metamorphic_equivalent(original, transformed);
 }
