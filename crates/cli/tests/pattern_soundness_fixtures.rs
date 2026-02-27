@@ -105,13 +105,13 @@ fn pattern_exhaustiveness_matrix() {
             issue: None,
         },
         MatrixCase {
-            name: "opt_nested_missing_leaf_known_violation",
+            name: "opt_nested_missing_leaf_non_exhaustive",
             prelude: "type AB = | A | B\ntype Opt = | Some(AB) | None",
             match_ty: "Opt",
             arms: "    Some(A) => 1\n    None => 0",
             scrutinees: &["Some(A)", "Some(B)", "None"],
             expected_runtime_exhaustive: false,
-            mode: SoundnessMode::KnownViolation,
+            mode: SoundnessMode::Strict,
             issue: Some(137),
         },
         MatrixCase {
@@ -135,13 +135,13 @@ fn pattern_exhaustiveness_matrix() {
             issue: None,
         },
         MatrixCase {
-            name: "wrap3_nested_missing_leaf_known_violation",
+            name: "wrap3_nested_missing_leaf_non_exhaustive",
             prelude: "type ABC = | A | B | C\ntype Wrap3 = | Wrap(ABC) | Empty",
             match_ty: "Wrap3",
             arms: "    Wrap(A) => 1\n    Empty => 0",
             scrutinees: &["Wrap(A)", "Wrap(B)", "Wrap(C)", "Empty"],
             expected_runtime_exhaustive: false,
-            mode: SoundnessMode::KnownViolation,
+            mode: SoundnessMode::Strict,
             issue: Some(137),
         },
     ];
