@@ -896,6 +896,16 @@ impl<'a> InferenceCtx<'a> {
                     }) => (Some(def_fields), false),
                     _ => (None, false),
                 };
+                if def_fields.is_none() {
+                    // Path resolves to a type that isn't record-shaped.
+                    self.push_diag(TyDiagnosticData::NotARecordType {
+                        name: name.resolve(self.interner).to_owned(),
+                    });
+                    for (_fname, fexpr) in fields {
+                        self.infer_expr(*fexpr, &Expectation::None);
+                    }
+                    return Ty::Error;
+                }
                 if let Some(def_fields) = def_fields {
                     // Build substitution env.
                     let mut tp = self.type_params.clone();

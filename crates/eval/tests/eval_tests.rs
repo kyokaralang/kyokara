@@ -2674,3 +2674,115 @@ fn run_project_private_helper_not_directly_callable_from_main() {
         "calling private helper() directly from main should fail"
     );
 }
+
+// ── Escape sequence tests (#74) ─────────────────────────────────────
+
+#[test]
+fn eval_string_escape_newline() {
+    let val = run_ok(r#"fn main() -> String { "\n" }"#);
+    assert_eq!(val, Value::String("\n".to_owned()));
+}
+
+#[test]
+fn eval_string_escape_tab() {
+    let val = run_ok(r#"fn main() -> String { "\t" }"#);
+    assert_eq!(val, Value::String("\t".to_owned()));
+}
+
+#[test]
+fn eval_string_escape_backslash() {
+    let val = run_ok(r#"fn main() -> String { "\\" }"#);
+    assert_eq!(val, Value::String("\\".to_owned()));
+}
+
+#[test]
+fn eval_string_escape_double_quote() {
+    let val = run_ok(r#"fn main() -> String { "he said \"hi\"" }"#);
+    assert_eq!(val, Value::String("he said \"hi\"".to_owned()));
+}
+
+#[test]
+fn eval_char_escape_newline() {
+    let val = run_ok(r"fn main() -> Char { '\n' }");
+    assert_eq!(val, Value::Char('\n'));
+}
+
+#[test]
+fn eval_char_escape_backslash() {
+    let val = run_ok(r"fn main() -> Char { '\\' }");
+    assert_eq!(val, Value::Char('\\'));
+}
+
+#[test]
+fn eval_char_newline_neq_backslash() {
+    // The repro from issue #74
+    let val = run_ok(r"fn main() -> Bool { char_to_string('\n') == char_to_string('\\') }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_match_escaped_char_literal() {
+    let val = run_ok(
+        r"fn main() -> Int {
+            let c = '\n'
+            match c {
+                '\n' => 1
+                _ => 0
+            }
+        }",
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
+fn eval_match_escaped_string_literal() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let s = "\t"
+            match s {
+                "\t" => 1
+                _ => 0
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
+// ── Path-qualified record literal validation (#126) ─────────────────
+
+#[test]
+fn eval_path_record_lit_non_record_type_rejected() {
+    // The exact repro from issue #126: Option is not a record type.
+    assert!(check_has_compile_errors(
+        "fn main() -> Int { let r = Option { x: 1 }\n0 }"
+    ));
+}
+
+#[test]
+fn eval_path_record_lit_user_adt_rejected() {
+    assert!(check_has_compile_errors(
+        "type Foo = | A | B\nfn main() -> Int { let r = Foo { x: 1 }\n0 }"
+    ));
+}
+
+#[test]
+fn eval_path_record_lit_valid_record_works() {
+    // Guard: legitimate named record literals still work end-to-end.
+    let val = run_ok(
+        "type Point = { x: Int, y: Int }\nfn main() -> Int { let p = Point { x: 1, y: 2 }\np.x + p.y }",
+    );
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_string_no_escapes_unchanged() {
+    // Guard: plain strings without escapes still work.
+    let val = run_ok(r#"fn main() -> String { "hello world" }"#);
+    assert_eq!(val, Value::String("hello world".to_owned()));
+}
+
+#[test]
+fn eval_invalid_escape_produces_diagnostic() {
+    // Guard: invalid escape sequence is flagged at compile time.
+    assert!(check_has_compile_errors(r#"fn main() -> String { "\q" }"#));
+}

@@ -225,6 +225,75 @@ impl BodyLowerCtx<'_> {
         }
     }
 
+    // ── Escape decoding ────────────────────────────────────────────
+
+    /// Decode escape sequences in a string literal interior (quotes already stripped).
+    fn decode_string_escapes(&mut self, raw: &str, range: TextRange) -> String {
+        let mut out = String::with_capacity(raw.len());
+        let mut chars = raw.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('n') => out.push('\n'),
+                    Some('r') => out.push('\r'),
+                    Some('t') => out.push('\t'),
+                    Some('\\') => out.push('\\'),
+                    Some('"') => out.push('"'),
+                    Some('\'') => out.push('\''),
+                    Some('0') => out.push('\0'),
+                    Some(other) => {
+                        let span = Span {
+                            file: self.file_id,
+                            range,
+                        };
+                        self.diagnostics.push(Diagnostic::error(
+                            format!("invalid escape sequence `\\{other}`"),
+                            span,
+                        ));
+                        out.push('\\');
+                        out.push(other);
+                    }
+                    None => {
+                        out.push('\\');
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    /// Decode a char literal interior (quotes already stripped).
+    fn decode_char_escape(&mut self, raw: &str, range: TextRange) -> char {
+        let mut chars = raw.chars();
+        match chars.next() {
+            Some('\\') => match chars.next() {
+                Some('n') => '\n',
+                Some('r') => '\r',
+                Some('t') => '\t',
+                Some('\\') => '\\',
+                Some('"') => '"',
+                Some('\'') => '\'',
+                Some('0') => '\0',
+                Some(other) => {
+                    let span = Span {
+                        file: self.file_id,
+                        range,
+                    };
+                    self.diagnostics.push(Diagnostic::error(
+                        format!("invalid escape sequence `\\{other}`"),
+                        span,
+                    ));
+                    other
+                }
+                None => '\0',
+            },
+            Some(c) => c,
+            None => '\0',
+        }
+    }
+
     // ── Expression lowering ────────────────────────────────────────
 
     fn lower_expr(&mut self, expr: &ExprCst) -> ExprIdx {
@@ -303,14 +372,13 @@ impl BodyLowerCtx<'_> {
                 }
                 SyntaxKind::StringLiteral => {
                     let text = tok.text();
-                    // Strip quotes
                     let inner = &text[1..text.len().saturating_sub(1)];
-                    Literal::String(inner.to_owned())
+                    Literal::String(self.decode_string_escapes(inner, tok.text_range()))
                 }
                 SyntaxKind::CharLiteral => {
                     let text = tok.text();
                     let inner = &text[1..text.len().saturating_sub(1)];
-                    Literal::Char(inner.chars().next().unwrap_or('\0'))
+                    Literal::Char(self.decode_char_escape(inner, tok.text_range()))
                 }
                 SyntaxKind::TrueKw => Literal::Bool(true),
                 SyntaxKind::FalseKw => Literal::Bool(false),
@@ -868,12 +936,12 @@ impl BodyLowerCtx<'_> {
                         SyntaxKind::StringLiteral => {
                             let text = tok.text();
                             let inner = &text[1..text.len().saturating_sub(1)];
-                            Literal::String(inner.to_owned())
+                            Literal::String(self.decode_string_escapes(inner, tok.text_range()))
                         }
                         SyntaxKind::CharLiteral => {
                             let text = tok.text();
                             let inner = &text[1..text.len().saturating_sub(1)];
-                            Literal::Char(inner.chars().next().unwrap_or('\0'))
+                            Literal::Char(self.decode_char_escape(inner, tok.text_range()))
                         }
                         SyntaxKind::TrueKw => Literal::Bool(true),
                         SyntaxKind::FalseKw => Literal::Bool(false),

@@ -50,6 +50,8 @@ pub enum TyDiagnosticData {
     MultiSegmentValuePath { path: String },
     /// Record pattern with an explicit type path is not supported yet.
     UnsupportedRecordPatternPath { path: String },
+    /// Path-qualified record literal where path is not a record type.
+    NotARecordType { name: String },
 }
 
 impl TyDiagnosticData {
@@ -76,6 +78,7 @@ impl TyDiagnosticData {
             TyDiagnosticData::NonValueNameInExpr { .. } => "E0015",
             TyDiagnosticData::MultiSegmentValuePath { .. } => "E0016",
             TyDiagnosticData::UnsupportedRecordPatternPath { .. } => "E0017",
+            TyDiagnosticData::NotARecordType { .. } => "E0021",
         }
     }
 
@@ -174,6 +177,9 @@ impl TyDiagnosticData {
             }
             TyDiagnosticData::UnsupportedRecordPatternPath { path } => {
                 format!("record pattern type paths are not supported yet: `{path}`")
+            }
+            TyDiagnosticData::NotARecordType { name } => {
+                format!("`{name}` is not a record type")
             }
         };
         Diagnostic::error(message, span)
