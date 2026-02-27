@@ -1,0 +1,17 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "soundness": {
+    "mode": "strict",
+    "issue": 134,
+    "require_check_rejection": false
+  },
+  "check": {
+    "ok": true,
+    "codes_all": []
+  },
+  "run": {
+    "ok": true,
+    "stdout_contains": ["1"]
+  }
+}

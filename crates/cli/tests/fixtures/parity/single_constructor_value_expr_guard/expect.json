@@ -1,0 +1,10 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "check": {
+    "ok": true
+  },
+  "run": {
+    "ok": true
+  }
+}

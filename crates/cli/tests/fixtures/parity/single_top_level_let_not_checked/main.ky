@@ -1,0 +1,5 @@
+let x = foo
+
+fn main() -> Int {
+  1
+}

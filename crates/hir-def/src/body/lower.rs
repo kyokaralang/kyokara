@@ -762,11 +762,13 @@ impl BodyLowerCtx<'_> {
 
                 if is_constructor && self.module_scope.constructors.contains_key(&name) {
                     // Nullary constructor pattern
-
-                    self.alloc_pat(pat::Pat::Constructor {
+                    let pat_idx = self.alloc_pat(pat::Pat::Constructor {
                         path: path::Path::single(name),
                         args: vec![],
-                    })
+                    });
+                    self.pat_source_map
+                        .insert(pat_idx, ip.syntax().text_range());
+                    pat_idx
                 } else {
                     if is_constructor {
                         let span = self.node_span(ip.syntax());
@@ -806,9 +808,17 @@ impl BodyLowerCtx<'_> {
                 // current (arm) scope so the arm body can resolve them.
                 let args: Vec<PatIdx> = cp.args().map(|a| self.lower_pat(&a, origin)).collect();
 
-                self.alloc_pat(pat::Pat::Constructor { path, args })
+                let pat_idx = self.alloc_pat(pat::Pat::Constructor { path, args });
+                self.pat_source_map
+                    .insert(pat_idx, cp.syntax().text_range());
+                pat_idx
             }
-            PatCst::Wildcard(_) => self.alloc_pat(pat::Pat::Wildcard),
+            PatCst::Wildcard(wc) => {
+                let pat_idx = self.alloc_pat(pat::Pat::Wildcard);
+                self.pat_source_map
+                    .insert(pat_idx, wc.syntax().text_range());
+                pat_idx
+            }
             PatCst::Literal(lp) => {
                 let literal = lp
                     .token()
@@ -864,7 +874,10 @@ impl BodyLowerCtx<'_> {
                         _ => Literal::Bool(false),
                     })
                     .unwrap_or(Literal::Bool(false));
-                self.alloc_pat(pat::Pat::Literal(literal))
+                let pat_idx = self.alloc_pat(pat::Pat::Literal(literal));
+                self.pat_source_map
+                    .insert(pat_idx, lp.syntax().text_range());
+                pat_idx
             }
             PatCst::Record(rp) => {
                 let path = rp.path().map(|p| self.lower_path(&p));
@@ -896,7 +909,10 @@ impl BodyLowerCtx<'_> {
                     self.pat_source_map.insert(pat_idx, tok.text_range());
                     self.register_local_binding(field_name, pat_idx, tok.text_range(), origin);
                 }
-                self.alloc_pat(pat::Pat::Record { path, fields })
+                let pat_idx = self.alloc_pat(pat::Pat::Record { path, fields });
+                self.pat_source_map
+                    .insert(pat_idx, rp.syntax().text_range());
+                pat_idx
             }
         }
     }

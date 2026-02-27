@@ -7,6 +7,7 @@
 //! When salsa lands (v0.3), the incremental database will live here.
 
 pub use kyokara_hir_def::body::Body;
+pub use kyokara_hir_def::builtins::register_builtin_intrinsics;
 pub use kyokara_hir_def::builtins::register_builtin_types;
 pub use kyokara_hir_def::item_tree::lower::collect_item_tree;
 pub use kyokara_hir_def::item_tree::{
@@ -61,6 +62,11 @@ pub fn check_file(source: &str) -> CheckResult {
 
     // 4. Register builtin types (Option, Result).
     register_builtin_types(
+        &mut item_result.tree,
+        &mut item_result.module_scope,
+        &mut interner,
+    );
+    register_builtin_intrinsics(
         &mut item_result.tree,
         &mut item_result.module_scope,
         &mut interner,
@@ -134,6 +140,11 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
         let mut item_result = collect_item_tree(&sf, file_id, &mut interner);
 
         register_builtin_types(
+            &mut item_result.tree,
+            &mut item_result.module_scope,
+            &mut interner,
+        );
+        register_builtin_intrinsics(
             &mut item_result.tree,
             &mut item_result.module_scope,
             &mut interner,
