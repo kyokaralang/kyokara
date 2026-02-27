@@ -112,16 +112,12 @@ pub fn run_with_manifest(
 
     // Check body_lowering_diagnostics for errors (e.g. unresolved names).
     // Filter out known false positives:
-    //   - "unresolved name `result`" from ensures/requires contract clauses
     //   - "duplicate binding" from constructor pattern scope bug
     let body_errors: Vec<String> = type_check
         .body_lowering_diagnostics
         .iter()
         .filter(|d| d.severity == kyokara_diagnostics::Severity::Error)
-        .filter(|d| {
-            !d.message.contains("unresolved name `result`")
-                && !d.message.starts_with("duplicate binding")
-        })
+        .filter(|d| !d.message.starts_with("duplicate binding"))
         .map(|d| d.message.clone())
         .collect();
     if !body_errors.is_empty() {

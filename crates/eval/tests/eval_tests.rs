@@ -1880,6 +1880,49 @@ fn run_rejects_body_lowering_errors_before_execution() {
 }
 
 #[test]
+fn run_rejects_user_variable_named_result() {
+    // Bug test (#159): user code with `result` as a variable name should be
+    // rejected at compile time, not suppressed by the ensures false-positive filter.
+    let src = "fn main() -> Int { result }";
+    let result = kyokara_eval::run(src);
+    let err = match result {
+        Ok(_) => panic!("expected error for unresolved `result`, but program executed"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    assert!(
+        !msg.starts_with("unresolved name:"),
+        "should be rejected at compile time, not at runtime; got: {msg}"
+    );
+}
+
+#[test]
+fn run_ensures_with_result_still_works() {
+    // Guard test: ensures clauses that use `result` should still run fine.
+    let val = run_ok("fn get() -> Int ensures result > 0 { 42 }\nfn main() -> Int { get() }");
+    assert!(matches!(val, Value::Int(42)));
+}
+
+#[test]
+fn run_ensures_result_and_user_result_coexist() {
+    // Edge case: one function has ensures (with implicit `result`),
+    // another function references an undefined `result` — the second
+    // should still be caught at compile time.
+    let src = "fn get() -> Int ensures result > 0 { 42 }\nfn main() -> Int { result }";
+    let result = kyokara_eval::run(src);
+    let err = match result {
+        Ok(_) => panic!("expected error for unresolved `result` in main"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    // Must be a compile-time error, not a runtime "unresolved name:" error.
+    assert!(
+        !msg.starts_with("unresolved name:"),
+        "should be caught at compile time, not runtime; got: {msg}"
+    );
+}
+
+#[test]
 fn run_project_rejects_body_lowering_error_in_sibling_module() {
     use std::io::Write;
 
