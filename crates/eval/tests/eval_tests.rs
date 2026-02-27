@@ -17,6 +17,21 @@ fn run_err(source: &str) -> String {
     }
 }
 
+fn check_has_compile_errors(source: &str) -> bool {
+    let result = kyokara_hir::check_file(source);
+    !result.parse_errors.is_empty()
+        || result
+            .lowering_diagnostics
+            .iter()
+            .any(|d| d.severity == kyokara_diagnostics::Severity::Error)
+        || result
+            .type_check
+            .body_lowering_diagnostics
+            .iter()
+            .any(|d| d.severity == kyokara_diagnostics::Severity::Error)
+        || !result.type_check.raw_diagnostics.is_empty()
+}
+
 fn run_with_manifest_ok(source: &str, manifest: Option<CapabilityManifest>) -> Value {
     match kyokara_eval::run_with_manifest(source, manifest) {
         Ok(result) => result.value,
@@ -2000,4 +2015,62 @@ fn main() -> Int {
         err.contains("duplicate binding"),
         "expected duplicate binding error in match arm, got: {err}"
     );
+}
+
+#[test]
+fn run_rejects_compile_invalid_programs_detected_by_check() {
+    struct Case<'a> {
+        name: &'a str,
+        src: &'a str,
+        run_fragment: &'a str,
+    }
+
+    let cases = [
+        Case {
+            name: "parse error",
+            src: "fn main( -> Int { 1 }",
+            run_fragment: "parse errors:",
+        },
+        Case {
+            name: "unresolved name",
+            src: "fn main() -> Int { unknown_name }",
+            run_fragment: "lowering errors:",
+        },
+        Case {
+            name: "duplicate pattern binding",
+            src: "type Pair = | Pair(Int, Int)\nfn main() -> Int {\n  let Pair(x, x) = Pair(1, 2)\n  x\n}",
+            run_fragment: "duplicate binding",
+        },
+        Case {
+            name: "invalid numeric underscore",
+            src: "fn main() -> Int { 1__2 }",
+            run_fragment: "invalid underscore placement",
+        },
+        Case {
+            name: "type mismatch",
+            src: "fn main() -> Int { \"x\" }",
+            run_fragment: "type mismatch",
+        },
+        Case {
+            name: "unresolved return type",
+            src: "fn main() -> Foo { 1 }",
+            run_fragment: "unresolved type",
+        },
+    ];
+
+    for case in cases {
+        assert!(
+            check_has_compile_errors(case.src),
+            "check should report compile diagnostics for case `{}`",
+            case.name
+        );
+        let err = run_err(case.src);
+        assert!(
+            err.contains(case.run_fragment),
+            "run should reject case `{}` with fragment `{}`; got: {}",
+            case.name,
+            case.run_fragment,
+            err
+        );
+    }
 }

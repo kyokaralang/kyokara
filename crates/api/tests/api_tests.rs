@@ -2277,3 +2277,30 @@ fn main() -> Int {
         main_fn.calls
     );
 }
+
+#[test]
+fn symbol_graph_lambda_shadow_does_not_hide_outer_direct_call() {
+    // Mixed case: lambda param shadows `foo` locally, but the outer direct
+    // `foo()` call should still be recorded exactly once.
+    let src = r#"
+fn foo() -> Int { 1 }
+fn main() -> Int {
+  foo()
+  let g = fn(foo) => foo()
+  g(fn() -> Int => 2)
+}
+"#;
+    let output = check(src, "test.ky");
+    let main_fn = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "main")
+        .expect("should have main function");
+    let foo_edges = main_fn.calls.iter().filter(|c| c.as_str() == "fn::foo").count();
+    assert_eq!(
+        foo_edges, 1,
+        "expected exactly one top-level fn::foo edge (outer direct call only), got: {:?}",
+        main_fn.calls
+    );
+}
