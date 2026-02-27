@@ -118,7 +118,7 @@ pub fn rename_symbol_project(
             if *mod_path == def_mod_path {
                 return false;
             }
-            imports_from_module(&info.item_tree, def_mod_path, &result.interner)
+            imports_from_module(&info.item_tree, def_mod_path)
         })
         .map(|(mod_path, _)| mod_path)
         .collect();
@@ -189,15 +189,19 @@ fn is_locally_defined(root: &SyntaxNode, name: &str, kind: SymbolKind) -> bool {
 fn imports_from_module(
     item_tree: &kyokara_hir::ItemTree,
     target_mod_path: &kyokara_hir::ModulePath,
-    interner: &Interner,
 ) -> bool {
-    let Some(target_last) = target_mod_path.last() else {
+    if target_mod_path.is_root() {
         return false; // Root module can't be imported
-    };
-    let target_name = target_last.resolve(interner);
+    }
     item_tree.imports.iter().any(|imp| {
-        let local = imp.alias.or_else(|| imp.path.last());
-        local.is_some_and(|n| n.resolve(interner) == target_name)
+        if imp.path.segments.is_empty() {
+            return false;
+        }
+        if imp.path.segments.len() > 1 {
+            imp.path.segments == target_mod_path.0
+        } else {
+            target_mod_path.last() == imp.path.last()
+        }
     })
 }
 

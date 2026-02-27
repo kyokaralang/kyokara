@@ -141,6 +141,7 @@ impl LanguageServer for KyokaraLanguageServer {
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
+        self.files.lock().unwrap().remove(&uri);
         self.sources.write().await.remove(&uri);
         self.analyses.write().await.remove(&uri);
         // Clear diagnostics for the closed file.
@@ -279,5 +280,198 @@ impl LanguageServer for KyokaraLanguageServer {
         } else {
             Ok(Some(edits))
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use futures::StreamExt;
+    use serde_json::{Value, json};
+    use tower::{Service, ServiceExt};
+    use tower_lsp::LspService;
+    use tower_lsp::jsonrpc::{Request, Response};
+
+    use super::KyokaraLanguageServer;
+
+    fn initialize_request(id: i64) -> Request {
+        Request::build("initialize")
+            .params(json!({ "capabilities": {} }))
+            .id(id)
+            .finish()
+    }
+
+    async fn initialize(service: &mut LspService<KyokaraLanguageServer>) {
+        let resp = service
+            .ready()
+            .await
+            .expect("service ready")
+            .call(initialize_request(1))
+            .await
+            .expect("initialize call should succeed")
+            .expect("initialize must return response");
+        assert!(resp.is_ok(), "initialize failed: {resp:?}");
+    }
+
+    async fn call_notification(
+        service: &mut LspService<KyokaraLanguageServer>,
+        method: &'static str,
+        params: Value,
+    ) {
+        let resp = service
+            .ready()
+            .await
+            .expect("service ready")
+            .call(Request::build(method).params(params).finish())
+            .await
+            .expect("notification call should succeed");
+        assert!(resp.is_none(), "notification should have no response");
+    }
+
+    async fn call_request(
+        service: &mut LspService<KyokaraLanguageServer>,
+        method: &'static str,
+        id: i64,
+        params: Value,
+    ) -> Response {
+        service
+            .ready()
+            .await
+            .expect("service ready")
+            .call(Request::build(method).params(params).id(id).finish())
+            .await
+            .expect("request call should succeed")
+            .expect("request should produce a response")
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn lifecycle_reopen_same_text_preserves_language_features() {
+        let (mut service, mut socket) = LspService::new(KyokaraLanguageServer::new);
+
+        let drain = tokio::spawn(async move { while socket.next().await.is_some() {} });
+
+        initialize(&mut service).await;
+
+        let uri = "file:///test.ky";
+        let source = "fn foo() -> Int { 42 }\nfn bar() -> Int { foo() }\n";
+
+        call_notification(
+            &mut service,
+            "textDocument/didOpen",
+            json!({
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": "kyokara",
+                    "version": 1,
+                    "text": source
+                }
+            }),
+        )
+        .await;
+
+        // Baseline: features should work after initial open.
+        let hover_before = call_request(
+            &mut service,
+            "textDocument/hover",
+            2,
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": 21 }
+            }),
+        )
+        .await;
+        assert!(hover_before.is_ok());
+        assert!(
+            hover_before.result().is_some_and(|r| !r.is_null()),
+            "hover should not be null after initial open: {hover_before:?}"
+        );
+
+        call_notification(
+            &mut service,
+            "textDocument/didClose",
+            json!({ "textDocument": { "uri": uri } }),
+        )
+        .await;
+
+        // Reopen with unchanged text. Regressions here can leave analyses cache empty.
+        call_notification(
+            &mut service,
+            "textDocument/didOpen",
+            json!({
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": "kyokara",
+                    "version": 2,
+                    "text": source
+                }
+            }),
+        )
+        .await;
+
+        let hover_after = call_request(
+            &mut service,
+            "textDocument/hover",
+            3,
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": 21 }
+            }),
+        )
+        .await;
+        assert!(hover_after.is_ok());
+        assert!(
+            hover_after.result().is_some_and(|r| !r.is_null()),
+            "hover should work after close/reopen unchanged text: {hover_after:?}"
+        );
+
+        let def_after = call_request(
+            &mut service,
+            "textDocument/definition",
+            4,
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": 21 }
+            }),
+        )
+        .await;
+        assert!(def_after.is_ok());
+        assert!(
+            def_after.result().is_some_and(|r| !r.is_null()),
+            "goto-definition should work after close/reopen unchanged text: {def_after:?}"
+        );
+
+        let completion_after = call_request(
+            &mut service,
+            "textDocument/completion",
+            5,
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": 0 }
+            }),
+        )
+        .await;
+        assert!(completion_after.is_ok());
+        let completion_result = completion_after
+            .result()
+            .expect("completion response should have result");
+        assert!(
+            !completion_result.is_null(),
+            "completion result must not be null"
+        );
+
+        let labels = completion_result
+            .get("items")
+            .and_then(Value::as_array)
+            .or_else(|| completion_result.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| item.get("label").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        assert!(
+            labels.contains(&"foo"),
+            "expected completion to include `foo`, got labels: {labels:?}"
+        );
+
+        drain.abort();
     }
 }

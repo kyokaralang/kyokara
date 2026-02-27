@@ -1265,6 +1265,81 @@ fn refactor_error_has_empty_verification_diagnostics() {
 }
 
 #[test]
+fn refactor_status_failed_when_body_lowering_diagnostics_exist() {
+    // Refactor should report Failed (not typechecked) when unresolved names remain.
+    let src = "fn foo() -> Int { 1 }\nfn main() -> Int { foo() + missing }";
+    let action = kyokara_refactor::RefactorAction::RenameSymbol {
+        old_name: "foo".into(),
+        new_name: "bar".into(),
+        kind: kyokara_refactor::SymbolKind::Function,
+        target_file: None,
+    };
+    let output = refactor(src, "test.ky", action, false);
+
+    assert_eq!(output.status, "failed");
+    assert!(
+        !output.verified,
+        "failed verification must set verified=false"
+    );
+    assert!(
+        !output.verification_diagnostics.is_empty(),
+        "failed verification should include diagnostics"
+    );
+    assert!(
+        output
+            .verification_diagnostics
+            .iter()
+            .any(|d| d.code.as_deref() == Some("E0101")),
+        "expected unresolved-name style diagnostic code E0101, got: {:?}",
+        output
+            .verification_diagnostics
+            .iter()
+            .map(|d| (&d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn refactor_project_status_failed_when_body_lowering_diagnostics_exist() {
+    let (_dir, main_path) = write_project(&[
+        (
+            "main.ky",
+            "import math\nfn main() -> Int { add(1, 2) + missing }\n",
+        ),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
+    ]);
+    let action = kyokara_refactor::RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: kyokara_refactor::SymbolKind::Function,
+        target_file: None,
+    };
+    let output = refactor_project(&main_path, action, false);
+
+    assert_eq!(output.status, "failed");
+    assert!(
+        !output.verified,
+        "failed verification must set verified=false"
+    );
+    assert!(
+        !output.edits.is_empty(),
+        "refactor should still produce edits before verification"
+    );
+    assert!(
+        output
+            .verification_diagnostics
+            .iter()
+            .any(|d| d.code.as_deref() == Some("E0101")),
+        "expected unresolved-name style diagnostic code E0101, got: {:?}",
+        output
+            .verification_diagnostics
+            .iter()
+            .map(|d| (&d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn refactor_json_has_verification_diagnostics_field() {
     // Verify the JSON output uses "verification_diagnostics" (not "warnings").
     let src = "fn foo() -> Int { 1 }\nfn caller() -> Int { foo() }";
@@ -1644,6 +1719,50 @@ fn check_project_reports_ambiguous_import_last_segment() {
             .iter()
             .any(|d| d.message.contains("ambiguous import")),
         "expected ambiguous import diagnostic, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn check_project_qualified_import_resolves_duplicate_leaf_modules() {
+    // `import a.math` should resolve exactly `a/math.ky` even when `b/math.ky` exists.
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "import a.math\nfn main() -> Int { value() }\n"),
+        ("a/math.ky", "pub fn value() -> Int { 1 }\n"),
+        ("b/math.ky", "pub fn value() -> Int { 2 }\n"),
+    ]);
+    let output = check_project(&main_path);
+    let import_diags: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("import"))
+        .collect();
+    assert!(
+        import_diags.is_empty(),
+        "qualified import should resolve without import diagnostics, got: {:?}",
+        import_diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn check_project_qualified_import_missing_path_does_not_match_by_leaf() {
+    // `import c.math` should not fall back to any `*.math` leaf modules.
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "import c.math\nfn main() -> Int { value() }\n"),
+        ("a/math.ky", "pub fn value() -> Int { 1 }\n"),
+        ("b/math.ky", "pub fn value() -> Int { 2 }\n"),
+    ]);
+    let output = check_project(&main_path);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("unresolved import")),
+        "expected unresolved import diagnostic for qualified missing path, got: {:?}",
         output
             .diagnostics
             .iter()
