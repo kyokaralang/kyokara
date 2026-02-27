@@ -1301,3 +1301,44 @@ fn test_sequential_match_bind_stops_dispatch() {
         "should not have equality check after bind catch-all. output:\n{out}"
     );
 }
+
+// ── Bug regression: ADT switch ignores nested subpatterns (#150) ───
+
+#[test]
+fn test_adt_match_nested_literal_check() {
+    // Bug: ADT switch dispatches on outer constructor but doesn't emit
+    // equality checks for nested literal subpatterns like `Some(1)`.
+    let out = lower_and_display(
+        "type O = | Some(Int) | None
+         fn f(x: O) -> Int {
+           match x {
+             Some(1) => 10
+             _ => 0
+           }
+         }",
+    );
+    // After extracting the field from Some, there should be an equality check.
+    assert!(
+        out.contains("eq "),
+        "should have equality check for nested literal `1`. output:\n{out}"
+    );
+}
+
+#[test]
+fn test_adt_match_nested_bind_still_works() {
+    // Guard: nested bind patterns (no literal) should NOT produce eq checks.
+    let out = lower_and_display(
+        "type O = | Some(Int) | None
+         fn f(x: O) -> Int {
+           match x {
+             Some(n) => n
+             None => 0
+           }
+         }",
+    );
+    // No equality checks needed — just field extraction and binding.
+    assert!(
+        !out.contains("eq "),
+        "should not have equality check for bind pattern. output:\n{out}"
+    );
+}
