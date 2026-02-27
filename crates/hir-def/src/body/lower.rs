@@ -87,10 +87,17 @@ pub fn lower_body(
         .and_then(|rc| rc.expr())
         .map(|e| ctx.lower_expr(&e));
 
-    let ensures = fn_def
-        .ensures_clause()
-        .and_then(|ec| ec.expr())
-        .map(|e| ctx.lower_expr(&e));
+    let ensures = fn_def.ensures_clause().and_then(|ec| ec.expr()).map(|e| {
+        // Introduce implicit `result` binding in ensures scope.
+        let ensures_scope = ctx.push_scope();
+        let result_name = Name::new(ctx.interner, "result");
+        let result_pat = ctx.alloc_pat(pat::Pat::Bind { name: result_name });
+        ctx.scopes
+            .define(ensures_scope, result_name, ScopeDef::Local(result_pat));
+        let idx = ctx.lower_expr(&e);
+        ctx.pop_scope();
+        idx
+    });
 
     let invariant = fn_def
         .invariant_clause()
