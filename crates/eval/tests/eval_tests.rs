@@ -2289,3 +2289,69 @@ fn eval_positional_args_still_work() {
     );
     assert_eq!(val, Value::Int(-7));
 }
+
+// ── Issue #68: wrong imported function body when sibling modules export same name ──
+
+#[test]
+fn run_project_uses_imported_module_body_not_sibling() {
+    // When main.ky imports util, and both util.ky and other.ky export
+    // `pub fn foo() -> Int`, only util's body should be used.
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let util_path = dir.path().join("util.ky");
+    let mut util_file = std::fs::File::create(&util_path).unwrap();
+    writeln!(util_file, "pub fn foo() -> Int {{ 42 }}").unwrap();
+
+    let other_path = dir.path().join("other.ky");
+    let mut other_file = std::fs::File::create(&other_path).unwrap();
+    writeln!(other_file, "pub fn foo() -> Int {{ 999 }}").unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import util").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ foo() }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path).expect("should succeed");
+    assert_eq!(
+        result.value,
+        Value::Int(42),
+        "foo() should resolve to util::foo() (42), not other::foo() (999)"
+    );
+}
+
+#[test]
+fn run_project_dual_import_same_name_is_conflict() {
+    // When main.ky imports both util and other, and both export `foo`,
+    // the second import should produce a conflicting-import error.
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let util_path = dir.path().join("util.ky");
+    let mut util_file = std::fs::File::create(&util_path).unwrap();
+    writeln!(util_file, "pub fn foo() -> Int {{ 42 }}").unwrap();
+
+    let other_path = dir.path().join("other.ky");
+    let mut other_file = std::fs::File::create(&other_path).unwrap();
+    writeln!(other_file, "pub fn foo() -> Int {{ 999 }}").unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import util").unwrap();
+    writeln!(main_file, "import other").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ foo() }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path);
+    match result {
+        Ok(_) => panic!("expected conflicting import error"),
+        Err(e) => {
+            let err = e.to_string();
+            assert!(
+                err.contains("conflicting import"),
+                "expected 'conflicting import' in message, got: {err}"
+            );
+        }
+    }
+}

@@ -266,12 +266,33 @@ pub fn run_project_with_manifest(
     }
 
     // Also collect bodies from imported modules and map them to entry module indices.
+    // Only consider modules that the entry module actually imports (#68).
     let entry_info = project.module_graph.get(&entry_path).unwrap();
     let entry_tree = &entry_info.item_tree;
     let entry_scope = &entry_info.scope;
 
+    // Build the set of module paths that the entry module imports.
+    let imported_mod_paths: Vec<ModulePath> = entry_tree
+        .imports
+        .iter()
+        .filter_map(|imp| {
+            let target_name = imp.path.last()?;
+            // Resolve to the actual module path, same as resolve_project_imports does.
+            for (mod_path, _) in project.module_graph.iter() {
+                if mod_path.last() == Some(target_name) {
+                    return Some(mod_path.clone());
+                }
+            }
+            None
+        })
+        .collect();
+
     for (mod_path, tc) in &project.type_checks {
         if *mod_path == entry_path {
+            continue;
+        }
+        // Only process modules that the entry module actually imported.
+        if !imported_mod_paths.contains(mod_path) {
             continue;
         }
         let Some(mod_info) = project.module_graph.get(mod_path) else {
