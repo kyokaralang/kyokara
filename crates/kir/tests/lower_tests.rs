@@ -1669,3 +1669,148 @@ fn test_validator_accepts_bool_assert_condition() {
         diags.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
 }
+
+// ── #156: validator should check base types for field_get/adt_field_get ──
+
+#[test]
+fn test_validator_rejects_field_get_on_int() {
+    // Bug: field_get on Int base passes validation.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+
+    let int_val = builder.push_const(Constant::Int(1), Ty::Int);
+    let field = Name::new(&mut interner, "x");
+    let _fg = builder.push_field_get(int_val, field, Ty::Error);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.iter().any(|d| d.message.contains("field_get")),
+        "should reject field_get on Int base. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validator_accepts_field_get_on_record() {
+    // Guard: field_get on Record base should pass.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+
+    let field_name = Name::new(&mut interner, "x");
+    let record_ty = Ty::Record {
+        fields: vec![(field_name, Ty::Int)],
+    };
+    let rec = builder.push_const(Constant::Unit, record_ty); // placeholder const
+    let _fg = builder.push_field_get(rec, field_name, Ty::Int);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    let field_diags: Vec<_> = diags
+        .iter()
+        .filter(|d| d.message.contains("field_get"))
+        .collect();
+    assert!(
+        field_diags.is_empty(),
+        "field_get on Record base should not produce field_get errors. diags: {:?}",
+        field_diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validator_rejects_adt_field_get_on_int() {
+    // Bug: adt_field_get on Int base passes validation.
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+
+    let int_val = builder.push_const(Constant::Int(1), Ty::Int);
+    let _afg = builder.push_adt_field_get(int_val, 0, Ty::Error);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    assert!(
+        diags.iter().any(|d| d.message.contains("adt_field_get")),
+        "should reject adt_field_get on Int base. diags: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validator_accepts_adt_field_get_on_adt() {
+    // Guard: adt_field_get on Adt base should pass.
+    use kyokara_hir_def::item_tree::TypeItemIdx;
+
+    let mut interner = Interner::new();
+    let mut builder = KirBuilder::new();
+
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+
+    let adt_ty = Ty::Adt {
+        def: TypeItemIdx::from_raw(la_arena::RawIdx::from_u32(0)),
+        args: vec![],
+    };
+    let adt_val = builder.push_const(Constant::Unit, adt_ty); // placeholder
+    let _afg = builder.push_adt_field_get(adt_val, 0, Ty::Int);
+    let unit = builder.push_const(Constant::Unit, Ty::Unit);
+    builder.set_return(unit);
+
+    let func = builder.build(
+        Name::new(&mut interner, "test"),
+        vec![],
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let diags = validate_function(&func, &interner);
+    let afg_diags: Vec<_> = diags
+        .iter()
+        .filter(|d| d.message.contains("adt_field_get"))
+        .collect();
+    assert!(
+        afg_diags.is_empty(),
+        "adt_field_get on Adt base should not produce adt_field_get errors. diags: {:?}",
+        afg_diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}

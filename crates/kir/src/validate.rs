@@ -380,6 +380,15 @@ fn validate_inst_operands(
         }
         Inst::FieldGet { base, .. } => {
             check_value_exists(*base, func, block_label, fn_name, "field_get base", diags);
+            if is_valid_value(*base, func) {
+                let base_ty = &func.values[*base].ty;
+                if !matches!(base_ty, Ty::Record { .. } | Ty::Adt { .. }) && !base_ty.is_poison() {
+                    diags.push(error(format!(
+                        "fn {}: block {} field_get base must be Record or Adt, got non-record type",
+                        fn_name, block_label
+                    )));
+                }
+            }
         }
         Inst::RecordUpdate { base, updates } => {
             check_value_exists(
@@ -470,6 +479,15 @@ fn validate_inst_operands(
                 "adt_field_get base",
                 diags,
             );
+            if is_valid_value(*base, func) {
+                let base_ty = &func.values[*base].ty;
+                if !matches!(base_ty, Ty::Adt { .. }) && !base_ty.is_poison() {
+                    diags.push(error(format!(
+                        "fn {}: block {} adt_field_get base must be Adt type",
+                        fn_name, block_label
+                    )));
+                }
+            }
         }
         Inst::FnRef { .. } => {}
     }
