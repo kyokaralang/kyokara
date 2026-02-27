@@ -695,12 +695,24 @@ impl Interpreter {
     #[inline(always)]
     fn eval_binary(&self, op: BinaryOp, lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
         match (op, &lhs, &rhs) {
-            // Int arithmetic.
-            (BinaryOp::Add, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
-            (BinaryOp::Sub, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
-            (BinaryOp::Mul, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
+            // Int arithmetic (checked to prevent overflow panics).
+            (BinaryOp::Add, Value::Int(a), Value::Int(b)) => a
+                .checked_add(*b)
+                .map(Value::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
+            (BinaryOp::Sub, Value::Int(a), Value::Int(b)) => a
+                .checked_sub(*b)
+                .map(Value::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
+            (BinaryOp::Mul, Value::Int(a), Value::Int(b)) => a
+                .checked_mul(*b)
+                .map(Value::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
             (BinaryOp::Div, Value::Int(_), Value::Int(0)) => Err(RuntimeError::DivisionByZero),
-            (BinaryOp::Div, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
+            (BinaryOp::Div, Value::Int(a), Value::Int(b)) => a
+                .checked_div(*b)
+                .map(Value::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
 
             // Float arithmetic.
             (BinaryOp::Add, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
@@ -752,7 +764,10 @@ impl Interpreter {
     #[inline(always)]
     fn eval_unary(&self, op: UnaryOp, val: Value) -> Result<Value, RuntimeError> {
         match (op, &val) {
-            (UnaryOp::Neg, Value::Int(n)) => Ok(Value::Int(-n)),
+            (UnaryOp::Neg, Value::Int(n)) => n
+                .checked_neg()
+                .map(Value::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
             (UnaryOp::Neg, Value::Float(f)) => Ok(Value::Float(-f)),
             (UnaryOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
             _ => Err(RuntimeError::TypeError(format!(
