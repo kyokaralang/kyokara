@@ -1,0 +1,15 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "soundness": {
+    "mode": "known_violation",
+    "issue": 131
+  },
+  "check": {
+    "ok": true
+  },
+  "run": {
+    "ok": false,
+    "stderr_contains": ["pattern match failure: no arm matched"]
+  }
+}

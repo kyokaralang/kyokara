@@ -1,0 +1,16 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "soundness": {
+    "mode": "known_violation",
+    "issue": 134,
+    "require_check_rejection": true
+  },
+  "check": {
+    "ok": true
+  },
+  "run": {
+    "ok": true,
+    "stdout_contains": ["1"]
+  }
+}
