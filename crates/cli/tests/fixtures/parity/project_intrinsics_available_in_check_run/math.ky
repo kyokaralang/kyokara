@@ -1,0 +1,4 @@
+pub fn size() -> Int {
+  let xs = list_new()
+  list_len(xs)
+}
