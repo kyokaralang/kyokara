@@ -257,8 +257,9 @@ pub fn lower_function(
     // Build effects from with_caps.
     let effects = build_effects(fn_item);
 
-    // Resolve return type.
-    let ret_ty = ctx.expr_ty(body.root);
+    // Use the declared/inferred return type, not the root expression type
+    // (which would be Never for explicit `return` expressions).
+    let ret_ty = infer.ret_ty.clone();
 
     ctx.builder.build(
         fn_item.name,

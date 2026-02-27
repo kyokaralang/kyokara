@@ -1137,3 +1137,27 @@ fn test_multi_param_types_resolved() {
         "all param types should be resolved. output:\n{out}"
     );
 }
+
+// ── Bug regression: ret_ty is Never for explicit return (#147) ───
+
+#[test]
+fn test_explicit_return_ret_ty_not_never() {
+    // Bug: lower_function used expr_ty(body.root) for ret_ty. When the root
+    // expression is `return x`, its type is Never, not the declared type.
+    let out = lower_and_display("fn f(x: Int) -> Int { return x }");
+    assert!(
+        out.contains("-> Int"),
+        "return type should be Int, not Never. output:\n{out}"
+    );
+    assert!(
+        !out.contains("-> Never"),
+        "return type should not be Never. output:\n{out}"
+    );
+}
+
+#[test]
+fn test_implicit_return_ret_ty_preserved() {
+    // Guard: implicit return should still work correctly.
+    let out = lower_and_display("fn f(x: Int) -> Int { x }");
+    assert!(out.contains("-> Int"), "output:\n{out}");
+}
