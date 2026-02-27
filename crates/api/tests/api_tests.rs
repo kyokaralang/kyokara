@@ -1580,6 +1580,28 @@ fn check_project_aliased_import_resolves_by_path_not_alias() {
     );
 }
 
+#[test]
+fn check_project_reports_ambiguous_import_last_segment() {
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "import math\nfn main() -> Int { value() }\n"),
+        ("a/math.ky", "pub fn value() -> Int { 1 }\n"),
+        ("b/math.ky", "pub fn value() -> Int { 2 }\n"),
+    ]);
+    let output = check_project(&main_path);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("ambiguous import")),
+        "expected ambiguous import diagnostic, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
+
 // ── Lowering diagnostic file path (#66) ──────────────────────────────
 
 #[test]
@@ -3174,6 +3196,53 @@ fn project_metamorphic_local_alpha_rename_preserves_edges_and_diagnostics() {
              }\n",
         ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
+    ];
+    assert_project_metamorphic_equivalent(&original, &transformed);
+}
+
+#[test]
+fn project_metamorphic_local_alpha_rename_preserves_edges_in_entry_and_imported_modules() {
+    let original = [
+        (
+            "main.ky",
+            "import math\n\
+             fn local_add(x: Int) -> Int {\n\
+               let tmp = x + 1\n\
+               tmp\n\
+             }\n\
+             fn main() -> Int {\n\
+               let n = 1\n\
+               local_add(n) + inc(n)\n\
+             }\n",
+        ),
+        (
+            "math.ky",
+            "pub fn inc(v: Int) -> Int {\n\
+               let inner = v + 1\n\
+               inner\n\
+             }\n",
+        ),
+    ];
+    let transformed = [
+        (
+            "main.ky",
+            "import math\n\
+             fn local_add(x: Int) -> Int {\n\
+               let renamed_tmp = x + 1\n\
+               renamed_tmp\n\
+             }\n\
+             fn main() -> Int {\n\
+               let renamed_n = 1\n\
+               local_add(renamed_n) + inc(renamed_n)\n\
+             }\n",
+        ),
+        (
+            "math.ky",
+            "pub fn inc(v: Int) -> Int {\n\
+               let renamed_inner = v + 1\n\
+               renamed_inner\n\
+             }\n",
+        ),
     ];
     assert_project_metamorphic_equivalent(&original, &transformed);
 }

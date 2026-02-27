@@ -1,0 +1,3 @@
+fn main() -> Int {
+  (fn(x: Int, y: Int) => x - y)(y: 10, x: 3)
+}

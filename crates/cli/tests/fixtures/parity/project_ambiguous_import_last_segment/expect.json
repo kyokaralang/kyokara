@@ -1,0 +1,12 @@
+{
+  "project": true,
+  "entry": "main.ky",
+  "check": {
+    "ok": false,
+    "messages_all": ["ambiguous import"]
+  },
+  "run": {
+    "ok": false,
+    "stderr_contains": ["compile lowering errors:", "ambiguous import"]
+  }
+}

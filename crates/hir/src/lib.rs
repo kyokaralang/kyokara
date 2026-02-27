@@ -251,7 +251,18 @@ fn resolve_project_imports(
 
         // Collect pub items from the target module.
         let pub_data = {
-            let Some(target_info) = graph.resolve_import(&resolve_name) else {
+            let candidates: Vec<ModulePath> = graph
+                .iter()
+                .filter_map(|(mod_path, _)| {
+                    if mod_path.last() == Some(resolve_name) {
+                        Some(mod_path.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if candidates.is_empty() {
                 let name_str = resolve_name.resolve(interner);
                 diagnostics.push(kyokara_diagnostics::Diagnostic::error(
                     format!("unresolved import `{name_str}`"),
@@ -261,7 +272,42 @@ fn resolve_project_imports(
                     },
                 ));
                 continue;
-            };
+            }
+
+            if candidates.len() > 1 {
+                let name_str = resolve_name.resolve(interner);
+                let mut labels: Vec<String> = candidates
+                    .iter()
+                    .map(|path| {
+                        if path.0.is_empty() {
+                            "<root>".to_string()
+                        } else {
+                            path.0
+                                .iter()
+                                .map(|seg| seg.resolve(interner).to_owned())
+                                .collect::<Vec<_>>()
+                                .join(".")
+                        }
+                    })
+                    .collect();
+                labels.sort();
+                diagnostics.push(kyokara_diagnostics::Diagnostic::error(
+                    format!(
+                        "ambiguous import `{name_str}`: matches {}",
+                        labels.join(", ")
+                    ),
+                    kyokara_span::Span {
+                        file: file_id,
+                        range: kyokara_span::TextRange::default(),
+                    },
+                ));
+                continue;
+            }
+
+            let target_path = &candidates[0];
+            let target_info = graph
+                .get(target_path)
+                .expect("candidate path must exist in module graph");
             collect_pub_data(&target_info.item_tree)
         };
 

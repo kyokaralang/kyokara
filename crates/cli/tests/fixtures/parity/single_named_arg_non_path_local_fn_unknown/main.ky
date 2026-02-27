@@ -1,0 +1,6 @@
+fn add(x: Int, y: Int) -> Int { x + y }
+
+fn main() -> Int {
+  let f = add
+  f(z: 1, y: 2)
+}

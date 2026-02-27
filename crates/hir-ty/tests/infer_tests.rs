@@ -607,3 +607,43 @@ fn named_args_missing_parameter_is_diagnostic() {
         "missing argument for parameter `y`",
     );
 }
+
+#[test]
+fn named_args_reordered_on_direct_lambda_type_checks() {
+    check_ok(
+        "fn main() -> Int {
+           (fn(x: Int, y: Int) => x - y)(y: 10, x: 3)
+         }",
+    );
+}
+
+#[test]
+fn named_args_reordered_on_local_fn_value_type_checks() {
+    check_ok(
+        "fn sub(x: Int, y: Int) -> Int { x - y }
+         fn main() -> Int {
+           let f = sub
+           f(y: 10, x: 3)
+         }",
+    );
+}
+
+#[test]
+fn named_args_reordered_on_local_lambda_value_type_checks() {
+    check_ok(
+        "fn main() -> Int {
+           let f = fn(x: Int, y: Int) => x - y
+           f(y: 10, x: 3)
+         }",
+    );
+}
+
+#[test]
+fn named_args_unknown_on_direct_lambda_is_diagnostic() {
+    check_err(
+        "fn main() -> Int {
+           (fn(x: Int, y: Int) => x + y)(z: 1, y: 2)
+         }",
+        "unknown named argument",
+    );
+}
