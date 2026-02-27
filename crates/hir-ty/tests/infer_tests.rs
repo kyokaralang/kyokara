@@ -647,3 +647,30 @@ fn named_args_unknown_on_direct_lambda_is_diagnostic() {
         "unknown named argument",
     );
 }
+
+// ── Path-qualified record literal validation (#126) ─────────────────
+
+#[test]
+fn path_record_lit_non_record_type_is_error() {
+    // Foo is an ADT (enum), not a record type — should emit a diagnostic.
+    check_err(
+        "type Foo = | A | B
+         fn main() -> Int {
+           let r = Foo { x: 1 }
+           0
+         }",
+        "not a record type",
+    );
+}
+
+#[test]
+fn path_record_lit_valid_record_still_works() {
+    // Guard: legitimate named record literals still work.
+    check_ok(
+        "type Point = { x: Int, y: Int }
+         fn main() -> Int {
+           let p = Point { x: 1, y: 2 }
+           p.x + p.y
+         }",
+    );
+}

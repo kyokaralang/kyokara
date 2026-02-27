@@ -2748,6 +2748,32 @@ fn eval_match_escaped_string_literal() {
     assert_eq!(val, Value::Int(1));
 }
 
+// ── Path-qualified record literal validation (#126) ─────────────────
+
+#[test]
+fn eval_path_record_lit_non_record_type_rejected() {
+    // The exact repro from issue #126: Option is not a record type.
+    assert!(check_has_compile_errors(
+        "fn main() -> Int { let r = Option { x: 1 }\n0 }"
+    ));
+}
+
+#[test]
+fn eval_path_record_lit_user_adt_rejected() {
+    assert!(check_has_compile_errors(
+        "type Foo = | A | B\nfn main() -> Int { let r = Foo { x: 1 }\n0 }"
+    ));
+}
+
+#[test]
+fn eval_path_record_lit_valid_record_works() {
+    // Guard: legitimate named record literals still work end-to-end.
+    let val = run_ok(
+        "type Point = { x: Int, y: Int }\nfn main() -> Int { let p = Point { x: 1, y: 2 }\np.x + p.y }",
+    );
+    assert_eq!(val, Value::Int(3));
+}
+
 #[test]
 fn eval_string_no_escapes_unchanged() {
     // Guard: plain strings without escapes still work.
