@@ -702,3 +702,66 @@ fn test_constructor_in_if_branches() {
     assert!(out.contains("adt_construct Val("), "output:\n{out}");
     assert!(out.contains("adt_construct Empty()"), "output:\n{out}");
 }
+
+// ── Bug regression: old() semantics erased in contracts (#72) ───
+
+#[test]
+fn test_old_in_ensures_with_explicit_return() {
+    // Bug: old(x) lowers as just `lower_expr(inner)`, resolving x in current
+    // scope. With explicit `return` inside a block where x is rebound,
+    // ensures is emitted at the return site while the rebinding is still in
+    // scope — so old(x) incorrectly references the rebound value.
+    let out = lower_and_display(
+        "fn f(x: Int) -> Int ensures old(x) > 0 {
+           let x = x + 1
+           return x
+         }",
+    );
+    assert!(
+        out.contains("assert"),
+        "ensures assert missing. output:\n{out}"
+    );
+    assert!(
+        out.contains("ensures"),
+        "ensures label missing. output:\n{out}"
+    );
+    // The gt instruction for the ensures should reference param `x` (displayed
+    // as `x`), NOT the rebound value `%N`. With the bug, we'd see `gt %2,`
+    // instead of `gt x,`.
+    let lines: Vec<&str> = out.lines().collect();
+    let gt_line = lines
+        .iter()
+        .find(|l| l.contains(" gt "))
+        .unwrap_or_else(|| panic!("no gt instruction found for ensures. output:\n{out}"));
+    assert!(
+        gt_line.contains("gt x,"),
+        "old(x) should reference original param `x`, not a computed value. got: {gt_line}\nfull output:\n{out}"
+    );
+}
+
+#[test]
+fn test_ensures_without_old_still_works() {
+    // Guard: ensures clause without old() should continue to work.
+    let out = lower_and_display("fn f(x: Int) -> Int ensures result > 0 { x }");
+    assert!(out.contains("assert"), "output:\n{out}");
+    assert!(out.contains("ensures"), "output:\n{out}");
+    assert!(!out.contains("hole"), "output:\n{out}");
+}
+
+#[test]
+fn test_old_without_rebinding_references_param() {
+    // Guard: old(x) where x is NOT rebound — should reference the original
+    // param regardless (trivially correct, verifies old() doesn't break).
+    let out = lower_and_display("fn f(x: Int) -> Int ensures old(x) > 0 { x }");
+    assert!(out.contains("assert"), "output:\n{out}");
+    assert!(out.contains("ensures"), "output:\n{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    let gt_line = lines
+        .iter()
+        .find(|l| l.contains(" gt "))
+        .unwrap_or_else(|| panic!("no gt instruction found. output:\n{out}"));
+    assert!(
+        gt_line.contains("gt x,"),
+        "old(x) should reference param `x`. got: {gt_line}\nfull output:\n{out}"
+    );
+}

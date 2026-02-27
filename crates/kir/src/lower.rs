@@ -66,6 +66,8 @@ pub(crate) struct LoweringCtx<'a> {
     pub(crate) result_name: Option<Name>,
     /// Collected ensures assertion ValueIds from all return points.
     pub(crate) ensures_vids: Vec<ValueId>,
+    /// Snapshot of param bindings at function entry, used for old() resolution.
+    pub(crate) old_scope: FxHashMap<Name, ValueId>,
 }
 
 impl<'a> LoweringCtx<'a> {
@@ -112,6 +114,16 @@ impl<'a> LoweringCtx<'a> {
 
     pub(crate) fn block_has_terminator(&self) -> bool {
         self.builder.block_has_terminator()
+    }
+
+    /// Lower an expression with `old()` semantics: names resolve to their
+    /// values at function entry (the original param bindings).
+    pub(crate) fn lower_expr_in_old_scope(&mut self, idx: ExprIdx) -> ValueId {
+        let saved = std::mem::take(&mut self.locals);
+        self.locals.push(self.old_scope.clone());
+        let val = self.lower_expr(idx);
+        self.locals = saved;
+        val
     }
 }
 
@@ -195,6 +207,7 @@ pub fn lower_function(
         ensures_expr,
         result_name,
         ensures_vids: Vec::new(),
+        old_scope: FxHashMap::default(),
     };
 
     // Create entry block.
@@ -209,6 +222,7 @@ pub fn lower_function(
             .builder
             .alloc_value(ty, Inst::FnParam { index: i as u32 });
         ctx.define_local(param.name, vid);
+        ctx.old_scope.insert(param.name, vid);
     }
 
     // Lower requires clause → Assert.

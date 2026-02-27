@@ -48,7 +48,7 @@ impl<'a> LoweringCtx<'a> {
                 let id = self.next_hole_id();
                 self.builder.push_hole(id, vec![], ty)
             }
-            Expr::Old(inner) => self.lower_expr(inner),
+            Expr::Old(inner) => self.lower_expr_in_old_scope(inner),
             Expr::Hole => {
                 let id = self.next_hole_id();
                 self.builder.push_hole(id, vec![], ty)
