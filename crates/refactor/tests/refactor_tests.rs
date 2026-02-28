@@ -712,6 +712,24 @@ fn verify_rename_passes() {
     );
 }
 
+#[test]
+fn verify_rename_on_erroneous_source_fails() {
+    let src = "fn add(x: Int, y: Int) -> Int { x + y }\n\
+               fn main() -> Int { add(1, 2) + missing }";
+    let result = kyokara_hir::check_file(src);
+    let action = RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: SymbolKind::Function,
+        target_file: None,
+    };
+    let refactor = kyokara_refactor::refactor(&result, file_id(), action).unwrap();
+    assert!(
+        !verify_single(src, &refactor.edits),
+        "verification should fail when unresolved errors remain after rename"
+    );
+}
+
 // ── Transaction tests ───────────────────────────────────────────────
 
 #[test]
@@ -735,6 +753,31 @@ fn transact_rename_verified() {
     let (_, patched) = &tx.patched_sources[0];
     assert!(patched.contains("fn sum("), "patched source: {patched}");
     assert!(patched.contains("sum(1, 2)"), "patched source: {patched}");
+}
+
+#[test]
+fn transact_rename_reports_failed_verification_when_source_has_errors() {
+    let src = "fn add(x: Int, y: Int) -> Int { x + y }\n\
+               fn main() -> Int { add(1, 2) + missing }";
+    let result = kyokara_hir::check_file(src);
+    let action = RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: SymbolKind::Function,
+        target_file: None,
+    };
+    let tx = kyokara_refactor::transaction::transact(src, &result, file_id(), action).unwrap();
+
+    match tx.verification {
+        VerificationStatus::Failed { diagnostics } => {
+            assert!(
+                !diagnostics.is_empty(),
+                "failed verification should contain diagnostics"
+            );
+            assert!(diagnostics.iter().any(|d| d.code.is_some()));
+        }
+        other => panic!("expected Failed verification, got {other:?}"),
+    }
 }
 
 #[test]
@@ -772,6 +815,49 @@ fn transact_rename_multifile_verified() {
         tx.verification
     );
     assert!(!tx.patched_sources.is_empty(), "expected patched sources");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn transact_rename_multifile_reports_failed_verification_when_project_has_errors() {
+    let dir = std::env::temp_dir().join("kyokara_tx_test_multifile_failed_verification");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let main_path = dir.join("main.ky");
+    let math_path = dir.join("math.ky");
+
+    std::fs::write(
+        &main_path,
+        "import math\nfn main() -> Int {\n    let x = add(10, 20)\n    x + missing\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &math_path,
+        "pub fn add(x: Int, y: Int) -> Int {\n    x + y\n}\n",
+    )
+    .unwrap();
+
+    let result = kyokara_hir::check_project(&main_path);
+    let action = RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: SymbolKind::Function,
+        target_file: Some(math_path.display().to_string()),
+    };
+    let tx = kyokara_refactor::transaction::transact_project(&main_path, &result, action).unwrap();
+
+    match tx.verification {
+        VerificationStatus::Failed { diagnostics } => {
+            assert!(
+                !diagnostics.is_empty(),
+                "expected diagnostics for multifile failed verification"
+            );
+            assert!(diagnostics.iter().any(|d| d.code.is_some()));
+        }
+        other => panic!("expected Failed verification, got {other:?}"),
+    }
 
     let _ = std::fs::remove_dir_all(&dir);
 }

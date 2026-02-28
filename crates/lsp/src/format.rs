@@ -1,5 +1,6 @@
 //! `textDocument/formatting` — integrate kyokara_fmt.
 
+use text_size::TextSize;
 use tower_lsp::lsp_types::{Position, Range, TextEdit};
 
 /// Format a document. Returns a single edit replacing the entire document
@@ -10,15 +11,11 @@ pub fn format_document(source: &str) -> Vec<TextEdit> {
         return Vec::new();
     }
 
-    // Count lines in the original source for the replacement range.
-    let line_count = source.lines().count() as u32;
-    let last_line_len = source.lines().last().map(|l| l.len() as u32).unwrap_or(0);
+    // Use the same UTF-16-aware conversion as the rest of the LSP bridge.
+    let end = crate::position::offset_to_lsp_position(TextSize::from(source.len() as u32), source);
 
     vec![TextEdit {
-        range: Range::new(
-            Position::new(0, 0),
-            Position::new(line_count, last_line_len),
-        ),
+        range: Range::new(Position::new(0, 0), end),
         new_text: formatted,
     }]
 }
@@ -41,8 +38,21 @@ mod tests {
         // Intentionally messy formatting.
         let source = "fn   foo(  )  ->  Int  {  42  }";
         let edits = format_document(source);
-        // If the formatter changes the text, we should get an edit.
-        // (The formatter may or may not change this particular input.)
-        let _ = edits;
+        assert_eq!(edits.len(), 1, "expected a full-document edit");
+    }
+
+    #[test]
+    fn format_edit_range_matches_utf16_end_of_document() {
+        // Contains an emoji (2 UTF-16 code units) and trailing newline.
+        let source = "fn   foo(  )  ->  String  {  \"😀\"  }\n";
+        let edits = format_document(source);
+        assert_eq!(edits.len(), 1, "expected a full-document edit");
+        let expected_end =
+            crate::position::offset_to_lsp_position(TextSize::from(source.len() as u32), source);
+        assert_eq!(
+            edits[0].range,
+            Range::new(Position::new(0, 0), expected_end),
+            "format range must cover exact UTF-16 document extent"
+        );
     }
 }

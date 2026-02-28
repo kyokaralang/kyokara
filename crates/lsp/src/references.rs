@@ -38,7 +38,7 @@ pub fn find_references(
     if let Some(kind) = kind {
         find_symbol_references(&root, &name, kind, source, uri)
     } else {
-        find_local_references(&root, &name, offset, source, uri)
+        find_local_references(analysis, &root, &name, offset, source, uri)
     }
 }
 
@@ -66,6 +66,16 @@ fn find_symbol_references(
         };
 
         if should_include_token(&parent, kind) {
+            if kind == SymbolKind::Function
+                && crate::goto_def::find_local_def_range_syntax(
+                    root,
+                    name,
+                    token.text_range().start(),
+                )
+                .is_some()
+            {
+                continue;
+            }
             let range = text_range_to_lsp_range(token.text_range(), source);
             locations.push(Location::new(uri.clone(), range));
         }
@@ -131,6 +141,7 @@ fn should_include_token(parent: &SyntaxNode, kind: SymbolKind) -> bool {
 /// Find references for local variables (all ident tokens matching the name
 /// within the enclosing function body).
 fn find_local_references(
+    analysis: &FileAnalysis,
     root: &SyntaxNode,
     name: &str,
     offset: TextSize,
@@ -150,12 +161,32 @@ fn find_local_references(
         .unwrap_or_else(|| root.clone());
 
     let mut locations = Vec::new();
+    let Some(target_def) = crate::goto_def::find_local_def_range(analysis, root, name, offset)
+    else {
+        return locations;
+    };
 
     for element in search_root.descendants_with_tokens() {
         let Some(token) = element.into_token() else {
             continue;
         };
         if token.kind() != SyntaxKind::Ident || token.text() != name {
+            continue;
+        }
+        let tok_offset = token.text_range().start();
+        let is_local_def_token = token.parent_ancestors().any(|p| {
+            matches!(
+                p.kind(),
+                SyntaxKind::Param | SyntaxKind::IdentPat | SyntaxKind::RecordPat
+            )
+        });
+        if is_local_def_token {
+            if token.text_range() != target_def {
+                continue;
+            }
+        } else if crate::goto_def::find_local_def_range(analysis, root, name, tok_offset)
+            != Some(target_def)
+        {
             continue;
         }
         let range = text_range_to_lsp_range(token.text_range(), source);
@@ -213,6 +244,73 @@ mod tests {
             refs.len() >= 2,
             "expected >=2 references in f, got {}",
             refs.len()
+        );
+    }
+
+    #[test]
+    fn find_fn_references_excludes_shadowed_local_calls() {
+        let source = "fn foo() -> Int { 1 }\n\
+                      fn main() -> Int {\n\
+                        foo()\n\
+                        let foo = fn() => 2\n\
+                        foo()\n\
+                      }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let refs = find_references(&analysis, source, TextSize::from(3), &test_uri());
+        assert_eq!(
+            refs.len(),
+            2,
+            "expected only definition + pre-shadow call; got refs: {refs:?}"
+        );
+    }
+
+    #[test]
+    fn find_fn_references_block_shadow_does_not_leak_after_block() {
+        let source = "fn foo() -> Int { 1 }\n\
+                      fn main() -> Int {\n\
+                        {\n\
+                          let foo = fn() => 2;\n\
+                          foo()\n\
+                        };\n\
+                        foo()\n\
+                      }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let refs = find_references(&analysis, source, TextSize::from(3), &test_uri());
+        assert_eq!(
+            refs.len(),
+            2,
+            "inner-block shadow should not hide outer post-block call: {refs:?}"
+        );
+    }
+
+    #[test]
+    fn find_local_refs_respects_lexical_shadowing() {
+        let source = "fn main() -> Int {\n\
+                        let x = 1;\n\
+                        let y = x;\n\
+                        {\n\
+                          let x = 2;\n\
+                          x\n\
+                        };\n\
+                        x\n\
+                      }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let outer_x_usage = source.rfind('x').expect("final outer x usage");
+        let refs = find_references(
+            &analysis,
+            source,
+            TextSize::from(outer_x_usage as u32),
+            &test_uri(),
+        );
+
+        // Outer x: definition + `let y = x` + final `x` => 3 refs.
+        assert_eq!(
+            refs.len(),
+            3,
+            "expected only outer-x refs; got refs: {refs:?}"
         );
     }
 }

@@ -474,4 +474,101 @@ mod tests {
 
         drain.abort();
     }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn lifecycle_close_clears_document_state() {
+        let (mut service, mut socket) = LspService::new(KyokaraLanguageServer::new);
+
+        let drain = tokio::spawn(async move { while socket.next().await.is_some() {} });
+
+        initialize(&mut service).await;
+
+        let uri = "file:///test.ky";
+        let source = "fn foo() -> Int { 42 }\nfn bar() -> Int { foo() }\n";
+
+        call_notification(
+            &mut service,
+            "textDocument/didOpen",
+            json!({
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": "kyokara",
+                    "version": 1,
+                    "text": source
+                }
+            }),
+        )
+        .await;
+
+        let hover_before = call_request(
+            &mut service,
+            "textDocument/hover",
+            10,
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": 21 }
+            }),
+        )
+        .await;
+        assert!(hover_before.is_ok(), "hover should succeed before close");
+        assert!(
+            hover_before.result().is_some_and(|r| !r.is_null()),
+            "hover should be present before close: {hover_before:?}"
+        );
+
+        call_notification(
+            &mut service,
+            "textDocument/didClose",
+            json!({ "textDocument": { "uri": uri } }),
+        )
+        .await;
+
+        let hover_after_close = call_request(
+            &mut service,
+            "textDocument/hover",
+            11,
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": 21 }
+            }),
+        )
+        .await;
+        assert!(hover_after_close.is_ok(), "hover request should not error");
+        assert!(
+            hover_after_close.result().is_some_and(Value::is_null),
+            "closed document should return null hover: {hover_after_close:?}"
+        );
+
+        let def_after_close = call_request(
+            &mut service,
+            "textDocument/definition",
+            12,
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": 21 }
+            }),
+        )
+        .await;
+        assert!(
+            def_after_close.result().is_some_and(Value::is_null),
+            "closed document should return null definition: {def_after_close:?}"
+        );
+
+        let completion_after_close = call_request(
+            &mut service,
+            "textDocument/completion",
+            13,
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": 0 }
+            }),
+        )
+        .await;
+        assert!(
+            completion_after_close.result().is_some_and(Value::is_null),
+            "closed document should return null completion: {completion_after_close:?}"
+        );
+
+        drain.abort();
+    }
 }
