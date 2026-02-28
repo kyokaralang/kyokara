@@ -76,6 +76,8 @@ impl<'a> InferenceCtx<'a> {
 
             Expr::Field { base, field } => self.infer_field(base, field),
 
+            Expr::Index { base, index } => self.infer_index(base, index),
+
             Expr::If {
                 condition,
                 then_branch,
@@ -1093,5 +1095,52 @@ impl<'a> InferenceCtx<'a> {
             .into_iter()
             .filter_map(|name| seen.remove(&name).map(|ty| (name, ty)))
             .collect()
+    }
+
+    fn infer_index(&mut self, base: ExprIdx, index: ExprIdx) -> Ty {
+        let base_ty = self.infer_expr(base, &Expectation::None);
+        let base_ty = self.table.resolve_deep(&base_ty);
+
+        match &base_ty {
+            Ty::Adt { def, args } => {
+                let type_name = self.item_tree.types[*def].name.resolve(self.interner);
+                match type_name {
+                    "List" => {
+                        self.infer_expr(index, &Expectation::Has(Ty::Int));
+                        args.first().cloned().unwrap_or(Ty::Error)
+                    }
+                    "Map" => {
+                        let key_ty = args
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| self.table.fresh_var());
+                        self.infer_expr(index, &Expectation::Has(key_ty));
+                        args.get(1).cloned().unwrap_or(Ty::Error)
+                    }
+                    _ => {
+                        self.infer_expr(index, &Expectation::None);
+                        self.push_diag(TyDiagnosticData::InvalidIndexTarget {
+                            ty: base_ty.clone(),
+                        });
+                        Ty::Error
+                    }
+                }
+            }
+            Ty::String => {
+                self.infer_expr(index, &Expectation::Has(Ty::Int));
+                Ty::Char
+            }
+            Ty::Error | Ty::Never => {
+                self.infer_expr(index, &Expectation::None);
+                Ty::Error
+            }
+            _ => {
+                self.infer_expr(index, &Expectation::None);
+                self.push_diag(TyDiagnosticData::InvalidIndexTarget {
+                    ty: base_ty.clone(),
+                });
+                Ty::Error
+            }
+        }
     }
 }

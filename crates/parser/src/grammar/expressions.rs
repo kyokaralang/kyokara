@@ -13,7 +13,7 @@
 //! - `+` `-`           : (19, 20)
 //! - `*` `/` `%`       : (21, 22)
 //! - Prefix `!` `-` `~`: right_bp 23
-//! - Postfix `?` `.` `()` : left_bp 25
+//! - Postfix `?` `.` `()` `[]` : left_bp 25
 
 use crate::SyntaxKind::*;
 use crate::parser::{CompletedMarker, Parser};
@@ -61,6 +61,13 @@ fn expr_bp(p: &mut Parser<'_>, min_bp: u8) -> Option<CompletedMarker> {
                 let m = lhs.precede(p);
                 arg_list(p);
                 m.complete(p, CallExpr)
+            }
+            LBracket if 25 >= min_bp => {
+                let m = lhs.precede(p);
+                p.bump(); // [
+                expr(p);
+                p.expect(RBracket);
+                m.complete(p, IndexExpr)
             }
             _ => break,
         };

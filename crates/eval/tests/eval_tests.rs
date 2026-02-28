@@ -4214,3 +4214,191 @@ fn eval_list_sort_by_runtime_error() {
     );
     assert!(err.contains("division by zero"), "got: {err}");
 }
+
+// ── Index syntax tests ──────────────────────────────────────────────
+
+#[test]
+fn eval_index_list_basic() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 10), 20)
+            xs[0]
+        }",
+    );
+    assert!(matches!(val, Value::Int(10)));
+}
+
+#[test]
+fn eval_index_list_last() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 10), 20)
+            xs[1]
+        }",
+    );
+    assert!(matches!(val, Value::Int(20)));
+}
+
+#[test]
+fn eval_index_list_out_of_bounds() {
+    let err = run_err(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 10), 20)
+            xs[5]
+        }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
+}
+
+#[test]
+fn eval_index_list_negative() {
+    let err = run_err(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 10), 20)
+            xs[0 - 1]
+        }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
+}
+
+#[test]
+fn eval_index_list_empty() {
+    let err = run_err(
+        "fn main() -> Int {
+            let xs: List<Int> = list_new()
+            xs[0]
+        }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
+}
+
+#[test]
+fn eval_index_string_basic() {
+    let val = run_ok(
+        "fn main() -> Char {
+            \"hello\"[1]
+        }",
+    );
+    assert!(matches!(val, Value::Char('e')));
+}
+
+#[test]
+fn eval_index_string_first() {
+    let val = run_ok(
+        "fn main() -> Char {
+            \"hello\"[0]
+        }",
+    );
+    assert!(matches!(val, Value::Char('h')));
+}
+
+#[test]
+fn eval_index_string_last() {
+    let val = run_ok(
+        "fn main() -> Char {
+            \"hello\"[4]
+        }",
+    );
+    assert!(matches!(val, Value::Char('o')));
+}
+
+#[test]
+fn eval_index_string_out_of_bounds() {
+    let err = run_err(
+        "fn main() -> Char {
+            \"hello\"[10]
+        }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
+}
+
+#[test]
+fn eval_index_string_empty() {
+    let err = run_err(
+        "fn main() -> Char {
+            \"\"[0]
+        }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
+}
+
+#[test]
+fn eval_index_map_basic() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let m = map_insert(map_new(), \"a\", 42)
+            m[\"a\"]
+        }",
+    );
+    assert!(matches!(val, Value::Int(42)));
+}
+
+#[test]
+fn eval_index_map_missing_key() {
+    let err = run_err(
+        "fn main() -> Int {
+            let m = map_insert(map_new(), \"a\", 42)
+            m[\"b\"]
+        }",
+    );
+    assert!(err.contains("key not found"), "got: {err}");
+}
+
+#[test]
+fn eval_index_chained_list() {
+    // Nested list indexing: list of lists
+    let val = run_ok(
+        "fn main() -> Int {
+            let inner = list_push(list_push(list_new(), 10), 20)
+            let outer = list_push(list_new(), inner)
+            outer[0][1]
+        }",
+    );
+    assert!(matches!(val, Value::Int(20)));
+}
+
+#[test]
+fn eval_index_with_expression() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 10), 20), 30)
+            xs[1 + 1]
+        }",
+    );
+    assert!(matches!(val, Value::Int(30)));
+}
+
+#[test]
+fn eval_index_string_unicode() {
+    // Multi-byte Unicode chars: indexing by char position, not byte position
+    // "héllo" has 5 chars; 'é' is multi-byte in UTF-8 but still 1 char
+    let source = format!(
+        "fn main() -> Char {{
+            let s = \"{}\"
+            s[1]
+        }}",
+        "h\u{00e9}llo"
+    );
+    let val = run_ok(&source);
+    assert!(matches!(val, Value::Char('\u{00e9}')));
+}
+
+#[test]
+fn eval_index_list_then_field() {
+    // Index a list of records, then access a field
+    let val = run_ok(
+        "type Point = { x: Int, y: Int }
+        fn main() -> Int {
+            let p = Point { x: 3, y: 4 }
+            let xs = list_push(list_new(), p)
+            xs[0].x
+        }",
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_index_on_wrong_type() {
+    // Indexing an Int should be a compile error
+    assert!(check_has_compile_errors("fn main() -> Int { 42[0] }"));
+}

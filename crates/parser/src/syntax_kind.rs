@@ -262,6 +262,8 @@ pub enum SyntaxKind {
     ArgList,
     /// Field access (`expr.field`).
     FieldExpr,
+    /// Index access (`expr[index]`).
+    IndexExpr,
     /// Pipeline (`expr |> f`).
     PipelineExpr,
     /// Error propagation (`expr?`).

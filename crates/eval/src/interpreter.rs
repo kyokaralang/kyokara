@@ -436,6 +436,14 @@ impl Interpreter {
                 self.eval_field(base_val, field).map(ControlFlow::Value)
             }
 
+            Expr::Index { base, index } => {
+                let base_idx = *base;
+                let index_idx = *index;
+                let base_val = eval_propagate!(self, env, body, base_idx);
+                let index_val = eval_propagate!(self, env, body, index_idx);
+                self.eval_index(base_val, index_val).map(ControlFlow::Value)
+            }
+
             Expr::If {
                 condition,
                 then_branch,
@@ -682,6 +690,14 @@ impl Interpreter {
                 let field = *field;
                 let base_val = eval_propagate_shared!(self, body, base_idx);
                 self.eval_field(base_val, field).map(ControlFlow::Value)
+            }
+
+            Expr::Index { base, index } => {
+                let base_idx = *base;
+                let index_idx = *index;
+                let base_val = eval_propagate_shared!(self, body, base_idx);
+                let index_val = eval_propagate_shared!(self, body, index_idx);
+                self.eval_index(base_val, index_val).map(ControlFlow::Value)
             }
 
             Expr::If {
@@ -1232,6 +1248,57 @@ impl Interpreter {
             }
             _ => Err(RuntimeError::TypeError(
                 "field access on non-record value".into(),
+            )),
+        }
+    }
+
+    fn eval_index(&self, base: Value, index: Value) -> Result<Value, RuntimeError> {
+        match (&base, &index) {
+            (Value::List(items), Value::Int(i)) => {
+                let i = *i;
+                if i < 0 {
+                    return Err(RuntimeError::IndexOutOfBounds {
+                        index: i,
+                        len: items.len() as i64,
+                    });
+                }
+                let idx = i as usize;
+                if idx < items.len() {
+                    Ok(items[idx].clone())
+                } else {
+                    Err(RuntimeError::IndexOutOfBounds {
+                        index: i,
+                        len: items.len() as i64,
+                    })
+                }
+            }
+            (Value::String(s), Value::Int(i)) => {
+                let i = *i;
+                if i < 0 {
+                    return Err(RuntimeError::IndexOutOfBounds {
+                        index: i,
+                        len: s.chars().count() as i64,
+                    });
+                }
+                let idx = i as usize;
+                match s.chars().nth(idx) {
+                    Some(c) => Ok(Value::Char(c)),
+                    None => Err(RuntimeError::IndexOutOfBounds {
+                        index: i,
+                        len: s.chars().count() as i64,
+                    }),
+                }
+            }
+            (Value::Map(entries), key) => {
+                for (k, v) in entries {
+                    if k == key {
+                        return Ok(v.clone());
+                    }
+                }
+                Err(RuntimeError::KeyNotFound)
+            }
+            _ => Err(RuntimeError::TypeError(
+                "indexing requires List, String, or Map".into(),
             )),
         }
     }
