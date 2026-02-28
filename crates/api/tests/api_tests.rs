@@ -3627,3 +3627,114 @@ fn check_modulo_in_complex_expression() {
         output.diagnostics
     );
 }
+
+// ── Bitwise operator type checking ─────────────────────────────────
+
+#[test]
+fn check_bitwise_and_int_ok() {
+    let output = check("fn main() -> Int { 3 & 1 }", "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics for Int & Int, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_bitwise_or_int_ok() {
+    let output = check("fn main() -> Int { 3 | 1 }", "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics for Int | Int, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_bitwise_xor_int_ok() {
+    let output = check("fn main() -> Int { 3 ^ 1 }", "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics for Int ^ Int, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_shl_int_ok() {
+    let output = check("fn main() -> Int { 1 << 3 }", "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics for Int << Int, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_shr_int_ok() {
+    let output = check("fn main() -> Int { 8 >> 2 }", "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics for Int >> Int, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_bitwise_not_int_ok() {
+    let output = check("fn main() -> Int { ~42 }", "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics for ~Int, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_bitwise_and_float_has_error() {
+    let output = check("fn main() -> Float { 1.0 & 2.0 }", "test.ky");
+    assert!(
+        !output.diagnostics.is_empty(),
+        "expected diagnostic for Float & Float"
+    );
+}
+
+#[test]
+fn check_bitwise_or_bool_has_error() {
+    let output = check("fn main() -> Bool { true | false }", "test.ky");
+    assert!(
+        !output.diagnostics.is_empty(),
+        "expected diagnostic for Bool | Bool"
+    );
+}
+
+#[test]
+fn check_bitwise_not_bool_has_error() {
+    let output = check("fn main() -> Bool { ~true }", "test.ky");
+    assert!(
+        !output.diagnostics.is_empty(),
+        "expected diagnostic for ~Bool"
+    );
+}
+
+#[test]
+fn check_shl_float_has_error() {
+    let output = check("fn main() -> Float { 1.0 << 2 }", "test.ky");
+    assert!(
+        !output.diagnostics.is_empty(),
+        "expected diagnostic for Float << Int"
+    );
+}
+
+#[test]
+fn check_bitwise_combined_expression() {
+    let output = check(
+        "fn main() -> Bool { (255 & 15) == 15 && (1 << 3) == 8 }",
+        "test.ky",
+    );
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics for combined bitwise expression, got: {:?}",
+        output.diagnostics
+    );
+}
