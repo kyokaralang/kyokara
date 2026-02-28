@@ -92,14 +92,11 @@ impl<'a> FuncCodegen<'a> {
             Inst::Const(Constant::Float(_)) => ValType::F64,
             Inst::Const(Constant::Bool(_)) | Inst::Const(Constant::Unit) => ValType::I32,
             Inst::Binary { op, .. } => {
-                // Comparison ops always produce i32.
-                use BinaryOp::*;
-                match op {
-                    Eq | NotEq | Lt | Gt | LtEq | GtEq | And | Or => ValType::I32,
-                    Add | Sub | Mul | Div | Mod | BitAnd | BitOr | BitXor | Shl | Shr => {
-                        // Try to infer from operand types.
-                        ValType::I64 // default to i64
-                    }
+                if op.returns_bool() {
+                    ValType::I32
+                } else {
+                    // Arithmetic/bitwise ops are represented as i64 at this stage.
+                    ValType::I64
                 }
             }
             Inst::Unary {
@@ -732,6 +729,20 @@ impl<'a> FuncCodegen<'a> {
             lhs_ty
         };
 
+        if matches!((op, lhs_ty), (BinaryOp::Mod, Ty::Float)) {
+            // Float modulo is lowered as: lhs - trunc(lhs / rhs) * rhs
+            // (Rust `%` semantics for floats).
+            self.emit_get(func, lhs);
+            self.emit_get(func, lhs);
+            self.emit_get(func, rhs);
+            func.instruction(&Instruction::F64Div);
+            func.instruction(&Instruction::F64Trunc);
+            self.emit_get(func, rhs);
+            func.instruction(&Instruction::F64Mul);
+            func.instruction(&Instruction::F64Sub);
+            return Ok(());
+        }
+
         self.emit_get(func, lhs);
         self.emit_get(func, rhs);
 
@@ -740,6 +751,12 @@ impl<'a> FuncCodegen<'a> {
             (BinaryOp::Sub, Ty::Int) => func.instruction(&Instruction::I64Sub),
             (BinaryOp::Mul, Ty::Int) => func.instruction(&Instruction::I64Mul),
             (BinaryOp::Div, Ty::Int) => func.instruction(&Instruction::I64DivS),
+            (BinaryOp::Mod, Ty::Int) => func.instruction(&Instruction::I64RemS),
+            (BinaryOp::BitAnd, Ty::Int) => func.instruction(&Instruction::I64And),
+            (BinaryOp::BitOr, Ty::Int) => func.instruction(&Instruction::I64Or),
+            (BinaryOp::BitXor, Ty::Int) => func.instruction(&Instruction::I64Xor),
+            (BinaryOp::Shl, Ty::Int) => func.instruction(&Instruction::I64Shl),
+            (BinaryOp::Shr, Ty::Int) => func.instruction(&Instruction::I64ShrS),
 
             (BinaryOp::Add, Ty::Float) => func.instruction(&Instruction::F64Add),
             (BinaryOp::Sub, Ty::Float) => func.instruction(&Instruction::F64Sub),
@@ -762,6 +779,8 @@ impl<'a> FuncCodegen<'a> {
 
             (BinaryOp::Eq, Ty::Bool) => func.instruction(&Instruction::I32Eq),
             (BinaryOp::NotEq, Ty::Bool) => func.instruction(&Instruction::I32Ne),
+            (BinaryOp::And, Ty::Bool) => func.instruction(&Instruction::I32And),
+            (BinaryOp::Or, Ty::Bool) => func.instruction(&Instruction::I32Or),
 
             _ => {
                 return Err(CodegenError::UnsupportedInstruction(format!(
@@ -800,6 +819,11 @@ impl<'a> FuncCodegen<'a> {
             (UnaryOp::Not, Ty::Bool) => {
                 self.emit_get(func, operand);
                 func.instruction(&Instruction::I32Eqz);
+            }
+            (UnaryOp::BitNot, Ty::Int) => {
+                self.emit_get(func, operand);
+                func.instruction(&Instruction::I64Const(-1));
+                func.instruction(&Instruction::I64Xor);
             }
             _ => {
                 return Err(CodegenError::UnsupportedInstruction(format!(
