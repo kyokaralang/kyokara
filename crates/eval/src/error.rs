@@ -47,4 +47,10 @@ pub enum RuntimeError {
 
     #[error("integer overflow")]
     IntegerOverflow,
+
+    #[error("index out of bounds: index {index}, length {len}")]
+    IndexOutOfBounds { index: i64, len: i64 },
+
+    #[error("key not found in map")]
+    KeyNotFound,
 }

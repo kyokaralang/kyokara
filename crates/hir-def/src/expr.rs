@@ -189,6 +189,9 @@ pub enum Expr {
     /// Field access: `expr.field`.
     Field { base: ExprIdx, field: Name },
 
+    /// Index access: `expr[index]`.
+    Index { base: ExprIdx, index: ExprIdx },
+
     /// `if cond { then } else { else }`.
     If {
         condition: ExprIdx,

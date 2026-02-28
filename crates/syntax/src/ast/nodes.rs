@@ -454,6 +454,7 @@ pub enum Expr {
     Unary(UnaryExpr),
     Call(CallExpr),
     Field(FieldExpr),
+    Index(IndexExpr),
     Pipeline(PipelineExpr),
     Propagate(PropagateExpr),
     Match(MatchExpr),
@@ -476,6 +477,7 @@ impl Expr {
             SyntaxKind::UnaryExpr => UnaryExpr::cast(node).map(Expr::Unary),
             SyntaxKind::CallExpr => CallExpr::cast(node).map(Expr::Call),
             SyntaxKind::FieldExpr => FieldExpr::cast(node).map(Expr::Field),
+            SyntaxKind::IndexExpr => IndexExpr::cast(node).map(Expr::Index),
             SyntaxKind::PipelineExpr => PipelineExpr::cast(node).map(Expr::Pipeline),
             SyntaxKind::PropagateExpr => PropagateExpr::cast(node).map(Expr::Propagate),
             SyntaxKind::MatchExpr => MatchExpr::cast(node).map(Expr::Match),
@@ -499,6 +501,7 @@ impl Expr {
             Expr::Unary(n) => n.syntax(),
             Expr::Call(n) => n.syntax(),
             Expr::Field(n) => n.syntax(),
+            Expr::Index(n) => n.syntax(),
             Expr::Pipeline(n) => n.syntax(),
             Expr::Propagate(n) => n.syntax(),
             Expr::Match(n) => n.syntax(),
@@ -617,6 +620,18 @@ impl FieldExpr {
             .filter_map(|it| it.into_token())
             .filter(|tok| tok.kind() == SyntaxKind::Ident)
             .last()
+    }
+}
+
+define_ast_node!(IndexExpr, IndexExpr);
+
+impl IndexExpr {
+    pub fn base(&self) -> Option<Expr> {
+        self.syntax.children().find_map(Expr::cast)
+    }
+
+    pub fn index(&self) -> Option<Expr> {
+        self.syntax.children().filter_map(Expr::cast).nth(1)
     }
 }
 
