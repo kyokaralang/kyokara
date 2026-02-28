@@ -18,6 +18,7 @@ members = [
     "crates/kir",
     "crates/codegen",
     "crates/lsp",
+    "crates/pbt",
     "xtask",
 ]
 
@@ -45,6 +46,7 @@ kyokara-api = { path = "crates/api" }
 kyokara-kir = { path = "crates/kir" }
 kyokara-codegen = { path = "crates/codegen" }
 kyokara-lsp = { path = "crates/lsp" }
+kyokara-pbt = { path = "crates/pbt" }
 
 # External dependencies
 rowan = "0.16"

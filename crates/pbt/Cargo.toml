@@ -1,0 +1,26 @@
+[package]
+name = "kyokara-pbt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+kyokara-stdx.workspace = true
+kyokara-span.workspace = true
+kyokara-intern.workspace = true
+kyokara-diagnostics.workspace = true
+kyokara-syntax.workspace = true
+kyokara-hir-def.workspace = true
+kyokara-hir.workspace = true
+kyokara-eval.workspace = true
+la-arena.workspace = true
+rustc-hash.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+smallvec.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
