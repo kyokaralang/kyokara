@@ -217,8 +217,10 @@ fn mixed_discovery() {
 
 #[test]
 fn property_type_check() {
-    // Valid property: should have no diagnostics.
-    let result = kyokara_hir::check_file("property p(a: Int, b: Int) { a + b == b + a }");
+    // Valid property with new canonical syntax: should have no diagnostics.
+    let result = kyokara_hir::check_file(
+        "property p(a: Int <- Gen.auto(), b: Int <- Gen.auto()) { a + b == b + a }",
+    );
     let all_diags: Vec<_> = result
         .type_check
         .raw_diagnostics
@@ -358,9 +360,9 @@ fn refined_unsatisfiable_reported() {
 }
 
 #[test]
-fn refined_type_check() {
-    // Valid refined property: should have no type errors.
-    let result = kyokara_hir::check_file("property p(x: { x: Int | x > 0 }) { x > 0 }");
+fn where_constrained_type_check() {
+    // Valid where-constrained property: should have no type errors.
+    let result = kyokara_hir::check_file("property p(x: Int <- Gen.auto()) where x > 0 { x > 0 }");
     let all_diags: Vec<_> = result
         .type_check
         .raw_diagnostics
@@ -369,7 +371,7 @@ fn refined_type_check() {
         .collect();
     assert!(
         all_diags.is_empty(),
-        "valid refined property should have no type errors: {all_diags:?}"
+        "valid where-constrained property should have no type errors: {all_diags:?}"
     );
 }
 
@@ -430,4 +432,283 @@ fn refined_corpus_replay() {
         arg_val2 > 0,
         "replayed corpus entry should satisfy refinement"
     );
+}
+
+// ── Canonical property syntax edge cases ────────────────────────────
+
+#[test]
+fn property_type_check_with_where_and_multiple_params() {
+    let result = kyokara_hir::check_file(
+        "property p(a: Int <- Gen.auto(), b: Int <- Gen.auto()) where a > 0 && b > 0 { a + b > 0 }",
+    );
+    let all_diags: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .map(|(d, _)| format!("{d:?}"))
+        .collect();
+    assert!(
+        all_diags.is_empty(),
+        "multi-param property with where should have no type errors: {all_diags:?}"
+    );
+}
+
+#[test]
+fn property_type_check_gen_int() {
+    let result = kyokara_hir::check_file("property p(x: Int <- Gen.int()) { x > 0 }");
+    let all_diags: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .map(|(d, _)| format!("{d:?}"))
+        .collect();
+    assert!(
+        all_diags.is_empty(),
+        "Gen.int() property should have no type errors: {all_diags:?}"
+    );
+}
+
+#[test]
+fn property_type_check_gen_bool() {
+    let result = kyokara_hir::check_file("property p(b: Bool <- Gen.bool()) { b == b }");
+    let all_diags: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .map(|(d, _)| format!("{d:?}"))
+        .collect();
+    assert!(
+        all_diags.is_empty(),
+        "Gen.bool() property should have no type errors: {all_diags:?}"
+    );
+}
+
+#[test]
+fn property_type_check_gen_string() {
+    let result =
+        kyokara_hir::check_file("property p(s: String <- Gen.string()) { string_len(s) >= 0 }");
+    let all_diags: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .map(|(d, _)| format!("{d:?}"))
+        .collect();
+    assert!(
+        all_diags.is_empty(),
+        "Gen.string() property should have no type errors: {all_diags:?}"
+    );
+}
+
+#[test]
+fn property_bare_param_parse_error() {
+    // Old syntax: bare property params should produce parse errors.
+    let result = kyokara_hir::check_file("property p(x: Int) { x > 0 }");
+    assert!(
+        !result.parse_errors.is_empty(),
+        "bare property param should produce parse error"
+    );
+    assert!(
+        result.parse_errors.iter().any(|e| e.message.contains("<-")),
+        "error should mention `<-`: {:?}",
+        result.parse_errors
+    );
+}
+
+#[test]
+fn property_where_unresolved_name() {
+    // Where clause referencing a nonexistent variable.
+    let result =
+        kyokara_hir::check_file("property p(x: Int <- Gen.auto()) where nonexistent > 0 { x > 0 }");
+    // Unresolved names surface in body_lowering_diagnostics or diagnostics.
+    let all_diags: Vec<String> = result
+        .type_check
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .chain(
+            result
+                .type_check
+                .body_lowering_diagnostics
+                .iter()
+                .map(|d| d.message.clone()),
+        )
+        .collect();
+    let has_unresolved = all_diags.iter().any(|msg| msg.contains("unresolved"));
+    assert!(
+        has_unresolved,
+        "where clause with unresolved name should produce diagnostic: {all_diags:?}"
+    );
+}
+
+#[test]
+fn property_invalid_gen_method_check() {
+    // Invalid Gen method produces lowering diagnostic.
+    let result = kyokara_hir::check_file("property p(x: Int <- Gen.unknown()) { x > 0 }");
+    assert!(
+        result
+            .lowering_diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid generator expression")),
+        "Gen.unknown() should produce 'invalid generator expression' diagnostic: {:?}",
+        result.lowering_diagnostics
+    );
+}
+
+#[test]
+fn property_refined_type_in_param_check() {
+    // Refined type in property param should produce specific diagnostic.
+    let result =
+        kyokara_hir::check_file("property p(x: { x: Int | x > 0 } <- Gen.auto()) { x > 0 }");
+    assert!(
+        result.lowering_diagnostics.iter().any(|d| d
+            .message
+            .contains("refinement types are not allowed in property params")),
+        "refined type in property param should be rejected: {:?}",
+        result.lowering_diagnostics
+    );
+}
+
+#[test]
+fn property_gen_non_call_check() {
+    // Plain identifier instead of Gen.method() call.
+    let result = kyokara_hir::check_file("property p(x: Int <- something) { x > 0 }");
+    assert!(
+        result
+            .lowering_diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid generator expression")),
+        "non-call gen should produce diagnostic: {:?}",
+        result.lowering_diagnostics
+    );
+}
+
+#[test]
+fn property_gen_wrong_base_check() {
+    // Not Gen.*, using Other.auto().
+    let result = kyokara_hir::check_file("property p(x: Int <- Other.auto()) { x > 0 }");
+    assert!(
+        result
+            .lowering_diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid generator expression")),
+        "Other.auto() should produce diagnostic: {:?}",
+        result.lowering_diagnostics
+    );
+}
+
+#[test]
+fn property_gen_int_range_one_arg_check() {
+    // Gen.int_range with only one argument.
+    let result = kyokara_hir::check_file("property p(x: Int <- Gen.int_range(1)) { x > 0 }");
+    assert!(
+        result
+            .lowering_diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid generator expression")),
+        "Gen.int_range(1) should produce diagnostic: {:?}",
+        result.lowering_diagnostics
+    );
+}
+
+#[test]
+fn property_gen_bool_with_args_check() {
+    // Gen.bool doesn't take arguments.
+    let result = kyokara_hir::check_file("property p(x: Bool <- Gen.bool(true)) { x }");
+    assert!(
+        result
+            .lowering_diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid generator expression")),
+        "Gen.bool(true) should produce diagnostic: {:?}",
+        result.lowering_diagnostics
+    );
+}
+
+#[test]
+fn property_gen_list_no_inner_check() {
+    // Gen.list() needs an inner generator.
+    let result = kyokara_hir::check_file("property p(xs: List<Int> <- Gen.list()) { true }");
+    assert!(
+        result
+            .lowering_diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid generator expression")),
+        "Gen.list() should produce diagnostic: {:?}",
+        result.lowering_diagnostics
+    );
+}
+
+#[test]
+fn property_gen_nested_invalid_check() {
+    // Gen.list(Gen.bad()) — inner spec is invalid.
+    let result =
+        kyokara_hir::check_file("property p(xs: List<Int> <- Gen.list(Gen.bad())) { true }");
+    assert!(
+        result
+            .lowering_diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid generator expression")),
+        "Gen.list(Gen.bad()) should produce diagnostic: {:?}",
+        result.lowering_diagnostics
+    );
+}
+
+#[test]
+fn property_int_range_pass() {
+    // Gen.int_range should actually generate values in the given range.
+    let source = "property in_range(x: Int <- Gen.int_range(1, 10)) { x >= 1 && x <= 10 }";
+    let config = test_config();
+    let report = run_tests(source, &config).unwrap();
+
+    assert!(
+        report.all_passed(),
+        "int_range(1, 10) should always satisfy 1 <= x <= 10: {}",
+        report.format_human()
+    );
+    assert!(report.results[0].passed > 0);
+}
+
+#[test]
+fn property_where_complex_conjunction() {
+    // Where clause with a complex boolean conjunction.
+    let source = r#"
+property bounded(x: Int <- Gen.auto())
+where
+  x > 0 && x < 100
+{
+  x + x > 0
+}
+"#;
+    let config = test_config();
+    let report = run_tests(source, &config).unwrap();
+
+    assert!(
+        report.all_passed(),
+        "bounded property should pass: {}",
+        report.format_human()
+    );
+}
+
+#[test]
+fn property_discard_rate_logged() {
+    // Where clause that filters ~50% — should still succeed with budget.
+    let source = r#"
+property half_positive(x: Int <- Gen.auto())
+where
+  x > 0
+{
+  x > 0
+}
+"#;
+    let config = test_config();
+    let report = run_tests(source, &config).unwrap();
+
+    assert!(
+        report.all_passed(),
+        "half_positive should pass: {}",
+        report.format_human()
+    );
+    let result = &report.results[0];
+    assert!(result.passed > 0, "should have passing tests");
+    assert!(result.discarded > 0, "should have some discards");
 }

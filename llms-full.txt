@@ -135,22 +135,25 @@ fn withdraw(acct: Account, amt: Money) -> Result[Account, WithdrawError]
 ### Property-Based Tests
 
 ```kyokara
-property sort_idempotent(xs: List[Int]) {
+property sort_idempotent(xs: List[Int] <- Gen.auto()) {
   List.sort(List.sort(xs)) == List.sort(xs)
 }
 ```
 
-First-class syntax, not a library — integrated with the type checker and contract system. Property bodies are lowered and type-checked (must return `Bool`). The PBT runner discovers properties alongside contracted functions.
+First-class syntax, not a library — integrated with the type checker and contract system. Property parameters use `<-` generator bindings: `name: Type <- Gen.spec()`. Available generators: `Gen.auto()` (type-driven), `Gen.int()`, `Gen.int_range(min, max)`, `Gen.float()`, `Gen.float_range(min, max)`, `Gen.bool()`, `Gen.string()`, `Gen.char()`, `Gen.list(inner)`, `Gen.map(k, v)`, `Gen.option(inner)`, `Gen.result(ok, err)`. Bare parameters (without `<-`) are parse errors. Property bodies are lowered and type-checked (must return `Bool`). The PBT runner discovers properties alongside contracted functions.
 
-Properties support refined-type parameters for constrained generation:
+Optional `where` clauses constrain generated inputs:
 
 ```kyokara
-property positive_is_positive(x: { x: Int | x > 0 }) {
+property positive_is_positive(x: Int <- Gen.auto())
+where
+  x > 0
+{
   x > 0
 }
 ```
 
-Refined-type predicates are lowered as synthetic checker functions and enforced via rejection sampling (up to 1000 attempts). The shrinker respects refinement constraints. Unsatisfiable constraints are reported as errors.
+The `where` expression is lowered as a precondition. Candidates violating the constraint are discarded (budget: 100x requested test count). The shrinker respects `where` constraints. Unsatisfiable constraints are reported as errors.
 
 ### Typed Holes and Partial Compilation
 
@@ -373,7 +376,7 @@ cli             (depends: api, refactor, eval, pbt, fmt, hir, lsp, syntax, diagn
 - **v0.0** (complete): Parser with error recovery (lossless CST) ✓, name resolution with scope chains ✓, item tree collection + body lowering with desugaring ✓, type checker (ADTs, generics, exhaustiveness) ✓, effect/capability checking ✓, typed holes ✓, structured diagnostics ✓, hole specs ✓, symbol graph ✓, patch suggestions ✓
 - **v0.1** (complete): Tree-walking interpreter ✓, intrinsics ✓, canonical formatter ✓, stable symbol IDs ✓, runtime contracts ✓, core stdlib (List, Map, String, Int/Float) ✓
 - **v0.2** (complete): Module system (convention-based layout, `pub` visibility, flat imports) ✓, refactor engine (rename symbol, add missing match cases, add missing capability) ✓, refactor transactions (atomic verify-before-apply, `--force` bypass) ✓, capability enforcement (type-level E0011 + runtime manifest `--caps`, deny-by-default) ✓, LSP server (salsa incrementality, diagnostics, hover, goto-def, references, completion, code actions, formatting) ✓
-- **v0.3** (in progress): KyokaraIR data structures ✓ (SSA, block params, text format, validator), HIR→KIR lowering ✓, WASM codegen MVP ✓, property-based test harness ✓ (`pbt` crate, `kyokara test --explore`, explicit `property` declarations with type-checked bodies, refinement-constrained generation via rejection sampling), SMT verification (restricted fragment), capability sandbox, deterministic replay
+- **v0.3** (in progress): KyokaraIR data structures ✓ (SSA, block params, text format, validator), HIR→KIR lowering ✓, WASM codegen MVP ✓, property-based test harness ✓ (`pbt` crate, `kyokara test --explore`, canonical `property` syntax with `<-` generator bindings and `where` constraints, `Gen.*` specs, discard-budget constrained generation), SMT verification (restricted fragment), capability sandbox, deterministic replay
 
 ## Building
 

@@ -218,7 +218,42 @@ fn roundtrip_hole_expr() {
 
 #[test]
 fn roundtrip_property_def() {
-    let src = "property commutative(x: Int, y: Int) { x }";
+    let src = "property commutative(x: Int <- Gen.auto(), y: Int <- Gen.auto()) { x }";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn roundtrip_property_with_where() {
+    let src = "property p(x: Int <- Gen.auto()) where x > 0 { x > 0 }";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn roundtrip_property_gen_int_range() {
+    let src = "property p(x: Int <- Gen.int_range(1, 100)) { true }";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn roundtrip_property_gen_list() {
+    let src = "property p(xs: List<Int> <- Gen.list(Gen.int())) { true }";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn roundtrip_property_trailing_comma() {
+    let src = "property p(x: Int <- Gen.auto(),) { true }";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn roundtrip_property_no_body() {
+    let src = "property p(x: Int <- Gen.auto())";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
 }
@@ -291,4 +326,64 @@ fn lexer_underscore_prefix_is_ident() {
     let tokens = kyokara_syntax::lex("_foo");
     assert_eq!(tokens.len(), 1);
     assert_eq!(tokens[0].kind, SyntaxKind::Ident);
+}
+
+// ── LeftArrow lexer tests ───────────────────────────────────────────
+
+#[test]
+fn lexer_left_arrow() {
+    let tokens = kyokara_syntax::lex("<-");
+    assert_eq!(tokens.len(), 1);
+    assert_eq!(tokens[0].kind, SyntaxKind::LeftArrow);
+    assert_eq!(tokens[0].text, "<-");
+}
+
+#[test]
+fn lexer_left_arrow_in_context() {
+    // "x: Int <- Gen.auto()" should tokenize <- as LeftArrow
+    let tokens = kyokara_syntax::lex("x <- y");
+    let arrow = tokens.iter().find(|t| t.kind == SyntaxKind::LeftArrow);
+    assert!(arrow.is_some(), "should have LeftArrow token: {tokens:?}");
+}
+
+#[test]
+fn lexer_lt_space_minus_stays_separate() {
+    // "a < -b" should NOT produce LeftArrow
+    let tokens = kyokara_syntax::lex("a < -b");
+    let has_arrow = tokens.iter().any(|t| t.kind == SyntaxKind::LeftArrow);
+    assert!(!has_arrow, "< -b should not produce LeftArrow: {tokens:?}");
+}
+
+#[test]
+fn lexer_left_arrow_no_spaces() {
+    // "x<-y" should tokenize as Ident LeftArrow Ident
+    let tokens = kyokara_syntax::lex("x<-y");
+    let kinds: Vec<_> = tokens
+        .iter()
+        .filter(|t| t.kind != SyntaxKind::Whitespace)
+        .map(|t| t.kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![SyntaxKind::Ident, SyntaxKind::LeftArrow, SyntaxKind::Ident],
+        "x<-y should be [Ident, LeftArrow, Ident]: {tokens:?}"
+    );
+}
+
+#[test]
+fn lexer_left_arrow_in_property_context() {
+    let tokens = kyokara_syntax::lex("x: Int <- Gen.auto()");
+    let arrow = tokens.iter().find(|t| t.kind == SyntaxKind::LeftArrow);
+    assert!(arrow.is_some(), "should have LeftArrow: {tokens:?}");
+    assert_eq!(arrow.unwrap().text, "<-");
+}
+
+#[test]
+fn lexer_multiple_left_arrows() {
+    let tokens = kyokara_syntax::lex("a <- b, c <- d");
+    let arrow_count = tokens
+        .iter()
+        .filter(|t| t.kind == SyntaxKind::LeftArrow)
+        .count();
+    assert_eq!(arrow_count, 2, "should have 2 LeftArrows: {tokens:?}");
 }

@@ -21,6 +21,13 @@ use crate::generate::{self, GenResult};
 use crate::report::{FailureInfo, FnTestResult, TestReport, TestableKind};
 use crate::shrink::{self, ShrinkOutcome};
 
+/// Maximum ratio of total attempts to desired passing tests.
+///
+/// When a property has a `where` constraint, many generated candidates get
+/// discarded. We allow up to `num_tests * MAX_DISCARD_RATIO` attempts before
+/// declaring the constraint unsatisfiable.
+const MAX_DISCARD_RATIO: usize = 100;
+
 /// Configuration for a PBT run.
 #[derive(Debug, Clone)]
 pub struct TestConfig {
@@ -55,15 +62,12 @@ struct TestableFunction {
     param_types: Vec<kyokara_hir_def::type_ref::TypeRef>,
 }
 
-/// Maximum number of rejection-sampling attempts for refined types.
-const MAX_REFINEMENT_REJECTIONS: usize = 1000;
-
 /// A property that's eligible for testing.
 struct TestableProperty {
     fn_idx: FnItemIdx,
     name: String,
     param_types: Vec<kyokara_hir_def::type_ref::TypeRef>,
-    refine_fns: Vec<Option<FnItemIdx>>,
+    gen_specs: Vec<kyokara_hir_def::item_tree::GenSpec>,
 }
 
 /// Parse, type-check, and run property-based tests on a single source file.
@@ -195,9 +199,22 @@ fn discover_testable(
     fn_bodies: &FxHashMap<FnItemIdx, kyokara_hir_def::body::Body>,
     interner: &Interner,
 ) -> Vec<TestableFunction> {
+    // Collect FnItemIdx values that back property definitions so we can
+    // skip them — properties are tested via `discover_properties`.
+    let property_fn_idxs: std::collections::HashSet<_> = item_tree
+        .properties
+        .iter()
+        .filter_map(|(_, p)| p.fn_idx)
+        .collect();
+
     let mut testable = Vec::new();
 
     for (idx, fn_item) in item_tree.functions.iter() {
+        // Skip synthetic functions backing property definitions.
+        if property_fn_idxs.contains(&idx) {
+            continue;
+        }
+
         let name_str = fn_item.name.resolve(interner);
 
         // Skip main.
@@ -252,18 +269,19 @@ fn discover_properties(
         let all_generatable = prop
             .params
             .iter()
-            .all(|p| generate::is_generatable(&p.ty, item_tree, interner));
+            .all(|ps| generate::is_generatable(&ps.param.ty, item_tree, interner));
 
         if !all_generatable {
             continue;
         }
 
-        let param_types: Vec<_> = prop.params.iter().map(|p| p.ty.clone()).collect();
+        let param_types: Vec<_> = prop.params.iter().map(|ps| ps.param.ty.clone()).collect();
+        let gen_specs: Vec<_> = prop.params.iter().map(|ps| ps.gen_spec.clone()).collect();
         properties.push(TestableProperty {
             fn_idx,
             name: prop.name.resolve(interner).to_string(),
             param_types,
-            refine_fns: prop.refine_fns.clone(),
+            gen_specs,
         });
     }
 
@@ -280,13 +298,8 @@ fn run_test_loop(
     let mut results = Vec::new();
     let mut skipped = Vec::new();
 
-    // Collect fn_idxs that are property-backing or refinement-checking synthetic functions.
-    let mut property_fn_idxs: Vec<FnItemIdx> = properties.iter().map(|p| p.fn_idx).collect();
-    for prop in properties {
-        for idx in prop.refine_fns.iter().flatten() {
-            property_fn_idxs.push(*idx);
-        }
-    }
+    // Collect fn_idxs that are property-backing synthetic functions.
+    let property_fn_idxs: Vec<FnItemIdx> = properties.iter().map(|p| p.fn_idx).collect();
 
     // Collect all function names from the item tree for the "skipped" list.
     let all_fn_names: Vec<(String, FnItemIdx)> = {
@@ -442,6 +455,9 @@ fn test_single_function(
 }
 
 /// Test a single property: generate inputs and check that it returns true.
+///
+/// `where` constraints are lowered as `requires` preconditions on the
+/// property body. `PreconditionFailed` → discard (same as contracted functions).
 fn test_single_property(
     interp: &mut Interpreter,
     prop: &TestableProperty,
@@ -450,7 +466,6 @@ fn test_single_property(
     let mut passed = 0usize;
     let mut discarded = 0usize;
     let mut total = 0usize;
-    let use_refinements = has_refinements(prop);
 
     // Phase 1: Replay corpus entries.
     let corpus_entries = corpus::load_entries(&config.corpus_base, &prop.name);
@@ -478,114 +493,92 @@ fn test_single_property(
     }
 
     // Phase 2: Explore (if enabled).
+    //
+    // Use a discard budget: keep generating until `num_tests` pass or we
+    // exhaust `num_tests * MAX_DISCARD_RATIO` total attempts. This handles
+    // `where` constraints that filter out most candidates (e.g., `x > 0` on
+    // a full-range Int generator).
     if config.explore {
-        for i in 0..config.num_tests {
-            let base_seed = config
-                .seed
-                .wrapping_add(prop.fn_idx.into_raw().into_u32() as u64 * 10000 + i as u64);
+        let max_attempts = config.num_tests.saturating_mul(MAX_DISCARD_RATIO);
+        let mut attempt = 0usize;
 
-            // Rejection sampling loop for refined types.
-            let max_attempts = if use_refinements {
-                MAX_REFINEMENT_REJECTIONS
-            } else {
-                1
+        while passed < config.num_tests && attempt < max_attempts {
+            let seed = config
+                .seed
+                .wrapping_add(prop.fn_idx.into_raw().into_u32() as u64 * 10000 + attempt as u64);
+            attempt += 1;
+            let mut recorder = ChoiceRecorder::new(seed);
+
+            let args = match generate_property_args(prop, &mut recorder, interp) {
+                Some(a) => a,
+                None => {
+                    discarded += 1;
+                    total += 1;
+                    continue;
+                }
             };
 
-            let mut found = false;
-            for attempt in 0..max_attempts {
-                let seed = base_seed.wrapping_add(attempt as u64 * 7919);
-                let mut recorder = ChoiceRecorder::new(seed);
+            let seq = recorder.into_sequence();
+            total += 1;
 
-                let args = match generate_property_args(prop, &mut recorder, interp) {
-                    Some(a) => a,
-                    None => continue,
-                };
+            match call_and_classify_property(interp, prop.fn_idx, args) {
+                TestOutcome::Pass => passed += 1,
+                TestOutcome::Discard => discarded += 1,
+                TestOutcome::Fail(error, args_display) => {
+                    // Shrink the failing case.
+                    let shrunk = shrink_property_failure(interp, prop, &seq);
 
-                // Check refinement predicates.
-                if use_refinements {
-                    match check_refinements(interp, &args, &prop.refine_fns) {
-                        Ok(true) => {}
-                        Ok(false) => continue, // Rejected, try again.
-                        Err(e) => {
-                            total += 1;
-                            return FnTestResult {
-                                name: prop.name.clone(),
-                                kind: TestableKind::Property,
-                                passed,
-                                discarded,
-                                total,
-                                failure: Some(FailureInfo {
-                                    error: format!("refinement error: {e}"),
-                                    args_display: vec![],
-                                    choices: recorder.into_sequence(),
-                                }),
-                            };
-                        }
-                    }
+                    // Re-run with shrunk sequence to get the display args.
+                    let (shrunk_error, shrunk_args) =
+                        replay_property_for_display(interp, prop, &shrunk)
+                            .unwrap_or((error, args_display));
+
+                    // Save to corpus.
+                    let entry = CorpusEntry {
+                        function: prop.name.clone(),
+                        choices: shrunk.choices.clone(),
+                        maxima: shrunk.maxima.clone(),
+                        error: shrunk_error.clone(),
+                        args_display: shrunk_args.clone(),
+                    };
+                    let _ = corpus::save_entry(&config.corpus_base, &entry);
+
+                    return FnTestResult {
+                        name: prop.name.clone(),
+                        kind: TestableKind::Property,
+                        passed,
+                        discarded,
+                        total,
+                        failure: Some(FailureInfo {
+                            error: shrunk_error,
+                            args_display: shrunk_args,
+                            choices: shrunk,
+                        }),
+                    };
                 }
-
-                let seq = recorder.into_sequence();
-                total += 1;
-                found = true;
-
-                match call_and_classify_property(interp, prop.fn_idx, args) {
-                    TestOutcome::Pass => passed += 1,
-                    TestOutcome::Discard => discarded += 1,
-                    TestOutcome::Fail(error, args_display) => {
-                        // Shrink the failing case.
-                        let shrunk = shrink_property_failure(interp, prop, &seq);
-
-                        // Re-run with shrunk sequence to get the display args.
-                        let (shrunk_error, shrunk_args) =
-                            replay_property_for_display(interp, prop, &shrunk)
-                                .unwrap_or((error, args_display));
-
-                        // Save to corpus.
-                        let entry = CorpusEntry {
-                            function: prop.name.clone(),
-                            choices: shrunk.choices.clone(),
-                            maxima: shrunk.maxima.clone(),
-                            error: shrunk_error.clone(),
-                            args_display: shrunk_args.clone(),
-                        };
-                        let _ = corpus::save_entry(&config.corpus_base, &entry);
-
-                        return FnTestResult {
-                            name: prop.name.clone(),
-                            kind: TestableKind::Property,
-                            passed,
-                            discarded,
-                            total,
-                            failure: Some(FailureInfo {
-                                error: shrunk_error,
-                                args_display: shrunk_args,
-                                choices: shrunk,
-                            }),
-                        };
-                    }
-                }
-                break; // Found a valid input, move on to next test.
-            }
-
-            // If we exhausted all attempts without finding a valid input,
-            // this constraint is unsatisfiable.
-            if !found && use_refinements {
-                return FnTestResult {
-                    name: prop.name.clone(),
-                    kind: TestableKind::Property,
-                    passed,
-                    discarded,
-                    total: total + 1,
-                    failure: Some(FailureInfo {
-                        error: "unsatisfiable refinement constraint: could not generate \
-                                a valid input after 1000 attempts"
-                            .to_string(),
-                        args_display: vec![],
-                        choices: ChoiceSequence::new(vec![], vec![]),
-                    }),
-                };
             }
         }
+    }
+
+    // Check for unsatisfiable `where` constraint: if all explored cases
+    // were discarded (no passing cases found), report as failure.
+    if config.explore && passed == 0 && discarded > 0 && total > 0 {
+        return FnTestResult {
+            name: prop.name.clone(),
+            kind: TestableKind::Property,
+            passed,
+            discarded,
+            total,
+            failure: Some(FailureInfo {
+                error: format!(
+                    "unsatisfiable or overly restrictive `where` constraint: \
+                     all {} test cases were discarded",
+                    total
+                ),
+                args_display: vec![],
+                choices: ChoiceSequence::new(vec![], vec![]),
+            }),
+        };
     }
 
     FnTestResult {
@@ -693,41 +686,9 @@ fn replay_for_display(
     }
 }
 
-// ── Refinement checking ────────────────────────────────────────────
-
-/// Check that generated args satisfy all refinement predicates.
-///
-/// Returns `Ok(true)` if all predicates pass, `Ok(false)` if any returns false,
-/// `Err` on runtime error.
-fn check_refinements(
-    interp: &mut Interpreter,
-    args: &Args,
-    refine_fns: &[Option<FnItemIdx>],
-) -> Result<bool, String> {
-    use kyokara_eval::value::Value;
-
-    for (arg, refine_fn) in args.iter().zip(refine_fns.iter()) {
-        if let Some(fn_idx) = refine_fn {
-            let check_args = Args::from(vec![arg.clone()]);
-            match interp.call_fn_by_idx(*fn_idx, check_args) {
-                Ok(Value::Bool(true)) => {}
-                Ok(Value::Bool(false)) => return Ok(false),
-                Ok(_) => return Err("refinement predicate did not return Bool".to_string()),
-                Err(e) => return Err(format!("refinement predicate error: {e}")),
-            }
-        }
-    }
-    Ok(true)
-}
-
-/// Check if this property has any refinement predicates.
-fn has_refinements(prop: &TestableProperty) -> bool {
-    prop.refine_fns.iter().any(|r| r.is_some())
-}
-
 // ── Property-specific helpers ──────────────────────────────────────
 
-/// Generate arguments for a property using a choice source.
+/// Generate arguments for a property using its generator specs.
 fn generate_property_args(
     prop: &TestableProperty,
     source: &mut dyn crate::choice::ChoiceSource,
@@ -738,8 +699,8 @@ fn generate_property_args(
     let interner = interp.interner();
 
     let mut args = Args::new();
-    for ty in &prop.param_types {
-        match generate::generate(ty, source, item_tree, module_scope, interner) {
+    for (ty, spec) in prop.param_types.iter().zip(prop.gen_specs.iter()) {
+        match generate::generate_from_spec(spec, ty, source, item_tree, module_scope, interner) {
             GenResult::Ok(val) => args.push(val),
             GenResult::Unsupported | GenResult::Exhausted => return None,
         }
@@ -750,7 +711,7 @@ fn generate_property_args(
 /// Call a property and classify the result.
 ///
 /// Properties return Bool: true → Pass, false → Fail.
-/// No preconditions, so no Discard.
+/// `PreconditionFailed` (from `where` constraint) → Discard.
 fn call_and_classify_property(
     interp: &mut Interpreter,
     fn_idx: FnItemIdx,
@@ -766,6 +727,7 @@ fn call_and_classify_property(
             TestOutcome::Fail("property returned false".to_string(), args_display)
         }
         Ok(_) => TestOutcome::Fail("property did not return Bool".to_string(), args_display),
+        Err(RuntimeError::PreconditionFailed(_)) => TestOutcome::Discard,
         Err(e) => TestOutcome::Fail(format!("runtime error: {e}"), args_display),
     }
 }
@@ -781,14 +743,6 @@ fn run_single_property_test(
         Some(a) => a,
         None => return TestOutcome::Discard,
     };
-    // Check refinement predicates on replayed args.
-    if has_refinements(prop) {
-        match check_refinements(interp, &args, &prop.refine_fns) {
-            Ok(true) => {}
-            Ok(false) => return TestOutcome::Discard,
-            Err(_) => return TestOutcome::Discard,
-        }
-    }
     call_and_classify_property(interp, prop.fn_idx, args)
 }
 
@@ -823,19 +777,13 @@ fn replay_property_for_display(
     let mut replayer = ChoiceReplayer::new(seq.clone());
     let args = generate_property_args(prop, &mut replayer, interp)?;
 
-    // Verify refinements still hold on the shrunk sequence.
-    if has_refinements(prop)
-        && let Ok(false) = check_refinements(interp, &args, &prop.refine_fns)
-    {
-        return None; // Discard — refinement violated.
-    }
-
     let args_display: Vec<String> = args.iter().map(|v| v.display(interp.interner())).collect();
 
     match interp.call_fn_by_idx(prop.fn_idx, args) {
         Ok(Value::Bool(true)) => None,
         Ok(Value::Bool(false)) => Some(("property returned false".to_string(), args_display)),
         Ok(_) => Some(("property did not return Bool".to_string(), args_display)),
+        Err(RuntimeError::PreconditionFailed(_)) => None, // Discard: where constraint violated.
         Err(e) => Some((format!("runtime error: {e}"), args_display)),
     }
 }

@@ -531,3 +531,173 @@ fn error_recovery_unknown_item() {
     assert!(!has_no_errors(&errors));
     assert!(has_node(&events, SourceFile));
 }
+
+// ── Property syntax ────────────────────────────────────────────────
+
+#[test]
+fn property_with_generator_binding() {
+    // property p(x: Int <- Gen.auto()) { x > 0 }
+    let (events, errors) = parse_tokens(&[
+        PropertyKw, Ident, LParen, Ident, Colon, Ident, LeftArrow, Ident, Dot, Ident, LParen,
+        RParen, RParen, LBrace, Ident, Gt, IntLiteral, RBrace,
+    ]);
+    assert!(has_no_errors(&errors), "errors: {errors:?}");
+    assert!(has_node(&events, PropertyDef));
+    assert!(has_node(&events, PropertyParamList));
+    assert!(has_node(&events, PropertyParam));
+}
+
+#[test]
+fn property_with_where_clause() {
+    // property p(x: Int <- Gen.auto()) where x > 0 { x > 0 }
+    let (events, errors) = parse_tokens(&[
+        PropertyKw, Ident, LParen, Ident, Colon, Ident, LeftArrow, Ident, Dot, Ident, LParen,
+        RParen, RParen, WhereKw, Ident, Gt, IntLiteral, LBrace, Ident, Gt, IntLiteral, RBrace,
+    ]);
+    assert!(has_no_errors(&errors), "errors: {errors:?}");
+    assert!(has_node(&events, PropertyDef));
+    assert!(has_node(&events, PropertyParamList));
+    assert!(has_node(&events, WhereClause));
+}
+
+#[test]
+fn property_multiple_params() {
+    // property p(a: Int <- Gen.auto(), b: Int <- Gen.auto()) { a + b == b + a }
+    let (events, errors) = parse_tokens(&[
+        PropertyKw, Ident, LParen, Ident, Colon, Ident, LeftArrow, Ident, Dot, Ident, LParen,
+        RParen, Comma, Ident, Colon, Ident, LeftArrow, Ident, Dot, Ident, LParen, RParen, RParen,
+        LBrace, Ident, Plus, Ident, EqEq, Ident, Plus, Ident, RBrace,
+    ]);
+    assert!(has_no_errors(&errors), "errors: {errors:?}");
+    assert!(has_node(&events, PropertyDef));
+    assert_eq!(count_start_nodes(&events, PropertyParam), 2);
+}
+
+#[test]
+fn property_bare_param_is_error() {
+    // property p(x: Int) { true }  — missing <- binding
+    let (events, errors) = parse_tokens(&[
+        PropertyKw, Ident, LParen, Ident, Colon, Ident, RParen, LBrace, TrueKw, RBrace,
+    ]);
+    assert!(
+        !has_no_errors(&errors),
+        "bare property params should produce errors"
+    );
+    assert!(has_node(&events, PropertyDef));
+    assert!(
+        errors.iter().any(|e| e.message.contains("<-")),
+        "error should mention `<-`: {errors:?}"
+    );
+}
+
+#[test]
+fn left_arrow_outside_property_is_error() {
+    // let x = <- b  — LeftArrow where an expression is expected
+    let (_events, errors) = parse_tokens(&[LetKw, Ident, Eq, LeftArrow, Ident]);
+    assert!(
+        !has_no_errors(&errors),
+        "LeftArrow in expr should produce error"
+    );
+    assert!(
+        errors.iter().any(|e| e.message.contains("<-")),
+        "error should mention `<-`: {errors:?}"
+    );
+}
+
+#[test]
+fn property_without_body() {
+    // property p(x: Int <- Gen.auto()) — no body, just declaration
+    let (events, errors) = parse_tokens(&[
+        PropertyKw, Ident, LParen, Ident, Colon, Ident, LeftArrow, Ident, Dot, Ident, LParen,
+        RParen, RParen,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "bodyless property should parse: {errors:?}"
+    );
+    assert!(has_node(&events, PropertyDef));
+    assert!(has_node(&events, PropertyParamList));
+}
+
+#[test]
+fn property_trailing_comma() {
+    // property p(x: Int <- Gen.auto(),) { x > 0 }
+    let (events, errors) = parse_tokens(&[
+        PropertyKw, Ident, LParen, Ident, Colon, Ident, LeftArrow, Ident, Dot, Ident, LParen,
+        RParen, Comma, RParen, LBrace, Ident, Gt, IntLiteral, RBrace,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "trailing comma should be ok: {errors:?}"
+    );
+    assert!(has_node(&events, PropertyDef));
+    assert_eq!(count_start_nodes(&events, PropertyParam), 1);
+}
+
+#[test]
+fn property_empty_params() {
+    // property p() { true }
+    let (events, errors) =
+        parse_tokens(&[PropertyKw, Ident, LParen, RParen, LBrace, TrueKw, RBrace]);
+    assert!(
+        has_no_errors(&errors),
+        "empty param list should parse: {errors:?}"
+    );
+    assert!(has_node(&events, PropertyDef));
+    assert!(has_node(&events, PropertyParamList));
+    assert_eq!(count_start_nodes(&events, PropertyParam), 0);
+}
+
+#[test]
+fn property_where_without_body() {
+    // property p(x: Int <- Gen.auto()) where x > 0
+    let (events, errors) = parse_tokens(&[
+        PropertyKw, Ident, LParen, Ident, Colon, Ident, LeftArrow, Ident, Dot, Ident, LParen,
+        RParen, RParen, WhereKw, Ident, Gt, IntLiteral,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "where without body should parse: {errors:?}"
+    );
+    assert!(has_node(&events, PropertyDef));
+    assert!(has_node(&events, WhereClause));
+}
+
+#[test]
+fn property_missing_lparen() {
+    // property p x: Int <- Gen.auto() { true }  — missing (
+    let (events, errors) = parse_tokens(&[
+        PropertyKw, Ident, Ident, Colon, Ident, LeftArrow, Ident, Dot, Ident, LParen, RParen,
+        LBrace, TrueKw, RBrace,
+    ]);
+    assert!(!has_no_errors(&errors), "missing ( should error");
+    assert!(has_node(&events, PropertyDef));
+}
+
+#[test]
+fn left_arrow_after_binary_op() {
+    // let x = 1 + <- 2  — LeftArrow after a binary operator
+    let (_events, errors) =
+        parse_tokens(&[LetKw, Ident, Eq, IntLiteral, Plus, LeftArrow, IntLiteral]);
+    assert!(
+        !has_no_errors(&errors),
+        "LeftArrow after + should produce error"
+    );
+    assert!(
+        errors.iter().any(|e| e.message.contains("<-")),
+        "error should mention `<-`: {errors:?}"
+    );
+}
+
+#[test]
+fn left_arrow_in_if_branch() {
+    // let x = if true { <- 1 } else { 0 }
+    let (_events, errors) = parse_tokens(&[
+        LetKw, Ident, Eq, IfKw, TrueKw, LBrace, LeftArrow, IntLiteral, RBrace, ElseKw, LBrace,
+        IntLiteral, RBrace,
+    ]);
+    assert!(
+        !has_no_errors(&errors),
+        "LeftArrow inside if body should produce error"
+    );
+}

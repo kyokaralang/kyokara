@@ -99,6 +99,8 @@ enum Token {
     BangEq,
     #[token(">=")]
     GtEq,
+    #[token("<-")]
+    LeftArrow,
     #[token("<=")]
     LtEq,
     #[token("<<")]
@@ -185,6 +187,7 @@ impl Token {
             Token::EqEq => SyntaxKind::EqEq,
             Token::BangEq => SyntaxKind::BangEq,
             Token::GtEq => SyntaxKind::GtEq,
+            Token::LeftArrow => SyntaxKind::LeftArrow,
             Token::LtEq => SyntaxKind::LtEq,
             Token::LtLt => SyntaxKind::LtLt,
             Token::GtGt => SyntaxKind::GtGt,
@@ -339,6 +342,7 @@ mod tests {
     fn operators() {
         let cases = [
             ("->", Arrow),
+            ("<-", LeftArrow),
             ("=>", FatArrow),
             ("=", Eq),
             ("==", EqEq),
@@ -382,6 +386,8 @@ mod tests {
         assert_eq!(lex_kinds("!="), [(BangEq, "!=")]);
         // `->` should not be `-` + `>`
         assert_eq!(lex_kinds("->"), [(Arrow, "->")]);
+        // `<-` should not be `<` + `-`
+        assert_eq!(lex_kinds("<-"), [(LeftArrow, "<-")]);
         // `=>` should not be `=` + `>`
         assert_eq!(lex_kinds("=>"), [(FatArrow, "=>")]);
         // `>=` should not be `>` + `=`

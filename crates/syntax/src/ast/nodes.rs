@@ -197,7 +197,11 @@ define_ast_node!(PropertyDef, PropertyDef);
 impl HasName for PropertyDef {}
 
 impl PropertyDef {
-    pub fn param_list(&self) -> Option<ParamList> {
+    pub fn property_param_list(&self) -> Option<PropertyParamList> {
+        support::child(&self.syntax)
+    }
+
+    pub fn where_clause(&self) -> Option<WhereClause> {
         support::child(&self.syntax)
     }
 
@@ -913,6 +917,36 @@ impl RecordPat {
 define_ast_node!(PatList, PatList);
 
 // ── Property ───────────────────────────────────────────────────────
+
+define_ast_node!(PropertyParamList, PropertyParamList);
+
+impl PropertyParamList {
+    pub fn params(&self) -> impl Iterator<Item = PropertyParam> + '_ {
+        support::children(&self.syntax)
+    }
+}
+
+define_ast_node!(PropertyParam, PropertyParam);
+
+impl HasName for PropertyParam {}
+
+impl PropertyParam {
+    pub fn type_expr(&self) -> Option<TypeExpr> {
+        self.syntax.children().find_map(TypeExpr::cast)
+    }
+
+    pub fn generator(&self) -> Option<Expr> {
+        self.syntax.children().find_map(Expr::cast)
+    }
+}
+
+define_ast_node!(WhereClause, WhereClause);
+
+impl WhereClause {
+    pub fn expr(&self) -> Option<Expr> {
+        self.syntax.children().find_map(Expr::cast)
+    }
+}
 
 define_ast_node!(ForAllBinder, ForAllBinder);
 
