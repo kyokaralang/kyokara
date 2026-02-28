@@ -444,7 +444,13 @@ impl<'a> FuncCodegen<'a> {
 
             // Handle terminator.
             if let Some(term) = &case_block.terminator {
-                self.emit_switch_arm_terminator(func, term, depth_to_merge)?;
+                self.emit_switch_arm_terminator(
+                    func,
+                    term,
+                    depth_to_merge,
+                    merge_block_id,
+                    emitted,
+                )?;
             }
         }
 
@@ -462,7 +468,7 @@ impl<'a> FuncCodegen<'a> {
             }
 
             if let Some(term) = &def_block.terminator {
-                self.emit_switch_arm_terminator(func, term, 0)?;
+                self.emit_switch_arm_terminator(func, term, 0, merge_block_id, emitted)?;
             }
         }
 
@@ -483,6 +489,8 @@ impl<'a> FuncCodegen<'a> {
         func: &mut Function,
         term: &Terminator,
         depth_to_merge: u32,
+        switch_merge: Option<BlockId>,
+        emitted: &mut FxHashMap<BlockId, ()>,
     ) -> Result<(), CodegenError> {
         match term {
             Terminator::Return(val) => {
@@ -496,7 +504,39 @@ impl<'a> FuncCodegen<'a> {
             Terminator::Unreachable => {
                 func.instruction(&Instruction::Unreachable);
             }
-            _ => {}
+            Terminator::Branch {
+                condition,
+                then_target,
+                else_target,
+            } => {
+                // Nested if/else inside a switch arm. Emit the branch with the
+                // switch merge as the stop point, then br out to the merge block.
+                self.emit_branch(
+                    func,
+                    *condition,
+                    then_target,
+                    else_target,
+                    switch_merge,
+                    emitted,
+                )?;
+                func.instruction(&Instruction::Br(depth_to_merge));
+            }
+            Terminator::Switch {
+                scrutinee,
+                cases,
+                default,
+            } => {
+                // Nested match inside a switch arm.
+                self.emit_switch(
+                    func,
+                    *scrutinee,
+                    cases,
+                    default.as_ref(),
+                    switch_merge,
+                    emitted,
+                )?;
+                func.instruction(&Instruction::Br(depth_to_merge));
+            }
         }
         Ok(())
     }
@@ -793,105 +833,12 @@ impl<'a> FuncCodegen<'a> {
         })?;
 
         // Allocate memory: call $alloc(size).
+        // Drop the alloc return value immediately — we re-derive the pointer
+        // from $heap_ptr each time we need it (ptr = heap_ptr - size).
+        // This keeps the value stack clean so ADT construction works inside
+        // nested blocks (if/else arms, match arms, etc.).
         func.instruction(&Instruction::I32Const(layout.size as i32));
         func.instruction(&Instruction::Call(self.ctx.alloc_fn_index));
-
-        // The alloc result (pointer) is on the stack. We need to use it
-        // multiple times, so store in a temp local... but we don't have one.
-        // We'll use local.tee to keep the pointer on stack.
-
-        // Actually, we need a temp local. Use the destination local since
-        // the caller does local.set after us. But we need the ptr first.
-        // Strategy: alloc returns ptr on stack. Store in result local via
-        // the caller's local.set. But we haven't done stores yet.
-
-        // Better: we use a series of operations that keep the ptr.
-        // Store tag: ptr still on stack from alloc.
-        // local.tee to keep ptr, then store tag.
-
-        // For simplicity, we'll do multiple alloc calls... no, that wastes memory.
-        // We need to juggle the pointer. Let's track it differently.
-
-        // The approach: after alloc, we have ptr on stack.
-        // We need to:
-        //   1. Store tag at ptr+0
-        //   2. Store each field at ptr+8, ptr+16, ...
-        //   3. Leave ptr on stack for the caller's local.set
-
-        // Use a pattern of: ptr on stack → store tag → store fields → push ptr again.
-        // But WASM doesn't have dup. We need to use local.tee or store in a temp.
-
-        // Since the caller will do `local.set dest_local` after us, we can use
-        // that destination local as scratch. But we don't know it here.
-        // Instead, let's find any local we can use as scratch.
-
-        // Actually the simplest approach: we know the caller does local.set(local_idx)
-        // right after our return. We can use that local as scratch within our emit.
-        // But we don't have local_idx here.
-
-        // Better approach: use the stack-based pattern with local.tee on the dest.
-        // We need access to the destination local. Let's refactor to pass it.
-
-        // For now, a simpler approach: push ptr, store tag using the mem
-        // instructions that pop the address but we re-push each time.
-        // Wastes some instructions but correct.
-
-        // Actually WASM i32.store pops [addr, value] from stack. So:
-        // 1. alloc → ptr on stack
-        // 2. For tag store: dup ptr (we can't), store tag
-
-        // The cleanest way: call alloc, get ptr. For each store operation,
-        // we need the ptr again. Since we can't dup, we store ptr in the
-        // destination local first, then load it back for each store.
-
-        // But we don't know the dest local. Instead, find the local that
-        // corresponds to this instruction's ValueId. We can't access it from here.
-
-        // Let's use a different strategy: change the interface so the caller
-        // passes the dest local. OR, emit into the dest local from here.
-
-        // The simplest correct approach for now: accept that we need a temp.
-        // We'll search for the local that this value maps to.
-        // Since emit_adt_construct is called from emit_inst which knows the vid,
-        // we should refactor. For now, let's use an approach that works without
-        // a temp local by restructuring the stores.
-
-        // WASM memory store: i32.store takes [addr, value] from stack (addr first).
-        // We can do:
-        //   alloc → ptr
-        //   (for each store: ptr, value, store; ptr has been consumed, need to reload)
-        // Problem: after first store, ptr is consumed.
-
-        // Real solution: every time we need ptr, we re-read it from $heap_ptr - size.
-        // Or: we just accept wasteful instructions and reload from a global.
-
-        // Best approach: refactor emit_inst to pass local_idx to sub-emitters.
-        // This is done below.
-
-        // For NOW: we cheat by noting that after alloc, $heap_ptr = ptr + size.
-        // So ptr = $heap_ptr - size. We can recompute it each time.
-        // But this is fragile. Let's just change the approach.
-
-        // Revised approach: we return the ptr from alloc first, then the
-        // calling emit_inst does local.set, and for the stores we reload
-        // from that local. But emit_inst does local.set AFTER we return...
-
-        // OK, let me just restructure: emit_adt_construct will take local_idx
-        // as a parameter, store the ptr there first, then do all stores.
-
-        // For now, I'll just do the stores using global $heap_ptr arithmetic.
-        // ptr = global.get($heap_ptr) - size
-        func.instruction(&Instruction::GlobalGet(0));
-        func.instruction(&Instruction::I32Const(layout.size as i32));
-        func.instruction(&Instruction::I32Sub);
-        // Now ptr is on stack. But we need it multiple times...
-
-        // Let me use a completely different strategy. Drop the alloc result,
-        // compute ptr from heap_ptr, store it in a known location.
-
-        // Actually the real answer is: pop the alloc result first and we'll
-        // re-derive ptr each time. This works because no other alloc happens
-        // between our stores.
         func.instruction(&Instruction::Drop);
 
         // ptr = heap_ptr - size
