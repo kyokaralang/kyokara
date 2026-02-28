@@ -1815,6 +1815,84 @@ fn run_with_manifest_none_allows_all() {
     assert!(matches!(val, Value::Unit));
 }
 
+#[test]
+fn manifest_allow_domains_constraint_rejected_until_enforced_issue_186() {
+    let manifest = manifest_from_json(r#"{"caps": {"Net": {"allow_domains": ["rates.example"]}}}"#);
+    let err = run_with_manifest_err("fn main() -> Int { 1 }", Some(manifest));
+    assert!(
+        err.contains("allow_domains"),
+        "expected field name in error, got: {err}"
+    );
+    assert!(
+        err.contains("Net"),
+        "expected capability name in error, got: {err}"
+    );
+}
+
+#[test]
+fn manifest_allow_tables_constraint_rejected_until_enforced_issue_186() {
+    let manifest = manifest_from_json(r#"{"caps": {"Db": {"allow_tables": ["payments"]}}}"#);
+    let err = run_with_manifest_err("fn main() -> Int { 1 }", Some(manifest));
+    assert!(
+        err.contains("allow_tables"),
+        "expected field name in error, got: {err}"
+    );
+    assert!(
+        err.contains("Db"),
+        "expected capability name in error, got: {err}"
+    );
+}
+
+#[test]
+fn manifest_allow_keys_constraint_rejected_until_enforced_issue_186() {
+    let manifest =
+        manifest_from_json(r#"{"caps": {"Secrets": {"allow_keys": ["PAYMENTS_API_KEY"]}}}"#);
+    let err = run_with_manifest_err("fn main() -> Int { 1 }", Some(manifest));
+    assert!(
+        err.contains("allow_keys"),
+        "expected field name in error, got: {err}"
+    );
+    assert!(
+        err.contains("Secrets"),
+        "expected capability name in error, got: {err}"
+    );
+}
+
+#[test]
+fn project_manifest_allow_domains_constraint_rejected_until_enforced_issue_186() {
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "fn main() -> Int {{ 1 }}").unwrap();
+
+    let manifest = manifest_from_json(r#"{"caps": {"Net": {"allow_domains": ["rates.example"]}}}"#);
+    let err = match kyokara_eval::run_project_with_manifest(&main_path, Some(manifest)) {
+        Ok(result) => panic!("expected error, got {:?}", result.value),
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        err.contains("allow_domains"),
+        "expected field name in error, got: {err}"
+    );
+}
+
+#[test]
+fn project_manifest_without_fine_grained_constraints_still_runs_issue_186_guard() {
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "fn main() -> Int {{ 1 }}").unwrap();
+
+    let manifest = manifest_from_json(r#"{"caps": {"IO": {}, "Net": {}}}"#);
+    let result = kyokara_eval::run_project_with_manifest(&main_path, Some(manifest))
+        .expect("project should still run with capability-only manifest");
+    assert!(matches!(result.value, Value::Int(1)));
+}
+
 // ── Multi-file project diagnostics ──────────────────────────────────
 
 #[test]
