@@ -1,4 +1,5 @@
 //! Parser unit tests — verify event structure for various constructs.
+#![allow(clippy::unwrap_used)]
 
 use SyntaxKind::*;
 use kyokara_parser::{Event, Input, ParseError, SyntaxKind, parse};

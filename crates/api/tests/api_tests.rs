@@ -1,4 +1,5 @@
 //! End-to-end API tests: source → `check()` → verify structured output.
+#![allow(clippy::unwrap_used)]
 
 use kyokara_api::{check, check_project, refactor, refactor_project};
 use std::collections::{BTreeMap, BTreeSet};

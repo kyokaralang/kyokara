@@ -147,6 +147,8 @@ fn lsp_range_start_to_offset(range: &lsp_types::Range, source: &str) -> Option<u
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
     use crate::db::FileAnalysis;
 

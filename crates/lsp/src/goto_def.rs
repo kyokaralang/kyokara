@@ -317,6 +317,8 @@ fn collect_pattern_binding_tokens(pat: &Pat, out: &mut Vec<SyntaxToken>) {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
     use crate::db::FileAnalysis;
 

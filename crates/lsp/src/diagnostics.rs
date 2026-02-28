@@ -83,6 +83,8 @@ pub fn to_lsp_diagnostics(analysis: &FileAnalysis, source: &str) -> Vec<lsp_type
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
     use crate::db::FileAnalysis;
 

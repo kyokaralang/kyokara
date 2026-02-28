@@ -1,5 +1,5 @@
 [package]
-name = "kyokara-kir"
+name = "kyokara-codegen"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,11 +11,15 @@ kyokara-intern.workspace = true
 kyokara-hir-def.workspace = true
 kyokara-hir-ty.workspace = true
 kyokara-diagnostics.workspace = true
-la-arena.workspace = true
+kyokara-kir.workspace = true
+wasm-encoder.workspace = true
+thiserror.workspace = true
 rustc-hash.workspace = true
+la-arena.workspace = true
 
 [dev-dependencies]
 kyokara-hir.workspace = true
+wasmtime.workspace = true
 
 [lints]
 workspace = true

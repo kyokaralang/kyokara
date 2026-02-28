@@ -1,5 +1,6 @@
 //! Formatter integration tests — snapshot tests, idempotency,
 //! comment preservation, import sorting.
+#![allow(clippy::unwrap_used)]
 
 use kyokara_fmt::format_source;
 

@@ -1,4 +1,5 @@
 //! Integration tests — parse source text, verify CST structure + lossless roundtrip.
+#![allow(clippy::unwrap_used)]
 
 use kyokara_syntax::{SyntaxKind, parse};
 
