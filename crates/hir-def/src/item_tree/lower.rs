@@ -114,22 +114,51 @@ impl ItemTreeCtx<'_> {
     }
 
     fn lower_fn_def(&mut self, f: &FnDef, inside_cap: bool) -> FnItemIdx {
-        let name = self.name_of(f);
+        // Detect method definitions: fn Type.method(self, ...)
+        let receiver_type = f
+            .receiver_type_token()
+            .map(|tok| Name::new(self.interner, tok.text()));
+        let name = if receiver_type.is_some() {
+            // For methods, the "name" is the method name (second Ident).
+            f.method_name_token()
+                .map(|tok| Name::new(self.interner, tok.text()))
+                .unwrap_or_else(|| Name::new(self.interner, "_"))
+        } else {
+            self.name_of(f)
+        };
+
         let type_params = self.collect_type_params(f);
 
         let params = f
             .param_list()
             .map(|pl| {
                 pl.params()
-                    .map(|p| {
+                    .enumerate()
+                    .map(|(i, p)| {
                         let pname = p
                             .name_token()
                             .map(|tok| Name::new(self.interner, tok.text()))
                             .unwrap_or_else(|| Name::new(self.interner, "_"));
-                        let ty = p
-                            .type_expr()
-                            .map(|t| self.lower_type_ref(&t))
-                            .unwrap_or(TypeRef::Error);
+                        let ty = if let Some(te) = p.type_expr() {
+                            self.lower_type_ref(&te)
+                        } else if i == 0
+                            && pname.resolve(self.interner) == "self"
+                            && let Some(recv) = receiver_type
+                        {
+                            // Bare `self` in a method def: infer type from receiver.
+                            TypeRef::Path {
+                                path: Path::single(recv),
+                                args: Vec::new(),
+                            }
+                        } else {
+                            // Missing type annotation on non-self parameter.
+                            let span = self.node_span(p.syntax());
+                            self.diagnostics.push(Diagnostic::error(
+                                "missing type annotation on parameter",
+                                span,
+                            ));
+                            TypeRef::Error
+                        };
                         FnParam { name: pname, ty }
                     })
                     .collect::<Vec<_>>()
@@ -181,9 +210,13 @@ impl ItemTreeCtx<'_> {
             pipe_caps,
             has_body,
             source_range: Some(f.syntax().text_range()),
+            receiver_type,
         });
 
-        if !inside_cap {
+        if let Some(recv) = receiver_type {
+            // Register as a method, not a free function.
+            self.module_scope.methods.insert((recv, name), idx);
+        } else if !inside_cap {
             self.register_fn(name, idx, f.syntax());
         }
 
@@ -425,6 +458,7 @@ impl ItemTreeCtx<'_> {
                 pipe_caps: vec![],
                 has_body: true,
                 source_range,
+                receiver_type: None,
             });
             // Do NOT register in module_scope.functions — the property is not
             // callable as a regular function from user code.

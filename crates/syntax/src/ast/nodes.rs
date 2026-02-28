@@ -178,6 +178,45 @@ impl FnDef {
     pub fn invariant_clause(&self) -> Option<InvariantClause> {
         support::child(&self.syntax)
     }
+
+    /// For method definitions (`fn Type.method(...)`), returns the receiver
+    /// type name token (`Type`). Returns `None` for regular function defs.
+    pub fn receiver_type_token(&self) -> Option<SyntaxToken> {
+        // A method has a Dot token directly inside FnDef (not in a child node).
+        let has_dot = self
+            .syntax
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .any(|tok| tok.kind() == SyntaxKind::Dot);
+        if !has_dot {
+            return None;
+        }
+        // The first Ident token is the receiver type name.
+        self.syntax
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .find(|tok| tok.kind() == SyntaxKind::Ident)
+    }
+
+    /// For method definitions (`fn Type.method(...)`), returns the method
+    /// name token. Returns `None` for regular function defs.
+    pub fn method_name_token(&self) -> Option<SyntaxToken> {
+        // Only valid for method defs (those with a Dot token).
+        let has_dot = self
+            .syntax
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .any(|tok| tok.kind() == SyntaxKind::Dot);
+        if !has_dot {
+            return None;
+        }
+        // The second Ident token (after the dot) is the method name.
+        self.syntax
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .filter(|tok| tok.kind() == SyntaxKind::Ident)
+            .nth(1)
+    }
 }
 
 define_ast_node!(CapDef, CapDef);

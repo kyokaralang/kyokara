@@ -4746,3 +4746,258 @@ fn eval_method_index_then_method() {
     );
     assert!(matches!(val, Value::Int(5)));
 }
+
+// ── User-defined method tests ───────────────────────────────────────
+
+#[test]
+fn eval_user_method_on_record() {
+    let val = run_ok(
+        r#"
+        type Point = { x: Int, y: Int }
+
+        fn Point.sum(self) -> Int {
+            self.x + self.y
+        }
+
+        fn main() -> Int {
+            let p = Point { x: 3, y: 4 }
+            p.sum()
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(7)));
+}
+
+#[test]
+fn eval_user_method_with_extra_args() {
+    let val = run_ok(
+        r#"
+        type Counter = { value: Int }
+
+        fn Counter.add(self, n: Int) -> Counter {
+            Counter { value: self.value + n }
+        }
+
+        fn main() -> Int {
+            let c = Counter { value: 10 }
+            let c2 = c.add(5)
+            c2.value
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(15)));
+}
+
+#[test]
+fn eval_user_method_chaining() {
+    let val = run_ok(
+        r#"
+        type Counter = { value: Int }
+
+        fn Counter.inc(self) -> Counter {
+            Counter { value: self.value + 1 }
+        }
+
+        fn main() -> Int {
+            let c = Counter { value: 0 }
+            c.inc().inc().inc().value
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_user_method_on_adt() {
+    let val = run_ok(
+        r#"
+        type Shape = | Circle(Int) | Rect(Int, Int)
+
+        fn Shape.area(self) -> Int {
+            match self {
+                Circle(r) => r * r * 3
+                Rect(w, h) => w * h
+            }
+        }
+
+        fn main() -> Int {
+            let s = Rect(4, 5)
+            s.area()
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(20)));
+}
+
+#[test]
+fn eval_user_method_field_and_method_coexist() {
+    // A record with a field named `x` and a method named `len`.
+    // Accessing `p.x` should be field access, `p.len()` should be method call.
+    let val = run_ok(
+        r#"
+        type Vec2 = { x: Int, y: Int }
+
+        fn Vec2.len(self) -> Int {
+            self.x + self.y
+        }
+
+        fn main() -> Int {
+            let v = Vec2 { x: 3, y: 4 }
+            v.x + v.len()
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(10)));
+}
+
+#[test]
+fn eval_user_method_returns_self_type() {
+    let val = run_ok(
+        r#"
+        type Pair = { a: Int, b: Int }
+
+        fn Pair.swap(self) -> Pair {
+            Pair { a: self.b, b: self.a }
+        }
+
+        fn main() -> Int {
+            let p = Pair { a: 1, b: 2 }
+            let swapped = p.swap()
+            swapped.a
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_user_method_multiple_methods_same_type() {
+    let val = run_ok(
+        r#"
+        type Box = { val: Int }
+
+        fn Box.get(self) -> Int {
+            self.val
+        }
+
+        fn Box.double(self) -> Box {
+            Box { val: self.val * 2 }
+        }
+
+        fn main() -> Int {
+            let b = Box { val: 5 }
+            b.double().get()
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(10)));
+}
+
+#[test]
+fn eval_user_method_with_self_and_typed_params() {
+    let val = run_ok(
+        r#"
+        type Acc = { total: Int }
+
+        fn Acc.add_all(self, a: Int, b: Int, c: Int) -> Acc {
+            Acc { total: self.total + a + b + c }
+        }
+
+        fn main() -> Int {
+            let acc = Acc { total: 0 }
+            acc.add_all(1, 2, 3).total
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(6)));
+}
+
+#[test]
+fn eval_user_method_and_free_fn_coexist() {
+    // A free function and a method with different names on the same type.
+    let val = run_ok(
+        r#"
+        type Num = { n: Int }
+
+        fn make_num(x: Int) -> Num {
+            Num { n: x }
+        }
+
+        fn Num.value(self) -> Int {
+            self.n
+        }
+
+        fn main() -> Int {
+            let x = make_num(42)
+            x.value()
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(42)));
+}
+
+#[test]
+fn eval_user_method_self_explicit_type_annotation() {
+    // User can also write `self: Point` explicitly.
+    let val = run_ok(
+        r#"
+        type Point = { x: Int, y: Int }
+
+        fn Point.sum(self: Point) -> Int {
+            self.x + self.y
+        }
+
+        fn main() -> Int {
+            let p = Point { x: 10, y: 20 }
+            p.sum()
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(30)));
+}
+
+#[test]
+fn eval_user_method_on_adt_circle() {
+    let val = run_ok(
+        r#"
+        type Shape = | Circle(Int) | Rect(Int, Int)
+
+        fn Shape.describe(self) -> String {
+            match self {
+                Circle(_) => "circle"
+                Rect(_, _) => "rect"
+            }
+        }
+
+        fn main() -> String {
+            let s = Circle(5)
+            s.describe()
+        }
+        "#,
+    );
+    assert_eq!(val, Value::String("circle".into()));
+}
+
+#[test]
+fn eval_user_method_using_other_methods() {
+    // Method that calls another method on the same type.
+    let val = run_ok(
+        r#"
+        type Wrapper = { inner: Int }
+
+        fn Wrapper.get(self) -> Int {
+            self.inner
+        }
+
+        fn Wrapper.get_plus(self, n: Int) -> Int {
+            self.get() + n
+        }
+
+        fn main() -> Int {
+            let w = Wrapper { inner: 10 }
+            w.get_plus(5)
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(15)));
+}

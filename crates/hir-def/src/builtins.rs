@@ -285,6 +285,7 @@ fn mk_intrinsic(
             pipe_caps: Vec::new(),
             has_body: false,
             source_range: None,
+            receiver_type: None,
         },
     )
 }

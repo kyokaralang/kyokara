@@ -1,10 +1,11 @@
 //! Pattern type inference for all [`Pat`] variants.
 
 use kyokara_hir_def::expr::Literal;
+use kyokara_hir_def::item_tree::TypeDefKind;
 use kyokara_hir_def::pat::Pat;
 
 use crate::diagnostics::TyDiagnosticData;
-use crate::resolve::instantiate_constructor;
+use crate::resolve::{TyResolutionEnv, instantiate_constructor};
 use crate::ty::Ty;
 
 use super::InferenceCtx;
@@ -141,6 +142,62 @@ impl<'a> InferenceCtx<'a> {
                                     },
                                 );
                             }
+                        }
+                    }
+                    Ty::Adt { ref def, ref args } => {
+                        let type_item = &self.item_tree.types[*def];
+                        let def_fields = match &type_item.kind {
+                            TypeDefKind::Record { fields: f } => Some(f),
+                            TypeDefKind::Alias(kyokara_hir_def::type_ref::TypeRef::Record {
+                                fields: f,
+                            }) => Some(f),
+                            _ => None,
+                        };
+                        if let Some(def_fields) = def_fields {
+                            let mut tp_map: Vec<(kyokara_hir_def::name::Name, Ty)> =
+                                self.type_params.clone();
+                            for (param_name, arg) in type_item.type_params.iter().zip(args.iter()) {
+                                tp_map.push((*param_name, arg.clone()));
+                            }
+                            let env = TyResolutionEnv {
+                                item_tree: self.item_tree,
+                                module_scope: self.module_scope,
+                                interner: self.interner,
+                                type_params: tp_map,
+                                resolving_aliases: vec![],
+                            };
+                            for field_name in &fields {
+                                let field_str = field_name.resolve(self.interner);
+                                if let Some((_, type_ref)) = def_fields
+                                    .iter()
+                                    .find(|(n, _)| n.resolve(self.interner) == field_str)
+                                {
+                                    let field_ty = env.resolve_type_ref(type_ref, &mut self.table);
+                                    let bind_ty = self.table.resolve_deep(&field_ty);
+                                    for bind_pat_idx in
+                                        self.record_field_bind_pats_in_range(pat_idx, *field_name)
+                                    {
+                                        self.local_types.insert(bind_pat_idx, bind_ty.clone());
+                                        self.pat_types.insert(bind_pat_idx, bind_ty.clone());
+                                    }
+                                } else {
+                                    self.push_pat_diag(
+                                        pat_idx,
+                                        TyDiagnosticData::NoSuchField {
+                                            field: field_str.to_owned(),
+                                            ty: resolved.clone(),
+                                        },
+                                    );
+                                }
+                            }
+                        } else {
+                            self.push_pat_diag(
+                                pat_idx,
+                                TyDiagnosticData::TypeMismatch {
+                                    expected: Ty::Record { fields: vec![] },
+                                    actual: resolved.clone(),
+                                },
+                            );
                         }
                     }
                     Ty::Error | Ty::Var(_) => {}
