@@ -45,10 +45,8 @@ impl KyokaraLanguageServer {
     async fn on_change(&self, uri: Url, text: String) {
         // Check if salsa detects a change (text equality).
         let needs_recompute = {
-            #[allow(clippy::unwrap_used)] // Mutex::lock — standard pattern, poisoning is fatal
-            let mut db = self.db.lock().unwrap();
-            #[allow(clippy::unwrap_used)]
-            let mut files = self.files.lock().unwrap();
+            let Ok(mut db) = self.db.lock() else { return };
+            let Ok(mut files) = self.files.lock() else { return };
 
             if let Some(existing) = files.get(&uri) {
                 let old_text = existing.text(&*db);
@@ -143,8 +141,9 @@ impl LanguageServer for KyokaraLanguageServer {
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
-        #[allow(clippy::unwrap_used)] // Mutex::lock — standard pattern, poisoning is fatal
-        self.files.lock().unwrap().remove(&uri);
+        if let Ok(mut files) = self.files.lock() {
+            files.remove(&uri);
+        }
         self.sources.write().await.remove(&uri);
         self.analyses.write().await.remove(&uri);
         // Clear diagnostics for the closed file.
