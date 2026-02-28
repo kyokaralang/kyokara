@@ -1547,3 +1547,192 @@ fn test_float_nan_neq_self_true() {
         1
     );
 }
+
+// ══════════════════════════════════════════════════════════════════
+// Bug #196: `result` in ensures gets Ty::Error — TDD tests
+// These test arithmetic/unary operations on `result` inside ensures.
+// They all fail before the fix with:
+//   UnsupportedInstruction("binary ... on Error")
+// ══════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_ensures_result_mul_pass() {
+    // result * 2 = 30, 30 > 10 → ensures passes.
+    assert_eq!(
+        run_main_i64(
+            "fn tripled(x: Int) -> Int ensures result * 2 > 10 { x * 3 }\n\
+             fn main() -> Int { tripled(5) }"
+        ),
+        15
+    );
+}
+
+#[test]
+fn test_ensures_result_mul_traps() {
+    // result = 3, 3 * 2 = 6, 6 > 10 is false → trap.
+    assert!(run_main_traps(
+        "fn identity(x: Int) -> Int ensures result * 2 > 10 { x }\n\
+         fn main() -> Int { identity(3) }"
+    ));
+}
+
+#[test]
+fn test_ensures_result_add_pass() {
+    // result = 10, 10 + 5 = 15, 15 > 10 → passes.
+    assert_eq!(
+        run_main_i64(
+            "fn double(x: Int) -> Int ensures result + 5 > 10 { x * 2 }\n\
+             fn main() -> Int { double(5) }"
+        ),
+        10
+    );
+}
+
+#[test]
+fn test_ensures_result_sub_pass() {
+    // result = 10, 10 - 1 = 9, 9 >= 0 → passes.
+    assert_eq!(
+        run_main_i64(
+            "fn inc(x: Int) -> Int ensures result - 1 >= 0 { x + 1 }\n\
+             fn main() -> Int { inc(9) }"
+        ),
+        10
+    );
+}
+
+#[test]
+fn test_ensures_result_div_pass() {
+    // result = 20, 20 / 2 = 10, 10 > 0 → passes.
+    assert_eq!(
+        run_main_i64(
+            "fn dbl(x: Int) -> Int ensures result / 2 > 0 { x * 2 }\n\
+             fn main() -> Int { dbl(10) }"
+        ),
+        20
+    );
+}
+
+#[test]
+fn test_ensures_result_neg_pass() {
+    // result = -5, -(result) = 5, 5 > 0 → passes.
+    assert_eq!(
+        run_main_i64(
+            "fn negate(x: Int) -> Int ensures -(result) > 0 { -(x) }\n\
+             fn main() -> Int { negate(5) }"
+        ),
+        -5
+    );
+}
+
+#[test]
+fn test_ensures_result_squared_pass() {
+    // result = 4, 4 * 4 = 16, 16 > 0 → passes.
+    assert_eq!(
+        run_main_i64(
+            "fn square(x: Int) -> Int ensures result * result > 0 { x * x }\n\
+             fn main() -> Int { square(2) }"
+        ),
+        4
+    );
+}
+
+#[test]
+fn test_ensures_result_with_param_arithmetic() {
+    // result = 6, x = 5, 6 - 5 = 1, 1 > 0 → passes.
+    assert_eq!(
+        run_main_i64(
+            "fn inc(x: Int) -> Int ensures result - x > 0 { x + 1 }\n\
+             fn main() -> Int { inc(5) }"
+        ),
+        6
+    );
+}
+
+#[test]
+fn test_ensures_result_chained_arithmetic() {
+    // result = 7, 7 * 2 + 1 = 15, 15 > 10 → passes.
+    assert_eq!(
+        run_main_i64(
+            "fn compute(x: Int) -> Int ensures result * 2 + 1 > 10 { x }\n\
+             fn main() -> Int { compute(7) }"
+        ),
+        7
+    );
+}
+
+#[test]
+fn test_ensures_result_chained_arithmetic_traps() {
+    // result = 3, 3 * 2 + 1 = 7, 7 > 10 is false → trap.
+    assert!(run_main_traps(
+        "fn compute(x: Int) -> Int ensures result * 2 + 1 > 10 { x }\n\
+         fn main() -> Int { compute(3) }"
+    ));
+}
+
+#[test]
+fn test_ensures_result_self_eq() {
+    // result == result is always true — both sides reference result.
+    assert_eq!(
+        run_main_i64(
+            "fn identity(x: Int) -> Int ensures result == result { x }\n\
+             fn main() -> Int { identity(42) }"
+        ),
+        42
+    );
+}
+
+#[test]
+fn test_ensures_float_result_arithmetic() {
+    // Float return: result + 1.0 = 5.0, 5.0 > 3.0 → passes.
+    let r = run_main_f64(
+        "fn half(x: Float) -> Float ensures result + 1.0 > 3.0 { x / 2.0 }\n\
+         fn main() -> Float { half(8.0) }",
+    );
+    assert!((r - 4.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn test_ensures_float_result_mul() {
+    // Float return: result * 2.0 = 10.0, 10.0 > 5.0 → passes.
+    let r = run_main_f64(
+        "fn half(x: Float) -> Float ensures result * 2.0 > 5.0 { x / 2.0 }\n\
+         fn main() -> Float { half(10.0) }",
+    );
+    assert!((r - 5.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn test_requires_param_arithmetic() {
+    // requires with arithmetic on params: x * 2 > 5.
+    // Verifies requires expressions also get proper type inference.
+    assert_eq!(
+        run_main_i64(
+            "fn check(x: Int) -> Int requires x * 2 > 5 { x }\n\
+             fn main() -> Int { check(4) }"
+        ),
+        4
+    );
+}
+
+#[test]
+fn test_requires_param_arithmetic_traps() {
+    // x = 2, 2 * 2 = 4, 4 > 5 is false → trap.
+    assert!(run_main_traps(
+        "fn check(x: Int) -> Int requires x * 2 > 5 { x }\n\
+         fn main() -> Int { check(2) }"
+    ));
+}
+
+#[test]
+fn test_requires_complex_and_ensures_complex() {
+    // Both requires and ensures have arithmetic.
+    // requires: x * 2 > 0 → 10 * 2 = 20 > 0 ✓
+    // result = 30, ensures: result - x > 0 → 30 - 10 = 20 > 0 ✓
+    assert_eq!(
+        run_main_i64(
+            "fn triple(x: Int) -> Int requires x * 2 > 0 ensures result - x > 0 { x * 3 }\n\
+             fn main() -> Int { triple(10) }"
+        ),
+        30
+    );
+}
