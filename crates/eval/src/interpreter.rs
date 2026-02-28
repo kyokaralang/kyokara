@@ -47,6 +47,11 @@ enum ControlFlow {
     Return(Value),
 }
 
+enum LogicalEvalStep {
+    ShortCircuit(Value),
+    NeedRhs,
+}
+
 impl ControlFlow {
     fn into_value(self) -> Value {
         match self {
@@ -375,34 +380,15 @@ impl Interpreter {
                 let op = *op;
                 let lhs = *lhs;
                 let rhs = *rhs;
-                // Short-circuit evaluation for logical operators.
                 match op {
-                    BinaryOp::And => {
+                    BinaryOp::And | BinaryOp::Or => {
                         let lv = eval_propagate!(self, env, body, lhs);
-                        match lv {
-                            Value::Bool(false) => Ok(ControlFlow::Value(Value::Bool(false))),
-                            Value::Bool(true) => {
+                        match self.logical_eval_step(op, &lv)? {
+                            LogicalEvalStep::ShortCircuit(v) => Ok(ControlFlow::Value(v)),
+                            LogicalEvalStep::NeedRhs => {
                                 let rv = eval_propagate!(self, env, body, rhs);
                                 Ok(ControlFlow::Value(rv))
                             }
-                            _ => Err(RuntimeError::TypeError(format!(
-                                "expected Bool for &&, got {:?}",
-                                std::mem::discriminant(&lv),
-                            ))),
-                        }
-                    }
-                    BinaryOp::Or => {
-                        let lv = eval_propagate!(self, env, body, lhs);
-                        match lv {
-                            Value::Bool(true) => Ok(ControlFlow::Value(Value::Bool(true))),
-                            Value::Bool(false) => {
-                                let rv = eval_propagate!(self, env, body, rhs);
-                                Ok(ControlFlow::Value(rv))
-                            }
-                            _ => Err(RuntimeError::TypeError(format!(
-                                "expected Bool for ||, got {:?}",
-                                std::mem::discriminant(&lv),
-                            ))),
                         }
                     }
                     _ => {
@@ -586,34 +572,15 @@ impl Interpreter {
                 let op = *op;
                 let lhs = *lhs;
                 let rhs = *rhs;
-                // Short-circuit evaluation for logical operators.
                 match op {
-                    BinaryOp::And => {
+                    BinaryOp::And | BinaryOp::Or => {
                         let lv = eval_propagate_shared!(self, body, lhs);
-                        match lv {
-                            Value::Bool(false) => Ok(ControlFlow::Value(Value::Bool(false))),
-                            Value::Bool(true) => {
+                        match self.logical_eval_step(op, &lv)? {
+                            LogicalEvalStep::ShortCircuit(v) => Ok(ControlFlow::Value(v)),
+                            LogicalEvalStep::NeedRhs => {
                                 let rv = eval_propagate_shared!(self, body, rhs);
                                 Ok(ControlFlow::Value(rv))
                             }
-                            _ => Err(RuntimeError::TypeError(format!(
-                                "expected Bool for &&, got {:?}",
-                                std::mem::discriminant(&lv),
-                            ))),
-                        }
-                    }
-                    BinaryOp::Or => {
-                        let lv = eval_propagate_shared!(self, body, lhs);
-                        match lv {
-                            Value::Bool(true) => Ok(ControlFlow::Value(Value::Bool(true))),
-                            Value::Bool(false) => {
-                                let rv = eval_propagate_shared!(self, body, rhs);
-                                Ok(ControlFlow::Value(rv))
-                            }
-                            _ => Err(RuntimeError::TypeError(format!(
-                                "expected Bool for ||, got {:?}",
-                                std::mem::discriminant(&lv),
-                            ))),
                         }
                     }
                     _ => {
@@ -1008,6 +975,33 @@ impl Interpreter {
                 std::mem::discriminant(&lhs),
                 std::mem::discriminant(&rhs),
             ))),
+        }
+    }
+
+    #[inline(always)]
+    fn logical_eval_step(
+        &self,
+        op: BinaryOp,
+        lhs: &Value,
+    ) -> Result<LogicalEvalStep, RuntimeError> {
+        match op {
+            BinaryOp::And => match lhs {
+                Value::Bool(false) => Ok(LogicalEvalStep::ShortCircuit(Value::Bool(false))),
+                Value::Bool(true) => Ok(LogicalEvalStep::NeedRhs),
+                _ => Err(RuntimeError::TypeError(format!(
+                    "expected Bool for &&, got {:?}",
+                    std::mem::discriminant(lhs),
+                ))),
+            },
+            BinaryOp::Or => match lhs {
+                Value::Bool(true) => Ok(LogicalEvalStep::ShortCircuit(Value::Bool(true))),
+                Value::Bool(false) => Ok(LogicalEvalStep::NeedRhs),
+                _ => Err(RuntimeError::TypeError(format!(
+                    "expected Bool for ||, got {:?}",
+                    std::mem::discriminant(lhs),
+                ))),
+            },
+            _ => unreachable!("logical_eval_step called for non-logical op"),
         }
     }
 

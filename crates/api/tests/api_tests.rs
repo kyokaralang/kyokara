@@ -521,6 +521,21 @@ fn check_unresolved_name_in_expression_produces_diagnostic() {
     );
 }
 
+#[test]
+fn check_duplicate_definition_maps_to_e0102() {
+    let src = "fn foo() -> Int { 1 }\nfn foo() -> Int { 2 }\nfn main() -> Int { foo() }";
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.iter().any(|d| d.code == "E0102"),
+        "expected duplicate-definition diagnostic code E0102, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| (&d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+}
+
 // ── Stable symbol ID tests ──────────────────────────────────────────
 
 #[test]

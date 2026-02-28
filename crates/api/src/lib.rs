@@ -183,11 +183,7 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
 
     // Lowering diagnostics.
     for diag in &result.lowering_diagnostics {
-        let code = if diag.message.contains("duplicate") {
-            "E0102"
-        } else {
-            "E0101"
-        };
+        let code = kyokara_hir::lowering_diagnostic_code(&diag.message);
         let file_name = result
             .file_map
             .path(diag.span.file)
@@ -209,11 +205,7 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
 
         // Body lowering diagnostics (unresolved names, duplicates).
         for diag in &tc.body_lowering_diagnostics {
-            let code = if diag.message.contains("duplicate") {
-                "E0102"
-            } else {
-                "E0101"
-            };
+            let code = kyokara_hir::lowering_diagnostic_code(&diag.message);
             diagnostics.push(convert_lowering_diagnostic(diag, code, &file_name));
         }
 
@@ -398,21 +390,13 @@ fn convert_result(result: &CheckResult, file_name: &str) -> CheckOutput {
 
     // Lowering diagnostics → E0101 (unresolved name) / E0102 (duplicate definition).
     for diag in &result.lowering_diagnostics {
-        let code = if diag.message.contains("duplicate") {
-            "E0102"
-        } else {
-            "E0101"
-        };
+        let code = kyokara_hir::lowering_diagnostic_code(&diag.message);
         diagnostics.push(convert_lowering_diagnostic(diag, code, file_name));
     }
 
     // Body lowering diagnostics (unresolved names, duplicates from body lowering).
     for diag in &result.type_check.body_lowering_diagnostics {
-        let code = if diag.message.contains("duplicate") {
-            "E0102"
-        } else {
-            "E0101"
-        };
+        let code = kyokara_hir::lowering_diagnostic_code(&diag.message);
         diagnostics.push(convert_lowering_diagnostic(diag, code, file_name));
     }
 
@@ -676,13 +660,13 @@ fn build_module_symbol_graph(
             .iter()
             .map(|p| ParamDto {
                 name: p.name.resolve(interner).to_owned(),
-                ty: display_type_ref(&p.ty, interner),
+                ty: kyokara_hir::display_type_ref(&p.ty, interner),
             })
             .collect();
         let return_type = fn_item
             .ret_type
             .as_ref()
-            .map(|t| display_type_ref(t, interner));
+            .map(|t| kyokara_hir::display_type_ref(t, interner));
         let effects: Vec<String> = fn_item
             .with_caps
             .iter()
@@ -728,7 +712,7 @@ fn build_module_symbol_graph(
                         .iter()
                         .map(|(n, tr)| ParamDto {
                             name: n.resolve(interner).to_owned(),
-                            ty: display_type_ref(tr, interner),
+                            ty: kyokara_hir::display_type_ref(tr, interner),
                         })
                         .collect();
                     ("record".to_owned(), fs, Vec::new())
@@ -739,7 +723,7 @@ fn build_module_symbol_graph(
                         .iter()
                         .map(|(n, tr)| ParamDto {
                             name: n.resolve(interner).to_owned(),
-                            ty: display_type_ref(tr, interner),
+                            ty: kyokara_hir::display_type_ref(tr, interner),
                         })
                         .collect();
                     ("record".to_owned(), fs, Vec::new())
@@ -756,7 +740,7 @@ fn build_module_symbol_graph(
                                 fields: v
                                     .fields
                                     .iter()
-                                    .map(|tr| display_type_ref(tr, interner))
+                                    .map(|tr| kyokara_hir::display_type_ref(tr, interner))
                                     .collect(),
                             }
                         })
@@ -795,13 +779,13 @@ fn build_module_symbol_graph(
                         .iter()
                         .map(|p| ParamDto {
                             name: p.name.resolve(interner).to_owned(),
-                            ty: display_type_ref(&p.ty, interner),
+                            ty: kyokara_hir::display_type_ref(&p.ty, interner),
                         })
                         .collect();
                     let return_type = fn_item
                         .ret_type
                         .as_ref()
-                        .map(|t| display_type_ref(t, interner));
+                        .map(|t| kyokara_hir::display_type_ref(t, interner));
                     cap_member_fn_nodes.push(FnNodeDto {
                         id: member_id.clone(),
                         name: fn_name,
@@ -839,52 +823,6 @@ fn dedupe_call_ids(calls: &mut Vec<String>) {
 }
 
 /// Render a surface-level TypeRef as a human-readable string (for the symbol graph).
-fn display_type_ref(tr: &TypeRef, interner: &Interner) -> String {
-    match tr {
-        TypeRef::Path { path, args } => {
-            let base: String = path
-                .segments
-                .iter()
-                .map(|s| s.resolve(interner))
-                .collect::<Vec<_>>()
-                .join(".");
-            if args.is_empty() {
-                base
-            } else {
-                let arg_strs: Vec<String> =
-                    args.iter().map(|a| display_type_ref(a, interner)).collect();
-                format!("{base}<{}>", arg_strs.join(", "))
-            }
-        }
-        TypeRef::Fn { params, ret } => {
-            let ps: Vec<String> = params
-                .iter()
-                .map(|p| display_type_ref(p, interner))
-                .collect();
-            format!(
-                "fn({}) -> {}",
-                ps.join(", "),
-                display_type_ref(ret, interner)
-            )
-        }
-        TypeRef::Record { fields } => {
-            let fs: Vec<String> = fields
-                .iter()
-                .map(|(n, t)| format!("{}: {}", n.resolve(interner), display_type_ref(t, interner)))
-                .collect();
-            format!("{{ {} }}", fs.join(", "))
-        }
-        TypeRef::Refined { name, base, .. } => {
-            format!(
-                "{{ {}: {} | ... }}",
-                name.resolve(interner),
-                display_type_ref(base, interner)
-            )
-        }
-        TypeRef::Error => "<error>".into(),
-    }
-}
-
 /// Extract the leaf name from a TypeRef::Path (used for effect/capability names).
 fn type_ref_name(tr: &TypeRef, interner: &Interner) -> Option<String> {
     if let TypeRef::Path { path, .. } = tr {
