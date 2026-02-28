@@ -3439,3 +3439,699 @@ fn eval_tilde_and_logical_not_distinct() {
     let val = run_ok("fn main() -> Bool { ~0 == -1 && !false }");
     assert_eq!(val, Value::Bool(true));
 }
+
+// ── parse_int tests ─────────────────────────────────────────────────
+
+#[test]
+fn eval_parse_int_basic() {
+    let val = run_ok(r#"fn main() -> Int { parse_int("42") }"#);
+    assert_eq!(val, Value::Int(42));
+}
+
+#[test]
+fn eval_parse_int_negative() {
+    let val = run_ok(r#"fn main() -> Int { parse_int("-7") }"#);
+    assert_eq!(val, Value::Int(-7));
+}
+
+#[test]
+fn eval_parse_int_zero() {
+    let val = run_ok(r#"fn main() -> Int { parse_int("0") }"#);
+    assert_eq!(val, Value::Int(0));
+}
+
+#[test]
+fn eval_parse_int_with_plus() {
+    let val = run_ok(r#"fn main() -> Int { parse_int("+42") }"#);
+    assert_eq!(val, Value::Int(42));
+}
+
+#[test]
+fn eval_parse_int_max() {
+    let val = run_ok(r#"fn main() -> Int { parse_int("9223372036854775807") }"#);
+    assert_eq!(val, Value::Int(i64::MAX));
+}
+
+#[test]
+fn eval_parse_int_min() {
+    let val = run_ok(r#"fn main() -> Int { parse_int("-9223372036854775808") }"#);
+    assert_eq!(val, Value::Int(i64::MIN));
+}
+
+#[test]
+fn eval_parse_int_empty_fails() {
+    let err = run_err(r#"fn main() -> Int { parse_int("") }"#);
+    assert!(err.contains("parse_int"), "got: {err}");
+}
+
+#[test]
+fn eval_parse_int_non_numeric_fails() {
+    let err = run_err(r#"fn main() -> Int { parse_int("abc") }"#);
+    assert!(err.contains("parse_int"), "got: {err}");
+}
+
+#[test]
+fn eval_parse_int_float_string_fails() {
+    let err = run_err(r#"fn main() -> Int { parse_int("3.14") }"#);
+    assert!(err.contains("parse_int"), "got: {err}");
+}
+
+#[test]
+fn eval_parse_int_whitespace_fails() {
+    let err = run_err(r#"fn main() -> Int { parse_int(" 42") }"#);
+    assert!(err.contains("parse_int"), "got: {err}");
+}
+
+#[test]
+fn eval_parse_int_overflow_fails() {
+    let err = run_err(r#"fn main() -> Int { parse_int("9223372036854775808") }"#);
+    assert!(err.contains("parse_int"), "got: {err}");
+}
+
+// ── parse_float tests ───────────────────────────────────────────────
+
+#[test]
+fn eval_parse_float_basic() {
+    let val = run_ok(r#"fn main() -> Float { parse_float("3.14") }"#);
+    assert_eq!(val, Value::Float(3.14));
+}
+
+#[test]
+fn eval_parse_float_integer_string() {
+    let val = run_ok(r#"fn main() -> Float { parse_float("42") }"#);
+    assert_eq!(val, Value::Float(42.0));
+}
+
+#[test]
+fn eval_parse_float_negative() {
+    let val = run_ok(r#"fn main() -> Float { parse_float("-2.5") }"#);
+    assert_eq!(val, Value::Float(-2.5));
+}
+
+#[test]
+fn eval_parse_float_zero() {
+    let val = run_ok(r#"fn main() -> Float { parse_float("0.0") }"#);
+    assert_eq!(val, Value::Float(0.0));
+}
+
+#[test]
+fn eval_parse_float_scientific() {
+    let val = run_ok(r#"fn main() -> Float { parse_float("1.5e10") }"#);
+    assert_eq!(val, Value::Float(1.5e10));
+}
+
+#[test]
+fn eval_parse_float_infinity() {
+    let val = run_ok(r#"fn main() -> Float { parse_float("inf") }"#);
+    assert_eq!(val, Value::Float(f64::INFINITY));
+}
+
+#[test]
+fn eval_parse_float_neg_infinity() {
+    let val = run_ok(r#"fn main() -> Float { parse_float("-inf") }"#);
+    assert_eq!(val, Value::Float(f64::NEG_INFINITY));
+}
+
+#[test]
+fn eval_parse_float_nan() {
+    let val = run_ok(r#"fn main() -> Float { parse_float("NaN") }"#);
+    match val {
+        Value::Float(f) => assert!(f.is_nan(), "expected NaN, got {f}"),
+        other => panic!("expected Float, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_parse_float_empty_fails() {
+    let err = run_err(r#"fn main() -> Float { parse_float("") }"#);
+    assert!(err.contains("parse_float"), "got: {err}");
+}
+
+#[test]
+fn eval_parse_float_non_numeric_fails() {
+    let err = run_err(r#"fn main() -> Float { parse_float("abc") }"#);
+    assert!(err.contains("parse_float"), "got: {err}");
+}
+
+// ── string_lines tests ─────────────────────────────────────────────
+
+#[test]
+fn eval_string_lines_basic() {
+    let val = run_ok(r#"fn main() -> Int { list_len(string_lines("a\nb\nc")) }"#);
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_string_lines_trailing_newline() {
+    let val = run_ok(r#"fn main() -> Int { list_len(string_lines("a\nb\n")) }"#);
+    assert_eq!(val, Value::Int(2));
+}
+
+#[test]
+fn eval_string_lines_empty() {
+    let val = run_ok(r#"fn main() -> Int { list_len(string_lines("")) }"#);
+    assert_eq!(val, Value::Int(0));
+}
+
+#[test]
+fn eval_string_lines_single() {
+    let val = run_ok(
+        r#"fn main() -> String {
+            match list_head(string_lines("hello")) {
+                Some(s) => s
+                None => "fail"
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::String("hello".to_string()));
+}
+
+#[test]
+fn eval_string_lines_crlf() {
+    let val = run_ok(r#"fn main() -> Int { list_len(string_lines("a\r\nb\r\nc")) }"#);
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_string_lines_blank_lines() {
+    // Two newlines = two empty lines (lines() strips trailing but keeps interior)
+    let val = run_ok(r#"fn main() -> Int { list_len(string_lines("\n\n")) }"#);
+    assert_eq!(val, Value::Int(2));
+}
+
+#[test]
+fn eval_string_lines_content_check() {
+    let val = run_ok(
+        r#"fn main() -> String {
+            let lines = string_lines("first\nsecond\nthird")
+            match list_get(lines, 1) {
+                Some(s) => s
+                None => "fail"
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::String("second".to_string()));
+}
+
+// ── string_chars tests ──────────────────────────────────────────────
+
+#[test]
+fn eval_string_chars_basic() {
+    let val = run_ok(r#"fn main() -> Int { list_len(string_chars("hello")) }"#);
+    assert_eq!(val, Value::Int(5));
+}
+
+#[test]
+fn eval_string_chars_empty() {
+    let val = run_ok(r#"fn main() -> Int { list_len(string_chars("")) }"#);
+    assert_eq!(val, Value::Int(0));
+}
+
+#[test]
+fn eval_string_chars_single() {
+    let val = run_ok(r#"fn main() -> Int { list_len(string_chars("x")) }"#);
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
+fn eval_string_chars_unicode() {
+    // "café" has 4 chars (é is a single codepoint U+00E9)
+    let val = run_ok(r#"fn main() -> Int { list_len(string_chars("café")) }"#);
+    assert_eq!(val, Value::Int(4));
+}
+
+#[test]
+fn eval_string_chars_roundtrip() {
+    // Convert string to chars, map each char back to string, concat them
+    let val = run_ok(
+        r#"fn main() -> String {
+            let chars = string_chars("abc")
+            let strings = list_map(chars, fn(c: Char) => char_to_string(c))
+            list_fold(strings, "", fn(acc: String, s: String) => string_concat(acc, s))
+        }"#,
+    );
+    assert_eq!(val, Value::String("abc".to_string()));
+}
+
+#[test]
+fn eval_string_chars_with_newlines() {
+    // "a\nb" has 3 chars: 'a', '\n', 'b'
+    let val = run_ok(r#"fn main() -> Int { list_len(string_chars("a\nb")) }"#);
+    assert_eq!(val, Value::Int(3));
+}
+
+// ── read_file tests ─────────────────────────────────────────────────
+
+#[test]
+fn eval_read_file_basic() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.txt");
+    std::fs::write(&file_path, "hello world").unwrap();
+    let path_str = file_path.to_str().unwrap();
+    let source = format!(r#"fn main() -> String {{ read_file("{path_str}") }}"#);
+    let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
+    let val = run_with_manifest_ok(&source, Some(manifest));
+    assert_eq!(val, Value::String("hello world".to_string()));
+}
+
+#[test]
+fn eval_read_file_multiline() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("multi.txt");
+    std::fs::write(&file_path, "line1\nline2\nline3\n").unwrap();
+    let path_str = file_path.to_str().unwrap();
+    let source = format!(
+        r#"fn main() -> Int {{ list_len(string_lines(read_file("{path_str}"))) }}"#
+    );
+    let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
+    let val = run_with_manifest_ok(&source, Some(manifest));
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_read_file_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("empty.txt");
+    std::fs::write(&file_path, "").unwrap();
+    let path_str = file_path.to_str().unwrap();
+    let source = format!(r#"fn main() -> String {{ read_file("{path_str}") }}"#);
+    let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
+    let val = run_with_manifest_ok(&source, Some(manifest));
+    assert_eq!(val, Value::String(String::new()));
+}
+
+#[test]
+fn eval_read_file_no_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.txt");
+    std::fs::write(&file_path, "allowed").unwrap();
+    let path_str = file_path.to_str().unwrap();
+    let source = format!(r#"fn main() -> String {{ read_file("{path_str}") }}"#);
+    let val = run_with_manifest_ok(&source, None);
+    assert_eq!(val, Value::String("allowed".to_string()));
+}
+
+#[test]
+fn eval_read_file_not_found() {
+    let source = r#"fn main() -> String { read_file("/nonexistent/path/to/file.txt") }"#;
+    let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
+    let err = run_with_manifest_err(source, Some(manifest));
+    assert!(err.contains("read_file"), "got: {err}");
+}
+
+#[test]
+fn eval_read_file_denied_no_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.txt");
+    std::fs::write(&file_path, "secret").unwrap();
+    let path_str = file_path.to_str().unwrap();
+    let source = format!(r#"fn main() -> String {{ read_file("{path_str}") }}"#);
+    let manifest = manifest_from_json(r#"{"caps": {}}"#);
+    let err = run_with_manifest_err(&source, Some(manifest));
+    assert!(err.contains("capability denied"), "got: {err}");
+    assert!(err.contains("fs"), "got: {err}");
+}
+
+#[test]
+fn eval_read_file_denied_wrong_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.txt");
+    std::fs::write(&file_path, "secret").unwrap();
+    let path_str = file_path.to_str().unwrap();
+    let source = format!(r#"fn main() -> String {{ read_file("{path_str}") }}"#);
+    let manifest = manifest_from_json(r#"{"caps": {"io": {}}}"#);
+    let err = run_with_manifest_err(&source, Some(manifest));
+    assert!(err.contains("capability denied"), "got: {err}");
+}
+
+#[test]
+fn eval_read_file_with_both_caps() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.txt");
+    std::fs::write(&file_path, "both caps").unwrap();
+    let path_str = file_path.to_str().unwrap();
+    let source = format!(r#"fn main() -> String {{ read_file("{path_str}") }}"#);
+    let manifest = manifest_from_json(r#"{"caps": {"io": {}, "fs": {}}}"#);
+    let val = run_with_manifest_ok(&source, Some(manifest));
+    assert_eq!(val, Value::String("both caps".to_string()));
+}
+
+// ── list_sort tests ─────────────────────────────────────────────────
+
+#[test]
+fn eval_list_sort_ints() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 3), 1), 2)
+            let sorted = list_sort(xs)
+            match list_get(sorted, 0) {
+                Some(x) => x
+                None => -1
+            }
+        }",
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
+fn eval_list_sort_ints_reverse() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_push(list_push(list_new(), 5), 4), 3), 2), 1)
+            let sorted = list_sort(xs)
+            match list_get(sorted, 4) {
+                Some(x) => x
+                None => -1
+            }
+        }",
+    );
+    assert_eq!(val, Value::Int(5));
+}
+
+#[test]
+fn eval_list_sort_ints_already_sorted() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
+            let sorted = list_sort(xs)
+            match list_get(sorted, 2) {
+                Some(x) => x
+                None => -1
+            }
+        }",
+    );
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_list_sort_ints_duplicates() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_push(list_new(), 3), 1), 3), 2)
+            let sorted = list_sort(xs)
+            // sorted should be [1, 2, 3, 3], check index 2
+            match list_get(sorted, 2) {
+                Some(x) => x
+                None => -1
+            }
+        }",
+    );
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_list_sort_ints_negative() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_push(list_new(), 3), -1), 0), -5)
+            let sorted = list_sort(xs)
+            match list_get(sorted, 0) {
+                Some(x) => x
+                None => 0
+            }
+        }",
+    );
+    assert_eq!(val, Value::Int(-5));
+}
+
+#[test]
+fn eval_list_sort_ints_single() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_new(), 42)
+            let sorted = list_sort(xs)
+            match list_get(sorted, 0) {
+                Some(x) => x
+                None => -1
+            }
+        }",
+    );
+    assert_eq!(val, Value::Int(42));
+}
+
+#[test]
+fn eval_list_sort_empty() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs: List<Int> = list_new()
+            let sorted = list_sort(xs)
+            list_len(sorted)
+        }",
+    );
+    assert_eq!(val, Value::Int(0));
+}
+
+#[test]
+fn eval_list_sort_strings() {
+    let val = run_ok(
+        r#"fn main() -> String {
+            let xs = list_push(list_push(list_push(list_new(), "banana"), "apple"), "cherry")
+            let sorted = list_sort(xs)
+            match list_get(sorted, 0) {
+                Some(s) => s
+                None => "fail"
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::String("apple".to_string()));
+}
+
+#[test]
+fn eval_list_sort_bools() {
+    let val = run_ok(
+        "fn main() -> Bool {
+            let xs = list_push(list_push(list_push(list_new(), true), false), true)
+            let sorted = list_sort(xs)
+            match list_get(sorted, 0) {
+                Some(b) => b
+                None => true
+            }
+        }",
+    );
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_list_sort_floats() {
+    let val = run_ok(
+        "fn main() -> Float {
+            let xs = list_push(list_push(list_push(list_new(), 3.0), 1.0), 2.0)
+            let sorted = list_sort(xs)
+            match list_get(sorted, 0) {
+                Some(x) => x
+                None => -1.0
+            }
+        }",
+    );
+    assert_eq!(val, Value::Float(1.0));
+}
+
+#[test]
+fn eval_list_sort_floats_with_nan() {
+    // NaN sorts to end via f64::total_cmp
+    let val = run_ok(
+        r#"fn main() -> Float {
+            let nan = parse_float("NaN")
+            let xs = list_push(list_push(list_push(list_new(), nan), 1.0), 2.0)
+            let sorted = list_sort(xs)
+            match list_get(sorted, 0) {
+                Some(x) => x
+                None => -1.0
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Float(1.0));
+}
+
+#[test]
+fn eval_list_sort_chars() {
+    let val = run_ok(
+        "fn main() -> Char {
+            let xs = list_push(list_push(list_push(list_new(), 'c'), 'a'), 'b')
+            let sorted = list_sort(xs)
+            match list_get(sorted, 0) {
+                Some(c) => c
+                None => 'z'
+            }
+        }",
+    );
+    assert_eq!(val, Value::Char('a'));
+}
+
+#[test]
+fn eval_list_sort_unsortable() {
+    let err = run_err(
+        "fn main() -> Int {
+            let inner = list_push(list_new(), 1)
+            let xs = list_push(list_new(), inner)
+            let sorted = list_sort(xs)
+            list_len(sorted)
+        }",
+    );
+    assert!(err.contains("unsortable") || err.contains("list_sort"), "got: {err}");
+}
+
+// ── list_sort_by tests ──────────────────────────────────────────────
+
+#[test]
+fn eval_list_sort_by_ascending() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 3), 1), 2)
+            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => a - b)
+            match list_get(sorted, 0) {
+                Some(x) => x
+                None => -1
+            }
+        }",
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
+fn eval_list_sort_by_descending() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 3), 1), 2)
+            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => b - a)
+            match list_get(sorted, 0) {
+                Some(x) => x
+                None => -1
+            }
+        }",
+    );
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_list_sort_by_named_fn() {
+    let val = run_ok(
+        "fn cmp(a: Int, b: Int) -> Int { a - b }
+        fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 3), 1), 2)
+            let sorted = list_sort_by(xs, cmp)
+            match list_get(sorted, 0) {
+                Some(x) => x
+                None => -1
+            }
+        }",
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
+fn eval_list_sort_by_empty() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs: List<Int> = list_new()
+            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => a - b)
+            list_len(sorted)
+        }",
+    );
+    assert_eq!(val, Value::Int(0));
+}
+
+#[test]
+fn eval_list_sort_by_single() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_new(), 42)
+            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => a - b)
+            match list_get(sorted, 0) {
+                Some(x) => x
+                None => -1
+            }
+        }",
+    );
+    assert_eq!(val, Value::Int(42));
+}
+
+#[test]
+fn eval_list_sort_by_strings_by_len() {
+    let val = run_ok(
+        r#"fn main() -> String {
+            let xs = list_push(list_push(list_push(list_new(), "bb"), "a"), "ccc")
+            let sorted = list_sort_by(xs, fn(a: String, b: String) => string_len(a) - string_len(b))
+            match list_get(sorted, 0) {
+                Some(s) => s
+                None => "fail"
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::String("a".to_string()));
+}
+
+#[test]
+fn eval_list_sort_by_stable() {
+    // Sort by tens digit only — elements with same tens digit should keep original order.
+    // Input: [21, 12, 11, 22] — sort by (x / 10): [12, 11, 21, 22]
+    // 12 before 11 (both have tens=1, original order: 12 at index 1, 11 at index 2)
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_push(list_new(), 21), 12), 11), 22)
+            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => a / 10 - b / 10)
+            match list_get(sorted, 0) {
+                Some(x) => x
+                None => -1
+            }
+        }",
+    );
+    // First element with tens digit 1 should be 12 (appeared before 11 in original)
+    assert_eq!(val, Value::Int(12));
+}
+
+#[test]
+fn eval_list_sort_by_already_sorted() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
+            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => a - b)
+            match list_get(sorted, 1) {
+                Some(x) => x
+                None => -1
+            }
+        }",
+    );
+    assert_eq!(val, Value::Int(2));
+}
+
+#[test]
+fn eval_list_sort_by_all_equal() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 5), 5), 5)
+            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => a - b)
+            list_len(sorted)
+        }",
+    );
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_list_sort_by_comparator_error() {
+    // Comparator returns Bool instead of Int
+    let err = run_err(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 2), 1)
+            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => a < b)
+            list_len(sorted)
+        }",
+    );
+    assert!(
+        err.contains("list_sort_by") || err.contains("Int"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn eval_list_sort_by_runtime_error() {
+    // Comparator divides by zero — error should propagate
+    let err = run_err(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 2), 1)
+            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => a / 0)
+            list_len(sorted)
+        }",
+    );
+    assert!(err.contains("division by zero"), "got: {err}");
+}
