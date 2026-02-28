@@ -1198,6 +1198,7 @@ dependencies = [
  "kyokara-stdx",
  "kyokara-syntax",
  "la-arena",
+ "parking_lot",
  "rowan",
  "rustc-hash 2.1.1",
  "salsa",
