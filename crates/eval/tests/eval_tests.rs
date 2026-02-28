@@ -3537,7 +3537,7 @@ fn eval_parse_int_overflow_fails() {
 #[test]
 fn eval_parse_float_basic() {
     let val = run_ok(r#"fn main() -> Float { parse_float("3.14") }"#);
-    assert_eq!(val, Value::Float(3.14));
+    assert_eq!(val, Value::Float(314.0 / 100.0));
 }
 
 #[test]
