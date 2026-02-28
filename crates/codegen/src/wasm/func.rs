@@ -95,8 +95,8 @@ impl<'a> FuncCodegen<'a> {
                 // Comparison ops always produce i32.
                 use BinaryOp::*;
                 match op {
-                    Eq | NotEq | Lt | Gt | LtEq | GtEq => ValType::I32,
-                    Add | Sub | Mul | Div => {
+                    Eq | NotEq | Lt | Gt | LtEq | GtEq | And | Or => ValType::I32,
+                    Add | Sub | Mul | Div | Mod | BitAnd | BitOr | BitXor | Shl | Shr => {
                         // Try to infer from operand types.
                         ValType::I64 // default to i64
                     }
@@ -105,6 +105,13 @@ impl<'a> FuncCodegen<'a> {
             Inst::Unary {
                 op: UnaryOp::Not, ..
             } => ValType::I32,
+            Inst::Unary {
+                op: UnaryOp::Neg, ..
+            }
+            | Inst::Unary {
+                op: UnaryOp::BitNot,
+                ..
+            } => ValType::I64,
             Inst::Assert { .. } => ValType::I32, // Unit
             _ => ValType::I32,                   // default
         }
@@ -344,9 +351,7 @@ impl<'a> FuncCodegen<'a> {
                     }
                     break;
                 }
-                Some(Terminator::Switch {
-                    cases, default, ..
-                }) => {
+                Some(Terminator::Switch { cases, default, .. }) => {
                     // Look through the switch to find its merge.
                     if let Some(merge) = self.find_switch_merge(cases, default.as_ref()) {
                         chain.push(merge);
