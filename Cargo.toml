@@ -66,6 +66,7 @@ tempfile = "3"
 tower-lsp = "0.20"
 salsa = "0.26"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-std", "macros"] }
+parking_lot = "0.12"
 
 [workspace.lints.clippy]
 unwrap_used = "deny"
