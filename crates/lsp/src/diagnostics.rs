@@ -1,5 +1,6 @@
 //! Convert Kyokara diagnostics to LSP diagnostics.
 
+use text_size::TextSize;
 use tower_lsp::lsp_types::{self, DiagnosticSeverity, NumberOrString};
 
 use crate::db::FileAnalysis;
@@ -11,8 +12,15 @@ pub fn to_lsp_diagnostics(analysis: &FileAnalysis, source: &str) -> Vec<lsp_type
 
     // 1. Parse errors.
     for err in &analysis.parse_errors {
+        let range = text_range_to_lsp_range(
+            kyokara_span::TextRange::new(
+                TextSize::from(err.range_start),
+                TextSize::from(err.range_end),
+            ),
+            source,
+        );
         out.push(lsp_types::Diagnostic {
-            range: lsp_types::Range::default(),
+            range,
             severity: Some(DiagnosticSeverity::ERROR),
             code: Some(NumberOrString::String("E0100".into())),
             source: Some("kyokara".into()),
@@ -90,6 +98,26 @@ mod tests {
                 .as_ref()
                 .is_some_and(|c| *c == NumberOrString::String("E0100".into()))
         }));
+    }
+
+    #[test]
+    fn parse_error_carries_non_default_range() {
+        let source = "fn main( -> Int { 1 }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = FileAnalysis::from_check_result(result, source.to_string());
+        let diags = to_lsp_diagnostics(&analysis, source);
+        let parse_diag = diags
+            .iter()
+            .find(|d| {
+                d.code
+                    .as_ref()
+                    .is_some_and(|c| *c == NumberOrString::String("E0100".into()))
+            })
+            .expect("expected parse diagnostic");
+        assert!(
+            parse_diag.range != lsp_types::Range::default(),
+            "parse diagnostic should carry source range, got default range"
+        );
     }
 
     #[test]
