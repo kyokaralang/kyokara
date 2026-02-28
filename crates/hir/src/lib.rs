@@ -8,6 +8,7 @@
 
 pub use kyokara_hir_def::body::Body;
 pub use kyokara_hir_def::builtins::register_builtin_intrinsics;
+pub use kyokara_hir_def::builtins::register_builtin_methods;
 pub use kyokara_hir_def::builtins::register_builtin_types;
 pub use kyokara_hir_def::item_tree::lower::collect_item_tree;
 pub use kyokara_hir_def::item_tree::{
@@ -44,6 +45,66 @@ pub struct CheckResult {
     pub lowering_diagnostics: Vec<kyokara_diagnostics::Diagnostic>,
 }
 
+/// Map lowering/body-lowering diagnostics to stable public diagnostic codes.
+///
+/// This is intentionally conservative until lowering diagnostics become
+/// structured enums: duplicate-definition style diagnostics map to `E0102`,
+/// and other lowering diagnostics map to `E0101`.
+pub fn lowering_diagnostic_code(message: &str) -> &'static str {
+    if message.contains("duplicate") {
+        "E0102"
+    } else {
+        "E0101"
+    }
+}
+
+/// Render a surface-level [`TypeRef`] as a human-readable string.
+pub fn display_type_ref(tr: &TypeRef, interner: &Interner) -> String {
+    match tr {
+        TypeRef::Path { path, args } => {
+            let base: String = path
+                .segments
+                .iter()
+                .map(|s| s.resolve(interner))
+                .collect::<Vec<_>>()
+                .join(".");
+            if args.is_empty() {
+                base
+            } else {
+                let arg_strs: Vec<String> =
+                    args.iter().map(|a| display_type_ref(a, interner)).collect();
+                format!("{base}<{}>", arg_strs.join(", "))
+            }
+        }
+        TypeRef::Fn { params, ret } => {
+            let ps: Vec<String> = params
+                .iter()
+                .map(|p| display_type_ref(p, interner))
+                .collect();
+            format!(
+                "fn({}) -> {}",
+                ps.join(", "),
+                display_type_ref(ret, interner)
+            )
+        }
+        TypeRef::Record { fields } => {
+            let fs: Vec<String> = fields
+                .iter()
+                .map(|(n, t)| format!("{}: {}", n.resolve(interner), display_type_ref(t, interner)))
+                .collect();
+            format!("{{ {} }}", fs.join(", "))
+        }
+        TypeRef::Refined { name, base, .. } => {
+            format!(
+                "{{ {}: {} | ... }}",
+                name.resolve(interner),
+                display_type_ref(base, interner)
+            )
+        }
+        TypeRef::Error => "<error>".into(),
+    }
+}
+
 /// Parse, lower, and type-check a single source file.
 pub fn check_file(source: &str) -> CheckResult {
     let file_id = FileId(0);
@@ -72,6 +133,7 @@ pub fn check_file(source: &str) -> CheckResult {
         &mut item_result.module_scope,
         &mut interner,
     );
+    register_builtin_methods(&mut item_result.module_scope, &mut interner);
 
     // 5. Type-check all functions (Pass 2 + 3).
     let type_check = check_module(
@@ -158,6 +220,7 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
             &mut item_result.module_scope,
             &mut interner,
         );
+        register_builtin_methods(&mut item_result.module_scope, &mut interner);
 
         all_lowering_diagnostics.extend(item_result.diagnostics);
 
@@ -440,4 +503,80 @@ fn collect_pub_data(item_tree: &ItemTree) -> Vec<PubData> {
     }
 
     items
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lowering_diagnostic_code_maps_duplicate() {
+        assert_eq!(
+            lowering_diagnostic_code("duplicate function `foo`"),
+            "E0102"
+        );
+    }
+
+    #[test]
+    fn lowering_diagnostic_code_maps_non_duplicate() {
+        assert_eq!(lowering_diagnostic_code("unresolved name `foo`"), "E0101");
+    }
+
+    #[test]
+    fn display_type_ref_keeps_full_paths() {
+        let mut interner = Interner::new();
+        let tr = TypeRef::Path {
+            path: Path {
+                segments: vec![
+                    Name::new(&mut interner, "foo"),
+                    Name::new(&mut interner, "bar"),
+                    Name::new(&mut interner, "Baz"),
+                ],
+            },
+            args: Vec::new(),
+        };
+        assert_eq!(display_type_ref(&tr, &interner), "foo.bar.Baz");
+    }
+
+    #[test]
+    fn display_type_ref_renders_nested_shapes() {
+        let mut interner = Interner::new();
+        let t_name = Name::new(&mut interner, "T");
+        let result = TypeRef::Path {
+            path: Path {
+                segments: vec![Name::new(&mut interner, "Result")],
+            },
+            args: vec![
+                TypeRef::Path {
+                    path: Path {
+                        segments: vec![
+                            Name::new(&mut interner, "foo"),
+                            Name::new(&mut interner, "A"),
+                        ],
+                    },
+                    args: Vec::new(),
+                },
+                TypeRef::Record {
+                    fields: vec![(
+                        t_name,
+                        TypeRef::Path {
+                            path: Path {
+                                segments: vec![
+                                    Name::new(&mut interner, "foo"),
+                                    Name::new(&mut interner, "bar"),
+                                    Name::new(&mut interner, "B"),
+                                ],
+                            },
+                            args: Vec::new(),
+                        },
+                    )],
+                },
+            ],
+        };
+
+        assert_eq!(
+            display_type_ref(&result, &interner),
+            "Result<foo.A, { T: foo.bar.B }>"
+        );
+    }
 }

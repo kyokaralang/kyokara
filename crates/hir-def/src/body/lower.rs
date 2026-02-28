@@ -12,8 +12,8 @@ use kyokara_syntax::SyntaxKind;
 use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::{
     self, ArgList, BinaryExpr, BlockExpr, BlockItem, CallExpr, ElseBranch, FieldExpr, FnDef,
-    IfExpr, LambdaExpr, LiteralExpr, MatchExpr, NamedArg, OldExpr, PathExpr, PipelineExpr,
-    PropagateExpr, PropertyDef, RecordExpr, ReturnExpr, TypeExpr, UnaryExpr,
+    IfExpr, IndexExpr, LambdaExpr, LiteralExpr, MatchExpr, NamedArg, OldExpr, PathExpr,
+    PipelineExpr, PropagateExpr, PropertyDef, RecordExpr, ReturnExpr, TypeExpr, UnaryExpr,
 };
 use kyokara_syntax::ast::traits::{HasName, HasTypeParams};
 
@@ -396,6 +396,7 @@ impl BodyLowerCtx<'_> {
             ExprCst::Unary(ue) => self.lower_unary(ue),
             ExprCst::Call(ce) => self.lower_call(ce),
             ExprCst::Field(fe) => self.lower_field(fe),
+            ExprCst::Index(ie) => self.lower_index(ie),
             ExprCst::Pipeline(pe) => self.lower_pipeline(pe),
             ExprCst::Propagate(pe) => self.lower_propagate(pe),
             ExprCst::Match(me) => self.lower_match(me),
@@ -496,26 +497,9 @@ impl BodyLowerCtx<'_> {
 
     fn lower_binary(&mut self, be: &BinaryExpr) -> ExprIdx {
         let op = match be.op_token() {
-            Some(tok) => match tok.kind() {
-                SyntaxKind::Plus => BinaryOp::Add,
-                SyntaxKind::Minus => BinaryOp::Sub,
-                SyntaxKind::Star => BinaryOp::Mul,
-                SyntaxKind::Slash => BinaryOp::Div,
-                SyntaxKind::Percent => BinaryOp::Mod,
-                SyntaxKind::EqEq => BinaryOp::Eq,
-                SyntaxKind::BangEq => BinaryOp::NotEq,
-                SyntaxKind::Lt => BinaryOp::Lt,
-                SyntaxKind::Gt => BinaryOp::Gt,
-                SyntaxKind::LtEq => BinaryOp::LtEq,
-                SyntaxKind::GtEq => BinaryOp::GtEq,
-                SyntaxKind::AmpAmp => BinaryOp::And,
-                SyntaxKind::PipePipe => BinaryOp::Or,
-                SyntaxKind::Amp => BinaryOp::BitAnd,
-                SyntaxKind::Pipe => BinaryOp::BitOr,
-                SyntaxKind::Caret => BinaryOp::BitXor,
-                SyntaxKind::LtLt => BinaryOp::Shl,
-                SyntaxKind::GtGt => BinaryOp::Shr,
-                _ => {
+            Some(tok) => match BinaryOp::from_syntax_kind(tok.kind()) {
+                Some(op) => op,
+                None => {
                     self.diagnostics.push(Diagnostic::error(
                         format!("unsupported binary operator `{}`", tok.text()),
                         Span {
@@ -549,11 +533,9 @@ impl BodyLowerCtx<'_> {
 
     fn lower_unary(&mut self, ue: &UnaryExpr) -> ExprIdx {
         let op = match ue.op_token() {
-            Some(tok) => match tok.kind() {
-                SyntaxKind::Bang => UnaryOp::Not,
-                SyntaxKind::Minus => UnaryOp::Neg,
-                SyntaxKind::Tilde => UnaryOp::BitNot,
-                _ => {
+            Some(tok) => match UnaryOp::from_syntax_kind(tok.kind()) {
+                Some(op) => op,
+                None => {
                     self.diagnostics.push(Diagnostic::error(
                         format!("unsupported unary operator `{}`", tok.text()),
                         Span {
@@ -630,6 +612,20 @@ impl BodyLowerCtx<'_> {
             .unwrap_or_else(|| Name::new(self.interner, "_"));
 
         self.alloc_expr(Expr::Field { base, field })
+    }
+
+    fn lower_index(&mut self, ie: &IndexExpr) -> ExprIdx {
+        let base = ie
+            .base()
+            .map(|e| self.lower_expr(&e))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+
+        let index = ie
+            .index()
+            .map(|e| self.lower_expr(&e))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+
+        self.alloc_expr(Expr::Index { base, index })
     }
 
     /// Pipeline desugaring: `x |> f(a, b)` → `Call { callee: f, args: [x, a, b] }`

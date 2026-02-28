@@ -9,6 +9,20 @@ use crate::item_tree::{CapItemIdx, FnItemIdx, TypeItemIdx};
 use crate::name::Name;
 use crate::scope::{ScopeDef, ScopeIdx, ScopeTree};
 
+/// Cached names for built-in primitive types, used during method resolution
+/// so that type inference can map `Ty::String` → `Name("String")` without
+/// requiring a mutable interner reference.
+#[derive(Debug, Default, Clone)]
+pub struct WellKnownNames {
+    pub string: Option<Name>,
+    pub int: Option<Name>,
+    pub float: Option<Name>,
+    pub bool_: Option<Name>,
+    pub char_: Option<Name>,
+    pub list: Option<Name>,
+    pub map: Option<Name>,
+}
+
 /// Module-level scope: items + constructors + imports.
 #[derive(Debug, Default, Clone)]
 pub struct ModuleScope {
@@ -22,6 +36,10 @@ pub struct ModuleScope {
     pub constructors: FxHashMap<Name, (TypeItemIdx, usize)>,
     /// Imported names: `local_name -> import_index`.
     pub imports: FxHashMap<Name, usize>,
+    /// Method definitions: `(receiver_type_name, method_name)` → `FnItemIdx`.
+    pub methods: FxHashMap<(Name, Name), FnItemIdx>,
+    /// Cached primitive type names for method resolution.
+    pub well_known_names: WellKnownNames,
 }
 
 /// The full resolver used during body lowering.

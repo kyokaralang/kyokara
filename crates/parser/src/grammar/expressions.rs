@@ -13,7 +13,7 @@
 //! - `+` `-`           : (19, 20)
 //! - `*` `/` `%`       : (21, 22)
 //! - Prefix `!` `-` `~`: right_bp 23
-//! - Postfix `?` `.` `()` : left_bp 25
+//! - Postfix `?` `.` `()` `[]` : left_bp 25
 
 use crate::SyntaxKind::*;
 use crate::parser::{CompletedMarker, Parser};
@@ -62,24 +62,27 @@ fn expr_bp(p: &mut Parser<'_>, min_bp: u8) -> Option<CompletedMarker> {
                 arg_list(p);
                 m.complete(p, CallExpr)
             }
+            LBracket if 25 >= min_bp => {
+                let m = lhs.precede(p);
+                p.bump(); // [
+                expr(p);
+                p.expect(RBracket);
+                m.complete(p, IndexExpr)
+            }
             _ => break,
         };
     }
 
     loop {
-        let (op_kind, left_bp, right_bp) = match p.current() {
-            PipeGt => (PipelineExpr, 1, 2),
-            PipePipe => (BinaryExpr, 3, 4),
-            AmpAmp => (BinaryExpr, 5, 6),
-            EqEq | BangEq => (BinaryExpr, 7, 8),
-            Lt | Gt | LtEq | GtEq => (BinaryExpr, 9, 10),
-            Pipe => (BinaryExpr, 11, 12),
-            Caret => (BinaryExpr, 13, 14),
-            Amp => (BinaryExpr, 15, 16),
-            LtLt | GtGt => (BinaryExpr, 17, 18),
-            Plus | Minus => (BinaryExpr, 19, 20),
-            Star | Slash | Percent => (BinaryExpr, 21, 22),
-            _ => break,
+        let current = p.current();
+        let (left_bp, right_bp) = match current.infix_binding_power() {
+            Some(bp) => bp,
+            None => break,
+        };
+        let op_kind = if current == PipeGt {
+            PipelineExpr
+        } else {
+            BinaryExpr
         };
 
         if left_bp < min_bp {
@@ -97,14 +100,13 @@ fn expr_bp(p: &mut Parser<'_>, min_bp: u8) -> Option<CompletedMarker> {
 
 /// Parse a left-hand side (prefix unary or primary expression).
 fn lhs(p: &mut Parser<'_>) -> Option<CompletedMarker> {
-    match p.current() {
-        Bang | Minus | Tilde => {
-            let m = p.open();
-            p.bump(); // prefix operator
-            expr_bp(p, 23); // prefix bp
-            Some(m.complete(p, UnaryExpr))
-        }
-        _ => primary(p),
+    if p.current().is_unary_prefix_operator() {
+        let m = p.open();
+        p.bump(); // prefix operator
+        expr_bp(p, 23); // prefix bp
+        Some(m.complete(p, UnaryExpr))
+    } else {
+        primary(p)
     }
 }
 
@@ -392,8 +394,5 @@ fn can_start_expr(kind: crate::SyntaxKind) -> bool {
             | ReturnKw
             | OldKw
             | FnKw
-            | Bang
-            | Minus
-            | Tilde
-    )
+    ) || kind.is_unary_prefix_operator()
 }

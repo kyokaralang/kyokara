@@ -264,6 +264,8 @@ pub enum SyntaxKind {
     ArgList,
     /// Field access (`expr.field`).
     FieldExpr,
+    /// Index access (`expr[index]`).
+    IndexExpr,
     /// Pipeline (`expr |> f`).
     PipelineExpr,
     /// Error propagation (`expr?`).
@@ -376,6 +378,59 @@ impl SyntaxKind {
         )
     }
 
+    /// Returns `true` for unary prefix operator tokens.
+    pub fn is_unary_prefix_operator(self) -> bool {
+        matches!(self, Self::Bang | Self::Minus | Self::Tilde)
+    }
+
+    /// Returns `true` for binary expression operator tokens.
+    ///
+    /// This intentionally excludes pipeline (`|>`), which lowers to
+    /// `PipelineExpr` instead of `BinaryExpr`.
+    pub fn is_binary_operator(self) -> bool {
+        matches!(
+            self,
+            Self::Plus
+                | Self::Minus
+                | Self::Star
+                | Self::Slash
+                | Self::Percent
+                | Self::EqEq
+                | Self::BangEq
+                | Self::Lt
+                | Self::Gt
+                | Self::LtEq
+                | Self::GtEq
+                | Self::Amp
+                | Self::Pipe
+                | Self::Caret
+                | Self::LtLt
+                | Self::GtGt
+                | Self::AmpAmp
+                | Self::PipePipe
+        )
+    }
+
+    /// Returns Pratt parser binding power for infix operators.
+    ///
+    /// Includes pipeline (`|>`) and binary operators.
+    pub fn infix_binding_power(self) -> Option<(u8, u8)> {
+        match self {
+            Self::PipeGt => Some((1, 2)),
+            Self::PipePipe => Some((3, 4)),
+            Self::AmpAmp => Some((5, 6)),
+            Self::EqEq | Self::BangEq => Some((7, 8)),
+            Self::Lt | Self::Gt | Self::LtEq | Self::GtEq => Some((9, 10)),
+            Self::Pipe => Some((11, 12)),
+            Self::Caret => Some((13, 14)),
+            Self::Amp => Some((15, 16)),
+            Self::LtLt | Self::GtGt => Some((17, 18)),
+            Self::Plus | Self::Minus => Some((19, 20)),
+            Self::Star | Self::Slash | Self::Percent => Some((21, 22)),
+            _ => None,
+        }
+    }
+
     /// Look up a keyword kind from its text. Returns `None` for
     /// identifiers that are not keywords.
     pub fn from_keyword(text: &str) -> Option<SyntaxKind> {
@@ -406,5 +461,57 @@ impl SyntaxKind {
             "pub" => Some(Self::PubKw),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SyntaxKind;
+
+    #[test]
+    fn unary_prefix_operators_are_classified() {
+        assert!(SyntaxKind::Bang.is_unary_prefix_operator());
+        assert!(SyntaxKind::Minus.is_unary_prefix_operator());
+        assert!(SyntaxKind::Tilde.is_unary_prefix_operator());
+        assert!(!SyntaxKind::Plus.is_unary_prefix_operator());
+        assert!(!SyntaxKind::PipeGt.is_unary_prefix_operator());
+    }
+
+    #[test]
+    fn binary_operators_exclude_pipeline() {
+        for kind in [
+            SyntaxKind::Plus,
+            SyntaxKind::Minus,
+            SyntaxKind::Star,
+            SyntaxKind::Slash,
+            SyntaxKind::Percent,
+            SyntaxKind::EqEq,
+            SyntaxKind::BangEq,
+            SyntaxKind::Lt,
+            SyntaxKind::Gt,
+            SyntaxKind::LtEq,
+            SyntaxKind::GtEq,
+            SyntaxKind::Amp,
+            SyntaxKind::Pipe,
+            SyntaxKind::Caret,
+            SyntaxKind::LtLt,
+            SyntaxKind::GtGt,
+            SyntaxKind::AmpAmp,
+            SyntaxKind::PipePipe,
+        ] {
+            assert!(kind.is_binary_operator(), "{kind:?} should be binary");
+        }
+
+        assert!(!SyntaxKind::PipeGt.is_binary_operator());
+    }
+
+    #[test]
+    fn infix_binding_power_matches_parser_contract() {
+        assert_eq!(SyntaxKind::PipeGt.infix_binding_power(), Some((1, 2)));
+        assert_eq!(SyntaxKind::PipePipe.infix_binding_power(), Some((3, 4)));
+        assert_eq!(SyntaxKind::AmpAmp.infix_binding_power(), Some((5, 6)));
+        assert_eq!(SyntaxKind::Plus.infix_binding_power(), Some((19, 20)));
+        assert_eq!(SyntaxKind::Percent.infix_binding_power(), Some((21, 22)));
+        assert_eq!(SyntaxKind::Ident.infix_binding_power(), None);
     }
 }

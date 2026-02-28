@@ -52,6 +52,10 @@ pub enum TyDiagnosticData {
     UnsupportedRecordPatternPath { path: String },
     /// Path-qualified record literal where path is not a record type.
     NotARecordType { name: String },
+    /// Index access on a type that does not support indexing.
+    InvalidIndexTarget { ty: Ty },
+    /// Method call on a type that has no such method.
+    NoSuchMethod { method: String, ty: Ty },
 }
 
 impl TyDiagnosticData {
@@ -79,6 +83,8 @@ impl TyDiagnosticData {
             TyDiagnosticData::MultiSegmentValuePath { .. } => "E0016",
             TyDiagnosticData::UnsupportedRecordPatternPath { .. } => "E0017",
             TyDiagnosticData::NotARecordType { .. } => "E0021",
+            TyDiagnosticData::InvalidIndexTarget { .. } => "E0022",
+            TyDiagnosticData::NoSuchMethod { .. } => "E0023",
         }
     }
 
@@ -180,6 +186,12 @@ impl TyDiagnosticData {
             }
             TyDiagnosticData::NotARecordType { name } => {
                 format!("`{name}` is not a record type")
+            }
+            TyDiagnosticData::InvalidIndexTarget { ty } => {
+                format!("cannot index into `{}`", dt(ty))
+            }
+            TyDiagnosticData::NoSuchMethod { method, ty } => {
+                format!("no method `{method}` on type `{}`", dt(ty))
             }
         };
         Diagnostic::error(message, span)

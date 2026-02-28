@@ -96,7 +96,12 @@ impl<'a> TyResolutionEnv<'a> {
         let type_item = &self.item_tree.types[type_idx];
 
         // For aliases, resolve the underlying type (substituting type args).
-        if let TypeDefKind::Alias(inner) = &type_item.kind {
+        // Exception: alias-to-record types (e.g., `type Point = { x: Int, y: Int }`)
+        // are treated as named types (Ty::Adt) so that method resolution can
+        // find the type name. Other aliases (path aliases) are expanded normally.
+        if let TypeDefKind::Alias(inner) = &type_item.kind
+            && !matches!(inner, TypeRef::Record { .. })
+        {
             let mut env = self.with_type_args(&type_item.type_params, args, table);
             env.resolving_aliases.push(type_idx);
             return env.resolve_type_ref(inner, table);

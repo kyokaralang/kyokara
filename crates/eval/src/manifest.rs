@@ -35,4 +35,21 @@ impl CapabilityManifest {
     pub fn is_granted(&self, cap_name: &str) -> bool {
         self.caps.contains_key(cap_name)
     }
+
+    /// Return the first fine-grained constraint field currently unsupported
+    /// by the runtime enforcement layer.
+    pub fn first_unsupported_constraint(&self) -> Option<(String, &'static str)> {
+        for (capability, grant) in &self.caps {
+            if grant.allow_domains.is_some() {
+                return Some((capability.clone(), "allow_domains"));
+            }
+            if grant.allow_tables.is_some() {
+                return Some((capability.clone(), "allow_tables"));
+            }
+            if grant.allow_keys.is_some() {
+                return Some((capability.clone(), "allow_keys"));
+            }
+        }
+        None
+    }
 }

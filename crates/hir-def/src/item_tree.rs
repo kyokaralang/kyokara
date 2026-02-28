@@ -55,6 +55,9 @@ pub struct FnItem {
     pub has_body: bool,
     /// Source range of the CST `FnDef` node (for matching back to syntax).
     pub source_range: Option<TextRange>,
+    /// For method definitions (`fn Type.method(self, ...)`), the receiver type name.
+    /// `None` for regular (free) functions.
+    pub receiver_type: Option<Name>,
 }
 
 /// A function parameter.
