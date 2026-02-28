@@ -298,7 +298,7 @@ impl<'a> InferenceCtx<'a> {
         let rhs_ty = self.infer_expr(rhs, &Expectation::Has(lhs_ty.clone()));
 
         match op {
-            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
                 let resolved = self.table.resolve_deep(&lhs_ty);
                 if !resolved.is_poison() && !matches!(resolved, Ty::Int | Ty::Float | Ty::Var(_)) {
                     self.push_diag(TyDiagnosticData::InvalidArithmeticOperand {
@@ -324,6 +324,26 @@ impl<'a> InferenceCtx<'a> {
                 self.unify_or_err(&lhs_ty, &rhs_ty);
                 Ty::Bool
             }
+            BinaryOp::And | BinaryOp::Or => {
+                self.unify_or_err(&Ty::Bool, &lhs_ty);
+                self.unify_or_err(&Ty::Bool, &rhs_ty);
+                Ty::Bool
+            }
+            BinaryOp::BitAnd
+            | BinaryOp::BitOr
+            | BinaryOp::BitXor
+            | BinaryOp::Shl
+            | BinaryOp::Shr => {
+                let resolved = self.table.resolve_deep(&lhs_ty);
+                if !resolved.is_poison() && !matches!(resolved, Ty::Int | Ty::Var(_)) {
+                    self.push_diag(TyDiagnosticData::InvalidArithmeticOperand {
+                        ty: resolved.clone(),
+                    });
+                    return Ty::Error;
+                }
+                self.unify_or_err(&lhs_ty, &rhs_ty);
+                lhs_ty
+            }
         }
     }
 
@@ -346,6 +366,15 @@ impl<'a> InferenceCtx<'a> {
                 }
                 self.unify_or_err(&Ty::Bool, &operand_ty);
                 Ty::Bool
+            }
+            UnaryOp::BitNot => {
+                let resolved = self.table.resolve_deep(&operand_ty);
+                if !resolved.is_poison() && !matches!(resolved, Ty::Int | Ty::Var(_)) {
+                    self.push_diag(TyDiagnosticData::InvalidArithmeticOperand { ty: resolved });
+                    return Ty::Error;
+                }
+                self.unify_or_err(&Ty::Int, &operand_ty);
+                Ty::Int
             }
         }
     }

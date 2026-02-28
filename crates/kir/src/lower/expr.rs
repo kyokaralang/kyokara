@@ -2,7 +2,7 @@
 
 use rustc_hash::FxHashSet;
 
-use kyokara_hir_def::expr::{CallArg, Expr, ExprIdx, Literal, MatchArm, Stmt};
+use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, MatchArm, Stmt};
 use kyokara_hir_def::item_tree::TypeDefKind;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::path::Path;
@@ -23,11 +23,14 @@ impl<'a> LoweringCtx<'a> {
         match expr {
             Expr::Literal(lit) => self.lower_literal(lit, ty),
             Expr::Path(path) => self.lower_path(path, ty),
-            Expr::Binary { op, lhs, rhs } => {
-                let lv = self.lower_expr(lhs);
-                let rv = self.lower_expr(rhs);
-                self.builder.push_binary(op, lv, rv, ty)
-            }
+            Expr::Binary { op, lhs, rhs } => match op {
+                BinaryOp::And | BinaryOp::Or => self.lower_logical_binary(op, lhs, rhs, ty),
+                _ => {
+                    let lv = self.lower_expr(lhs);
+                    let rv = self.lower_expr(rhs);
+                    self.builder.push_binary(op, lv, rv, ty)
+                }
+            },
             Expr::Unary { op, operand } => {
                 let v = self.lower_expr(operand);
                 self.builder.push_unary(op, v, ty)
@@ -198,6 +201,77 @@ impl<'a> LoweringCtx<'a> {
                 self.lower_expr(idx)
             })
             .collect()
+    }
+
+    /// Lower `&&` and `||` with short-circuit semantics using explicit CFG.
+    ///
+    /// `a && b`:
+    /// - if `a` true  -> evaluate `b`
+    /// - if `a` false -> result `false`
+    ///
+    /// `a || b`:
+    /// - if `a` true  -> result `true`
+    /// - if `a` false -> evaluate `b`
+    fn lower_logical_binary(
+        &mut self,
+        op: BinaryOp,
+        lhs: ExprIdx,
+        rhs: ExprIdx,
+        ty: Ty,
+    ) -> ValueId {
+        let lhs_val = self.lower_expr(lhs);
+
+        let rhs_blk = self.builder.new_block(None);
+        let short_blk = self.builder.new_block(None);
+        let merge_blk = self.builder.new_block(Some(self.labels.merge));
+
+        match op {
+            BinaryOp::And => self.builder.set_branch(
+                lhs_val,
+                BranchTarget {
+                    block: rhs_blk,
+                    args: vec![],
+                },
+                BranchTarget {
+                    block: short_blk,
+                    args: vec![],
+                },
+            ),
+            BinaryOp::Or => self.builder.set_branch(
+                lhs_val,
+                BranchTarget {
+                    block: short_blk,
+                    args: vec![],
+                },
+                BranchTarget {
+                    block: rhs_blk,
+                    args: vec![],
+                },
+            ),
+            _ => unreachable!("non-logical operator passed to lower_logical_binary"),
+        }
+
+        self.builder.switch_to(rhs_blk);
+        let rhs_val = self.lower_expr(rhs);
+        if !self.block_has_terminator() {
+            self.builder.set_jump(BranchTarget {
+                block: merge_blk,
+                args: vec![rhs_val],
+            });
+        }
+
+        self.builder.switch_to(short_blk);
+        let short_val = self
+            .builder
+            .push_const(Constant::Bool(matches!(op, BinaryOp::Or)), ty.clone());
+        self.builder.set_jump(BranchTarget {
+            block: merge_blk,
+            args: vec![short_val],
+        });
+
+        let result = self.builder.add_block_param(merge_blk, None, ty);
+        self.builder.switch_to(merge_blk);
+        result
     }
 
     // ── If ───────────────────────────────────────────────────────
