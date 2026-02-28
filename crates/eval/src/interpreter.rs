@@ -391,6 +391,38 @@ impl Interpreter {
             Expr::Call { callee, args } => {
                 let callee_idx = *callee;
                 let args = args.clone();
+
+                // ── Method call resolution ──────────────────────────
+                // If callee is a Field expression, try method dispatch first.
+                if let Expr::Field { base, field } = &body.exprs[callee_idx] {
+                    let base_idx = *base;
+                    let field_name = *field;
+                    let base_val = eval_propagate!(self, env, body, base_idx);
+
+                    if let Some(method_fn) = self.resolve_method(&base_val, field_name) {
+                        let ordered = self.args_in_call_order(&args);
+                        let mut arg_vals = Args::with_capacity(ordered.len() + 1);
+                        arg_vals.push(base_val);
+                        for idx in &ordered {
+                            let v = eval_propagate!(self, env, body, *idx);
+                            arg_vals.push(v);
+                        }
+                        return self.call_value(method_fn, arg_vals).map(ControlFlow::Value);
+                    }
+
+                    // Not a method — fall through to field access + call.
+                    let callee_val = self.eval_field(base_val, field_name)?;
+                    let ordered = self.args_in_call_order(&args);
+                    let mut arg_vals = Args::with_capacity(ordered.len());
+                    for idx in &ordered {
+                        let v = eval_propagate!(self, env, body, *idx);
+                        arg_vals.push(v);
+                    }
+                    return self
+                        .call_value(callee_val, arg_vals)
+                        .map(ControlFlow::Value);
+                }
+
                 let callee_val = eval_propagate!(self, env, body, callee_idx);
 
                 // When calling a user function or lambda with named args,
@@ -590,6 +622,37 @@ impl Interpreter {
 
             Expr::Call { callee, args } => {
                 let callee_idx = *callee;
+
+                // ── Method call resolution (shared path) ────────────
+                if let Expr::Field { base, field } = &body.exprs[callee_idx] {
+                    let base_idx = *base;
+                    let field_name = *field;
+                    let base_val = eval_propagate_shared!(self, body, base_idx);
+
+                    if let Some(method_fn) = self.resolve_method(&base_val, field_name) {
+                        let ordered = self.args_in_call_order(args);
+                        let mut arg_vals = Args::with_capacity(ordered.len() + 1);
+                        arg_vals.push(base_val);
+                        for idx in &ordered {
+                            let v = eval_propagate_shared!(self, body, *idx);
+                            arg_vals.push(v);
+                        }
+                        return self.call_value(method_fn, arg_vals).map(ControlFlow::Value);
+                    }
+
+                    // Not a method — fall through to field access + call.
+                    let callee_val = self.eval_field(base_val, field_name)?;
+                    let ordered = self.args_in_call_order(args);
+                    let mut arg_vals = Args::with_capacity(ordered.len());
+                    for idx in &ordered {
+                        let v = eval_propagate_shared!(self, body, *idx);
+                        arg_vals.push(v);
+                    }
+                    return self
+                        .call_value(callee_val, arg_vals)
+                        .map(ControlFlow::Value);
+                }
+
                 // Note: args borrows body.exprs[idx] immutably, which is compatible
                 // with passing body to eval_expr_shared (also immutable).
                 // The &mut self in eval_expr_shared doesn't conflict because body
@@ -1249,6 +1312,43 @@ impl Interpreter {
             _ => Err(RuntimeError::TypeError(
                 "field access on non-record value".into(),
             )),
+        }
+    }
+
+    /// Map a runtime value to its well-known type name for method lookup.
+    fn value_type_name(&self, val: &Value) -> Option<Name> {
+        let wk = &self.module_scope.well_known_names;
+        match val {
+            Value::String(_) => wk.string,
+            Value::Int(_) => wk.int,
+            Value::Float(_) => wk.float,
+            Value::Bool(_) => wk.bool_,
+            Value::Char(_) => wk.char_,
+            Value::List(_) => wk.list,
+            Value::Map(_) => wk.map,
+            Value::Adt { type_idx, .. } => Some(self.item_tree.types[*type_idx].name),
+            _ => None,
+        }
+    }
+
+    /// Try to resolve a method on a value's type. Returns the method as a
+    /// `Value::Fn` if found, `None` otherwise.
+    fn resolve_method(&self, base: &Value, method_name: Name) -> Option<Value> {
+        let type_name = self.value_type_name(base)?;
+        let fn_idx = self
+            .module_scope
+            .methods
+            .get(&(type_name, method_name))
+            .copied()?;
+
+        // Check if it maps to an intrinsic.
+        let fn_item = &self.item_tree.functions[fn_idx];
+        let fn_name = fn_item.name;
+
+        if let Some(intr) = self.intrinsics.get(&fn_name) {
+            Some(Value::Fn(Box::new(FnValue::Intrinsic(*intr))))
+        } else {
+            Some(Value::Fn(Box::new(FnValue::User(fn_idx))))
         }
     }
 

@@ -8,6 +8,7 @@
 
 pub use kyokara_hir_def::body::Body;
 pub use kyokara_hir_def::builtins::register_builtin_intrinsics;
+pub use kyokara_hir_def::builtins::register_builtin_methods;
 pub use kyokara_hir_def::builtins::register_builtin_types;
 pub use kyokara_hir_def::item_tree::lower::collect_item_tree;
 pub use kyokara_hir_def::item_tree::{
@@ -132,6 +133,7 @@ pub fn check_file(source: &str) -> CheckResult {
         &mut item_result.module_scope,
         &mut interner,
     );
+    register_builtin_methods(&mut item_result.module_scope, &mut interner);
 
     // 5. Type-check all functions (Pass 2 + 3).
     let type_check = check_module(
@@ -218,6 +220,7 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
             &mut item_result.module_scope,
             &mut interner,
         );
+        register_builtin_methods(&mut item_result.module_scope, &mut interner);
 
         all_lowering_diagnostics.extend(item_result.diagnostics);
 
