@@ -1,4 +1,5 @@
 //! End-to-end tests: parse → collect item tree → lower body → verify HIR.
+#![allow(clippy::unwrap_used)]
 
 use kyokara_hir_def::body::lower::lower_body;
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, Literal, Stmt, UnaryOp};

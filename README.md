@@ -150,7 +150,7 @@ Kyokara's compiler follows [rust-analyzer](https://github.com/rust-analyzer/rust
 ```
 Source → Lexer (logos) → Parser (tree-agnostic) → CST (rowan, lossless)
      → HIR (def/ty/facade) → Type Inference → Effect Checking
-     → KyokaraIR (SSA, block-params) → Codegen (WASM, planned)
+     → KyokaraIR (SSA, block-params) → Codegen (WASM)
      → API (structured JSON output)
 ```
 
@@ -170,6 +170,7 @@ crates/
   hir-ty        # type inference + effect checking
   hir           # semantic query facade
   kir           # SSA-based IR (block params, text format, validator, HIR→KIR lowering)
+  codegen       # WASM code generation (KIR → wasm-encoder)
   eval          # tree-walking interpreter
   fmt           # canonical code formatter (Wadler-Lindig Doc IR)
   refactor      # semantic refactor engine (rename, quickfix)
@@ -185,7 +186,7 @@ crates/
 | **v0.0** | Parser ✓, name resolution ✓, CST→HIR lowering ✓, type checker ✓, effect checking ✓, typed holes ✓, structured diagnostics ✓, hole specs ✓, symbol graph ✓, patch suggestions ✓ | **Complete** |
 | **v0.1** | Tree-walking interpreter ✓, intrinsics ✓, builtin Option/Result types ✓, canonical formatter ✓, stable symbol IDs ✓, runtime contracts ✓, core stdlib (List, Map, String, Int/Float) ✓ | **Complete** |
 | **v0.2** | Module system (convention-based layout, `pub` visibility, flat imports) ✓, refactor engine (rename, add missing match cases, add missing capability) ✓, refactor transactions (atomic verify-before-apply) ✓, capability enforcement (type-level E0011 + runtime manifest `--caps`) ✓, LSP server (diagnostics, hover, go-to-def, references, completion, code actions, formatting) ✓ | **Complete** |
-| **v0.3** | KyokaraIR data structures ✓, HIR→KIR lowering ✓, property testing, SMT verification (restricted fragment), WASM codegen, capability sandbox, deterministic replay | In progress |
+| **v0.3** | KyokaraIR data structures ✓, HIR→KIR lowering ✓, WASM codegen MVP (scalars, control flow, calls, ADTs, records) ✓, property testing, SMT verification (restricted fragment), capability sandbox, deterministic replay | In progress |
 
 ## FAQ
 

@@ -14,3 +14,6 @@ kyokara-syntax.workspace = true
 kyokara-diagnostics.workspace = true
 kyokara-parser.workspace = true
 rowan.workspace = true
+
+[lints]
+workspace = true

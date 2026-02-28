@@ -453,6 +453,8 @@ fn should_use_project_mode(path: &std::path::Path, force_project: bool) -> bool 
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
     use std::cell::RefCell;
     use std::collections::BTreeMap;

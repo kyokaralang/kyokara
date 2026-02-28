@@ -142,6 +142,8 @@ fn fits(mut remaining: i32, initial: &[(i32, Mode, &Doc)]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
     use crate::doc::Doc;
 

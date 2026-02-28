@@ -184,6 +184,7 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
     // 4. Type-check each module.
     let mut type_checks = Vec::new();
     for (mod_path, cst_root) in &cst_roots {
+        #[allow(clippy::unwrap_used)] // key comes from cst_roots, always in module_graph
         let info = module_graph.get(mod_path).unwrap();
         let tc = check_module(
             cst_root,
