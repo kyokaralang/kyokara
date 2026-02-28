@@ -176,6 +176,135 @@ fn infer_block_with_stmts() {
     );
 }
 
+// ── Modulo type inference ────────────────────────────────────────────
+
+#[test]
+fn infer_modulo_int() {
+    check_ok("fn foo() -> Int { 10 % 3 }");
+}
+
+#[test]
+fn infer_modulo_float() {
+    check_ok("fn foo() -> Float { 3.14 % 1.0 }");
+}
+
+#[test]
+fn err_modulo_on_bool() {
+    check_err("fn foo() -> Bool { true % false }", "arithmetic");
+}
+
+#[test]
+fn err_modulo_on_string() {
+    check_err(r#"fn foo() -> String { "a" % "b" }"#, "arithmetic");
+}
+
+// ── Logical operator type inference ─────────────────────────────────
+
+#[test]
+fn infer_logical_and() {
+    check_ok("fn foo() -> Bool { true && false }");
+}
+
+#[test]
+fn infer_logical_or() {
+    check_ok("fn foo() -> Bool { true || false }");
+}
+
+#[test]
+fn err_logical_and_on_int() {
+    check_err("fn foo() -> Bool { 1 && 2 }", "type mismatch");
+}
+
+#[test]
+fn err_logical_or_on_int() {
+    check_err("fn foo() -> Bool { 1 || 2 }", "type mismatch");
+}
+
+// ── Bitwise operator type inference ─────────────────────────────────
+
+#[test]
+fn infer_bitwise_and() {
+    check_ok("fn foo() -> Int { 12 & 10 }");
+}
+
+#[test]
+fn infer_bitwise_or() {
+    check_ok("fn foo() -> Int { 12 | 10 }");
+}
+
+#[test]
+fn infer_bitwise_xor() {
+    check_ok("fn foo() -> Int { 12 ^ 10 }");
+}
+
+#[test]
+fn infer_shl() {
+    check_ok("fn foo() -> Int { 1 << 3 }");
+}
+
+#[test]
+fn infer_shr() {
+    check_ok("fn foo() -> Int { 8 >> 2 }");
+}
+
+#[test]
+fn infer_bitwise_not() {
+    check_ok("fn foo() -> Int { ~42 }");
+}
+
+#[test]
+fn err_bitwise_and_on_float() {
+    check_err("fn foo() -> Float { 1.0 & 2.0 }", "arithmetic");
+}
+
+#[test]
+fn err_bitwise_or_on_bool() {
+    check_err("fn foo() -> Bool { true | false }", "arithmetic");
+}
+
+#[test]
+fn err_bitwise_xor_on_string() {
+    check_err(r#"fn foo() -> String { "a" ^ "b" }"#, "arithmetic");
+}
+
+#[test]
+fn err_shl_on_float() {
+    check_err("fn foo() -> Float { 1.0 << 2 }", "arithmetic");
+}
+
+#[test]
+fn err_bitwise_not_on_bool() {
+    check_err("fn foo() -> Bool { ~true }", "arithmetic");
+}
+
+#[test]
+fn err_bitwise_not_on_float() {
+    check_err("fn foo() -> Float { ~1.0 }", "arithmetic");
+}
+
+// ── Combined operator type inference ────────────────────────────────
+
+#[test]
+fn infer_bitwise_in_comparison() {
+    // (a & b) == c — bitwise result is Int, comparison returns Bool
+    check_ok("fn foo() -> Bool { (3 & 1) == 1 }");
+}
+
+#[test]
+fn infer_bitwise_with_logical() {
+    check_ok("fn foo() -> Bool { (3 & 1) == 1 && (4 | 2) == 6 }");
+}
+
+#[test]
+fn infer_shift_with_addition() {
+    check_ok("fn foo() -> Int { 1 + (1 << 3) }");
+}
+
+#[test]
+fn infer_tilde_in_expression() {
+    check_ok("fn foo() -> Int { ~0 + 1 }");
+}
+
 // ── Type error tests ─────────────────────────────────────────────────
 
 #[test]

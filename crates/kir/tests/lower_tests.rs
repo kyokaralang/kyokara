@@ -141,6 +141,83 @@ fn test_not() {
     assert!(out.contains("not x"), "output:\n{out}");
 }
 
+// ── Modulo ──────────────────────────────────────────────────────
+
+#[test]
+fn test_rem() {
+    let out = lower_and_display("fn f(x: Int, y: Int) -> Int { x % y }");
+    assert!(out.contains("rem x, y"), "output:\n{out}");
+}
+
+// ── Bitwise binary ops ──────────────────────────────────────────
+
+#[test]
+fn test_bit_and() {
+    let out = lower_and_display("fn f(x: Int, y: Int) -> Int { x & y }");
+    assert!(out.contains("bit_and x, y"), "output:\n{out}");
+}
+
+#[test]
+fn test_bit_or() {
+    let out = lower_and_display("fn f(x: Int, y: Int) -> Int { x | y }");
+    assert!(out.contains("bit_or x, y"), "output:\n{out}");
+}
+
+#[test]
+fn test_bit_xor() {
+    let out = lower_and_display("fn f(x: Int, y: Int) -> Int { x ^ y }");
+    assert!(out.contains("bit_xor x, y"), "output:\n{out}");
+}
+
+#[test]
+fn test_shl() {
+    let out = lower_and_display("fn f(x: Int, y: Int) -> Int { x << y }");
+    assert!(out.contains("shl x, y"), "output:\n{out}");
+}
+
+#[test]
+fn test_shr() {
+    let out = lower_and_display("fn f(x: Int, y: Int) -> Int { x >> y }");
+    assert!(out.contains("shr x, y"), "output:\n{out}");
+}
+
+// ── Bitwise unary ───────────────────────────────────────────────
+
+#[test]
+fn test_bit_not() {
+    let out = lower_and_display("fn f(x: Int) -> Int { ~x }");
+    assert!(out.contains("bit_not x"), "output:\n{out}");
+}
+
+// ── Logical operators in KIR ─────────────────────────────────────
+// At the KIR level, && and || lower as binary "and"/"or" ops.
+// Short-circuit semantics are handled by the tree-walking interpreter
+// at the Expr::Binary dispatch, not at the KIR level.
+
+#[test]
+fn test_logical_and() {
+    let out = lower_and_display("fn f(a: Bool, b: Bool) -> Bool { a && b }");
+    assert!(out.contains("and a, b"), "output:\n{out}");
+}
+
+#[test]
+fn test_logical_or() {
+    let out = lower_and_display("fn f(a: Bool, b: Bool) -> Bool { a || b }");
+    assert!(out.contains("or a, b"), "output:\n{out}");
+}
+
+// ── Chained bitwise ops ─────────────────────────────────────────
+
+#[test]
+fn test_chained_bitwise_and() {
+    let out = lower_and_display("fn f(x: Int, y: Int, z: Int) -> Int { x & y & z }");
+    let count = out.matches("bit_and").count();
+    assert!(
+        count >= 2,
+        "expected 2 bit_and ops, got {count}. output:\n{out}"
+    );
+}
+
 // ── Calls ────────────────────────────────────────────────────────
 
 #[test]

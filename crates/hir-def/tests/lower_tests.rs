@@ -334,6 +334,182 @@ fn lower_field_expr() {
     }
 }
 
+// ── Modulo, logical, and bitwise operator lowering ─────────────────
+
+#[test]
+fn lower_modulo_expr() {
+    let (body, diags, _) = lower_fn_body("fn foo(x: Int) { x % 3 }");
+    assert!(diags.is_empty());
+    match &body.exprs[body.root] {
+        Expr::Block {
+            tail: Some(tail), ..
+        } => match &body.exprs[*tail] {
+            Expr::Binary {
+                op: BinaryOp::Mod, ..
+            } => {}
+            other => panic!("expected Binary Mod, got {other:?}"),
+        },
+        other => panic!("expected Block, got {other:?}"),
+    }
+}
+
+#[test]
+fn lower_logical_and_expr() {
+    let (body, diags, _) = lower_fn_body("fn foo(a: Bool, b: Bool) { a && b }");
+    assert!(diags.is_empty());
+    match &body.exprs[body.root] {
+        Expr::Block {
+            tail: Some(tail), ..
+        } => match &body.exprs[*tail] {
+            Expr::Binary {
+                op: BinaryOp::And, ..
+            } => {}
+            other => panic!("expected Binary And, got {other:?}"),
+        },
+        other => panic!("expected Block, got {other:?}"),
+    }
+}
+
+#[test]
+fn lower_logical_or_expr() {
+    let (body, diags, _) = lower_fn_body("fn foo(a: Bool, b: Bool) { a || b }");
+    assert!(diags.is_empty());
+    match &body.exprs[body.root] {
+        Expr::Block {
+            tail: Some(tail), ..
+        } => match &body.exprs[*tail] {
+            Expr::Binary {
+                op: BinaryOp::Or, ..
+            } => {}
+            other => panic!("expected Binary Or, got {other:?}"),
+        },
+        other => panic!("expected Block, got {other:?}"),
+    }
+}
+
+#[test]
+fn lower_bitwise_and_expr() {
+    let (body, diags, _) = lower_fn_body("fn foo(x: Int, y: Int) { x & y }");
+    assert!(diags.is_empty());
+    match &body.exprs[body.root] {
+        Expr::Block {
+            tail: Some(tail), ..
+        } => match &body.exprs[*tail] {
+            Expr::Binary {
+                op: BinaryOp::BitAnd,
+                ..
+            } => {}
+            other => panic!("expected Binary BitAnd, got {other:?}"),
+        },
+        other => panic!("expected Block, got {other:?}"),
+    }
+}
+
+#[test]
+fn lower_bitwise_or_expr() {
+    let (body, diags, _) = lower_fn_body("fn foo(x: Int, y: Int) { x | y }");
+    assert!(diags.is_empty());
+    match &body.exprs[body.root] {
+        Expr::Block {
+            tail: Some(tail), ..
+        } => match &body.exprs[*tail] {
+            Expr::Binary {
+                op: BinaryOp::BitOr,
+                ..
+            } => {}
+            other => panic!("expected Binary BitOr, got {other:?}"),
+        },
+        other => panic!("expected Block, got {other:?}"),
+    }
+}
+
+#[test]
+fn lower_bitwise_xor_expr() {
+    let (body, diags, _) = lower_fn_body("fn foo(x: Int, y: Int) { x ^ y }");
+    assert!(diags.is_empty());
+    match &body.exprs[body.root] {
+        Expr::Block {
+            tail: Some(tail), ..
+        } => match &body.exprs[*tail] {
+            Expr::Binary {
+                op: BinaryOp::BitXor,
+                ..
+            } => {}
+            other => panic!("expected Binary BitXor, got {other:?}"),
+        },
+        other => panic!("expected Block, got {other:?}"),
+    }
+}
+
+#[test]
+fn lower_shl_expr() {
+    let (body, diags, _) = lower_fn_body("fn foo(x: Int) { x << 3 }");
+    assert!(diags.is_empty());
+    match &body.exprs[body.root] {
+        Expr::Block {
+            tail: Some(tail), ..
+        } => match &body.exprs[*tail] {
+            Expr::Binary {
+                op: BinaryOp::Shl, ..
+            } => {}
+            other => panic!("expected Binary Shl, got {other:?}"),
+        },
+        other => panic!("expected Block, got {other:?}"),
+    }
+}
+
+#[test]
+fn lower_shr_expr() {
+    let (body, diags, _) = lower_fn_body("fn foo(x: Int) { x >> 2 }");
+    assert!(diags.is_empty());
+    match &body.exprs[body.root] {
+        Expr::Block {
+            tail: Some(tail), ..
+        } => match &body.exprs[*tail] {
+            Expr::Binary {
+                op: BinaryOp::Shr, ..
+            } => {}
+            other => panic!("expected Binary Shr, got {other:?}"),
+        },
+        other => panic!("expected Block, got {other:?}"),
+    }
+}
+
+#[test]
+fn lower_bitwise_not_expr() {
+    let (body, diags, _) = lower_fn_body("fn foo(x: Int) { ~x }");
+    assert!(diags.is_empty());
+    match &body.exprs[body.root] {
+        Expr::Block {
+            tail: Some(tail), ..
+        } => match &body.exprs[*tail] {
+            Expr::Unary {
+                op: UnaryOp::BitNot,
+                ..
+            } => {}
+            other => panic!("expected Unary BitNot, got {other:?}"),
+        },
+        other => panic!("expected Block, got {other:?}"),
+    }
+}
+
+#[test]
+fn lower_neg_expr() {
+    let (body, diags, _) = lower_fn_body("fn foo(x: Int) { -x }");
+    assert!(diags.is_empty());
+    match &body.exprs[body.root] {
+        Expr::Block {
+            tail: Some(tail), ..
+        } => match &body.exprs[*tail] {
+            Expr::Unary {
+                op: UnaryOp::Neg, ..
+            } => {}
+            other => panic!("expected Unary Neg, got {other:?}"),
+        },
+        other => panic!("expected Block, got {other:?}"),
+    }
+}
+
 // ── Desugaring tests ───────────────────────────────────────────────
 
 #[test]
