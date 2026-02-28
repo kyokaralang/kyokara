@@ -1143,3 +1143,407 @@ fn test_comparison_result_in_computation() {
 fn test_double_negation() {
     assert_eq!(run_main_i64("fn main() -> Int { -(-(5)) }"), 5);
 }
+
+// ══════════════════════════════════════════════════════════════════
+// Phase 1: Negative & Edge-Case Tests
+// ══════════════════════════════════════════════════════════════════
+
+// ── Contract Edge Cases ───────────────────────────────────────────
+
+#[test]
+fn test_ensures_gteq_pass() {
+    // ensures with >= comparison on result — passes (15 >= 10).
+    assert_eq!(
+        run_main_i64(
+            "fn tripled(x: Int) -> Int ensures result >= 10 { x * 3 }\n\
+             fn main() -> Int { tripled(5) }"
+        ),
+        15
+    );
+}
+
+#[test]
+fn test_ensures_gteq_traps() {
+    // 3 >= 10 is false → trap.
+    assert!(run_main_traps(
+        "fn tripled(x: Int) -> Int ensures result >= 10 { x }\n\
+         fn main() -> Int { tripled(3) }"
+    ));
+}
+
+#[test]
+fn test_ensures_equality_pass() {
+    assert_eq!(
+        run_main_i64(
+            "fn get_42() -> Int ensures result == 42 { 42 }\n\
+             fn main() -> Int { get_42() }"
+        ),
+        42
+    );
+}
+
+#[test]
+fn test_ensures_equality_traps() {
+    assert!(run_main_traps(
+        "fn get_42() -> Int ensures result == 42 { 41 }\n\
+         fn main() -> Int { get_42() }"
+    ));
+}
+
+#[test]
+fn test_requires_and_ensures_both_pass() {
+    assert_eq!(
+        run_main_i64(
+            "fn safe(x: Int) -> Int requires x > 0 ensures result > x { x + 1 }\n\
+             fn main() -> Int { safe(5) }"
+        ),
+        6
+    );
+}
+
+#[test]
+fn test_requires_pass_ensures_fail_traps() {
+    // requires passes (5 > 0), but ensures fails (4 > 5 is false).
+    assert!(run_main_traps(
+        "fn safe(x: Int) -> Int requires x > 0 ensures result > x { x - 1 }\n\
+         fn main() -> Int { safe(5) }"
+    ));
+}
+
+#[test]
+fn test_requires_fail_with_ensures_traps() {
+    // requires fails first (-1 > 0 is false) — traps before body runs.
+    assert!(run_main_traps(
+        "fn safe(x: Int) -> Int requires x > 0 ensures result > x { x + 1 }\n\
+         fn main() -> Int { safe(-1) }"
+    ));
+}
+
+#[test]
+fn test_contract_on_bool_returning_fn() {
+    // ensures on a Bool-returning function, condition uses result.
+    assert_eq!(
+        run_main_i32(
+            "fn check(x: Int) -> Bool ensures result == true { x > 10 }\n\
+             fn main() -> Bool { check(42) }"
+        ),
+        1
+    );
+}
+
+// ── Stack Hygiene (regression guards for alloc fix) ───────────────
+
+#[test]
+fn test_multiple_adt_in_same_if_arm() {
+    // Two ADT constructions in the same then-arm — both allocs must
+    // leave the value stack clean.
+    assert_eq!(
+        run_main_i64(
+            "type Opt = | Some(Int) | None\n\
+             fn main() -> Int {\n\
+               let x = 5\n\
+               let pair = if x > 0 {\n\
+                 let a = Some(x)\n\
+                 let b = Some(x * 2)\n\
+                 let va = match a { Some(v) => v\n None => 0 }\n\
+                 let vb = match b { Some(v) => v\n None => 0 }\n\
+                 va + vb\n\
+               } else { 0 }\n\
+               pair\n\
+             }"
+        ),
+        15
+    );
+}
+
+#[test]
+fn test_adt_in_deeply_nested_if() {
+    // ADT construction at the bottom of 3 levels of if/else nesting.
+    assert_eq!(
+        run_main_i64(
+            "type Opt = | Some(Int) | None\n\
+             fn main() -> Int {\n\
+               let x = 5\n\
+               let opt = if x > 0 {\n\
+                 if x > 3 {\n\
+                   if x > 4 { Some(x) } else { None }\n\
+                 } else { None }\n\
+               } else { None }\n\
+               match opt { Some(v) => v\n None => -1 }\n\
+             }"
+        ),
+        5
+    );
+}
+
+#[test]
+fn test_adt_in_nested_match_arms() {
+    // ADT construction in both arms of a match that's inside another match.
+    assert_eq!(
+        run_main_i64(
+            "type AB = | A | B\n\
+             type Opt = | Some(Int) | None\n\
+             fn main() -> Int {\n\
+               let x = A\n\
+               let opt = match x {\n\
+                 A => match B {\n\
+                   A => Some(1)\n\
+                   B => Some(2)\n\
+                 }\n\
+                 B => None\n\
+               }\n\
+               match opt { Some(v) => v\n None => 0 }\n\
+             }"
+        ),
+        2
+    );
+}
+
+#[test]
+fn test_record_in_if_arms() {
+    // Record construction in both if/else arms.
+    assert_eq!(
+        run_main_i64(
+            "type Pair = { x: Int, y: Int }\n\
+             fn main() -> Int {\n\
+               let cond = true\n\
+               let r = if cond { Pair { x: 10, y: 20 } } else { Pair { x: 1, y: 2 } }\n\
+               r.x + r.y\n\
+             }"
+        ),
+        30
+    );
+}
+
+#[test]
+fn test_mixed_adt_and_record_in_scope() {
+    // ADT and record allocations interleaved in the same block.
+    assert_eq!(
+        run_main_i64(
+            "type Opt = | Some(Int) | None\n\
+             type Pair = { x: Int, y: Int }\n\
+             fn main() -> Int {\n\
+               let a = Some(10)\n\
+               let r = Pair { x: 20, y: 30 }\n\
+               let b = Some(40)\n\
+               let va = match a { Some(v) => v\n None => 0 }\n\
+               let vb = match b { Some(v) => v\n None => 0 }\n\
+               va + r.x + r.y + vb\n\
+             }"
+        ),
+        100
+    );
+}
+
+#[test]
+fn test_record_in_match_arm_with_if() {
+    // Record construction inside an if/else that's inside a match arm.
+    assert_eq!(
+        run_main_i64(
+            "type Opt = | Some(Int) | None\n\
+             type Pair = { x: Int, y: Int }\n\
+             fn main() -> Int {\n\
+               let r = match Some(5) {\n\
+                 Some(v) => if v > 3 {\n\
+                   Pair { x: v, y: v * 10 }\n\
+                 } else {\n\
+                   Pair { x: 0, y: 0 }\n\
+                 }\n\
+                 None => Pair { x: -1, y: -1 }\n\
+               }\n\
+               r.x + r.y\n\
+             }"
+        ),
+        55
+    );
+}
+
+// ── Control Flow Edge Cases ───────────────────────────────────────
+
+#[test]
+fn test_match_all_arms_return() {
+    // Every arm uses explicit return — no merge block exists.
+    assert_eq!(
+        run_main_i64(
+            "type Opt = | Some(Int) | None\n\
+             fn extract(o: Opt) -> Int {\n\
+               match o {\n\
+                 Some(x) => return x\n\
+                 None => return -1\n\
+               }\n\
+             }\n\
+             fn main() -> Int { extract(Some(42)) }"
+        ),
+        42
+    );
+}
+
+#[test]
+fn test_match_all_arms_return_default() {
+    // Same but hits the None arm.
+    assert_eq!(
+        run_main_i64(
+            "type Opt = | Some(Int) | None\n\
+             fn extract(o: Opt) -> Int {\n\
+               match o {\n\
+                 Some(x) => return x\n\
+                 None => return -1\n\
+               }\n\
+             }\n\
+             fn main() -> Int { extract(None) }"
+        ),
+        -1
+    );
+}
+
+#[test]
+fn test_if_both_arms_explicit_return() {
+    // Both if/else branches use explicit return — no merge block.
+    assert_eq!(
+        run_main_i64(
+            "fn abs_ret(x: Int) -> Int {\n\
+               if x > 0 { return x } else { return -(x) }\n\
+             }\n\
+             fn main() -> Int { abs_ret(-7) }"
+        ),
+        7
+    );
+}
+
+#[test]
+fn test_match_mixed_branch_and_switch_arms() {
+    // One arm has if/else (Branch), another has nested match (Switch).
+    assert_eq!(
+        run_main_i64(
+            "type Outer = | A(Int) | B(Int)\n\
+             type Inner = | X(Int) | Y\n\
+             fn main() -> Int {\n\
+               let o = A(5)\n\
+               match o {\n\
+                 A(v) => if v > 3 { v * 10 } else { v }\n\
+                 B(v) => match X(v) {\n\
+                   X(w) => w + 100\n\
+                   Y => 0\n\
+                 }\n\
+               }\n\
+             }"
+        ),
+        50
+    );
+}
+
+#[test]
+fn test_match_mixed_branch_and_switch_arms_other() {
+    // Same structure but hits the B arm (nested Switch path).
+    assert_eq!(
+        run_main_i64(
+            "type Outer = | A(Int) | B(Int)\n\
+             type Inner = | X(Int) | Y\n\
+             fn main() -> Int {\n\
+               let o = B(7)\n\
+               match o {\n\
+                 A(v) => if v > 3 { v * 10 } else { v }\n\
+                 B(v) => match X(v) {\n\
+                   X(w) => w + 100\n\
+                   Y => 0\n\
+                 }\n\
+               }\n\
+             }"
+        ),
+        107
+    );
+}
+
+#[test]
+fn test_single_variant_match() {
+    // Single-variant ADT — br_table with one entry.
+    assert_eq!(
+        run_main_i64(
+            "type Wrap = | Wrap(Int)\n\
+             fn main() -> Int {\n\
+               match Wrap(42) {\n\
+                 Wrap(x) => x\n\
+               }\n\
+             }"
+        ),
+        42
+    );
+}
+
+// ── Arithmetic Boundaries ─────────────────────────────────────────
+
+#[test]
+fn test_int_division_by_zero_traps() {
+    // WASM i64.div_s traps on division by zero.
+    assert!(run_main_traps("fn main() -> Int { 10 / 0 }"));
+}
+
+#[test]
+fn test_int_overflow_add_wraps() {
+    // WASM i64.add wraps: i64::MAX + 1 = i64::MIN.
+    assert_eq!(
+        run_main_i64("fn main() -> Int { 9223372036854775807 + 1 }"),
+        i64::MIN
+    );
+}
+
+#[test]
+fn test_int_overflow_sub_wraps() {
+    // i64::MIN - 1 wraps to i64::MAX.
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               let min = -(9223372036854775807) - 1\n\
+               min - 1\n\
+             }"
+        ),
+        i64::MAX
+    );
+}
+
+#[test]
+fn test_int_min_div_neg_one_traps() {
+    // i64::MIN / -1 overflows (result would be i64::MAX+1) — WASM traps.
+    assert!(run_main_traps(
+        "fn main() -> Int {\n\
+           let min = -(9223372036854775807) - 1\n\
+           min / -1\n\
+         }"
+    ));
+}
+
+#[test]
+fn test_int_max_literal() {
+    assert_eq!(
+        run_main_i64("fn main() -> Int { 9223372036854775807 }"),
+        i64::MAX
+    );
+}
+
+#[test]
+fn test_float_nan_eq_self_false() {
+    // IEEE 754: NaN == NaN is false.
+    assert_eq!(
+        run_main_i32(
+            "fn main() -> Bool {\n\
+               let nan = 0.0 / 0.0\n\
+               nan == nan\n\
+             }"
+        ),
+        0
+    );
+}
+
+#[test]
+fn test_float_nan_neq_self_true() {
+    // IEEE 754: NaN != NaN is true.
+    assert_eq!(
+        run_main_i32(
+            "fn main() -> Bool {\n\
+               let nan = 0.0 / 0.0\n\
+               nan != nan\n\
+             }"
+        ),
+        1
+    );
+}
