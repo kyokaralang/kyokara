@@ -3700,9 +3700,8 @@ fn eval_read_file_multiline() {
     let file_path = dir.path().join("multi.txt");
     std::fs::write(&file_path, "line1\nline2\nline3\n").unwrap();
     let path_str = file_path.to_str().unwrap();
-    let source = format!(
-        r#"fn main() -> Int {{ list_len(string_lines(read_file("{path_str}"))) }}"#
-    );
+    let source =
+        format!(r#"fn main() -> Int {{ list_len(string_lines(read_file("{path_str}"))) }}"#);
     let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
     let val = run_with_manifest_ok(&source, Some(manifest));
     assert_eq!(val, Value::Int(3));
@@ -3968,7 +3967,10 @@ fn eval_list_sort_unsortable() {
             list_len(sorted)
         }",
     );
-    assert!(err.contains("unsortable") || err.contains("list_sort"), "got: {err}");
+    assert!(
+        err.contains("unsortable") || err.contains("list_sort"),
+        "got: {err}"
+    );
 }
 
 // ── list_sort_by tests ──────────────────────────────────────────────

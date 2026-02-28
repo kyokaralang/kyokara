@@ -66,6 +66,21 @@ pub enum IntrinsicFn {
     FloatMax,
     IntToFloat,
     FloatToInt,
+
+    // Parsing
+    ParseInt,
+    ParseFloat,
+
+    // String decomposition
+    StringLines,
+    StringChars,
+
+    // File I/O
+    ReadFile,
+
+    // Sorting
+    ListSort,
+    ListSortBy,
 }
 
 impl IntrinsicFn {
@@ -76,6 +91,7 @@ impl IntrinsicFn {
     pub fn required_capability(self) -> Option<&'static str> {
         match self {
             IntrinsicFn::Print | IntrinsicFn::Println => Some("io"),
+            IntrinsicFn::ReadFile => Some("fs"),
             _ => None,
         }
     }
@@ -91,6 +107,7 @@ impl IntrinsicFn {
                 | IntrinsicFn::ListFilter
                 | IntrinsicFn::ListFold
                 | IntrinsicFn::MapGet
+                | IntrinsicFn::ListSortBy
         )
     }
 
@@ -466,13 +483,150 @@ impl IntrinsicFn {
                 Ok(Value::Int(*f as i64))
             }
 
+            // ── Parsing ────────────────────────────────────────────
+            IntrinsicFn::ParseInt => {
+                let Value::String(s) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "parse_int expects a String argument".into(),
+                    ));
+                };
+                s.parse::<i64>()
+                    .map(Value::Int)
+                    .map_err(|e| RuntimeError::TypeError(format!("parse_int: {e}")))
+            }
+            IntrinsicFn::ParseFloat => {
+                let Value::String(s) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "parse_float expects a String argument".into(),
+                    ));
+                };
+                s.parse::<f64>()
+                    .map(Value::Float)
+                    .map_err(|e| RuntimeError::TypeError(format!("parse_float: {e}")))
+            }
+
+            // ── String decomposition ──────────────────────────────
+            IntrinsicFn::StringLines => {
+                let Value::String(s) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "string_lines expects a String argument".into(),
+                    ));
+                };
+                let lines: Vec<Value> = s.lines().map(|l| Value::String(l.to_string())).collect();
+                Ok(Value::List(lines))
+            }
+            IntrinsicFn::StringChars => {
+                let Value::String(s) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "string_chars expects a String argument".into(),
+                    ));
+                };
+                let chars: Vec<Value> = s.chars().map(Value::Char).collect();
+                Ok(Value::List(chars))
+            }
+
+            // ── File I/O ──────────────────────────────────────────
+            IntrinsicFn::ReadFile => {
+                let Value::String(path) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "read_file expects a String argument".into(),
+                    ));
+                };
+                std::fs::read_to_string(path)
+                    .map(Value::String)
+                    .map_err(|e| RuntimeError::TypeError(format!("read_file: {e}")))
+            }
+
+            // ── Sorting (natural order) ───────────────────────────
+            IntrinsicFn::ListSort => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError("list_sort expects a List".into()));
+                };
+                if xs.is_empty() {
+                    return Ok(Value::List(Vec::new()));
+                }
+                match &xs[0] {
+                    Value::Int(_) => {
+                        let mut ints = Vec::with_capacity(xs.len());
+                        for v in xs {
+                            let Value::Int(n) = v else {
+                                return Err(RuntimeError::TypeError(
+                                    "list_sort: mixed types in list".into(),
+                                ));
+                            };
+                            ints.push(*n);
+                        }
+                        ints.sort();
+                        Ok(Value::List(ints.into_iter().map(Value::Int).collect()))
+                    }
+                    Value::Float(_) => {
+                        let mut floats = Vec::with_capacity(xs.len());
+                        for v in xs {
+                            let Value::Float(f) = v else {
+                                return Err(RuntimeError::TypeError(
+                                    "list_sort: mixed types in list".into(),
+                                ));
+                            };
+                            floats.push(*f);
+                        }
+                        floats.sort_by(f64::total_cmp);
+                        Ok(Value::List(floats.into_iter().map(Value::Float).collect()))
+                    }
+                    Value::String(_) => {
+                        let mut strings = Vec::with_capacity(xs.len());
+                        for v in xs {
+                            let Value::String(s) = v else {
+                                return Err(RuntimeError::TypeError(
+                                    "list_sort: mixed types in list".into(),
+                                ));
+                            };
+                            strings.push(s.clone());
+                        }
+                        strings.sort();
+                        Ok(Value::List(
+                            strings.into_iter().map(Value::String).collect(),
+                        ))
+                    }
+                    Value::Char(_) => {
+                        let mut chars = Vec::with_capacity(xs.len());
+                        for v in xs {
+                            let Value::Char(c) = v else {
+                                return Err(RuntimeError::TypeError(
+                                    "list_sort: mixed types in list".into(),
+                                ));
+                            };
+                            chars.push(*c);
+                        }
+                        chars.sort();
+                        Ok(Value::List(chars.into_iter().map(Value::Char).collect()))
+                    }
+                    Value::Bool(_) => {
+                        let mut bools = Vec::with_capacity(xs.len());
+                        for v in xs {
+                            let Value::Bool(b) = v else {
+                                return Err(RuntimeError::TypeError(
+                                    "list_sort: mixed types in list".into(),
+                                ));
+                            };
+                            bools.push(*b);
+                        }
+                        bools.sort();
+                        Ok(Value::List(bools.into_iter().map(Value::Bool).collect()))
+                    }
+                    _ => Err(RuntimeError::TypeError(
+                        "list_sort: unsortable element type".into(),
+                    )),
+                }
+            }
+
             // ── Complex (intercepted by interpreter) ─────────────
             IntrinsicFn::ListGet
             | IntrinsicFn::ListHead
             | IntrinsicFn::ListMap
             | IntrinsicFn::ListFilter
             | IntrinsicFn::ListFold
-            | IntrinsicFn::MapGet => Err(RuntimeError::TypeError(
+            | IntrinsicFn::MapGet
+            | IntrinsicFn::ListSortBy => Err(RuntimeError::TypeError(
                 "complex intrinsic called without interpreter context".into(),
             )),
         }
@@ -569,5 +723,22 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (Name::new(interner, "float_max"), IntrinsicFn::FloatMax),
         (Name::new(interner, "int_to_float"), IntrinsicFn::IntToFloat),
         (Name::new(interner, "float_to_int"), IntrinsicFn::FloatToInt),
+        // Parsing
+        (Name::new(interner, "parse_int"), IntrinsicFn::ParseInt),
+        (Name::new(interner, "parse_float"), IntrinsicFn::ParseFloat),
+        // String decomposition
+        (
+            Name::new(interner, "string_lines"),
+            IntrinsicFn::StringLines,
+        ),
+        (
+            Name::new(interner, "string_chars"),
+            IntrinsicFn::StringChars,
+        ),
+        // File I/O
+        (Name::new(interner, "read_file"), IntrinsicFn::ReadFile),
+        // Sorting
+        (Name::new(interner, "list_sort"), IntrinsicFn::ListSort),
+        (Name::new(interner, "list_sort_by"), IntrinsicFn::ListSortBy),
     ]
 }
