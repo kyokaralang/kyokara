@@ -282,6 +282,10 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
         path: Path::single(Name::new(interner, "List")),
         args: vec![string_ty.clone()],
     };
+    let list_char = TypeRef::Path {
+        path: Path::single(Name::new(interner, "List")),
+        args: vec![char_ty.clone()],
+    };
     let map_kv = TypeRef::Path {
         path: Path::single(Name::new(interner, "Map")),
         args: vec![k_ref.clone(), v_ref.clone()],
@@ -307,6 +311,10 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
     let fn_ut_to_u = TypeRef::Fn {
         params: vec![u_ref.clone(), t_ref.clone()],
         ret: Box::new(u_ref.clone()),
+    };
+    let fn_tt_to_int = TypeRef::Fn {
+        params: vec![t_ref.clone(), t_ref.clone()],
+        ret: Box::new(int_ty.clone()),
     };
 
     vec![
@@ -660,6 +668,66 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
             vec![],
             vec![("f", float_ty.clone())],
             int_ty.clone(),
+        ),
+        // ── Parsing ──────────────────────────────────────────────
+        // parse_int(s: String) -> Int
+        mk_intrinsic(
+            interner,
+            "parse_int",
+            vec![],
+            vec![("s", string_ty.clone())],
+            int_ty.clone(),
+        ),
+        // parse_float(s: String) -> Float
+        mk_intrinsic(
+            interner,
+            "parse_float",
+            vec![],
+            vec![("s", string_ty.clone())],
+            float_ty.clone(),
+        ),
+        // ── String decomposition ─────────────────────────────────
+        // string_lines(s: String) -> List<String>
+        mk_intrinsic(
+            interner,
+            "string_lines",
+            vec![],
+            vec![("s", string_ty.clone())],
+            list_string.clone(),
+        ),
+        // string_chars(s: String) -> List<Char>
+        mk_intrinsic(
+            interner,
+            "string_chars",
+            vec![],
+            vec![("s", string_ty.clone())],
+            list_char,
+        ),
+        // ── File I/O ─────────────────────────────────────────────
+        // read_file(path: String) -> String
+        mk_intrinsic(
+            interner,
+            "read_file",
+            vec![],
+            vec![("path", string_ty.clone())],
+            string_ty,
+        ),
+        // ── Sorting ──────────────────────────────────────────────
+        // list_sort<T>(xs: List<T>) -> List<T>
+        mk_intrinsic(
+            interner,
+            "list_sort",
+            vec![t_name],
+            vec![("xs", list_t.clone())],
+            list_t.clone(),
+        ),
+        // list_sort_by<T>(xs: List<T>, cmp: fn(T, T) -> Int) -> List<T>
+        mk_intrinsic(
+            interner,
+            "list_sort_by",
+            vec![t_name],
+            vec![("xs", list_t.clone()), ("cmp", fn_tt_to_int)],
+            list_t,
         ),
     ]
 }

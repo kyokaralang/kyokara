@@ -38,8 +38,9 @@
 - [fmt](https://github.com/kyokaralang/kyokara/tree/main/crates/fmt): Canonical code formatter — Wadler-Lindig Doc IR, 2-space indent, 100-col width, import sorting, comment preservation, verbatim error fallback
 - [refactor](https://github.com/kyokaralang/kyokara/tree/main/crates/refactor): Semantic refactor engine — CST-based rename (function, type, capability, variant), add missing match cases, add missing capability annotation, transactional verification (apply edits in-memory, re-check, return Verified/Failed/Skipped status)
 - [lsp](https://github.com/kyokaralang/kyokara/tree/main/crates/lsp): LSP server with salsa incrementality — diagnostics, hover, go-to-definition, find references, completion, code actions (quickfixes), formatting
+- [pbt](https://github.com/kyokaralang/kyokara/tree/main/crates/pbt): Property-based testing — choice-sequence engine (SplitMix64 RNG, record/replay), type-driven generators (scalars, ADTs, records, Option, Result, List, Map), 4-pass shrinker (zero-suffix, block deletion, binary-search minimize, pair swap), corpus persistence, contract-for-free testing of `requires`/`ensures`/`invariant` functions
 - [api](https://github.com/kyokaralang/kyokara/tree/main/crates/api): JSON serialization of all compiler outputs (diagnostics, typed AST, symbol graph with stable namespaced IDs, patches, refactor results)
-- [cli](https://github.com/kyokaralang/kyokara/tree/main/crates/cli): `kyokara check`, `kyokara run`, `kyokara fmt`, `kyokara refactor`, `kyokara lsp`
+- [cli](https://github.com/kyokaralang/kyokara/tree/main/crates/cli): `kyokara check`, `kyokara run`, `kyokara fmt`, `kyokara refactor`, `kyokara test`, `kyokara lsp`
 
 ## Optional
 
