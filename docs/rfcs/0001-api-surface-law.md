@@ -90,6 +90,22 @@ Examples:
 - `to_*` means total/safe conversion
 - `parse_*` means fallible parsing and should return `Result` when represented in surface API
 
+Principle:
+
+- Parsing belongs to the source representation owner. For text parsing, the owner is `String` (or equivalent text type), not the destination type.
+
+Canonical parsing forms for numeric text:
+
+- `s.parse_int() -> Result[Int, ParseError]`
+- `s.parse_float() -> Result[Float, ParseError]`
+
+Non-canonical aliases must not be introduced as parallel public APIs:
+
+- `parse_int(s)`
+- `parse_float(s)`
+- `Int.parse(s)`
+- `Float.parse(s)`
+
 ### L7. No synonyms and no ad-hoc overloads (`MUST NOT`)
 
 Do not ship duplicate entrypoints for the same semantic operation.
@@ -167,6 +183,7 @@ Use this checklist in PRs that add or change stdlib/intrinsic/public APIs.
 - [ ] Ambiguity guard applied (booleans/ambiguous same-category params/options object) (`L11`).
 - [ ] If pipe-eligible, `x |> f(...)` desugars cleanly to `f(x, ...)` (`L12`).
 - [ ] Any sugar is lossless and desugars to canonical form (`L14`).
+- [ ] Parsing APIs follow source-owner placement and return `Result` (`L6`).
 
 ### B. API change checklist
 
