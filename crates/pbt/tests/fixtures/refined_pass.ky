@@ -1,3 +1,6 @@
-property positive_is_positive(x: { x: Int | x > 0 }) {
-    x > 0
+property positive_is_positive(x: Int <- Gen.auto())
+where
+  x > 0
+{
+  x > 0
 }

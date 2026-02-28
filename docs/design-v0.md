@@ -36,7 +36,7 @@ Support "almost valid" programs:
 ### 1.2 Intent is explicit and checkable
 First-class specification:
 - preconditions/postconditions (`requires`, `ensures`, `invariant`)
-- property-based tests (`property ... for all ...`)
+- property-based tests (`property name(x: T <- Gen.auto()) where pred { body }`)
 - optional refinement constraints (`type PositiveInt = Int where x>0`)
 
 ### 1.3 Determinism by default
@@ -197,26 +197,31 @@ fn withdraw(acct: Account, amt: Money) -> Result[Account, WithdrawError]
 ### 2.8 Property-based tests
 
 ```kyokara
-property sort_idempotent(xs: List[Int]) {
+property sort_idempotent(xs: List[Int] <- Gen.auto()) {
   List.sort(List.sort(xs)) == List.sort(xs)
 }
 
-property add_commutative(a: Int, b: Int) {
+property add_commutative(a: Int <- Gen.auto(), b: Int <- Gen.auto()) {
   a + b == b + a
 }
 ```
 
+Property parameters use `<-` generator bindings: `name: Type <- Gen.spec()`. Available generators include `Gen.auto()` (type-driven), `Gen.int()`, `Gen.int_range(min, max)`, `Gen.float()`, `Gen.float_range(min, max)`, `Gen.bool()`, `Gen.string()`, `Gen.char()`, `Gen.list(inner)`, `Gen.map(k, v)`, `Gen.option(inner)`, `Gen.result(ok, err)`. Bare parameters (without `<-`) are parse errors.
+
 Property bodies are lowered and type-checked (must return `Bool`). The PBT runner discovers properties alongside contracted functions and tests them with generated inputs.
 
-Properties support **refined types** on parameters for constrained generation:
+Optional `where` clauses constrain generated inputs:
 
 ```kyokara
-property positive_is_positive(x: { x: Int | x > 0 }) {
+property positive_is_positive(x: Int <- Gen.auto())
+where
+  x > 0
+{
   x > 0
 }
 ```
 
-Refined-type predicates are lowered as synthetic checker functions. The PBT runner uses rejection sampling (up to 1000 attempts) to generate values satisfying the predicate, and the shrinker respects refinement constraints. Unsatisfiable constraints are reported as errors. Refined types in non-property contexts (regular functions, type aliases) are still rejected.
+The `where` expression is lowered as a precondition on the property body. Candidates that violate the constraint are discarded (with a budget of 100x the requested test count). The shrinker respects `where` constraints: shrunk counterexamples always satisfy the predicate. Unsatisfiable constraints (all candidates discarded) are reported as errors. Refined types in non-property contexts (regular functions, type aliases) are still rejected.
 
 ### 2.9 Typed holes + partial compilation
 
@@ -567,7 +572,7 @@ injected as synthetic types before type-checking.
 * Capability enforcement: type-level checking (E0011) ✓ + runtime manifest enforcement (`--caps`, deny-by-default) ✓
 
 **v0.3 — Verification + Codegen + Replay**
-* Property-based test harness ✓ (`pbt` crate: choice-sequence engine, type-driven generators, 4-pass shrinker, corpus persistence, refinement-constrained generation via rejection sampling; `kyokara test <file> --explore` discovers contract functions and explicit `property` declarations, generates random inputs, checks contracts/properties, shrinks counterexamples)
+* Property-based test harness ✓ (`pbt` crate: choice-sequence engine, type-driven generators with `Gen.*` specs and `<-` bindings, 4-pass shrinker, corpus persistence, `where`-constrained generation via discard budgets; `kyokara test <file> --explore` discovers contract functions and explicit `property` declarations, generates random inputs, checks contracts/properties, shrinks counterexamples)
 * SMT integration for contract verification (restricted fragment: linear arithmetic + uninterpreted functions, best-effort, never blocks compilation)
 * KyokaraIR data structures ✓ (SSA, block params, text format, validator) + HIR→KIR lowering ✓ + WASM codegen MVP ✓ (scalars, control flow, function calls, ADTs, records via `codegen` crate + `wasm-encoder`; deferred: closures, strings, lists, maps, intrinsics, capabilities)
 * Capability sandbox runtime (host functions + manifest)

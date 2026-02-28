@@ -5,6 +5,9 @@ fn clamp(x: Int) -> Int
   if x > 100 { 100 } else { x }
 }
 
-property pos_capped(x: { x: Int | x > 0 && x < 1000 }) {
+property pos_capped(x: Int <- Gen.auto())
+where
+  x > 0 && x < 1000
+{
   x + x > 0
 }

@@ -438,6 +438,185 @@ fn gen_user_type(
     }
 }
 
+/// Generate a value for the given type using a generator spec.
+///
+/// `Auto` delegates to existing `generate()` (identical distribution).
+/// Explicit specs generate values constrained to the spec.
+pub fn generate_from_spec(
+    spec: &kyokara_hir_def::item_tree::GenSpec,
+    declared_ty: &TypeRef,
+    source: &mut dyn ChoiceSource,
+    item_tree: &ItemTree,
+    module_scope: &ModuleScope,
+    interner: &Interner,
+) -> GenResult {
+    use kyokara_hir_def::item_tree::GenSpec;
+
+    match spec {
+        GenSpec::Auto => generate(declared_ty, source, item_tree, module_scope, interner),
+        GenSpec::Int => gen_int(source),
+        GenSpec::IntRange { min, max } => gen_int_range(source, *min, *max),
+        GenSpec::Float => gen_float(source),
+        GenSpec::FloatRange { min, max } => gen_float_range(source, *min, *max),
+        GenSpec::Bool => gen_bool(source),
+        GenSpec::String => gen_string(source),
+        GenSpec::Char => gen_char(source),
+        GenSpec::List(inner) => {
+            // Extract inner type from declared_ty if possible.
+            let inner_ty = match declared_ty {
+                TypeRef::Path { args, .. } if !args.is_empty() => &args[0],
+                _ => return GenResult::Unsupported,
+            };
+            let Some(len) = source.draw(MAX_LIST_LEN) else {
+                return GenResult::Exhausted;
+            };
+            let mut items = Vec::with_capacity(len as usize);
+            for _ in 0..len {
+                match generate_from_spec(inner, inner_ty, source, item_tree, module_scope, interner)
+                {
+                    GenResult::Ok(val) => items.push(val),
+                    other => return other,
+                }
+            }
+            GenResult::Ok(Value::List(items))
+        }
+        GenSpec::Map(key_spec, val_spec) => {
+            let (key_ty, val_ty) = match declared_ty {
+                TypeRef::Path { args, .. } if args.len() >= 2 => (&args[0], &args[1]),
+                _ => return GenResult::Unsupported,
+            };
+            let Some(len) = source.draw(MAX_MAP_LEN) else {
+                return GenResult::Exhausted;
+            };
+            let mut entries = Vec::with_capacity(len as usize);
+            for _ in 0..len {
+                let k = match generate_from_spec(
+                    key_spec,
+                    key_ty,
+                    source,
+                    item_tree,
+                    module_scope,
+                    interner,
+                ) {
+                    GenResult::Ok(val) => val,
+                    other => return other,
+                };
+                let v = match generate_from_spec(
+                    val_spec,
+                    val_ty,
+                    source,
+                    item_tree,
+                    module_scope,
+                    interner,
+                ) {
+                    GenResult::Ok(val) => val,
+                    other => return other,
+                };
+                entries.push((k, v));
+            }
+            GenResult::Ok(Value::Map(entries))
+        }
+        GenSpec::OptionOf(inner_spec) => {
+            let inner_ty = match declared_ty {
+                TypeRef::Path { args, .. } if !args.is_empty() => &args[0],
+                _ => return GenResult::Unsupported,
+            };
+            let Some(tag) = source.draw(1) else {
+                return GenResult::Exhausted;
+            };
+            let (type_idx, none_variant, some_variant) = match find_option_variants(module_scope) {
+                Some(v) => v,
+                None => return GenResult::Unsupported,
+            };
+            if tag == 0 {
+                GenResult::Ok(Value::Adt {
+                    type_idx,
+                    variant: none_variant,
+                    fields: vec![],
+                })
+            } else {
+                match generate_from_spec(
+                    inner_spec,
+                    inner_ty,
+                    source,
+                    item_tree,
+                    module_scope,
+                    interner,
+                ) {
+                    GenResult::Ok(val) => GenResult::Ok(Value::Adt {
+                        type_idx,
+                        variant: some_variant,
+                        fields: vec![val],
+                    }),
+                    other => other,
+                }
+            }
+        }
+        GenSpec::ResultOf(ok_spec, err_spec) => {
+            let (ok_ty, err_ty) = match declared_ty {
+                TypeRef::Path { args, .. } if args.len() >= 2 => (&args[0], &args[1]),
+                _ => return GenResult::Unsupported,
+            };
+            let Some(tag) = source.draw(1) else {
+                return GenResult::Exhausted;
+            };
+            let (type_idx, ok_variant, err_variant) = match find_result_variants(module_scope) {
+                Some(v) => v,
+                None => return GenResult::Unsupported,
+            };
+            if tag == 0 {
+                match generate_from_spec(ok_spec, ok_ty, source, item_tree, module_scope, interner)
+                {
+                    GenResult::Ok(val) => GenResult::Ok(Value::Adt {
+                        type_idx,
+                        variant: ok_variant,
+                        fields: vec![val],
+                    }),
+                    other => other,
+                }
+            } else {
+                match generate_from_spec(
+                    err_spec,
+                    err_ty,
+                    source,
+                    item_tree,
+                    module_scope,
+                    interner,
+                ) {
+                    GenResult::Ok(val) => GenResult::Ok(Value::Adt {
+                        type_idx,
+                        variant: err_variant,
+                        fields: vec![val],
+                    }),
+                    other => other,
+                }
+            }
+        }
+    }
+}
+
+fn gen_int_range(source: &mut dyn ChoiceSource, min: i64, max: i64) -> GenResult {
+    if min > max {
+        return GenResult::Unsupported;
+    }
+    let range = (max - min) as u64;
+    let Some(offset) = source.draw(range) else {
+        return GenResult::Exhausted;
+    };
+    GenResult::Ok(Value::Int(min + offset as i64))
+}
+
+fn gen_float_range(source: &mut dyn ChoiceSource, min: f64, max: f64) -> GenResult {
+    if min > max {
+        return GenResult::Unsupported;
+    }
+    let Some(raw) = source.draw(u32::MAX as u64) else {
+        return GenResult::Exhausted;
+    };
+    let frac = raw as f64 / u32::MAX as f64;
+    GenResult::Ok(Value::Float(min + frac * (max - min)))
+}
+
 /// Find a type definition by Name in the item tree.
 fn find_type_by_name(item_tree: &ItemTree, name: Name) -> Option<TypeItemIdx> {
     for (idx, ty) in item_tree.types.iter() {

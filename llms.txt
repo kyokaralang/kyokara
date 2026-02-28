@@ -15,7 +15,7 @@
 - Explicit capabilities: `with Net`, `with Db`, `with Clock`, `with Secrets` — deny-by-default, manifest-enforced
 - ADTs and exhaustive pattern matching: `type Result[T, E] = | Ok(value: T) | Err(error: E)`
 - Contracts: `requires`, `ensures`, `old()` — checked at runtime, optionally verified by SMT (restricted fragment, best-effort)
-- Property-based tests: `property name(x: T) { expr }` as first-class syntax, bodies type-checked (must return Bool), refined-type parameters for constrained generation (`x: { x: Int | x > 0 }`)
+- Property-based tests: `property name(x: T <- Gen.auto()) where pred { expr }` as first-class syntax, `<-` generator bindings (`Gen.auto()`, `Gen.int()`, `Gen.int_range(min, max)`, etc.), optional `where` constraints (discard-based), bodies type-checked (must return Bool)
 - Typed holes: `?name(args)` compiles to structured hole specs with expected type, effects, and constraints
 - Pipeline operator: `x |> f(a=1)` desugars to `f(x, a=1)`
 - Error propagation: `expr?` desugars to early-return match on `Result`
