@@ -1184,6 +1184,40 @@ impl Interpreter {
                 }
                 Ok(acc)
             }
+            IntrinsicFn::ListSortBy => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "list_sort_by expects a List".into(),
+                    ));
+                };
+                let cmp_fn = args[1].clone();
+                let mut items = xs.clone();
+                // Insertion sort: stable, simple, avoids &mut self borrow
+                // issues with Rust's sort_by.
+                let len = items.len();
+                for i in 1..len {
+                    let mut j = i;
+                    while j > 0 {
+                        let cmp_result = self.call_value(
+                            cmp_fn.clone(),
+                            smallvec::smallvec![items[j - 1].clone(), items[j].clone()],
+                        )?;
+                        match cmp_result {
+                            Value::Int(n) if n > 0 => {
+                                items.swap(j - 1, j);
+                                j -= 1;
+                            }
+                            Value::Int(_) => break,
+                            _ => {
+                                return Err(RuntimeError::TypeError(
+                                    "list_sort_by: comparator must return Int".into(),
+                                ));
+                            }
+                        }
+                    }
+                }
+                Ok(Value::List(items))
+            }
             _ => Err(RuntimeError::TypeError("unknown complex intrinsic".into())),
         }
     }
