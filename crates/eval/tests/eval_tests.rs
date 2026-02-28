@@ -1613,7 +1613,7 @@ fn no_manifest_print_works() {
 
 #[test]
 fn manifest_with_io_print_works() {
-    let manifest = manifest_from_json(r#"{"caps": {"IO": {}}}"#);
+    let manifest = manifest_from_json(r#"{"caps": {"io": {}}}"#);
     let val = run_with_manifest_ok(
         r#"fn main() -> Unit {
             println("hello")
@@ -1633,7 +1633,7 @@ fn manifest_without_io_print_denied() {
         Some(manifest),
     );
     assert!(err.contains("capability denied"));
-    assert!(err.contains("IO"));
+    assert!(err.contains("io"));
 }
 
 #[test]
@@ -1646,12 +1646,12 @@ fn manifest_without_io_println_denied() {
         Some(manifest),
     );
     assert!(err.contains("capability denied"));
-    assert!(err.contains("IO"));
+    assert!(err.contains("io"));
 }
 
 #[test]
 fn manifest_with_io_pure_intrinsics_work() {
-    let manifest = manifest_from_json(r#"{"caps": {"IO": {}}}"#);
+    let manifest = manifest_from_json(r#"{"caps": {"io": {}}}"#);
     let val = run_with_manifest_ok(
         r#"fn main() -> String {
             int_to_string(42)
@@ -1718,7 +1718,7 @@ fn manifest_grants_user_cap() {
 #[test]
 fn manifest_denies_user_cap() {
     // Type-checks fine (main declares Console), but manifest doesn't grant Console.
-    let manifest = manifest_from_json(r#"{"caps": {"IO": {}}}"#);
+    let manifest = manifest_from_json(r#"{"caps": {"io": {}}}"#);
     let err = run_with_manifest_err(
         r#"
         cap Console { fn log(msg: String) -> Unit }
@@ -1790,7 +1790,7 @@ fn pure_function_with_restrictive_manifest() {
 #[test]
 fn manifest_grants_unused_cap() {
     // Manifest grants Net, program only uses IO — that's fine.
-    let manifest = manifest_from_json(r#"{"caps": {"Net": {}, "IO": {}}}"#);
+    let manifest = manifest_from_json(r#"{"caps": {"Net": {}, "io": {}}}"#);
     let val = run_with_manifest_ok(
         r#"fn main() -> Unit {
             println("hello")
@@ -1805,7 +1805,7 @@ fn capability_denied_error_message_format() {
     let manifest = manifest_from_json(r#"{"caps": {}}"#);
     let err = run_with_manifest_err(r#"fn main() -> Unit { println("x") }"#, Some(manifest));
     // Should contain both the capability name and the function name.
-    assert!(err.contains("IO"));
+    assert!(err.contains("io"));
     assert!(err.contains("Println"));
 }
 
