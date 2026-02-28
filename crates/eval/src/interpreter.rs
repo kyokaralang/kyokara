@@ -253,85 +253,86 @@ impl Interpreter {
         // SAFETY: we hold &mut self but only mutate interner/env/old_env, not fn_bodies.
         let body = unsafe { &*body };
 
-        let fn_item = &self.item_tree.functions[fn_idx];
+        let fn_name = {
+            let fn_item = &self.item_tree.functions[fn_idx];
+            self.ensure_user_fn_caps_allowed(fn_item)?;
 
-        self.ensure_user_fn_caps_allowed(fn_item)?;
+            // Use the shared environment with a new scope instead of allocating a fresh Env.
+            self.env.push_scope();
 
-        // Use the shared environment with a new scope instead of allocating a fresh Env.
-        self.env.push_scope();
-
-        // Bind parameters directly from the item tree (no intermediate Vec allocation).
-        let params = &fn_item.params;
-        for (i, param) in params.iter().enumerate() {
-            if let Some(val) = args.get(i) {
-                self.env.bind(param.name, val.clone());
+            // Bind parameters directly from the item tree (no intermediate Vec allocation).
+            for (i, param) in fn_item.params.iter().enumerate() {
+                if let Some(val) = args.get(i) {
+                    self.env.bind(param.name, val.clone());
+                }
             }
-        }
+            fn_item.name
+        };
 
         // Fast path: skip contract checks when no contracts are present.
         let has_requires = body.requires.is_some();
         let has_ensures = body.ensures.is_some();
         let has_invariant = body.invariant.is_some();
-
-        if !has_requires && !has_ensures && !has_invariant {
-            // Hot path: no contracts — just evaluate the body.
-            let result = self.eval_expr_shared(body, body.root);
-            self.env.pop_scope();
-            let return_val = match result? {
-                ControlFlow::Value(v) | ControlFlow::Return(v) => v,
-            };
-            return Ok(return_val);
-        }
-
-        // Slow path: full contract checking.
-        let fn_name_str = fn_item.name.resolve(&self.interner).to_string();
-
-        // Check precondition.
-        if let Some(req_idx) = body.requires {
-            let val = self.eval_expr_shared(body, req_idx)?.into_value();
-            if !matches!(val, Value::Bool(true)) {
-                self.env.pop_scope();
-                return Err(RuntimeError::PreconditionFailed(fn_name_str));
-            }
-        }
-
-        // Snapshot env for old() before evaluating the body.
-        let prev_old_env = self.old_env.take();
-        if has_ensures {
-            self.old_env = Some(self.env.clone());
-        }
-
-        // Evaluate the function body.
-        let return_val = match self.eval_expr_shared(body, body.root)? {
-            ControlFlow::Value(v) | ControlFlow::Return(v) => v,
+        let prev_old_env = if has_ensures {
+            Some(self.old_env.take())
+        } else {
+            None
         };
 
-        // Check invariant.
-        if let Some(inv_idx) = body.invariant {
-            let val = self.eval_expr_shared(body, inv_idx)?.into_value();
-            if !matches!(val, Value::Bool(true)) {
-                self.env.pop_scope();
-                self.old_env = prev_old_env;
-                return Err(RuntimeError::InvariantViolated(fn_name_str));
+        let result = (|| -> Result<Value, RuntimeError> {
+            if !has_requires && !has_ensures && !has_invariant {
+                // Hot path: no contracts — just evaluate the body.
+                let result = self.eval_expr_shared(body, body.root)?;
+                return Ok(result.into_value());
             }
+
+            // Slow path: full contract checking.
+            let fn_name_str = fn_name.resolve(&self.interner).to_string();
+
+            // Check precondition.
+            if let Some(req_idx) = body.requires {
+                let val = self.eval_expr_shared(body, req_idx)?.into_value();
+                if !matches!(val, Value::Bool(true)) {
+                    return Err(RuntimeError::PreconditionFailed(fn_name_str));
+                }
+            }
+
+            // Snapshot env for old() before evaluating the body.
+            if has_ensures {
+                self.old_env = Some(self.env.clone());
+            }
+
+            // Evaluate the function body.
+            let return_val = self.eval_expr_shared(body, body.root)?.into_value();
+
+            // Check invariant.
+            if let Some(inv_idx) = body.invariant {
+                let val = self.eval_expr_shared(body, inv_idx)?.into_value();
+                if !matches!(val, Value::Bool(true)) {
+                    return Err(RuntimeError::InvariantViolated(fn_name_str));
+                }
+            }
+
+            // Check postcondition.
+            if let Some(ens_idx) = body.ensures {
+                let result_name = Name::new(&mut self.interner, "result");
+                self.env.bind(result_name, return_val.clone());
+                let val = self.eval_expr_shared(body, ens_idx)?.into_value();
+                if !matches!(val, Value::Bool(true)) {
+                    return Err(RuntimeError::PostconditionFailed(fn_name_str));
+                }
+            }
+
+            Ok(return_val)
+        })();
+
+        // Cleanup must run even when contract evaluation exits early on `?`.
+        self.env.pop_scope();
+        if let Some(old) = prev_old_env {
+            self.old_env = old;
         }
 
-        // Check postcondition.
-        if let Some(ens_idx) = body.ensures {
-            let result_name = Name::new(&mut self.interner, "result");
-            self.env.bind(result_name, return_val.clone());
-            let val = self.eval_expr_shared(body, ens_idx)?.into_value();
-            self.env.pop_scope();
-            self.old_env = prev_old_env;
-            if !matches!(val, Value::Bool(true)) {
-                return Err(RuntimeError::PostconditionFailed(fn_name_str));
-            }
-        } else {
-            self.env.pop_scope();
-            self.old_env = prev_old_env;
-        }
-
-        Ok(return_val)
+        result
     }
 
     fn eval_expr(
@@ -1544,7 +1545,7 @@ impl Interpreter {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use kyokara_hir_def::item_tree::{TypeDefKind, TypeItem, VariantDef};
+    use kyokara_hir_def::item_tree::{FnItem, TypeDefKind, TypeItem, VariantDef};
     use kyokara_hir_def::path::Path;
     use kyokara_hir_def::type_ref::TypeRef;
     use la_arena::{Arena, ArenaMap};
@@ -1610,6 +1611,73 @@ mod tests {
         (interpreter, body, type_idx, a_name, some_name)
     }
 
+    fn make_body_with_contracts(
+        root_expr: Expr,
+        requires_expr: Option<Expr>,
+        ensures_expr: Option<Expr>,
+        invariant_expr: Option<Expr>,
+    ) -> Body {
+        let mut exprs = Arena::new();
+        let root = exprs.alloc(root_expr);
+        let requires = requires_expr.map(|e| exprs.alloc(e));
+        let ensures = ensures_expr.map(|e| exprs.alloc(e));
+        let invariant = invariant_expr.map(|e| exprs.alloc(e));
+
+        Body {
+            exprs,
+            pats: Arena::new(),
+            root,
+            requires,
+            ensures,
+            invariant,
+            scopes: kyokara_hir_def::scope::ScopeTree::default(),
+            pat_scopes: Vec::new(),
+            expr_scopes: ArenaMap::default(),
+            expr_source_map: ArenaMap::default(),
+            pat_source_map: ArenaMap::default(),
+            local_binding_meta: ArenaMap::default(),
+        }
+    }
+
+    fn make_interpreter_with_single_fn(body: Body) -> (Interpreter, FnItemIdx, Name) {
+        let mut interner = Interner::new();
+        let fn_name = Name::new(&mut interner, "f");
+        let param_name = Name::new(&mut interner, "x");
+
+        let mut item_tree = ItemTree::default();
+        let fn_idx = item_tree.functions.alloc(FnItem {
+            name: fn_name,
+            is_pub: false,
+            type_params: Vec::new(),
+            params: vec![FnParam {
+                name: param_name,
+                ty: TypeRef::Error,
+            }],
+            ret_type: Some(TypeRef::Error),
+            with_caps: Vec::new(),
+            pipe_caps: Vec::new(),
+            has_body: true,
+            source_range: None,
+        });
+
+        let mut module_scope = ModuleScope::default();
+        module_scope.functions.insert(fn_name, fn_idx);
+
+        let mut fn_bodies = FxHashMap::default();
+        fn_bodies.insert(fn_idx, body);
+
+        let interpreter = Interpreter::new(
+            item_tree,
+            module_scope,
+            fn_bodies,
+            FxHashMap::default(),
+            interner,
+            None,
+        );
+
+        (interpreter, fn_idx, param_name)
+    }
+
     #[test]
     fn dotted_constructor_pattern_does_not_match_by_leaf_name() {
         let (interp, mut body, type_idx, a_name, some_name) = make_test_interpreter_and_body();
@@ -1658,5 +1726,101 @@ mod tests {
             matched,
             "single-segment constructor pattern should match corresponding ADT value"
         );
+    }
+
+    #[test]
+    fn call_fn_precondition_eval_error_cleans_scope() {
+        let body = make_body_with_contracts(
+            Expr::Literal(Literal::Int(1)),
+            Some(Expr::Missing),
+            None,
+            None,
+        );
+        let (mut interp, fn_idx, param_name) = make_interpreter_with_single_fn(body);
+
+        let mut args = Args::new();
+        args.push(Value::Int(7));
+
+        let err = interp.call_fn(fn_idx, args).expect_err("call should fail");
+        assert!(matches!(err, RuntimeError::MissingExpr));
+        assert!(interp.env.lookup(param_name).is_none());
+        assert!(interp.old_env.is_none());
+    }
+
+    #[test]
+    fn call_fn_body_eval_error_restores_old_env_and_scope() {
+        let body = make_body_with_contracts(
+            Expr::Missing,
+            None,
+            Some(Expr::Literal(Literal::Bool(true))),
+            None,
+        );
+        let (mut interp, fn_idx, param_name) = make_interpreter_with_single_fn(body);
+
+        let marker = Name::new(&mut interp.interner, "old_snapshot_marker");
+        let mut snapshot = Env::new();
+        snapshot.bind(marker, Value::Int(99));
+        interp.old_env = Some(snapshot);
+
+        let mut args = Args::new();
+        args.push(Value::Int(7));
+
+        let err = interp.call_fn(fn_idx, args).expect_err("call should fail");
+        assert!(matches!(err, RuntimeError::MissingExpr));
+        assert!(interp.env.lookup(param_name).is_none());
+        let restored = interp.old_env.as_ref().and_then(|e| e.lookup(marker));
+        assert!(matches!(restored, Some(Value::Int(99))));
+    }
+
+    #[test]
+    fn call_fn_ensures_eval_error_restores_old_env_and_scope() {
+        let body = make_body_with_contracts(
+            Expr::Literal(Literal::Int(1)),
+            None,
+            Some(Expr::Missing),
+            None,
+        );
+        let (mut interp, fn_idx, param_name) = make_interpreter_with_single_fn(body);
+
+        let marker = Name::new(&mut interp.interner, "old_snapshot_marker");
+        let mut snapshot = Env::new();
+        snapshot.bind(marker, Value::Int(99));
+        interp.old_env = Some(snapshot);
+
+        let mut args = Args::new();
+        args.push(Value::Int(7));
+
+        let err = interp.call_fn(fn_idx, args).expect_err("call should fail");
+        assert!(matches!(err, RuntimeError::MissingExpr));
+        assert!(interp.env.lookup(param_name).is_none());
+        let result_name = Name::new(&mut interp.interner, "result");
+        assert!(interp.env.lookup(result_name).is_none());
+        let restored = interp.old_env.as_ref().and_then(|e| e.lookup(marker));
+        assert!(matches!(restored, Some(Value::Int(99))));
+    }
+
+    #[test]
+    fn call_fn_invariant_eval_error_restores_old_env_and_scope() {
+        let body = make_body_with_contracts(
+            Expr::Literal(Literal::Int(1)),
+            None,
+            Some(Expr::Literal(Literal::Bool(true))),
+            Some(Expr::Missing),
+        );
+        let (mut interp, fn_idx, param_name) = make_interpreter_with_single_fn(body);
+
+        let marker = Name::new(&mut interp.interner, "old_snapshot_marker");
+        let mut snapshot = Env::new();
+        snapshot.bind(marker, Value::Int(99));
+        interp.old_env = Some(snapshot);
+
+        let mut args = Args::new();
+        args.push(Value::Int(7));
+
+        let err = interp.call_fn(fn_idx, args).expect_err("call should fail");
+        assert!(matches!(err, RuntimeError::MissingExpr));
+        assert!(interp.env.lookup(param_name).is_none());
+        let restored = interp.old_env.as_ref().and_then(|e| e.lookup(marker));
+        assert!(matches!(restored, Some(Value::Int(99))));
     }
 }
