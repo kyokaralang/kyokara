@@ -30,12 +30,20 @@ pub enum BinaryOp {
     Sub,
     Mul,
     Div,
+    Mod,
     Eq,
     NotEq,
     Lt,
     Gt,
     LtEq,
     GtEq,
+    And,
+    Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
 }
 
 /// Unary operators.
@@ -43,6 +51,7 @@ pub enum BinaryOp {
 pub enum UnaryOp {
     Not,
     Neg,
+    BitNot,
 }
 
 /// A function call argument (positional or named).

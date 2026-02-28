@@ -345,9 +345,42 @@ impl Interpreter {
                 let op = *op;
                 let lhs = *lhs;
                 let rhs = *rhs;
-                let lv = eval_propagate!(self, env, body, lhs);
-                let rv = eval_propagate!(self, env, body, rhs);
-                self.eval_binary(op, lv, rv).map(ControlFlow::Value)
+                // Short-circuit evaluation for logical operators.
+                match op {
+                    BinaryOp::And => {
+                        let lv = eval_propagate!(self, env, body, lhs);
+                        match lv {
+                            Value::Bool(false) => Ok(ControlFlow::Value(Value::Bool(false))),
+                            Value::Bool(true) => {
+                                let rv = eval_propagate!(self, env, body, rhs);
+                                Ok(ControlFlow::Value(rv))
+                            }
+                            _ => Err(RuntimeError::TypeError(format!(
+                                "expected Bool for &&, got {:?}",
+                                std::mem::discriminant(&lv),
+                            ))),
+                        }
+                    }
+                    BinaryOp::Or => {
+                        let lv = eval_propagate!(self, env, body, lhs);
+                        match lv {
+                            Value::Bool(true) => Ok(ControlFlow::Value(Value::Bool(true))),
+                            Value::Bool(false) => {
+                                let rv = eval_propagate!(self, env, body, rhs);
+                                Ok(ControlFlow::Value(rv))
+                            }
+                            _ => Err(RuntimeError::TypeError(format!(
+                                "expected Bool for ||, got {:?}",
+                                std::mem::discriminant(&lv),
+                            ))),
+                        }
+                    }
+                    _ => {
+                        let lv = eval_propagate!(self, env, body, lhs);
+                        let rv = eval_propagate!(self, env, body, rhs);
+                        self.eval_binary(op, lv, rv).map(ControlFlow::Value)
+                    }
+                }
             }
 
             Expr::Unary { op, operand } => {
@@ -523,9 +556,42 @@ impl Interpreter {
                 let op = *op;
                 let lhs = *lhs;
                 let rhs = *rhs;
-                let lv = eval_propagate_shared!(self, body, lhs);
-                let rv = eval_propagate_shared!(self, body, rhs);
-                self.eval_binary(op, lv, rv).map(ControlFlow::Value)
+                // Short-circuit evaluation for logical operators.
+                match op {
+                    BinaryOp::And => {
+                        let lv = eval_propagate_shared!(self, body, lhs);
+                        match lv {
+                            Value::Bool(false) => Ok(ControlFlow::Value(Value::Bool(false))),
+                            Value::Bool(true) => {
+                                let rv = eval_propagate_shared!(self, body, rhs);
+                                Ok(ControlFlow::Value(rv))
+                            }
+                            _ => Err(RuntimeError::TypeError(format!(
+                                "expected Bool for &&, got {:?}",
+                                std::mem::discriminant(&lv),
+                            ))),
+                        }
+                    }
+                    BinaryOp::Or => {
+                        let lv = eval_propagate_shared!(self, body, lhs);
+                        match lv {
+                            Value::Bool(true) => Ok(ControlFlow::Value(Value::Bool(true))),
+                            Value::Bool(false) => {
+                                let rv = eval_propagate_shared!(self, body, rhs);
+                                Ok(ControlFlow::Value(rv))
+                            }
+                            _ => Err(RuntimeError::TypeError(format!(
+                                "expected Bool for ||, got {:?}",
+                                std::mem::discriminant(&lv),
+                            ))),
+                        }
+                    }
+                    _ => {
+                        let lv = eval_propagate_shared!(self, body, lhs);
+                        let rv = eval_propagate_shared!(self, body, rhs);
+                        self.eval_binary(op, lv, rv).map(ControlFlow::Value)
+                    }
+                }
             }
 
             Expr::Unary { op, operand } => {
@@ -838,12 +904,41 @@ impl Interpreter {
                 .checked_div(*b)
                 .map(Value::Int)
                 .ok_or(RuntimeError::IntegerOverflow),
+            (BinaryOp::Mod, Value::Int(_), Value::Int(0)) => Err(RuntimeError::DivisionByZero),
+            (BinaryOp::Mod, Value::Int(a), Value::Int(b)) => a
+                .checked_rem(*b)
+                .map(Value::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
 
             // Float arithmetic.
             (BinaryOp::Add, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
             (BinaryOp::Sub, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
             (BinaryOp::Mul, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
             (BinaryOp::Div, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
+            (BinaryOp::Mod, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a % b)),
+
+            // Bitwise operations (Int only).
+            (BinaryOp::BitAnd, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a & b)),
+            (BinaryOp::BitOr, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a | b)),
+            (BinaryOp::BitXor, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a ^ b)),
+            (BinaryOp::Shl, Value::Int(a), Value::Int(b)) => {
+                if *b < 0 || *b >= 64 {
+                    Err(RuntimeError::TypeError(format!(
+                        "shift amount {b} out of range (0..63)"
+                    )))
+                } else {
+                    Ok(Value::Int(a.wrapping_shl(*b as u32)))
+                }
+            }
+            (BinaryOp::Shr, Value::Int(a), Value::Int(b)) => {
+                if *b < 0 || *b >= 64 {
+                    Err(RuntimeError::TypeError(format!(
+                        "shift amount {b} out of range (0..63)"
+                    )))
+                } else {
+                    Ok(Value::Int(a.wrapping_shr(*b as u32)))
+                }
+            }
 
             // String concatenation via +.
             (BinaryOp::Add, Value::String(a), Value::String(b)) => {
@@ -895,6 +990,7 @@ impl Interpreter {
                 .ok_or(RuntimeError::IntegerOverflow),
             (UnaryOp::Neg, Value::Float(f)) => Ok(Value::Float(-f)),
             (UnaryOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
+            (UnaryOp::BitNot, Value::Int(n)) => Ok(Value::Int(!n)),
             _ => Err(RuntimeError::TypeError(format!(
                 "cannot apply {op:?} to {val:?}"
             ))),

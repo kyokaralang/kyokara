@@ -396,12 +396,20 @@ fn binary_op_name(op: BinaryOp) -> &'static str {
         BinaryOp::Sub => "sub",
         BinaryOp::Mul => "mul",
         BinaryOp::Div => "div",
+        BinaryOp::Mod => "rem",
         BinaryOp::Eq => "eq",
         BinaryOp::NotEq => "neq",
         BinaryOp::Lt => "lt",
         BinaryOp::Gt => "gt",
         BinaryOp::LtEq => "lte",
         BinaryOp::GtEq => "gte",
+        BinaryOp::And => "and",
+        BinaryOp::Or => "or",
+        BinaryOp::BitAnd => "bit_and",
+        BinaryOp::BitOr => "bit_or",
+        BinaryOp::BitXor => "bit_xor",
+        BinaryOp::Shl => "shl",
+        BinaryOp::Shr => "shr",
     }
 }
 
@@ -409,5 +417,6 @@ fn unary_op_name(op: UnaryOp) -> &'static str {
     match op {
         UnaryOp::Not => "not",
         UnaryOp::Neg => "neg",
+        UnaryOp::BitNot => "bit_not",
     }
 }

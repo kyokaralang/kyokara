@@ -380,6 +380,139 @@ fn cap_def() {
     assert!(has_node(&events, FnDef));
 }
 
+// ── Modulo, logical, and bitwise operators ──────────────────────────
+
+#[test]
+fn binary_expr_modulo() {
+    // let x = 10 % 3
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, IntLiteral, Percent, IntLiteral]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, BinaryExpr));
+}
+
+#[test]
+fn binary_expr_logical_and() {
+    // let x = true && false
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, TrueKw, AmpAmp, FalseKw]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, BinaryExpr));
+}
+
+#[test]
+fn binary_expr_logical_or() {
+    // let x = true || false
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, TrueKw, PipePipe, FalseKw]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, BinaryExpr));
+}
+
+#[test]
+fn binary_expr_bitwise_and() {
+    // let x = 3 & 1
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, IntLiteral, Amp, IntLiteral]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, BinaryExpr));
+}
+
+#[test]
+fn binary_expr_bitwise_or() {
+    // let x = 3 | 1
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, IntLiteral, Pipe, IntLiteral]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, BinaryExpr));
+}
+
+#[test]
+fn binary_expr_bitwise_xor() {
+    // let x = 3 ^ 1
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, IntLiteral, Caret, IntLiteral]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, BinaryExpr));
+}
+
+#[test]
+fn binary_expr_shift_left() {
+    // let x = 1 << 3
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, IntLiteral, LtLt, IntLiteral]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, BinaryExpr));
+}
+
+#[test]
+fn binary_expr_shift_right() {
+    // let x = 8 >> 2
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, IntLiteral, GtGt, IntLiteral]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, BinaryExpr));
+}
+
+#[test]
+fn unary_expr_bitwise_not() {
+    // let x = ~42
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, Tilde, IntLiteral]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, UnaryExpr));
+}
+
+#[test]
+fn bitwise_precedence_and_tighter_than_or() {
+    // let x = a & b | c  → should parse as (a & b) | c → 2 BinaryExprs
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, Ident, Amp, Ident, Pipe, Ident]);
+    assert!(has_no_errors(&errors));
+    assert_eq!(count_start_nodes(&events, BinaryExpr), 2);
+}
+
+#[test]
+fn bitwise_precedence_xor_between_and_or() {
+    // let x = a | b ^ c  → should parse as a | (b ^ c) → 2 BinaryExprs
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, Ident, Pipe, Ident, Caret, Ident]);
+    assert!(has_no_errors(&errors));
+    assert_eq!(count_start_nodes(&events, BinaryExpr), 2);
+}
+
+#[test]
+fn addition_tighter_than_shift() {
+    // let x = a + b << c  → should parse as (a + b) << c → 2 BinaryExprs
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, Ident, Plus, Ident, LtLt, Ident]);
+    assert!(has_no_errors(&errors));
+    assert_eq!(count_start_nodes(&events, BinaryExpr), 2);
+}
+
+#[test]
+fn bitwise_tighter_than_comparison() {
+    // let x = a == b & c  → should parse as a == (b & c) → 2 BinaryExprs
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, Ident, EqEq, Ident, Amp, Ident]);
+    assert!(has_no_errors(&errors));
+    assert_eq!(count_start_nodes(&events, BinaryExpr), 2);
+}
+
+#[test]
+fn logical_looser_than_comparison() {
+    // let x = a == b && c == d  → 2 comparisons + 1 logical = 3 BinaryExprs
+    let (events, errors) = parse_tokens(&[
+        LetKw, Ident, Eq, Ident, EqEq, Ident, AmpAmp, Ident, EqEq, Ident,
+    ]);
+    assert!(has_no_errors(&errors));
+    assert_eq!(count_start_nodes(&events, BinaryExpr), 3);
+}
+
+#[test]
+fn modulo_same_precedence_as_multiply() {
+    // let x = a * b % c → 2 BinaryExprs (left-assoc: (a * b) % c)
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, Ident, Star, Ident, Percent, Ident]);
+    assert!(has_no_errors(&errors));
+    assert_eq!(count_start_nodes(&events, BinaryExpr), 2);
+}
+
+#[test]
+fn tilde_tighter_than_shift() {
+    // let x = ~a << b  → should parse as (~a) << b → 1 UnaryExpr + 1 BinaryExpr
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, Tilde, Ident, LtLt, Ident]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, UnaryExpr));
+    assert!(has_node(&events, BinaryExpr));
+}
+
 // ── Error recovery ──────────────────────────────────────────────────
 
 #[test]

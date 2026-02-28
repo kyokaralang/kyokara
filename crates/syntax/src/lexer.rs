@@ -83,6 +83,10 @@ enum Token {
     Ident,
 
     // ── Multi-char operators (ordered longest-first) ─────────────────
+    #[token("&&")]
+    AmpAmp,
+    #[token("||")]
+    PipePipe,
     #[token("|>")]
     PipeGt,
     #[token("->")]
@@ -97,6 +101,10 @@ enum Token {
     GtEq,
     #[token("<=")]
     LtEq,
+    #[token("<<")]
+    LtLt,
+    #[token(">>")]
+    GtGt,
 
     // ── Single-char operators ────────────────────────────────────────
     #[token("=")]
@@ -115,10 +123,16 @@ enum Token {
     Star,
     #[token("/")]
     Slash,
+    #[token("%")]
+    Percent,
     #[token("|")]
     Pipe,
     #[token("&")]
     Amp,
+    #[token("^")]
+    Caret,
+    #[token("~")]
+    Tilde,
     #[token("?")]
     Question,
 
@@ -163,6 +177,8 @@ impl Token {
                     SyntaxKind::from_keyword(text).unwrap_or(SyntaxKind::Ident)
                 }
             }
+            Token::AmpAmp => SyntaxKind::AmpAmp,
+            Token::PipePipe => SyntaxKind::PipePipe,
             Token::PipeGt => SyntaxKind::PipeGt,
             Token::Arrow => SyntaxKind::Arrow,
             Token::FatArrow => SyntaxKind::FatArrow,
@@ -170,6 +186,8 @@ impl Token {
             Token::BangEq => SyntaxKind::BangEq,
             Token::GtEq => SyntaxKind::GtEq,
             Token::LtEq => SyntaxKind::LtEq,
+            Token::LtLt => SyntaxKind::LtLt,
+            Token::GtGt => SyntaxKind::GtGt,
             Token::Eq => SyntaxKind::Eq,
             Token::Bang => SyntaxKind::Bang,
             Token::Gt => SyntaxKind::Gt,
@@ -178,8 +196,11 @@ impl Token {
             Token::Minus => SyntaxKind::Minus,
             Token::Star => SyntaxKind::Star,
             Token::Slash => SyntaxKind::Slash,
+            Token::Percent => SyntaxKind::Percent,
             Token::Pipe => SyntaxKind::Pipe,
             Token::Amp => SyntaxKind::Amp,
+            Token::Caret => SyntaxKind::Caret,
+            Token::Tilde => SyntaxKind::Tilde,
             Token::Question => SyntaxKind::Question,
             Token::LParen => SyntaxKind::LParen,
             Token::RParen => SyntaxKind::RParen,
@@ -331,9 +352,16 @@ mod tests {
             ("-", Minus),
             ("*", Star),
             ("/", Slash),
+            ("%", Percent),
             ("|", Pipe),
             ("|>", PipeGt),
+            ("||", PipePipe),
             ("&", Amp),
+            ("&&", AmpAmp),
+            ("^", Caret),
+            ("~", Tilde),
+            ("<<", LtLt),
+            (">>", GtGt),
             ("?", Question),
         ];
         for (text, expected) in cases {
@@ -360,6 +388,14 @@ mod tests {
         assert_eq!(lex_kinds(">="), [(GtEq, ">=")]);
         // `<=` should not be `<` + `=`
         assert_eq!(lex_kinds("<="), [(LtEq, "<=")]);
+        // `&&` should not be `&` + `&`
+        assert_eq!(lex_kinds("&&"), [(AmpAmp, "&&")]);
+        // `||` should not be `|` + `|`
+        assert_eq!(lex_kinds("||"), [(PipePipe, "||")]);
+        // `<<` should not be `<` + `<`
+        assert_eq!(lex_kinds("<<"), [(LtLt, "<<")]);
+        // `>>` should not be `>` + `>`
+        assert_eq!(lex_kinds(">>"), [(GtGt, ">>")]);
     }
 
     // ── Literals ─────────────────────────────────────────────────────

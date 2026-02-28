@@ -410,22 +410,45 @@ impl BodyLowerCtx<'_> {
     }
 
     fn lower_binary(&mut self, be: &BinaryExpr) -> ExprIdx {
-        let op = be
-            .op_token()
-            .map(|tok| match tok.kind() {
+        let op = match be.op_token() {
+            Some(tok) => match tok.kind() {
                 SyntaxKind::Plus => BinaryOp::Add,
                 SyntaxKind::Minus => BinaryOp::Sub,
                 SyntaxKind::Star => BinaryOp::Mul,
                 SyntaxKind::Slash => BinaryOp::Div,
+                SyntaxKind::Percent => BinaryOp::Mod,
                 SyntaxKind::EqEq => BinaryOp::Eq,
                 SyntaxKind::BangEq => BinaryOp::NotEq,
                 SyntaxKind::Lt => BinaryOp::Lt,
                 SyntaxKind::Gt => BinaryOp::Gt,
                 SyntaxKind::LtEq => BinaryOp::LtEq,
                 SyntaxKind::GtEq => BinaryOp::GtEq,
-                _ => BinaryOp::Add,
-            })
-            .unwrap_or(BinaryOp::Add);
+                SyntaxKind::AmpAmp => BinaryOp::And,
+                SyntaxKind::PipePipe => BinaryOp::Or,
+                SyntaxKind::Amp => BinaryOp::BitAnd,
+                SyntaxKind::Pipe => BinaryOp::BitOr,
+                SyntaxKind::Caret => BinaryOp::BitXor,
+                SyntaxKind::LtLt => BinaryOp::Shl,
+                SyntaxKind::GtGt => BinaryOp::Shr,
+                _ => {
+                    self.diagnostics.push(Diagnostic::error(
+                        format!("unsupported binary operator `{}`", tok.text()),
+                        Span {
+                            file: self.file_id,
+                            range: tok.text_range(),
+                        },
+                    ));
+                    return self.alloc_expr(Expr::Missing);
+                }
+            },
+            None => {
+                self.diagnostics.push(Diagnostic::error(
+                    "missing binary operator".to_string(),
+                    self.node_span(be.syntax()),
+                ));
+                return self.alloc_expr(Expr::Missing);
+            }
+        };
 
         let lhs = be
             .lhs()
@@ -440,14 +463,30 @@ impl BodyLowerCtx<'_> {
     }
 
     fn lower_unary(&mut self, ue: &UnaryExpr) -> ExprIdx {
-        let op = ue
-            .op_token()
-            .map(|tok| match tok.kind() {
+        let op = match ue.op_token() {
+            Some(tok) => match tok.kind() {
                 SyntaxKind::Bang => UnaryOp::Not,
                 SyntaxKind::Minus => UnaryOp::Neg,
-                _ => UnaryOp::Not,
-            })
-            .unwrap_or(UnaryOp::Not);
+                SyntaxKind::Tilde => UnaryOp::BitNot,
+                _ => {
+                    self.diagnostics.push(Diagnostic::error(
+                        format!("unsupported unary operator `{}`", tok.text()),
+                        Span {
+                            file: self.file_id,
+                            range: tok.text_range(),
+                        },
+                    ));
+                    return self.alloc_expr(Expr::Missing);
+                }
+            },
+            None => {
+                self.diagnostics.push(Diagnostic::error(
+                    "missing unary operator".to_string(),
+                    self.node_span(ue.syntax()),
+                ));
+                return self.alloc_expr(Expr::Missing);
+            }
+        };
 
         let operand = ue
             .operand()

@@ -139,6 +139,75 @@ fn fmt_unary_expr() {
 }
 
 #[test]
+fn fmt_modulo_expr() {
+    assert_fmt(
+        "fn main() -> Int { 10%3 }",
+        "fn main() -> Int {\n  10 % 3\n}\n",
+    );
+}
+
+#[test]
+fn fmt_logical_and_expr() {
+    assert_fmt(
+        "fn main() -> Bool { true&&false }",
+        "fn main() -> Bool {\n  true && false\n}\n",
+    );
+}
+
+#[test]
+fn fmt_logical_or_expr() {
+    assert_fmt(
+        "fn main() -> Bool { true||false }",
+        "fn main() -> Bool {\n  true || false\n}\n",
+    );
+}
+
+#[test]
+fn fmt_bitwise_and_expr() {
+    assert_fmt(
+        "fn main() -> Int { 3&1 }",
+        "fn main() -> Int {\n  3 & 1\n}\n",
+    );
+}
+
+#[test]
+fn fmt_bitwise_or_expr() {
+    assert_fmt(
+        "fn main() -> Int { 3|1 }",
+        "fn main() -> Int {\n  3 | 1\n}\n",
+    );
+}
+
+#[test]
+fn fmt_bitwise_xor_expr() {
+    assert_fmt(
+        "fn main() -> Int { 3^1 }",
+        "fn main() -> Int {\n  3 ^ 1\n}\n",
+    );
+}
+
+#[test]
+fn fmt_shift_left_expr() {
+    assert_fmt(
+        "fn main() -> Int { 1<<3 }",
+        "fn main() -> Int {\n  1 << 3\n}\n",
+    );
+}
+
+#[test]
+fn fmt_shift_right_expr() {
+    assert_fmt(
+        "fn main() -> Int { 8>>2 }",
+        "fn main() -> Int {\n  8 >> 2\n}\n",
+    );
+}
+
+#[test]
+fn fmt_bitwise_not_expr() {
+    assert_fmt("fn main() -> Int { ~42 }", "fn main() -> Int {\n  ~42\n}\n");
+}
+
+#[test]
 fn fmt_call_expr() {
     assert_fmt(
         "fn main() -> Int { add(1,2) }",

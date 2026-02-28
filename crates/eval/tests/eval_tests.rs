@@ -2848,3 +2848,594 @@ fn eval_invalid_escape_produces_diagnostic() {
     // Guard: invalid escape sequence is flagged at compile time.
     assert!(check_has_compile_errors(r#"fn main() -> String { "\q" }"#));
 }
+
+// ── Modulo operator tests ───────────────────────────────────────────
+
+#[test]
+fn eval_modulo_basic() {
+    let val = run_ok("fn main() -> Int { 10 % 3 }");
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
+fn eval_modulo_zero() {
+    let val = run_ok("fn main() -> Int { 7 % 7 }");
+    assert_eq!(val, Value::Int(0));
+}
+
+#[test]
+fn eval_modulo_larger_divisor() {
+    let val = run_ok("fn main() -> Int { 3 % 10 }");
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_modulo_negative() {
+    // Rust's checked_rem preserves sign of dividend.
+    // This parses as 0 - (7 % 3) = 0 - 1 = -1 due to precedence.
+    let val = run_ok("fn main() -> Int { 0 - 7 % 3 }");
+    assert_eq!(val, Value::Int(-1));
+}
+
+#[test]
+fn eval_modulo_division_by_zero() {
+    let err = run_err("fn main() -> Int { 10 % 0 }");
+    assert!(err.contains("division by zero"), "got: {err}");
+}
+
+#[test]
+fn eval_modulo_float() {
+    let val = run_ok("fn main() -> Float { 5.5 % 2.0 }");
+    assert!(matches!(val, Value::Float(f) if (f - 1.5).abs() < 1e-10));
+}
+
+#[test]
+fn eval_modulo_precedence_same_as_mul() {
+    // % has same precedence as * and /, left-associative.
+    // 10 % 3 * 2 should be (10 % 3) * 2 = 1 * 2 = 2
+    let val = run_ok("fn main() -> Int { 10 % 3 * 2 }");
+    assert_eq!(val, Value::Int(2));
+}
+
+#[test]
+fn eval_modulo_precedence_lower_than_nothing_higher_than_add() {
+    // 1 + 10 % 3 should be 1 + (10 % 3) = 1 + 1 = 2
+    let val = run_ok("fn main() -> Int { 1 + 10 % 3 }");
+    assert_eq!(val, Value::Int(2));
+}
+
+#[test]
+fn eval_modulo_type_error() {
+    assert!(check_has_compile_errors(
+        r#"fn main() -> Int { "hello" % 2 }"#
+    ));
+}
+
+// ── Logical AND operator tests ──────────────────────────────────────
+
+#[test]
+fn eval_and_true_true() {
+    let val = run_ok("fn main() -> Bool { true && true }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_and_true_false() {
+    let val = run_ok("fn main() -> Bool { true && false }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_and_false_true() {
+    let val = run_ok("fn main() -> Bool { false && true }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_and_false_false() {
+    let val = run_ok("fn main() -> Bool { false && false }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_and_short_circuit() {
+    // If LHS is false, RHS should not be evaluated.
+    // 1 / 0 would cause a runtime error, but && should short-circuit.
+    let val = run_ok("fn main() -> Bool { false && 1 / 0 == 0 }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_and_with_comparisons() {
+    let val = run_ok("fn main() -> Bool { 1 > 0 && 2 > 1 }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_and_with_comparisons_false() {
+    let val = run_ok("fn main() -> Bool { 1 > 0 && 2 < 1 }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_and_type_error() {
+    assert!(check_has_compile_errors("fn main() -> Bool { 1 && true }"));
+}
+
+// ── Logical OR operator tests ───────────────────────────────────────
+
+#[test]
+fn eval_or_true_true() {
+    let val = run_ok("fn main() -> Bool { true || true }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_or_true_false() {
+    let val = run_ok("fn main() -> Bool { true || false }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_or_false_true() {
+    let val = run_ok("fn main() -> Bool { false || true }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_or_false_false() {
+    let val = run_ok("fn main() -> Bool { false || false }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_or_short_circuit() {
+    // If LHS is true, RHS should not be evaluated.
+    // 1 / 0 would cause a runtime error, but || should short-circuit.
+    let val = run_ok("fn main() -> Bool { true || 1 / 0 == 0 }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_or_with_comparisons() {
+    let val = run_ok("fn main() -> Bool { 1 < 0 || 2 > 1 }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_or_type_error() {
+    assert!(check_has_compile_errors("fn main() -> Bool { 1 || true }"));
+}
+
+// ── Precedence: && binds tighter than || ────────────────────────────
+
+#[test]
+fn eval_or_and_precedence() {
+    // true || false && false should be true || (false && false) = true || false = true
+    let val = run_ok("fn main() -> Bool { true || false && false }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_and_or_precedence() {
+    // false && true || true should be (false && true) || true = false || true = true
+    let val = run_ok("fn main() -> Bool { false && true || true }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_and_or_precedence_2() {
+    // false || false && true should be false || (false && true) = false || false = false
+    let val = run_ok("fn main() -> Bool { false || false && true }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+// ── Combined operator tests ────────────────────────────────────────
+
+#[test]
+fn eval_modulo_with_logical() {
+    // 10 % 2 == 0 && 9 % 3 == 0
+    let val = run_ok("fn main() -> Bool { 10 % 2 == 0 && 9 % 3 == 0 }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_modulo_with_logical_false() {
+    let val = run_ok("fn main() -> Bool { 10 % 3 == 0 || 9 % 2 == 0 }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_chained_and() {
+    let val = run_ok("fn main() -> Bool { true && true && true && true }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_chained_or() {
+    let val = run_ok("fn main() -> Bool { false || false || false || true }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_not_and_or() {
+    // !false && true should be true
+    let val = run_ok("fn main() -> Bool { !false && true }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_not_or() {
+    // !true || false should be false
+    let val = run_ok("fn main() -> Bool { !true || false }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+// ── Bitwise AND (&) ────────────────────────────────────────────────
+
+#[test]
+fn eval_bitwise_and_basic() {
+    // 12 & 10 = 8 (binary: 1100 & 1010 = 1000)
+    let val = run_ok("fn main() -> Int { 12 & 10 }");
+    assert_eq!(val, Value::Int(8));
+}
+
+#[test]
+fn eval_bitwise_and_identity() {
+    // x & -1 == x (all bits set)
+    let val = run_ok("fn main() -> Int { 42 & -1 }");
+    assert_eq!(val, Value::Int(42));
+}
+
+#[test]
+fn eval_bitwise_and_zero() {
+    let val = run_ok("fn main() -> Int { 255 & 0 }");
+    assert_eq!(val, Value::Int(0));
+}
+
+// ── Bitwise OR (|) ─────────────────────────────────────────────────
+
+#[test]
+fn eval_bitwise_or_basic() {
+    // 12 | 10 = 14 (binary: 1100 | 1010 = 1110)
+    let val = run_ok("fn main() -> Int { 12 | 10 }");
+    assert_eq!(val, Value::Int(14));
+}
+
+#[test]
+fn eval_bitwise_or_zero() {
+    let val = run_ok("fn main() -> Int { 42 | 0 }");
+    assert_eq!(val, Value::Int(42));
+}
+
+// ── Bitwise XOR (^) ────────────────────────────────────────────────
+
+#[test]
+fn eval_bitwise_xor_basic() {
+    // 12 ^ 10 = 6 (binary: 1100 ^ 1010 = 0110)
+    let val = run_ok("fn main() -> Int { 12 ^ 10 }");
+    assert_eq!(val, Value::Int(6));
+}
+
+#[test]
+fn eval_bitwise_xor_self_is_zero() {
+    let val = run_ok("fn main() -> Int { 42 ^ 42 }");
+    assert_eq!(val, Value::Int(0));
+}
+
+#[test]
+fn eval_bitwise_xor_zero_identity() {
+    let val = run_ok("fn main() -> Int { 42 ^ 0 }");
+    assert_eq!(val, Value::Int(42));
+}
+
+// ── Left shift (<<) ────────────────────────────────────────────────
+
+#[test]
+fn eval_shl_basic() {
+    let val = run_ok("fn main() -> Int { 1 << 3 }");
+    assert_eq!(val, Value::Int(8));
+}
+
+#[test]
+fn eval_shl_zero() {
+    let val = run_ok("fn main() -> Int { 42 << 0 }");
+    assert_eq!(val, Value::Int(42));
+}
+
+#[test]
+fn eval_shl_out_of_range() {
+    let err = run_err("fn main() -> Int { 1 << 64 }");
+    assert!(err.contains("out of range"), "got: {err}");
+}
+
+#[test]
+fn eval_shl_negative_shift() {
+    let err = run_err("fn main() -> Int { 1 << -1 }");
+    assert!(err.contains("out of range"), "got: {err}");
+}
+
+// ── Right shift (>>) ───────────────────────────────────────────────
+
+#[test]
+fn eval_shr_basic() {
+    let val = run_ok("fn main() -> Int { 16 >> 2 }");
+    assert_eq!(val, Value::Int(4));
+}
+
+#[test]
+fn eval_shr_arithmetic() {
+    // Arithmetic right shift: -8 >> 1 should be -4 (sign-extending)
+    let val = run_ok("fn main() -> Int { -8 >> 1 }");
+    assert_eq!(val, Value::Int(-4));
+}
+
+#[test]
+fn eval_shr_zero() {
+    let val = run_ok("fn main() -> Int { 42 >> 0 }");
+    assert_eq!(val, Value::Int(42));
+}
+
+#[test]
+fn eval_shr_out_of_range() {
+    let err = run_err("fn main() -> Int { 1 >> 64 }");
+    assert!(err.contains("out of range"), "got: {err}");
+}
+
+// ── Bitwise NOT (~) ────────────────────────────────────────────────
+
+#[test]
+fn eval_bitwise_not_zero() {
+    let val = run_ok("fn main() -> Int { ~0 }");
+    assert_eq!(val, Value::Int(-1));
+}
+
+#[test]
+fn eval_bitwise_not_neg_one() {
+    let val = run_ok("fn main() -> Int { ~-1 }");
+    assert_eq!(val, Value::Int(0));
+}
+
+#[test]
+fn eval_bitwise_not_positive() {
+    let val = run_ok("fn main() -> Int { ~42 }");
+    assert_eq!(val, Value::Int(!42_i64));
+}
+
+#[test]
+fn eval_bitwise_not_double() {
+    // ~~x == x
+    let val = run_ok("fn main() -> Int { ~~100 }");
+    assert_eq!(val, Value::Int(100));
+}
+
+// ── Precedence tests ───────────────────────────────────────────────
+
+#[test]
+fn eval_bitwise_precedence_and_before_or() {
+    // a | b & c should parse as a | (b & c)
+    // 1 | (3 & 2) = 1 | 2 = 3
+    let val = run_ok("fn main() -> Int { 1 | 3 & 2 }");
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_bitwise_precedence_xor_between_and_or() {
+    // a | b ^ c & d should parse as a | (b ^ (c & d))
+    // 8 | (4 ^ (6 & 3)) = 8 | (4 ^ 2) = 8 | 6 = 14
+    let val = run_ok("fn main() -> Int { 8 | 4 ^ 6 & 3 }");
+    assert_eq!(val, Value::Int(14));
+}
+
+#[test]
+fn eval_bitwise_precedence_add_before_shift() {
+    // a + b << c should parse as (a + b) << c — add binds tighter than shift
+    let val = run_ok("fn main() -> Int { 1 + 1 << 3 }");
+    assert_eq!(val, Value::Int(16)); // (1 + 1) << 3 = 2 << 3 = 16
+}
+
+#[test]
+fn eval_bitwise_above_comparison() {
+    // Bitwise ops bind tighter than comparison (fixed precedence, unlike C)
+    // a == b & c should parse as a == (b & c)
+    let val = run_ok("fn main() -> Bool { 2 == 3 & 2 }");
+    assert_eq!(val, Value::Bool(true)); // 2 == (3 & 2) = 2 == 2 = true
+}
+
+#[test]
+fn eval_tilde_higher_than_shift() {
+    // ~a << b should parse as (~a) << b
+    let val = run_ok("fn main() -> Int { ~0 << 8 }");
+    assert_eq!(val, Value::Int(-1_i64 << 8)); // (~0) << 8 = -1 << 8 = -256
+}
+
+// ── Interaction with logical operators ─────────────────────────────
+
+#[test]
+fn eval_bitwise_and_vs_logical_and() {
+    // & is bitwise (Int), && is logical (Bool)
+    let val = run_ok("fn main() -> Bool { (3 & 1) == 1 && true }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_bitwise_or_vs_logical_or() {
+    // | is bitwise (Int), || is logical (Bool)
+    let val = run_ok("fn main() -> Bool { (0 | 0) == 0 || false }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+// ── Type error tests ───────────────────────────────────────────────
+
+#[test]
+fn eval_bitwise_and_rejects_float() {
+    assert!(check_has_compile_errors("fn main() -> Float { 1.0 & 2.0 }"));
+}
+
+#[test]
+fn eval_bitwise_or_rejects_bool() {
+    assert!(check_has_compile_errors(
+        "fn main() -> Bool { true | false }"
+    ));
+}
+
+#[test]
+fn eval_bitwise_not_rejects_bool() {
+    assert!(check_has_compile_errors("fn main() -> Bool { ~true }"));
+}
+
+#[test]
+fn eval_shl_rejects_float() {
+    assert!(check_has_compile_errors("fn main() -> Float { 1.0 << 2 }"));
+}
+
+// ── Combined bitwise expressions ───────────────────────────────────
+
+#[test]
+fn eval_bitwise_mask_and_shift() {
+    // Extract bits [4:7] from 0xFF: (0xFF >> 4) & 0xF = 0xF = 15
+    let val = run_ok("fn main() -> Int { (255 >> 4) & 15 }");
+    assert_eq!(val, Value::Int(15));
+}
+
+#[test]
+fn eval_bitwise_set_bit() {
+    // Set bit 3: 0 | (1 << 3) = 8
+    let val = run_ok("fn main() -> Int { 0 | (1 << 3) }");
+    assert_eq!(val, Value::Int(8));
+}
+
+#[test]
+fn eval_bitwise_clear_bit() {
+    // Clear bit 1 from 0b111: 7 & ~(1 << 1) = 7 & ~2 = 7 & (-3) = 5
+    let val = run_ok("fn main() -> Int { 7 & ~(1 << 1) }");
+    assert_eq!(val, Value::Int(5));
+}
+
+#[test]
+fn eval_bitwise_toggle_bit() {
+    // Toggle bit 2: 0b101 ^ (1 << 2) = 5 ^ 4 = 1
+    let val = run_ok("fn main() -> Int { 5 ^ (1 << 2) }");
+    assert_eq!(val, Value::Int(1));
+}
+
+// ── Associativity chains ───────────────────────────────────────────
+
+#[test]
+fn eval_bitwise_and_left_assoc() {
+    // Left-associative: (14 & 7) & 3 = 6 & 3 = 2
+    let val = run_ok("fn main() -> Int { 14 & 7 & 3 }");
+    assert_eq!(val, Value::Int(2));
+}
+
+#[test]
+fn eval_bitwise_or_left_assoc() {
+    // (1 | 2) | 4 = 3 | 4 = 7
+    let val = run_ok("fn main() -> Int { 1 | 2 | 4 }");
+    assert_eq!(val, Value::Int(7));
+}
+
+#[test]
+fn eval_bitwise_xor_left_assoc() {
+    // (5 ^ 3) ^ 6 = 6 ^ 6 = 0
+    let val = run_ok("fn main() -> Int { 5 ^ 3 ^ 6 }");
+    assert_eq!(val, Value::Int(0));
+}
+
+#[test]
+fn eval_shl_left_assoc() {
+    // (1 << 2) << 3 = 4 << 3 = 32
+    let val = run_ok("fn main() -> Int { 1 << 2 << 3 }");
+    assert_eq!(val, Value::Int(32));
+}
+
+#[test]
+fn eval_shr_left_assoc() {
+    // (64 >> 2) >> 1 = 16 >> 1 = 8
+    let val = run_ok("fn main() -> Int { 64 >> 2 >> 1 }");
+    assert_eq!(val, Value::Int(8));
+}
+
+// ── More mixed operator expressions ────────────────────────────────
+
+#[test]
+fn eval_bitwise_in_let_binding() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let flags = 1 | 2 | 4
+            let mask = 3
+            flags & mask
+        }",
+    );
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_shift_in_arithmetic() {
+    // (1 << 4) + (1 << 2) = 16 + 4 = 20
+    let val = run_ok("fn main() -> Int { (1 << 4) + (1 << 2) }");
+    assert_eq!(val, Value::Int(20));
+}
+
+#[test]
+fn eval_xor_swap_pattern() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let a = 5
+            let b = 3
+            let a2 = a ^ b
+            let b2 = b ^ a2
+            let a3 = a2 ^ b2
+            a3 + b2 * 100
+        }",
+    );
+    // a3 = 3 (original b), b2 = 5 (original a)
+    assert_eq!(val, Value::Int(3 + 5 * 100));
+}
+
+#[test]
+fn eval_all_bitwise_ops_combined() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let a = 255
+            let c = (a & 15) | (a >> 4)
+            let d = c ^ (1 << 3)
+            d
+        }",
+    );
+    // a & 15 = 15, a >> 4 = 15, c = 15 | 15 = 15, d = 15 ^ 8 = 7
+    assert_eq!(val, Value::Int(7));
+}
+
+#[test]
+fn eval_modulo_with_bitwise() {
+    // % has higher BP than &, so: (17 % 10) & 3 = 7 & 3 = 3
+    let val = run_ok("fn main() -> Int { 17 % 10 & 3 }");
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_logical_with_bitwise_comparison() {
+    let val = run_ok(
+        "fn main() -> Bool {
+            let flags = 7
+            let bit0 = flags & 1
+            let bit2 = flags & 4
+            bit0 != 0 && bit2 != 0
+        }",
+    );
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_nested_tilde() {
+    // ~~~x == ~x (triple negation = single negation)
+    let val = run_ok("fn main() -> Int { ~~~42 }");
+    assert_eq!(val, Value::Int(!42_i64));
+}
+
+#[test]
+fn eval_tilde_and_logical_not_distinct() {
+    let val = run_ok("fn main() -> Bool { ~0 == -1 && !false }");
+    assert_eq!(val, Value::Bool(true));
+}
