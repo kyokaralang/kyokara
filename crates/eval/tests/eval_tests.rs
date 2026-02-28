@@ -5001,3 +5001,107 @@ fn eval_user_method_using_other_methods() {
     );
     assert!(matches!(val, Value::Int(15)));
 }
+
+// ── Chaining edge cases ────────────────────────────────────────
+
+#[test]
+fn eval_index_then_method() {
+    // xs[0].len() — index into a list of strings, then call method
+    let val = run_ok(
+        r#"
+        fn main() -> Int {
+            let xs = list_push(list_push(list_new(), "hello"), "world")
+            xs[0].len()
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(5)));
+}
+
+#[test]
+fn eval_method_then_index() {
+    // "hello".chars()[1] — method returning list, then index
+    let val = run_ok(
+        r#"
+        fn main() -> Char {
+            "hello".chars()[1]
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Char('e')));
+}
+
+#[test]
+fn eval_method_chain_then_index() {
+    // "a,b,c".split(",")[2] — method returning list, then index
+    let val = run_ok(
+        r#"
+        fn main() -> String {
+            "a,b,c".split(",")[2]
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::String(s) if s == "c"));
+}
+
+#[test]
+fn eval_index_then_field() {
+    // xs[0].x — index into list of records, then field access
+    let val = run_ok(
+        r#"
+        type Point = { x: Int, y: Int }
+        fn main() -> Int {
+            let xs = list_push(list_new(), Point { x: 42, y: 7 })
+            xs[0].x
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(42)));
+}
+
+#[test]
+fn eval_no_method_on_int() {
+    // 42.len() should produce a type error about no method
+    let err = run_err(
+        r#"
+        fn main() -> Int {
+            42.len()
+        }
+        "#,
+    );
+    assert!(
+        err.contains("no method"),
+        "expected 'no method' error, got: {err}"
+    );
+}
+
+#[test]
+fn eval_no_method_on_string() {
+    // "hello".nonexistent() should produce a method error
+    let err = run_err(
+        r#"
+        fn main() -> Int {
+            "hello".nonexistent()
+        }
+        "#,
+    );
+    assert!(
+        err.contains("no method"),
+        "expected 'no method' error, got: {err}"
+    );
+}
+
+#[test]
+fn eval_flat_fn_and_method_both_work() {
+    // string_len("hello") and "hello".len() both return 5
+    let val = run_ok(
+        r#"
+        fn main() -> Int {
+            let a = string_len("hello")
+            let b = "hello".len()
+            a + b
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(10)));
+}

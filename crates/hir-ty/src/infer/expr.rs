@@ -1182,11 +1182,28 @@ impl<'a> InferenceCtx<'a> {
 
         // Look up method in the registry.
         let type_name = self.type_category_name(&base_ty_resolved)?;
-        let fn_idx = self
-            .module_scope
-            .methods
-            .get(&(type_name, field))
-            .copied()?;
+        let fn_idx = match self.module_scope.methods.get(&(type_name, field)).copied() {
+            Some(idx) => idx,
+            None => {
+                // Type has a name but no such method exists — emit diagnostic.
+                self.push_diag(TyDiagnosticData::NoSuchMethod {
+                    method: field.resolve(self.interner).to_owned(),
+                    ty: base_ty_resolved.clone(),
+                });
+                // Record the callee expr type as Error so the caller doesn't
+                // re-emit a "no field" diagnostic.
+                self.expr_types.insert(callee, Ty::Error);
+                // Infer args for completeness.
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(e) | CallArg::Named { value: e, .. } => {
+                            self.infer_expr(*e, &Expectation::None);
+                        }
+                    }
+                }
+                return Some(Ty::Error);
+            }
+        };
 
         // Instantiate the method's function signature with fresh type variables.
         let env = Self::make_env(
