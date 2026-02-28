@@ -56,8 +56,9 @@ fn withdraw(acct: Account, amt: Money) -> Result[Account, WithdrawError]
 ```
 
 ```kyokara
-property "sort is idempotent" for all xs: List[Int] =
+property sort_idempotent(xs: List[Int]) {
   List.sort(List.sort(xs)) == List.sort(xs)
+}
 ```
 
 **Verification staging:**

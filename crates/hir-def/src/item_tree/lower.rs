@@ -330,7 +330,7 @@ impl ItemTreeCtx<'_> {
     fn lower_property_def(&mut self, p: &PropertyDef) {
         let name = self.name_of(p);
 
-        let params = p
+        let params: Vec<FnParam> = p
             .param_list()
             .map(|pl| {
                 pl.params()
@@ -350,19 +350,41 @@ impl ItemTreeCtx<'_> {
             .unwrap_or_default();
 
         let has_body = p.body().is_some();
+        let source_range = Some(p.syntax().text_range());
 
-        if has_body {
-            let span = self.node_span(p.syntax());
-            self.diagnostics.push(Diagnostic::error(
-                "property bodies are not semantically checked yet".to_string(),
-                span,
-            ));
-        }
+        // If the property has a body, create a synthetic FnItem so the body
+        // gets lowered and type-checked alongside real functions.
+        let fn_idx = if has_body {
+            let bool_path = Path {
+                segments: vec![Name::new(self.interner, "Bool")],
+            };
+            let idx = self.tree.functions.alloc(FnItem {
+                name,
+                is_pub: false,
+                type_params: vec![],
+                params: params.clone(),
+                ret_type: Some(TypeRef::Path {
+                    path: bool_path,
+                    args: vec![],
+                }),
+                with_caps: vec![],
+                pipe_caps: vec![],
+                has_body: true,
+                source_range,
+            });
+            // Do NOT register in module_scope.functions — the property is not
+            // callable as a regular function from user code.
+            Some(idx)
+        } else {
+            None
+        };
 
         self.tree.properties.alloc(PropertyItem {
             name,
             params,
             has_body,
+            source_range,
+            fn_idx,
         });
     }
 

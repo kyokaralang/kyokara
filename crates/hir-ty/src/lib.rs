@@ -20,7 +20,7 @@ pub mod unify;
 
 use kyokara_diagnostics::Diagnostic;
 use kyokara_hir_def::body::Body;
-use kyokara_hir_def::body::lower::lower_body;
+use kyokara_hir_def::body::lower::{lower_body, lower_property_body};
 use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree};
 use kyokara_hir_def::resolver::ModuleScope;
 use kyokara_hir_def::type_ref::TypeRef;
@@ -29,7 +29,7 @@ use kyokara_span::{FileId, Span};
 use kyokara_stdx::FxHashMap;
 use kyokara_syntax::SyntaxNode;
 use kyokara_syntax::ast::AstNode;
-use kyokara_syntax::ast::nodes::FnDef;
+use kyokara_syntax::ast::nodes::{FnDef, PropertyDef};
 use kyokara_syntax::ast::traits::HasName;
 
 use kyokara_hir_def::name::Name;
@@ -73,6 +73,7 @@ pub fn check_module(
     let mut fn_calls = Vec::new();
 
     let fn_defs: Vec<FnDef> = root.descendants().filter_map(FnDef::cast).collect();
+    let prop_defs: Vec<PropertyDef> = root.descendants().filter_map(PropertyDef::cast).collect();
 
     for (fn_idx, fn_item) in item_tree.functions.iter() {
         if !fn_item.has_body {
@@ -82,21 +83,33 @@ pub fn check_module(
         // Match by source range when available (exact CST node identity),
         // falling back to name-based matching for imported functions.
         let fn_name_str = fn_item.name.resolve(interner);
-        let Some(fn_def) = fn_defs.iter().find(|fd: &&FnDef| {
+        let fn_def = fn_defs.iter().find(|fd: &&FnDef| {
             if let Some(range) = fn_item.source_range {
                 fd.syntax().text_range() == range
             } else {
                 fd.name_token().is_some_and(|t| t.text() == fn_name_str)
             }
-        }) else {
+        });
+
+        // Try FnDef first; if not found, try PropertyDef (synthetic FnItems
+        // created for properties point at PropertyDef source ranges).
+        let body_result = if let Some(fd) = fn_def {
+            lower_body(fd, module_scope, file_id, interner)
+        } else if let Some(pd) = prop_defs.iter().find(|pd| {
+            fn_item
+                .source_range
+                .is_some_and(|range| pd.syntax().text_range() == range)
+        }) {
+            lower_property_body(pd, module_scope, file_id, interner)
+        } else {
             continue;
         };
 
-        let body_result = lower_body(fn_def, module_scope, file_id, interner);
-
         let fn_span = Span {
             file: file_id,
-            range: fn_def.syntax().text_range(),
+            range: fn_item
+                .source_range
+                .unwrap_or(kyokara_span::TextRange::default()),
         };
 
         body_lowering_diagnostics.extend(body_result.diagnostics.iter().cloned());
