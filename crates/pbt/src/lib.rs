@@ -11,5 +11,5 @@ pub mod report;
 pub mod runner;
 pub mod shrink;
 
-pub use report::{FnTestResult, TestReport};
+pub use report::{FnTestResult, TestReport, TestableKind};
 pub use runner::{TestConfig, run_project_tests, run_tests};
