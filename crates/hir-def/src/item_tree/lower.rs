@@ -101,7 +101,11 @@ impl ItemTreeCtx<'_> {
             }
         }
 
-        self.tree.imports.push(Import { path, alias });
+        self.tree.imports.push(Import {
+            path,
+            alias,
+            source_range: import.syntax().text_range(),
+        });
     }
 
     fn lower_item(&mut self, item: Item) {

@@ -27,7 +27,8 @@ pub use kyokara_hir_ty::{TypeCheckResult, check_module};
 
 use kyokara_intern::Interner;
 use kyokara_parser::ParseError;
-use kyokara_span::{FileId, FileMap};
+use kyokara_span::{FileId, FileMap, TextRange};
+use kyokara_stdx::FxHashMap;
 use kyokara_syntax::SyntaxNode;
 use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::SourceFile;
@@ -279,6 +280,7 @@ fn resolve_project_imports(
         importing_mod: ModulePath,
         import_path: Path,
         file_id: FileId,
+        import_range: TextRange,
     }
 
     let mut to_resolve: Vec<PendingImport> = Vec::new();
@@ -293,7 +295,18 @@ fn resolve_project_imports(
                 importing_mod: mod_path.clone(),
                 import_path: imp.path.clone(),
                 file_id: info.file_id,
+                import_range: imp.source_range,
             });
+        }
+    }
+
+    let mut modules_by_leaf: FxHashMap<Name, Vec<ModulePath>> = FxHashMap::default();
+    for (mod_path, _) in graph.iter() {
+        if let Some(last) = mod_path.last() {
+            modules_by_leaf
+                .entry(last)
+                .or_default()
+                .push(mod_path.clone());
         }
     }
 
@@ -303,7 +316,13 @@ fn resolve_project_imports(
             importing_mod,
             import_path,
             file_id,
+            import_range,
         } = pending;
+
+        let import_span = kyokara_span::Span {
+            file: file_id,
+            range: import_range,
+        };
 
         // Collect pub items from the target module.
         let pub_data = {
@@ -322,25 +341,16 @@ fn resolve_project_imports(
                 }
             } else {
                 let resolve_name = import_path.segments[0];
-                graph
-                    .iter()
-                    .filter_map(|(mod_path, _)| {
-                        if mod_path.last() == Some(resolve_name) {
-                            Some(mod_path.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
+                modules_by_leaf
+                    .get(&resolve_name)
+                    .cloned()
+                    .unwrap_or_default()
             };
 
             if candidates.is_empty() {
                 diagnostics.push(kyokara_diagnostics::Diagnostic::error(
                     format!("unresolved import `{import_name}`"),
-                    kyokara_span::Span {
-                        file: file_id,
-                        range: kyokara_span::TextRange::default(),
-                    },
+                    import_span,
                 ));
                 continue;
             }
@@ -366,10 +376,7 @@ fn resolve_project_imports(
                         "ambiguous import `{import_name}`: matches {}",
                         labels.join(", ")
                     ),
-                    kyokara_span::Span {
-                        file: file_id,
-                        range: kyokara_span::TextRange::default(),
-                    },
+                    import_span,
                 ));
                 continue;
             }
@@ -386,7 +393,6 @@ fn resolve_project_imports(
             continue;
         };
 
-        let import_file_id = importing_info.file_id;
         for item in pub_data {
             match item {
                 PubData::Fn(mut fn_item) => {
@@ -395,10 +401,7 @@ fn resolve_project_imports(
                         let name_str = name.resolve(interner);
                         diagnostics.push(kyokara_diagnostics::Diagnostic::error(
                             format!("conflicting import: `{name_str}` is already defined"),
-                            kyokara_span::Span {
-                                file: import_file_id,
-                                range: kyokara_span::TextRange::default(),
-                            },
+                            import_span,
                         ));
                     } else {
                         // Imported functions are not source-owned by this module.
@@ -415,10 +418,7 @@ fn resolve_project_imports(
                         let name_str = name.resolve(interner);
                         diagnostics.push(kyokara_diagnostics::Diagnostic::error(
                             format!("conflicting import: `{name_str}` is already defined"),
-                            kyokara_span::Span {
-                                file: import_file_id,
-                                range: kyokara_span::TextRange::default(),
-                            },
+                            import_span,
                         ));
                     } else {
                         let variants_info: Vec<(Name, usize)> =
@@ -449,10 +449,7 @@ fn resolve_project_imports(
                         let name_str = name.resolve(interner);
                         diagnostics.push(kyokara_diagnostics::Diagnostic::error(
                             format!("conflicting import: `{name_str}` is already defined"),
-                            kyokara_span::Span {
-                                file: import_file_id,
-                                range: kyokara_span::TextRange::default(),
-                            },
+                            import_span,
                         ));
                     } else {
                         let idx = importing_info.item_tree.caps.alloc(cap_item);

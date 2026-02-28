@@ -1675,6 +1675,28 @@ fn check_project_reports_unresolved_import() {
 }
 
 #[test]
+fn check_project_unresolved_import_reports_real_span() {
+    let (_dir, main_path) =
+        write_project(&[("main.ky", "\nimport nope\nfn main() -> Int { 1 }\n")]);
+    let output = check_project(&main_path);
+    let diag = output
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains("unresolved import `nope`"))
+        .expect("expected unresolved import diagnostic");
+    assert!(
+        diag.span.end > diag.span.start,
+        "unresolved import diagnostic should have non-empty source span, got: {:?}",
+        diag.span
+    );
+    assert!(
+        diag.span.start > 0,
+        "unresolved import span should point at import statement, not default offset 0: {:?}",
+        diag.span
+    );
+}
+
+#[test]
 fn check_project_surfaces_module_read_io_error() {
     let dir = tempfile::tempdir().expect("tempdir");
     let main_path = dir.path().join("main.ky");
@@ -1740,6 +1762,31 @@ fn check_project_reports_ambiguous_import_last_segment() {
             .iter()
             .map(|d| &d.message)
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn check_project_ambiguous_import_reports_real_span() {
+    let (_dir, main_path) = write_project(&[
+        ("main.ky", "\nimport math\nfn main() -> Int { value() }\n"),
+        ("a/math.ky", "pub fn value() -> Int { 1 }\n"),
+        ("b/math.ky", "pub fn value() -> Int { 2 }\n"),
+    ]);
+    let output = check_project(&main_path);
+    let diag = output
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains("ambiguous import `math`"))
+        .expect("expected ambiguous import diagnostic");
+    assert!(
+        diag.span.end > diag.span.start,
+        "ambiguous import diagnostic should have non-empty source span, got: {:?}",
+        diag.span
+    );
+    assert!(
+        diag.span.start > 0,
+        "ambiguous import span should point at import statement, not default offset 0: {:?}",
+        diag.span
     );
 }
 
@@ -2412,6 +2459,34 @@ fn project_import_collision_does_not_misattribute_call_edge_to_specific_module()
             && !main_fn.calls.contains(&"fn::b::foo".to_string()),
         "ambiguous collision call should not be attributed to a specific module, got calls: {:?}",
         main_fn.calls
+    );
+}
+
+#[test]
+fn project_conflicting_import_reports_real_span() {
+    let (_dir, main_path) = write_project(&[
+        (
+            "main.ky",
+            "\nimport a\nimport b\nfn foo() -> Int { 0 }\nfn main() -> Int { foo() }\n",
+        ),
+        ("a.ky", "pub fn foo() -> Int { 1 }\n"),
+        ("b.ky", "pub fn foo() -> Int { 2 }\n"),
+    ]);
+    let output = check_project(&main_path);
+    let diag = output
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains("conflicting import") && d.message.contains("foo"))
+        .expect("expected conflicting import diagnostic");
+    assert!(
+        diag.span.end > diag.span.start,
+        "conflicting import diagnostic should have non-empty source span, got: {:?}",
+        diag.span
+    );
+    assert!(
+        diag.span.start > 0,
+        "conflicting import span should point at import statement, not default offset 0: {:?}",
+        diag.span
     );
 }
 
