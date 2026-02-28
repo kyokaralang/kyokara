@@ -723,6 +723,11 @@ fn write_project(files: &[(&str, &str)]) -> (tempfile::TempDir, std::path::PathB
     (dir, main_path)
 }
 
+fn check_project_from_files(files: &[(&str, &str)]) -> kyokara_api::CheckOutput {
+    let (_dir, main_path) = write_project(files);
+    check_project(&main_path)
+}
+
 fn find_function_by_id<'a>(
     output: &'a kyokara_api::CheckOutput,
     id: &str,
@@ -934,13 +939,29 @@ fn assert_diagnostic_code_delta(
     );
 }
 
+fn assert_check_no_diagnostics(src: &str, context: &str) {
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "{context}: expected no diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+fn assert_check_has_diagnostics(src: &str, context: &str) {
+    let output = check(src, "test.ky");
+    assert!(
+        !output.diagnostics.is_empty(),
+        "{context}: expected at least one diagnostic"
+    );
+}
+
 #[test]
 fn project_symbol_ids_are_module_qualified() {
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         ("main.ky", "fn helper() -> Int { 1 }"),
         ("math.ky", "pub fn helper() -> Int { 2 }"),
     ]);
-    let output = check_project(&main_path);
     let helpers: Vec<_> = output
         .symbol_graph
         .functions
@@ -964,11 +985,10 @@ fn project_symbol_ids_are_module_qualified() {
 
 #[test]
 fn project_symbol_graph_no_duplicate_builtins() {
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         ("main.ky", "fn foo() -> Int { 1 }"),
         ("math.ky", "pub fn bar() -> Int { 2 }"),
     ]);
-    let output = check_project(&main_path);
     for builtin in &["Option", "Result", "List", "Map"] {
         let count = output
             .symbol_graph
@@ -982,11 +1002,10 @@ fn project_symbol_graph_no_duplicate_builtins() {
 
 #[test]
 fn project_symbol_graph_imported_fn_not_duplicated_as_local_alias() {
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         ("main.ky", "import a\nfn main() -> Int { foo() }\n"),
         ("a.ky", "pub fn foo() -> Int { 1 }\n"),
     ]);
-    let output = check_project(&main_path);
 
     let foo_nodes: Vec<_> = output
         .symbol_graph
@@ -1009,7 +1028,7 @@ fn project_symbol_graph_imported_fn_not_duplicated_as_local_alias() {
 
 #[test]
 fn project_symbol_id_uniqueness() {
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         (
             "main.ky",
             "type Color = | Red | Green\ncap IO { fn read() -> String }\nfn foo() -> Int { 1 }",
@@ -1019,7 +1038,6 @@ fn project_symbol_id_uniqueness() {
             "pub fn add(x: Int, y: Int) -> Int { x + y }\npub type Point = { x: Int, y: Int }",
         ),
     ]);
-    let output = check_project(&main_path);
 
     let mut ids: Vec<String> = Vec::new();
     for f in &output.symbol_graph.functions {
@@ -1047,14 +1065,13 @@ fn project_symbol_id_uniqueness() {
 
 #[test]
 fn project_symbol_graph_duplicate_fn_defs_use_unique_ids() {
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         ("main.ky", "import math\nfn main() -> Int { add(1, 2) }\n"),
         (
             "math.ky",
             "pub fn add(x: Int, y: Int) -> Int { x + y }\npub fn add(x: Int, y: Int) -> Int { x - y }\n",
         ),
     ]);
-    let output = check_project(&main_path);
 
     let mut ids = std::collections::HashSet::new();
     let mut dups = Vec::new();
@@ -1071,11 +1088,10 @@ fn project_symbol_graph_duplicate_fn_defs_use_unique_ids() {
 
 #[test]
 fn project_call_edges_use_qualified_ids() {
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         ("main.ky", "import math\nfn caller() -> Int { add(1, 2) }"),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
     ]);
-    let output = check_project(&main_path);
     let caller = output
         .symbol_graph
         .functions
@@ -1091,14 +1107,13 @@ fn project_call_edges_use_qualified_ids() {
 
 #[test]
 fn project_symbol_graph_repeated_import_calls_are_deduped() {
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         (
             "main.ky",
             "import math\nfn caller() -> Int {\n  add(1, 2)\n  add(3, 4)\n}\n",
         ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
     ]);
-    let output = check_project(&main_path);
     let caller = output
         .symbol_graph
         .functions
@@ -1119,11 +1134,10 @@ fn project_symbol_graph_repeated_import_calls_are_deduped() {
 
 #[test]
 fn project_root_module_uses_bare_ids() {
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         ("main.ky", "fn foo() -> Int { 1 }"),
         ("math.ky", "pub fn bar() -> Int { 2 }"),
     ]);
-    let output = check_project(&main_path);
     let foo = output
         .symbol_graph
         .functions
@@ -1139,11 +1153,10 @@ fn project_root_module_uses_bare_ids() {
 
 #[test]
 fn project_variant_ids_are_module_qualified() {
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         ("main.ky", "fn foo() -> Int { 1 }"),
         ("math.ky", "pub type Color = | Red | Green"),
     ]);
-    let output = check_project(&main_path);
     let color = output
         .symbol_graph
         .types
@@ -1164,11 +1177,10 @@ fn project_variant_ids_are_module_qualified() {
 
 #[test]
 fn project_capability_ids_are_module_qualified() {
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         ("main.ky", "fn foo() -> Int { 1 }"),
         ("math.ky", "pub cap IO { fn read() -> String }"),
     ]);
-    let output = check_project(&main_path);
     let io = output
         .symbol_graph
         .capabilities
@@ -1188,11 +1200,10 @@ fn project_capability_ids_are_module_qualified() {
 
 #[test]
 fn project_builtin_type_ids_are_unqualified() {
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         ("main.ky", "fn foo() -> Int { 1 }"),
         ("math.ky", "pub fn bar() -> Int { 2 }"),
     ]);
-    let output = check_project(&main_path);
     for builtin in &["Option", "Result", "List", "Map"] {
         let t = output
             .symbol_graph
@@ -1658,8 +1669,7 @@ fn api_io_error_produces_error_status() {
 
 #[test]
 fn check_project_reports_unresolved_import() {
-    let (_dir, main_path) = write_project(&[("main.ky", "import nope\nfn main() -> Int { 1 }\n")]);
-    let output = check_project(&main_path);
+    let output = check_project_from_files(&[("main.ky", "import nope\nfn main() -> Int { 1 }\n")]);
     assert!(
         output
             .diagnostics
@@ -1700,14 +1710,13 @@ fn check_project_surfaces_module_read_io_error() {
 #[test]
 fn check_project_aliased_import_resolves_by_path_not_alias() {
     // `import math as M` should resolve the "math" module, not look for a module named "M".
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         (
             "main.ky",
             "import math as M\nfn main() -> Int { add(1, 2) }\n",
         ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
     ]);
-    let output = check_project(&main_path);
     // Should have no "unresolved import" errors.
     let import_errors: Vec<_> = output
         .diagnostics
@@ -1723,12 +1732,11 @@ fn check_project_aliased_import_resolves_by_path_not_alias() {
 
 #[test]
 fn check_project_reports_ambiguous_import_last_segment() {
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         ("main.ky", "import math\nfn main() -> Int { value() }\n"),
         ("a/math.ky", "pub fn value() -> Int { 1 }\n"),
         ("b/math.ky", "pub fn value() -> Int { 2 }\n"),
     ]);
-    let output = check_project(&main_path);
     assert!(
         output
             .diagnostics
@@ -1746,12 +1754,11 @@ fn check_project_reports_ambiguous_import_last_segment() {
 #[test]
 fn check_project_qualified_import_resolves_duplicate_leaf_modules() {
     // `import a.math` should resolve exactly `a/math.ky` even when `b/math.ky` exists.
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         ("main.ky", "import a.math\nfn main() -> Int { value() }\n"),
         ("a/math.ky", "pub fn value() -> Int { 1 }\n"),
         ("b/math.ky", "pub fn value() -> Int { 2 }\n"),
     ]);
-    let output = check_project(&main_path);
     let import_diags: Vec<_> = output
         .diagnostics
         .iter()
@@ -1767,12 +1774,11 @@ fn check_project_qualified_import_resolves_duplicate_leaf_modules() {
 #[test]
 fn check_project_qualified_import_missing_path_does_not_match_by_leaf() {
     // `import c.math` should not fall back to any `*.math` leaf modules.
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         ("main.ky", "import c.math\nfn main() -> Int { value() }\n"),
         ("a/math.ky", "pub fn value() -> Int { 1 }\n"),
         ("b/math.ky", "pub fn value() -> Int { 2 }\n"),
     ]);
-    let output = check_project(&main_path);
     assert!(
         output
             .diagnostics
@@ -1792,8 +1798,7 @@ fn check_project_qualified_import_missing_path_does_not_match_by_leaf() {
 #[test]
 fn check_project_lowering_diagnostic_has_real_file_path() {
     // Lowering diagnostics should report the actual file path, not "<project>".
-    let (_dir, main_path) = write_project(&[("main.ky", "import nope\nfn main() -> Int { 1 }\n")]);
-    let output = check_project(&main_path);
+    let output = check_project_from_files(&[("main.ky", "import nope\nfn main() -> Int { 1 }\n")]);
     let diag = output
         .diagnostics
         .iter()
@@ -2354,12 +2359,11 @@ fn let_constructor_pattern_bindings_in_scope() {
 #[test]
 fn project_import_collision_produces_diagnostic() {
     // Two modules export `pub fn foo()` — importing both should produce a collision diagnostic.
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         ("main.ky", "import a\nimport b\nfn main() -> Int { foo() }"),
         ("a.ky", "pub fn foo() -> Int { 1 }"),
         ("b.ky", "pub fn foo() -> Int { 2 }"),
     ]);
-    let output = check_project(&main_path);
     let collisions: Vec<_> = output
         .diagnostics
         .iter()
@@ -2378,12 +2382,11 @@ fn project_import_collision_produces_diagnostic() {
 
 #[test]
 fn project_import_collision_does_not_misattribute_call_edge_to_specific_module() {
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         ("main.ky", "import a\nimport b\nfn main() -> Int { foo() }"),
         ("a.ky", "pub fn foo() -> Int { 1 }"),
         ("b.ky", "pub fn foo() -> Int { 2 }"),
     ]);
-    let output = check_project(&main_path);
 
     let collisions: Vec<_> = output
         .diagnostics
@@ -3083,14 +3086,13 @@ fn main() -> Int {
 fn project_symbol_graph_pre_post_shadow_with_imported_function() {
     // Project mode: imported `math::add` should be recorded before local shadowing,
     // and local post-shadow call should not create an extra call edge.
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         (
             "main.ky",
             "import math\nfn caller() -> Int {\n  add(1, 2)\n  let add = fn(x: Int, y: Int) -> Int => x\n  add(1, 2)\n}\n",
         ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
     ]);
-    let output = check_project(&main_path);
     let caller = output
         .symbol_graph
         .functions
@@ -3155,7 +3157,7 @@ fn nested_block_shadow() -> Int {
 
 #[test]
 fn symbol_graph_call_edge_invariants_project_import_shadow_matrix() {
-    let (_dir, main_path) = write_project(&[
+    let output = check_project_from_files(&[
         (
             "main.ky",
             "import math\n\
@@ -3178,7 +3180,6 @@ fn symbol_graph_call_edge_invariants_project_import_shadow_matrix() {
         ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
     ]);
-    let output = check_project(&main_path);
     assert_call_edges_target_existing_functions(&output);
     assert_no_duplicate_call_edges_per_caller(&output);
 
@@ -3557,199 +3558,68 @@ fn diagnostic_delta_type_mismatch_adds_one_e0001() {
 // ── Modulo, logical AND, logical OR operator type-check tests ───────
 
 #[test]
-fn check_modulo_int_no_diagnostics() {
-    let output = check("fn main() -> Int { 10 % 3 }", "test.ky");
-    assert!(
-        output.diagnostics.is_empty(),
-        "expected no diagnostics for Int % Int, got: {:?}",
-        output.diagnostics
-    );
+fn check_modulo_and_logical_ops_accept_valid_cases() {
+    let cases = [
+        ("Int % Int", "fn main() -> Int { 10 % 3 }"),
+        ("Float % Float", "fn main() -> Float { 5.5 % 2.0 }"),
+        ("Bool && Bool", "fn main() -> Bool { true && false }"),
+        ("Bool || Bool", "fn main() -> Bool { true || false }"),
+        (
+            "comparison && comparison",
+            "fn main() -> Bool { 1 > 0 && 2 > 1 }",
+        ),
+        (
+            "modulo+equality+and",
+            "fn main() -> Bool { 10 % 2 == 0 && 9 % 3 == 0 }",
+        ),
+    ];
+    for (context, src) in cases {
+        assert_check_no_diagnostics(src, context);
+    }
 }
 
 #[test]
-fn check_modulo_float_no_diagnostics() {
-    let output = check("fn main() -> Float { 5.5 % 2.0 }", "test.ky");
-    assert!(
-        output.diagnostics.is_empty(),
-        "expected no diagnostics for Float % Float, got: {:?}",
-        output.diagnostics
-    );
-}
-
-#[test]
-fn check_modulo_string_has_error() {
-    let output = check(r#"fn main() -> String { "a" % "b" }"#, "test.ky");
-    assert!(
-        !output.diagnostics.is_empty(),
-        "expected diagnostic for String % String"
-    );
-}
-
-#[test]
-fn check_logical_and_no_diagnostics() {
-    let output = check("fn main() -> Bool { true && false }", "test.ky");
-    assert!(
-        output.diagnostics.is_empty(),
-        "expected no diagnostics for Bool && Bool, got: {:?}",
-        output.diagnostics
-    );
-}
-
-#[test]
-fn check_logical_or_no_diagnostics() {
-    let output = check("fn main() -> Bool { true || false }", "test.ky");
-    assert!(
-        output.diagnostics.is_empty(),
-        "expected no diagnostics for Bool || Bool, got: {:?}",
-        output.diagnostics
-    );
-}
-
-#[test]
-fn check_logical_and_with_comparisons_no_diagnostics() {
-    let output = check("fn main() -> Bool { 1 > 0 && 2 > 1 }", "test.ky");
-    assert!(
-        output.diagnostics.is_empty(),
-        "expected no diagnostics for comparison && comparison, got: {:?}",
-        output.diagnostics
-    );
-}
-
-#[test]
-fn check_logical_and_int_operand_has_error() {
-    let output = check("fn main() -> Bool { 1 && true }", "test.ky");
-    assert!(
-        !output.diagnostics.is_empty(),
-        "expected diagnostic for Int && Bool"
-    );
-}
-
-#[test]
-fn check_logical_or_int_operand_has_error() {
-    let output = check("fn main() -> Bool { true || 1 }", "test.ky");
-    assert!(
-        !output.diagnostics.is_empty(),
-        "expected diagnostic for Bool || Int"
-    );
-}
-
-#[test]
-fn check_modulo_in_complex_expression() {
-    let output = check("fn main() -> Bool { 10 % 2 == 0 && 9 % 3 == 0 }", "test.ky");
-    assert!(
-        output.diagnostics.is_empty(),
-        "expected no diagnostics for modulo+equality+and, got: {:?}",
-        output.diagnostics
-    );
+fn check_modulo_and_logical_ops_reject_invalid_cases() {
+    let cases = [
+        ("String % String", r#"fn main() -> String { "a" % "b" }"#),
+        ("Int && Bool", "fn main() -> Bool { 1 && true }"),
+        ("Bool || Int", "fn main() -> Bool { true || 1 }"),
+    ];
+    for (context, src) in cases {
+        assert_check_has_diagnostics(src, context);
+    }
 }
 
 // ── Bitwise operator type checking ─────────────────────────────────
 
 #[test]
-fn check_bitwise_and_int_ok() {
-    let output = check("fn main() -> Int { 3 & 1 }", "test.ky");
-    assert!(
-        output.diagnostics.is_empty(),
-        "expected no diagnostics for Int & Int, got: {:?}",
-        output.diagnostics
-    );
+fn check_bitwise_ops_accept_valid_cases() {
+    let cases = [
+        ("Int & Int", "fn main() -> Int { 3 & 1 }"),
+        ("Int | Int", "fn main() -> Int { 3 | 1 }"),
+        ("Int ^ Int", "fn main() -> Int { 3 ^ 1 }"),
+        ("Int << Int", "fn main() -> Int { 1 << 3 }"),
+        ("Int >> Int", "fn main() -> Int { 8 >> 2 }"),
+        ("~Int", "fn main() -> Int { ~42 }"),
+        (
+            "combined bitwise expression",
+            "fn main() -> Bool { (255 & 15) == 15 && (1 << 3) == 8 }",
+        ),
+    ];
+    for (context, src) in cases {
+        assert_check_no_diagnostics(src, context);
+    }
 }
 
 #[test]
-fn check_bitwise_or_int_ok() {
-    let output = check("fn main() -> Int { 3 | 1 }", "test.ky");
-    assert!(
-        output.diagnostics.is_empty(),
-        "expected no diagnostics for Int | Int, got: {:?}",
-        output.diagnostics
-    );
-}
-
-#[test]
-fn check_bitwise_xor_int_ok() {
-    let output = check("fn main() -> Int { 3 ^ 1 }", "test.ky");
-    assert!(
-        output.diagnostics.is_empty(),
-        "expected no diagnostics for Int ^ Int, got: {:?}",
-        output.diagnostics
-    );
-}
-
-#[test]
-fn check_shl_int_ok() {
-    let output = check("fn main() -> Int { 1 << 3 }", "test.ky");
-    assert!(
-        output.diagnostics.is_empty(),
-        "expected no diagnostics for Int << Int, got: {:?}",
-        output.diagnostics
-    );
-}
-
-#[test]
-fn check_shr_int_ok() {
-    let output = check("fn main() -> Int { 8 >> 2 }", "test.ky");
-    assert!(
-        output.diagnostics.is_empty(),
-        "expected no diagnostics for Int >> Int, got: {:?}",
-        output.diagnostics
-    );
-}
-
-#[test]
-fn check_bitwise_not_int_ok() {
-    let output = check("fn main() -> Int { ~42 }", "test.ky");
-    assert!(
-        output.diagnostics.is_empty(),
-        "expected no diagnostics for ~Int, got: {:?}",
-        output.diagnostics
-    );
-}
-
-#[test]
-fn check_bitwise_and_float_has_error() {
-    let output = check("fn main() -> Float { 1.0 & 2.0 }", "test.ky");
-    assert!(
-        !output.diagnostics.is_empty(),
-        "expected diagnostic for Float & Float"
-    );
-}
-
-#[test]
-fn check_bitwise_or_bool_has_error() {
-    let output = check("fn main() -> Bool { true | false }", "test.ky");
-    assert!(
-        !output.diagnostics.is_empty(),
-        "expected diagnostic for Bool | Bool"
-    );
-}
-
-#[test]
-fn check_bitwise_not_bool_has_error() {
-    let output = check("fn main() -> Bool { ~true }", "test.ky");
-    assert!(
-        !output.diagnostics.is_empty(),
-        "expected diagnostic for ~Bool"
-    );
-}
-
-#[test]
-fn check_shl_float_has_error() {
-    let output = check("fn main() -> Float { 1.0 << 2 }", "test.ky");
-    assert!(
-        !output.diagnostics.is_empty(),
-        "expected diagnostic for Float << Int"
-    );
-}
-
-#[test]
-fn check_bitwise_combined_expression() {
-    let output = check(
-        "fn main() -> Bool { (255 & 15) == 15 && (1 << 3) == 8 }",
-        "test.ky",
-    );
-    assert!(
-        output.diagnostics.is_empty(),
-        "expected no diagnostics for combined bitwise expression, got: {:?}",
-        output.diagnostics
-    );
+fn check_bitwise_ops_reject_invalid_cases() {
+    let cases = [
+        ("Float & Float", "fn main() -> Float { 1.0 & 2.0 }"),
+        ("Bool | Bool", "fn main() -> Bool { true | false }"),
+        ("~Bool", "fn main() -> Bool { ~true }"),
+        ("Float << Int", "fn main() -> Float { 1.0 << 2 }"),
+    ];
+    for (context, src) in cases {
+        assert_check_has_diagnostics(src, context);
+    }
 }
