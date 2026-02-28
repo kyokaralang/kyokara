@@ -60,6 +60,9 @@ First-class specification:
 - prefer explicit forms over clever syntax
 - support named arguments by default
 
+API/stdlib surface consistency rules are specified in RFC 0001:
+- [API Surface Law (AI-first)](rfcs/0001-api-surface-law.md)
+
 ### 2.2 Modules and imports
 
 **Implemented (v0.2):** Convention-based file layout — the file path determines the module path. No explicit `module` declarations needed.

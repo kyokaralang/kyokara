@@ -1,0 +1,198 @@
+# RFC 0001: API Surface Law (AI-first)
+
+- Status: Draft
+- Owner: Language Design
+- Tracking issue: [#243](https://github.com/kyokaralang/kyokara/issues/243)
+- Last updated: 2026-02-28
+
+## Summary
+
+Define a normative, mechanically-checkable set of API surface rules for Kyokara stdlib and language-facing APIs.
+
+The goal is to reduce ambiguity for AI authors and keep APIs predictable under refactoring, code generation, and automated fixes.
+
+## Motivation
+
+AI-first authoring degrades when APIs allow multiple equivalent spellings, inconsistent parameter order, hidden globals, or fuzzy placement rules.
+
+This RFC defines one canonical model:
+
+1. behavior belongs where ownership is clear
+2. data flow is positional-first and pipe-compatible
+3. optionality/config is explicit and named
+4. side effects are capability-scoped
+5. evolution is additive and machine-trackable
+
+## Scope
+
+In scope:
+
+- stdlib function/method/type-constructor shape
+- intrinsic exposure policy
+- parameter order and named-argument rules
+- pipe compatibility contract
+- compatibility and evolution constraints
+
+Out of scope:
+
+- parser syntax details not affecting API shape
+- IR/codegen internals
+- concurrency model
+
+## Laws
+
+### L1. One canonical spelling (`MUST`)
+
+Each operation has exactly one canonical API form in docs and generated code.
+
+Examples:
+
+- canonical: `io.println("hi")`
+- forbidden duplicates: both `len(x)` and `x.len()` for the same operation
+
+### L2. Owner rule for placement (`MUST`)
+
+If behavior clearly belongs to a value, use a method.
+If no clear receiver owner exists, use a module function.
+
+Examples:
+
+- method: `s.trim()`, `n.abs()`
+- module: `math.min(a, b)`, `math.gcd(a, b)`
+
+### L3. No runtime globals as canonical API (`MUST`)
+
+Runtime/library calls are namespaced under modules or types.
+
+Examples:
+
+- canonical: `io.print`, `io.println`, `fs.read_file`
+- if shorthand exists, it must desugar to canonical form
+
+### L4. Effects via capability modules (`MUST`)
+
+Side-effecting APIs live in capability-scoped modules and are enforceable through manifests/type-level effect checking.
+
+Examples:
+
+- `io.*`, `fs.*`, `net.*`
+
+### L5. Construction in type namespace (`MUST`)
+
+Constructors/factories are namespaced under types.
+
+Examples:
+
+- `List.new()`, `Map.new()`
+
+### L6. Fallibility semantics are explicit (`MUST`)
+
+- `to_*` means total/safe conversion
+- `parse_*` means fallible parsing and should return `Result` when represented in surface API
+
+### L7. No synonyms and no ad-hoc overloads (`MUST NOT`)
+
+Do not ship duplicate entrypoints for the same semantic operation.
+Do not rely on type/arity overload ambiguity as the primary API shape.
+
+### L8. No implicit coercions (`MUST`)
+
+Type changes are explicit in API usage.
+
+### L9. Parameter mode contract (`MUST`)
+
+1. arg1 is primary data value (pipe receiver), positional
+2. required args follow, positional
+3. optional/config args are named-only
+4. positional optional args are forbidden
+
+### L10. Required positional semantic order (`MUST`)
+
+Use these stable pair orderings:
+
+1. source before target
+2. low before high
+3. start before end
+
+If no obvious pair exists, declaration order becomes permanent API contract.
+
+### L11. Ambiguity guard (`MUST`)
+
+Require named args or options objects when any are true:
+
+1. adjacent same-category parameter types cause confusion
+2. boolean flags are present
+3. more than 3 required non-data parameters would be needed
+
+### L12. Pipe desugaring (`MUST`)
+
+`x |> f(a, b, k: v)` desugars to `f(x, a, b, k: v)`.
+
+### L13. Pipeline direction (`SHOULD`)
+
+Pipelines are left-to-right transformations; sinks/effects should be terminal steps.
+
+### L14. Sugar policy (`MAY`, constrained)
+
+Human ergonomics sugar is allowed only if lossless and equivalent to canonical APIs.
+
+### L15. Evolution policy (`SHOULD`)
+
+Prefer additive evolution. Breaking changes require deprecation windows and migration guidance/tooling.
+
+## Mechanically-checkable criteria
+
+The following can be enforced by lints/tooling:
+
+1. duplicate canonical spellings for same operation
+2. non-pipe-compatible arg1 placement for transform APIs
+3. optional positional params
+4. unnamed boolean flags in function signatures
+5. unnamespaced canonical runtime APIs
+6. unstable parameter ordering changes across versions
+
+## API-surface conformance checklist
+
+Use this checklist in PRs that add or change stdlib/intrinsic/public APIs.
+
+### A. New API checklist
+
+- [ ] Canonical spelling is unique (`L1`, `L7`).
+- [ ] Placement follows owner rule (method vs module vs type constructor) (`L2`, `L5`).
+- [ ] Canonical form is namespaced (not a runtime global) (`L3`).
+- [ ] Effectful behavior is capability-scoped (`L4`).
+- [ ] No implicit coercion is required to call/use the API (`L8`).
+- [ ] Signature follows parameter mode contract: data first, required positional, optional named-only (`L9`).
+- [ ] Required positional semantic order is stable and documented (`L10`).
+- [ ] Ambiguity guard applied (booleans/ambiguous same-category params/options object) (`L11`).
+- [ ] If pipe-eligible, `x |> f(...)` desugars cleanly to `f(x, ...)` (`L12`).
+- [ ] Any sugar is lossless and desugars to canonical form (`L14`).
+
+### B. API change checklist
+
+- [ ] Parameter order in existing APIs is unchanged unless breaking change is explicitly approved (`L10`, `L15`).
+- [ ] No new synonym/overload path is introduced (`L1`, `L7`).
+- [ ] Existing canonical call sites remain valid or have migration guidance (`L15`).
+- [ ] Deprecation/migration notes are included when behavior or naming changes (`L15`).
+- [ ] Docs and machine-facing outputs are updated in the same PR.
+
+### C. Review gate outcome
+
+Mark one:
+
+- [ ] `PASS` — all required checks satisfied.
+- [ ] `PASS WITH FOLLOW-UP` — non-blocking gaps tracked in issue(s).
+- [ ] `BLOCKED` — violates one or more `MUST` laws.
+
+## Rollout plan
+
+1. publish this RFC and link from design docs
+2. align stdlib/intrinsic docs to canonical forms
+3. add conformance checks incrementally (lint + tests)
+4. enforce evolution/deprecation policy in release process
+
+## Open questions
+
+1. Should a default prelude expose any non-capability pure helpers?
+2. Should parser-level syntax support a first-class options object literal convention?
+3. Which rules should be hard errors vs warnings in v0.x?

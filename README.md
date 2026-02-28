@@ -193,6 +193,9 @@ crates/
 | **v0.2** | Module system (convention-based layout, `pub` visibility, flat imports) ✓, refactor engine (rename, add missing match cases, add missing capability) ✓, refactor transactions (atomic verify-before-apply) ✓, capability enforcement (type-level E0011 + runtime manifest `--caps`) ✓, LSP server (diagnostics, hover, go-to-def, references, completion, code actions, formatting) ✓ | **Complete** |
 | **v0.3** | KyokaraIR data structures ✓, HIR→KIR lowering ✓, WASM codegen MVP (scalars, control flow, calls, ADTs, records) ✓, property-based testing (`kyokara test --explore`) ✓, SMT verification (restricted fragment), capability sandbox, deterministic replay | In progress |
 
+AI-special-feature status tracking (with completeness scores + issue links) lives in [docs/ai-programmer-special-features-tracker.md](docs/ai-programmer-special-features-tracker.md).
+API surface design rules live in [docs/rfcs/0001-api-surface-law.md](docs/rfcs/0001-api-surface-law.md).
+
 ## FAQ
 
 **Why build the compiler frontend before an interpreter? Most new languages start with "make something run."**
