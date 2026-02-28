@@ -20,7 +20,7 @@ pub mod unify;
 
 use kyokara_diagnostics::Diagnostic;
 use kyokara_hir_def::body::Body;
-use kyokara_hir_def::body::lower::{lower_body, lower_property_body};
+use kyokara_hir_def::body::lower::{lower_body, lower_property_body, lower_refinement_body};
 use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree};
 use kyokara_hir_def::resolver::ModuleScope;
 use kyokara_hir_def::type_ref::TypeRef;
@@ -29,7 +29,7 @@ use kyokara_span::{FileId, Span};
 use kyokara_stdx::FxHashMap;
 use kyokara_syntax::SyntaxNode;
 use kyokara_syntax::ast::AstNode;
-use kyokara_syntax::ast::nodes::{FnDef, PropertyDef};
+use kyokara_syntax::ast::nodes::{FnDef, PropertyDef, RefinedType};
 use kyokara_syntax::ast::traits::HasName;
 
 use kyokara_hir_def::name::Name;
@@ -74,6 +74,8 @@ pub fn check_module(
 
     let fn_defs: Vec<FnDef> = root.descendants().filter_map(FnDef::cast).collect();
     let prop_defs: Vec<PropertyDef> = root.descendants().filter_map(PropertyDef::cast).collect();
+    let refined_types: Vec<RefinedType> =
+        root.descendants().filter_map(RefinedType::cast).collect();
 
     for (fn_idx, fn_item) in item_tree.functions.iter() {
         if !fn_item.has_body {
@@ -93,6 +95,7 @@ pub fn check_module(
 
         // Try FnDef first; if not found, try PropertyDef (synthetic FnItems
         // created for properties point at PropertyDef source ranges).
+        // Finally, try RefinedType (synthetic FnItems for refinement predicates).
         let body_result = if let Some(fd) = fn_def {
             lower_body(fd, module_scope, file_id, interner)
         } else if let Some(pd) = prop_defs.iter().find(|pd| {
@@ -101,6 +104,12 @@ pub fn check_module(
                 .is_some_and(|range| pd.syntax().text_range() == range)
         }) {
             lower_property_body(pd, module_scope, file_id, interner)
+        } else if let Some(rt) = refined_types.iter().find(|rt| {
+            fn_item
+                .source_range
+                .is_some_and(|range| rt.syntax().text_range() == range)
+        }) {
+            lower_refinement_body(rt, module_scope, file_id, interner)
         } else {
             continue;
         };
