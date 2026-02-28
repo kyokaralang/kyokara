@@ -1290,7 +1290,7 @@ impl Interpreter {
 
     fn eval_field(&self, base: Value, field: Name) -> Result<Value, RuntimeError> {
         match base {
-            Value::Record { fields } => {
+            Value::Record { fields, .. } => {
                 for (name, val) in &fields {
                     if *name == field {
                         return Ok(val.clone());
@@ -1327,6 +1327,10 @@ impl Interpreter {
             Value::List(_) => wk.list,
             Value::Map(_) => wk.map,
             Value::Adt { type_idx, .. } => Some(self.item_tree.types[*type_idx].name),
+            Value::Record {
+                type_idx: Some(idx),
+                ..
+            } => Some(self.item_tree.types[*idx].name),
             _ => None,
         }
     }
@@ -1492,7 +1496,10 @@ impl Interpreter {
             Pat::Record {
                 fields: pat_fields, ..
             } => {
-                let Value::Record { fields: val_fields } = value else {
+                let Value::Record {
+                    fields: val_fields, ..
+                } = value
+                else {
                     return false;
                 };
                 // Each pattern field name must match a value field,
@@ -1582,7 +1589,7 @@ impl Interpreter {
         &mut self,
         env: &mut Env,
         body: &Body,
-        _path: Option<&kyokara_hir_def::path::Path>,
+        path: Option<&kyokara_hir_def::path::Path>,
         fields: &[(Name, ExprIdx)],
     ) -> Result<ControlFlow, RuntimeError> {
         let mut field_vals = Vec::with_capacity(fields.len());
@@ -1591,11 +1598,19 @@ impl Interpreter {
             field_vals.push((*name, val));
         }
 
+        // Resolve type index from path for method resolution.
+        let type_idx = path
+            .and_then(|p| p.segments.first())
+            .and_then(|name| self.module_scope.types.get(name).copied());
+
         // Record literals (`Name { field: value }`) always produce record
         // values. ADT constructors are handled separately through the call
         // path (`Name(value)`). This avoids misinterpreting record literals
         // as ADT constructors when names collide (issue #127).
-        Ok(ControlFlow::Value(Value::Record { fields: field_vals }))
+        Ok(ControlFlow::Value(Value::Record {
+            fields: field_vals,
+            type_idx,
+        }))
     }
 
     // --- Shared-env variants of helper methods ---
@@ -1693,7 +1708,7 @@ impl Interpreter {
     fn eval_record_lit_shared(
         &mut self,
         body: &Body,
-        _path: Option<&kyokara_hir_def::path::Path>,
+        path: Option<&kyokara_hir_def::path::Path>,
         fields: &[(Name, ExprIdx)],
     ) -> Result<ControlFlow, RuntimeError> {
         let mut field_vals = Vec::with_capacity(fields.len());
@@ -1702,8 +1717,15 @@ impl Interpreter {
             field_vals.push((*name, val));
         }
 
+        let type_idx = path
+            .and_then(|p| p.segments.first())
+            .and_then(|name| self.module_scope.types.get(name).copied());
+
         // Record literals always produce record values (see eval_record_lit).
-        Ok(ControlFlow::Value(Value::Record { fields: field_vals }))
+        Ok(ControlFlow::Value(Value::Record {
+            fields: field_vals,
+            type_idx,
+        }))
     }
 }
 

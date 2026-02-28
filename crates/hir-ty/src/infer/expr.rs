@@ -461,10 +461,10 @@ impl<'a> InferenceCtx<'a> {
         // ── Method call resolution ──────────────────────────────────
         // If the callee is `expr.field(args)`, try resolving as a method
         // call before falling through to normal field-access + call.
-        if let Expr::Field { base, field } = self.body.exprs[callee].clone() {
-            if let Some(result) = self.try_infer_method_call(callee, base, field, args) {
-                return result;
-            }
+        if let Expr::Field { base, field } = self.body.exprs[callee].clone()
+            && let Some(result) = self.try_infer_method_call(callee, base, field, args)
+        {
+            return result;
         }
 
         let callee_ty = self.infer_expr(callee, &Expectation::None);
@@ -688,7 +688,15 @@ impl<'a> InferenceCtx<'a> {
             }
             Ty::Adt { def, args } => {
                 let type_item = &self.item_tree.types[*def];
-                if let TypeDefKind::Record { fields: def_fields } = &type_item.kind {
+                // Extract record fields from Record or Alias-to-Record kinds.
+                let def_fields = match &type_item.kind {
+                    TypeDefKind::Record { fields } => Some(fields),
+                    TypeDefKind::Alias(kyokara_hir_def::type_ref::TypeRef::Record { fields }) => {
+                        Some(fields)
+                    }
+                    _ => None,
+                };
+                if let Some(def_fields) = def_fields {
                     // Build substitution for type params.
                     let mut tp_map: Vec<(kyokara_hir_def::name::Name, Ty)> =
                         self.type_params.clone();
@@ -867,6 +875,23 @@ impl<'a> InferenceCtx<'a> {
                 } => fields
                     .iter()
                     .all(|f| rec_fields.iter().any(|(name, _)| name == f)),
+                Ty::Adt { def, .. } => {
+                    let type_item = &self.item_tree.types[def];
+                    let def_fields = match &type_item.kind {
+                        TypeDefKind::Record { fields: f } => Some(f),
+                        TypeDefKind::Alias(kyokara_hir_def::type_ref::TypeRef::Record {
+                            fields: f,
+                        }) => Some(f),
+                        _ => None,
+                    };
+                    if let Some(def_fields) = def_fields {
+                        fields
+                            .iter()
+                            .all(|f| def_fields.iter().any(|(name, _)| name == f))
+                    } else {
+                        false
+                    }
+                }
                 _ => false,
             },
             Pat::Constructor { path, args } => {
@@ -926,12 +951,12 @@ impl<'a> InferenceCtx<'a> {
             if let Some(&type_idx) = self.module_scope.types.get(&name) {
                 let type_item = &self.item_tree.types[type_idx];
                 // Extract record fields from either Record kind or Alias to Record.
-                let (def_fields, is_true_record) = match &type_item.kind {
-                    TypeDefKind::Record { fields: def_fields } => (Some(def_fields), true),
+                let def_fields = match &type_item.kind {
+                    TypeDefKind::Record { fields: def_fields } => Some(def_fields),
                     TypeDefKind::Alias(kyokara_hir_def::type_ref::TypeRef::Record {
                         fields: def_fields,
-                    }) => (Some(def_fields), false),
-                    _ => (None, false),
+                    }) => Some(def_fields),
+                    _ => None,
                 };
                 if def_fields.is_none() {
                     // Path resolves to a type that isn't record-shaped.
@@ -966,18 +991,12 @@ impl<'a> InferenceCtx<'a> {
                         .map(|(n, tr)| (*n, env.resolve_type_ref(tr, &mut self.table)))
                         .collect();
 
-                    let result_ty = if is_true_record {
-                        Ty::Adt {
-                            def: type_idx,
-                            args: args.clone(),
-                        }
-                    } else {
-                        Ty::Record {
-                            fields: expected_field_tys
-                                .iter()
-                                .map(|(n, ty)| (*n, ty.clone()))
-                                .collect(),
-                        }
+                    // Always produce Ty::Adt when the type was resolved from
+                    // the module scope, even for alias-to-record types.
+                    // This ensures method resolution can find the type name.
+                    let result_ty = Ty::Adt {
+                        def: type_idx,
+                        args: args.clone(),
                     };
 
                     for (fname, fexpr) in fields {
@@ -1145,10 +1164,17 @@ impl<'a> InferenceCtx<'a> {
             }
             Ty::Adt { def, .. } => {
                 let type_item = &self.item_tree.types[*def];
-                if let TypeDefKind::Record { fields: def_fields } = &type_item.kind {
-                    if def_fields.iter().any(|(n, _)| *n == field) {
-                        return None; // actual field exists, fall through
+                let def_fields = match &type_item.kind {
+                    TypeDefKind::Record { fields } => Some(fields.as_slice()),
+                    TypeDefKind::Alias(kyokara_hir_def::type_ref::TypeRef::Record { fields }) => {
+                        Some(fields.as_slice())
                     }
+                    _ => None,
+                };
+                if let Some(def_fields) = def_fields
+                    && def_fields.iter().any(|(n, _)| *n == field)
+                {
+                    return None; // actual field exists, fall through
                 }
             }
             _ => {}

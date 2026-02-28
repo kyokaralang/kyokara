@@ -1030,8 +1030,24 @@ impl<'a> FuncCodegen<'a> {
     }
 
     fn resolve_record_field_index(&self, base_ty: &Ty, field: Name) -> Result<u32, CodegenError> {
-        let fields = match base_ty {
-            Ty::Record { fields } => fields,
+        let field_names: Vec<Name> = match base_ty {
+            Ty::Record { fields } => fields.iter().map(|(n, _)| *n).collect(),
+            Ty::Adt { def, .. } => {
+                let type_item = &self.ctx.item_tree.types[*def];
+                match &type_item.kind {
+                    kyokara_hir_def::item_tree::TypeDefKind::Record { fields } => {
+                        fields.iter().map(|(n, _)| *n).collect()
+                    }
+                    kyokara_hir_def::item_tree::TypeDefKind::Alias(
+                        kyokara_hir_def::type_ref::TypeRef::Record { fields },
+                    ) => fields.iter().map(|(n, _)| *n).collect(),
+                    _ => {
+                        return Err(CodegenError::UnsupportedType(
+                            "field access on non-record ADT".into(),
+                        ));
+                    }
+                }
+            }
             _ => {
                 return Err(CodegenError::UnsupportedType(
                     "field access on non-record".into(),
@@ -1040,7 +1056,7 @@ impl<'a> FuncCodegen<'a> {
         };
 
         // Sort field names to get deterministic index.
-        let mut names: Vec<Name> = fields.iter().map(|(n, _)| *n).collect();
+        let mut names = field_names;
         names.sort_by(|a, b| {
             let a_str = a.resolve(self.ctx.interner);
             let b_str = b.resolve(self.ctx.interner);
