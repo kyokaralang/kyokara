@@ -101,6 +101,10 @@ enum Token {
     GtEq,
     #[token("<=")]
     LtEq,
+    #[token("<<")]
+    LtLt,
+    #[token(">>")]
+    GtGt,
 
     // ── Single-char operators ────────────────────────────────────────
     #[token("=")]
@@ -125,6 +129,10 @@ enum Token {
     Pipe,
     #[token("&")]
     Amp,
+    #[token("^")]
+    Caret,
+    #[token("~")]
+    Tilde,
     #[token("?")]
     Question,
 
@@ -178,6 +186,8 @@ impl Token {
             Token::BangEq => SyntaxKind::BangEq,
             Token::GtEq => SyntaxKind::GtEq,
             Token::LtEq => SyntaxKind::LtEq,
+            Token::LtLt => SyntaxKind::LtLt,
+            Token::GtGt => SyntaxKind::GtGt,
             Token::Eq => SyntaxKind::Eq,
             Token::Bang => SyntaxKind::Bang,
             Token::Gt => SyntaxKind::Gt,
@@ -189,6 +199,8 @@ impl Token {
             Token::Percent => SyntaxKind::Percent,
             Token::Pipe => SyntaxKind::Pipe,
             Token::Amp => SyntaxKind::Amp,
+            Token::Caret => SyntaxKind::Caret,
+            Token::Tilde => SyntaxKind::Tilde,
             Token::Question => SyntaxKind::Question,
             Token::LParen => SyntaxKind::LParen,
             Token::RParen => SyntaxKind::RParen,
@@ -346,6 +358,10 @@ mod tests {
             ("||", PipePipe),
             ("&", Amp),
             ("&&", AmpAmp),
+            ("^", Caret),
+            ("~", Tilde),
+            ("<<", LtLt),
+            (">>", GtGt),
             ("?", Question),
         ];
         for (text, expected) in cases {
@@ -376,6 +392,10 @@ mod tests {
         assert_eq!(lex_kinds("&&"), [(AmpAmp, "&&")]);
         // `||` should not be `|` + `|`
         assert_eq!(lex_kinds("||"), [(PipePipe, "||")]);
+        // `<<` should not be `<` + `<`
+        assert_eq!(lex_kinds("<<"), [(LtLt, "<<")]);
+        // `>>` should not be `>` + `>`
+        assert_eq!(lex_kinds(">>"), [(GtGt, ">>")]);
     }
 
     // ── Literals ─────────────────────────────────────────────────────

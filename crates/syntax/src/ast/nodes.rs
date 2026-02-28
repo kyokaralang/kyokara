@@ -562,6 +562,11 @@ impl BinaryExpr {
                         | SyntaxKind::Gt
                         | SyntaxKind::LtEq
                         | SyntaxKind::GtEq
+                        | SyntaxKind::Amp
+                        | SyntaxKind::Pipe
+                        | SyntaxKind::Caret
+                        | SyntaxKind::LtLt
+                        | SyntaxKind::GtGt
                         | SyntaxKind::AmpAmp
                         | SyntaxKind::PipePipe
                 )
@@ -580,7 +585,12 @@ impl UnaryExpr {
         self.syntax
             .children_with_tokens()
             .filter_map(|it| it.into_token())
-            .find(|tok| matches!(tok.kind(), SyntaxKind::Bang | SyntaxKind::Minus))
+            .find(|tok| {
+                matches!(
+                    tok.kind(),
+                    SyntaxKind::Bang | SyntaxKind::Minus | SyntaxKind::Tilde
+                )
+            })
     }
 }
 

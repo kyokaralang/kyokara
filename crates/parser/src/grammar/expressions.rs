@@ -6,10 +6,14 @@
 //! - `&&`              : (5, 6)
 //! - `==` `!=`         : (7, 8)
 //! - `<` `>` `<=` `>=` : (9, 10)
-//! - `+` `-`           : (11, 12)
-//! - `*` `/` `%`       : (13, 14)
-//! - Prefix `!` `-`    : right_bp 15
-//! - Postfix `?` `.` `()` : left_bp 17
+//! - `|` (bitwise OR)  : (11, 12)
+//! - `^` (bitwise XOR) : (13, 14)
+//! - `&` (bitwise AND) : (15, 16)
+//! - `+` `-`           : (17, 18)
+//! - `<<` `>>`         : (19, 20)
+//! - `*` `/` `%`       : (21, 22)
+//! - Prefix `!` `-` `~`: right_bp 23
+//! - Postfix `?` `.` `()` : left_bp 25
 
 use crate::SyntaxKind::*;
 use crate::parser::{CompletedMarker, Parser};
@@ -40,20 +44,20 @@ fn expr_bp(p: &mut Parser<'_>, min_bp: u8) -> Option<CompletedMarker> {
     let mut lhs = lhs(p)?;
 
     loop {
-        // Postfix operators (bp 17).
+        // Postfix operators (bp 25).
         lhs = match p.current() {
-            Question if 17 >= min_bp => {
+            Question if 25 >= min_bp => {
                 let m = lhs.precede(p);
                 p.bump(); // ?
                 m.complete(p, PropagateExpr)
             }
-            Dot if 17 >= min_bp => {
+            Dot if 25 >= min_bp => {
                 let m = lhs.precede(p);
                 p.bump(); // .
                 p.expect(Ident);
                 m.complete(p, FieldExpr)
             }
-            LParen if 17 >= min_bp => {
+            LParen if 25 >= min_bp => {
                 let m = lhs.precede(p);
                 arg_list(p);
                 m.complete(p, CallExpr)
@@ -69,8 +73,12 @@ fn expr_bp(p: &mut Parser<'_>, min_bp: u8) -> Option<CompletedMarker> {
             AmpAmp => (BinaryExpr, 5, 6),
             EqEq | BangEq => (BinaryExpr, 7, 8),
             Lt | Gt | LtEq | GtEq => (BinaryExpr, 9, 10),
-            Plus | Minus => (BinaryExpr, 11, 12),
-            Star | Slash | Percent => (BinaryExpr, 13, 14),
+            Pipe => (BinaryExpr, 11, 12),
+            Caret => (BinaryExpr, 13, 14),
+            Amp => (BinaryExpr, 15, 16),
+            Plus | Minus => (BinaryExpr, 17, 18),
+            LtLt | GtGt => (BinaryExpr, 19, 20),
+            Star | Slash | Percent => (BinaryExpr, 21, 22),
             _ => break,
         };
 
@@ -90,10 +98,10 @@ fn expr_bp(p: &mut Parser<'_>, min_bp: u8) -> Option<CompletedMarker> {
 /// Parse a left-hand side (prefix unary or primary expression).
 fn lhs(p: &mut Parser<'_>) -> Option<CompletedMarker> {
     match p.current() {
-        Bang | Minus => {
+        Bang | Minus | Tilde => {
             let m = p.open();
             p.bump(); // prefix operator
-            expr_bp(p, 15); // prefix bp
+            expr_bp(p, 23); // prefix bp
             Some(m.complete(p, UnaryExpr))
         }
         _ => primary(p),
@@ -377,5 +385,6 @@ fn can_start_expr(kind: crate::SyntaxKind) -> bool {
             | FnKw
             | Bang
             | Minus
+            | Tilde
     )
 }
