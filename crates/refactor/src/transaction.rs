@@ -214,7 +214,7 @@ fn collect_single_verification(check: &kyokara_hir::CheckResult) -> Verification
         });
     }
     for d in &check.lowering_diagnostics {
-        let code = kyokara_hir::lowering_diagnostic_code(&d.message);
+        let code = kyokara_hir::lowering_diagnostic_code(d);
         diags.push(VerificationDiagnostic {
             message: d.message.clone(),
             span: Some(d.span),
@@ -222,7 +222,7 @@ fn collect_single_verification(check: &kyokara_hir::CheckResult) -> Verification
         });
     }
     for d in &check.type_check.body_lowering_diagnostics {
-        let code = kyokara_hir::lowering_diagnostic_code(&d.message);
+        let code = kyokara_hir::lowering_diagnostic_code(d);
         diags.push(VerificationDiagnostic {
             message: d.message.clone(),
             span: Some(d.span),
@@ -261,7 +261,7 @@ fn collect_project_verification(check: &kyokara_hir::ProjectCheckResult) -> Veri
         }
     }
     for d in &check.lowering_diagnostics {
-        let code = kyokara_hir::lowering_diagnostic_code(&d.message);
+        let code = kyokara_hir::lowering_diagnostic_code(d);
         diags.push(VerificationDiagnostic {
             message: d.message.clone(),
             span: Some(d.span),
@@ -270,7 +270,7 @@ fn collect_project_verification(check: &kyokara_hir::ProjectCheckResult) -> Veri
     }
     for (mod_path, tc) in &check.type_checks {
         for d in &tc.body_lowering_diagnostics {
-            let code = kyokara_hir::lowering_diagnostic_code(&d.message);
+            let code = kyokara_hir::lowering_diagnostic_code(d);
             diags.push(VerificationDiagnostic {
                 message: d.message.clone(),
                 span: Some(d.span),

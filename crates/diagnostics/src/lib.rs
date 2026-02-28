@@ -14,6 +14,14 @@ pub enum Severity {
     Hint,
 }
 
+/// Structured classification for diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DiagnosticKind {
+    General,
+    DuplicateDefinition,
+    UnresolvedName,
+}
+
 /// A suggested fix for a diagnostic.
 #[derive(Debug, Clone)]
 pub struct Fix {
@@ -26,6 +34,7 @@ pub struct Fix {
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub severity: Severity,
+    pub kind: DiagnosticKind,
     pub message: String,
     pub span: Span,
     pub fixes: Vec<Fix>,
@@ -33,8 +42,13 @@ pub struct Diagnostic {
 
 impl Diagnostic {
     pub fn error(message: impl Into<String>, span: Span) -> Self {
+        Self::error_with_kind(message, span, DiagnosticKind::General)
+    }
+
+    pub fn error_with_kind(message: impl Into<String>, span: Span, kind: DiagnosticKind) -> Self {
         Self {
             severity: Severity::Error,
+            kind,
             message: message.into(),
             span,
             fixes: Vec::new(),
@@ -44,10 +58,16 @@ impl Diagnostic {
     pub fn warning(message: impl Into<String>, span: Span) -> Self {
         Self {
             severity: Severity::Warning,
+            kind: DiagnosticKind::General,
             message: message.into(),
             span,
             fixes: Vec::new(),
         }
+    }
+
+    pub fn with_kind(mut self, kind: DiagnosticKind) -> Self {
+        self.kind = kind;
+        self
     }
 
     pub fn with_fix(mut self, fix: Fix) -> Self {

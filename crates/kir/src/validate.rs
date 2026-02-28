@@ -538,6 +538,7 @@ fn error(message: String) -> Diagnostic {
     Diagnostic {
         message,
         severity: Severity::Error,
+        kind: kyokara_diagnostics::DiagnosticKind::General,
         span: dummy_span(),
         fixes: Vec::new(),
     }

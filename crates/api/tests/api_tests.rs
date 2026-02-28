@@ -1670,17 +1670,15 @@ fn api_io_error_produces_error_status() {
 #[test]
 fn check_project_reports_unresolved_import() {
     let output = check_project_from_files(&[("main.ky", "import nope\nfn main() -> Int { 1 }\n")]);
+    let diag = output
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains("nope"))
+        .expect("expected unresolved import diagnostic for `nope`");
     assert!(
-        output
-            .diagnostics
-            .iter()
-            .any(|d| d.message.contains("nope")),
-        "expected a diagnostic about unresolved import `nope`, got: {:?}",
-        output
-            .diagnostics
-            .iter()
-            .map(|d| &d.message)
-            .collect::<Vec<_>>()
+        diag.span.end > diag.span.start,
+        "expected unresolved import span to target source range, got: {:?}",
+        diag.span
     );
 }
 
@@ -1737,17 +1735,15 @@ fn check_project_reports_ambiguous_import_last_segment() {
         ("a/math.ky", "pub fn value() -> Int { 1 }\n"),
         ("b/math.ky", "pub fn value() -> Int { 2 }\n"),
     ]);
+    let diag = output
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains("ambiguous import"))
+        .expect("expected ambiguous import diagnostic");
     assert!(
-        output
-            .diagnostics
-            .iter()
-            .any(|d| d.message.contains("ambiguous import")),
-        "expected ambiguous import diagnostic, got: {:?}",
-        output
-            .diagnostics
-            .iter()
-            .map(|d| &d.message)
-            .collect::<Vec<_>>()
+        diag.span.end > diag.span.start,
+        "expected ambiguous import span to target source range, got: {:?}",
+        diag.span
     );
 }
 
@@ -2377,6 +2373,11 @@ fn project_import_collision_produces_diagnostic() {
             .iter()
             .map(|d| &d.message)
             .collect::<Vec<_>>()
+    );
+    assert!(
+        collisions[0].span.end > collisions[0].span.start,
+        "expected conflicting import span to target source range, got: {:?}",
+        collisions[0].span
     );
 }
 

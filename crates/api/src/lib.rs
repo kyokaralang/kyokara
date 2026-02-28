@@ -183,7 +183,7 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
 
     // Lowering diagnostics.
     for diag in &result.lowering_diagnostics {
-        let code = kyokara_hir::lowering_diagnostic_code(&diag.message);
+        let code = kyokara_hir::lowering_diagnostic_code(diag);
         let file_name = result
             .file_map
             .path(diag.span.file)
@@ -205,7 +205,7 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
 
         // Body lowering diagnostics (unresolved names, duplicates).
         for diag in &tc.body_lowering_diagnostics {
-            let code = kyokara_hir::lowering_diagnostic_code(&diag.message);
+            let code = kyokara_hir::lowering_diagnostic_code(diag);
             diagnostics.push(convert_lowering_diagnostic(diag, code, &file_name));
         }
 
@@ -390,13 +390,13 @@ fn convert_result(result: &CheckResult, file_name: &str) -> CheckOutput {
 
     // Lowering diagnostics → E0101 (unresolved name) / E0102 (duplicate definition).
     for diag in &result.lowering_diagnostics {
-        let code = kyokara_hir::lowering_diagnostic_code(&diag.message);
+        let code = kyokara_hir::lowering_diagnostic_code(diag);
         diagnostics.push(convert_lowering_diagnostic(diag, code, file_name));
     }
 
     // Body lowering diagnostics (unresolved names, duplicates from body lowering).
     for diag in &result.type_check.body_lowering_diagnostics {
-        let code = kyokara_hir::lowering_diagnostic_code(&diag.message);
+        let code = kyokara_hir::lowering_diagnostic_code(diag);
         diagnostics.push(convert_lowering_diagnostic(diag, code, file_name));
     }
 
