@@ -18,6 +18,17 @@ pub fn find_references(
     offset: TextSize,
     uri: &Url,
 ) -> Vec<Location> {
+    find_references_with_options(analysis, source, offset, uri, true)
+}
+
+/// Find references with LSP-style options.
+pub fn find_references_with_options(
+    analysis: &Arc<FileAnalysis>,
+    source: &str,
+    offset: TextSize,
+    uri: &Url,
+    include_declaration: bool,
+) -> Vec<Location> {
     let root = analysis.syntax_root();
     let symbol = position::symbol_at_offset_with_scope(
         &root,
@@ -36,9 +47,17 @@ pub fn find_references(
     };
 
     if let Some(kind) = kind {
-        find_symbol_references(&root, &name, kind, source, uri)
+        find_symbol_references(&root, &name, kind, source, uri, include_declaration)
     } else {
-        find_local_references(analysis, &root, &name, offset, source, uri)
+        find_local_references(
+            analysis,
+            &root,
+            &name,
+            offset,
+            source,
+            uri,
+            include_declaration,
+        )
     }
 }
 
@@ -50,6 +69,7 @@ fn find_symbol_references(
     kind: SymbolKind,
     source: &str,
     uri: &Url,
+    include_declaration: bool,
 ) -> Vec<Location> {
     let mut locations = Vec::new();
 
@@ -66,6 +86,9 @@ fn find_symbol_references(
         };
 
         if should_include_token(&parent, kind) {
+            if !include_declaration && is_definition_site(&parent, kind) {
+                continue;
+            }
             if kind == SymbolKind::Function
                 && crate::goto_def::find_local_def_range_syntax(
                     root,
@@ -138,6 +161,15 @@ fn should_include_token(parent: &SyntaxNode, kind: SymbolKind) -> bool {
     false
 }
 
+fn is_definition_site(parent: &SyntaxNode, kind: SymbolKind) -> bool {
+    match kind {
+        SymbolKind::Function => parent.kind() == SyntaxKind::FnDef,
+        SymbolKind::Type => parent.kind() == SyntaxKind::TypeDef,
+        SymbolKind::Capability => parent.kind() == SyntaxKind::CapDef,
+        SymbolKind::Variant => parent.kind() == SyntaxKind::Variant,
+    }
+}
+
 /// Find references for local variables (all ident tokens matching the name
 /// within the enclosing function body).
 fn find_local_references(
@@ -147,6 +179,7 @@ fn find_local_references(
     offset: TextSize,
     source: &str,
     uri: &Url,
+    include_declaration: bool,
 ) -> Vec<Location> {
     use kyokara_syntax::ast::AstNode;
     use kyokara_syntax::ast::nodes::FnDef;
@@ -181,6 +214,9 @@ fn find_local_references(
             )
         });
         if is_local_def_token {
+            if !include_declaration {
+                continue;
+            }
             if token.text_range() != target_def {
                 continue;
             }
