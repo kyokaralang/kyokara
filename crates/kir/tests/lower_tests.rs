@@ -190,20 +190,23 @@ fn test_bit_not() {
 }
 
 // ── Logical operators in KIR ─────────────────────────────────────
-// At the KIR level, && and || lower as binary "and"/"or" ops.
-// Short-circuit semantics are handled by the tree-walking interpreter
-// at the Expr::Binary dispatch, not at the KIR level.
+// `&&` and `||` lower to explicit control flow so short-circuit behavior
+// is preserved in KIR-based backends.
 
 #[test]
 fn test_logical_and() {
     let out = lower_and_display("fn f(a: Bool, b: Bool) -> Bool { a && b }");
-    assert!(out.contains("and a, b"), "output:\n{out}");
+    assert!(out.contains("branch a ->"), "output:\n{out}");
+    assert!(out.contains("const false : Bool"), "output:\n{out}");
+    assert!(!out.contains("and a, b"), "output:\n{out}");
 }
 
 #[test]
 fn test_logical_or() {
     let out = lower_and_display("fn f(a: Bool, b: Bool) -> Bool { a || b }");
-    assert!(out.contains("or a, b"), "output:\n{out}");
+    assert!(out.contains("branch a ->"), "output:\n{out}");
+    assert!(out.contains("const true : Bool"), "output:\n{out}");
+    assert!(!out.contains("or a, b"), "output:\n{out}");
 }
 
 // ── Chained bitwise ops ─────────────────────────────────────────
