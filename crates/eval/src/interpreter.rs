@@ -119,6 +119,36 @@ impl Interpreter {
         self.interner
     }
 
+    /// Call a user-defined function by arena index (public wrapper for PBT).
+    pub fn call_fn_by_idx(&mut self, fn_idx: FnItemIdx, args: Args) -> Result<Value, RuntimeError> {
+        self.call_fn(fn_idx, args)
+    }
+
+    /// Borrow the item tree.
+    pub fn item_tree(&self) -> &ItemTree {
+        &self.item_tree
+    }
+
+    /// Borrow the module scope.
+    pub fn module_scope(&self) -> &ModuleScope {
+        &self.module_scope
+    }
+
+    /// Borrow the interner.
+    pub fn interner(&self) -> &Interner {
+        &self.interner
+    }
+
+    /// Mutably borrow the interner.
+    pub fn interner_mut(&mut self) -> &mut Interner {
+        &mut self.interner
+    }
+
+    /// Borrow the function bodies map.
+    pub fn fn_bodies(&self) -> &FxHashMap<FnItemIdx, Body> {
+        &self.fn_bodies
+    }
+
     /// Find and run the `main` function.
     pub fn run_main(&mut self) -> Result<Value, RuntimeError> {
         let main_name = Name::new(&mut self.interner, "main");
