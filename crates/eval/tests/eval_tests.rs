@@ -3228,10 +3228,10 @@ fn eval_bitwise_precedence_xor_between_and_or() {
 }
 
 #[test]
-fn eval_bitwise_precedence_shift_before_add() {
-    // a + b << c should parse as a + (b << c) — shift binds tighter than add
+fn eval_bitwise_precedence_add_before_shift() {
+    // a + b << c should parse as (a + b) << c — add binds tighter than shift
     let val = run_ok("fn main() -> Int { 1 + 1 << 3 }");
-    assert_eq!(val, Value::Int(9)); // 1 + (1 << 3) = 1 + 8 = 9
+    assert_eq!(val, Value::Int(16)); // (1 + 1) << 3 = 2 << 3 = 16
 }
 
 #[test]
