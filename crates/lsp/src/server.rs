@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use parking_lot::Mutex;
 use salsa::Setter;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
@@ -14,16 +15,16 @@ use crate::position;
 
 /// The Kyokara language server state.
 ///
-/// The salsa database is wrapped in a `std::sync::Mutex` (not tokio's)
+/// The salsa database is wrapped in a `parking_lot::Mutex` (not tokio's)
 /// because salsa's `Storage` is `!Sync`. All other state uses tokio's
 /// `RwLock` for async-friendly sharing.
 pub struct KyokaraLanguageServer {
     /// LSP client handle for publishing diagnostics, etc.
     client: Client,
     /// Salsa database for incremental tracking.
-    db: std::sync::Mutex<LspDatabase>,
+    db: Mutex<LspDatabase>,
     /// Map from URI to salsa input handle.
-    files: std::sync::Mutex<HashMap<Url, SourceFile>>,
+    files: Mutex<HashMap<Url, SourceFile>>,
     /// Map from URI to latest source text.
     sources: RwLock<HashMap<Url, String>>,
     /// Map from URI to cached analysis result.
@@ -34,8 +35,8 @@ impl KyokaraLanguageServer {
     pub fn new(client: Client) -> Self {
         Self {
             client,
-            db: std::sync::Mutex::new(LspDatabase::default()),
-            files: std::sync::Mutex::new(HashMap::new()),
+            db: Mutex::new(LspDatabase::default()),
+            files: Mutex::new(HashMap::new()),
             sources: RwLock::new(HashMap::new()),
             analyses: RwLock::new(HashMap::new()),
         }
@@ -45,8 +46,8 @@ impl KyokaraLanguageServer {
     async fn on_change(&self, uri: Url, text: String) {
         // Check if salsa detects a change (text equality).
         let needs_recompute = {
-            let Ok(mut db) = self.db.lock() else { return };
-            let Ok(mut files) = self.files.lock() else { return };
+            let mut db = self.db.lock();
+            let mut files = self.files.lock();
 
             if let Some(existing) = files.get(&uri) {
                 let old_text = existing.text(&*db);
@@ -141,9 +142,7 @@ impl LanguageServer for KyokaraLanguageServer {
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
-        if let Ok(mut files) = self.files.lock() {
-            files.remove(&uri);
-        }
+        self.files.lock().remove(&uri);
         self.sources.write().await.remove(&uri);
         self.analyses.write().await.remove(&uri);
         // Clear diagnostics for the closed file.
