@@ -26,6 +26,8 @@ pub struct FuncCodegen<'a> {
     local_types: Vec<ValType>,
     /// Next available local index.
     next_local: u32,
+    /// Scratch i64 local used by checked arithmetic lowerings.
+    scratch_i64_local: u32,
 }
 
 impl<'a> FuncCodegen<'a> {
@@ -36,6 +38,7 @@ impl<'a> FuncCodegen<'a> {
             local_map: FxHashMap::default(),
             local_types: Vec::new(),
             next_local: kir_func.params.len() as u32,
+            scratch_i64_local: 0,
         }
     }
 
@@ -81,6 +84,11 @@ impl<'a> FuncCodegen<'a> {
             self.local_types.push(wasm_ty);
             self.local_map.insert(vid, local_idx);
         }
+
+        // Reserve one scratch local for checked integer arithmetic.
+        self.scratch_i64_local = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I64);
 
         Ok(())
     }
@@ -743,6 +751,19 @@ impl<'a> FuncCodegen<'a> {
             return Ok(());
         }
 
+        // Enforce language-level integer boundary semantics so WASM matches
+        // interpreter behavior for overflow/invalid shift amounts.
+        match (op, lhs_ty) {
+            (BinaryOp::Add, Ty::Int) => self.emit_int_add_overflow_check(func, lhs, rhs),
+            (BinaryOp::Sub, Ty::Int) => self.emit_int_sub_overflow_check(func, lhs, rhs),
+            (BinaryOp::Mul, Ty::Int) => self.emit_int_mul_overflow_check(func, lhs, rhs),
+            (BinaryOp::Mod, Ty::Int) => self.emit_int_mod_overflow_check(func, lhs, rhs),
+            (BinaryOp::Shl, Ty::Int) | (BinaryOp::Shr, Ty::Int) => {
+                self.emit_int_shift_amount_check(func, rhs)
+            }
+            _ => {}
+        }
+
         self.emit_get(func, lhs);
         self.emit_get(func, rhs);
 
@@ -808,6 +829,7 @@ impl<'a> FuncCodegen<'a> {
 
         match (op, operand_ty) {
             (UnaryOp::Neg, Ty::Int) => {
+                self.emit_int_neg_overflow_check(func, operand);
                 func.instruction(&Instruction::I64Const(0));
                 self.emit_get(func, operand);
                 func.instruction(&Instruction::I64Sub);
@@ -1064,12 +1086,143 @@ impl<'a> FuncCodegen<'a> {
     fn emit_assert(&self, func: &mut Function, condition: ValueId) {
         self.emit_get(func, condition);
         func.instruction(&Instruction::I32Eqz);
+        self.emit_trap_if_true(func);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────
+
+    fn emit_trap_if_true(&self, func: &mut Function) {
         func.instruction(&Instruction::If(BlockType::Empty));
         func.instruction(&Instruction::Unreachable);
         func.instruction(&Instruction::End);
     }
 
-    // ── Helpers ───────────────────────────────────────────────────
+    fn emit_int_add_overflow_check(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        // (rhs > 0 && lhs > MAX - rhs) || (rhs < 0 && lhs < MIN - rhs)
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64GtS);
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::I64Const(i64::MAX));
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Sub);
+        func.instruction(&Instruction::I64GtS);
+        func.instruction(&Instruction::I32And);
+
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::I64Const(i64::MIN));
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Sub);
+        func.instruction(&Instruction::I64LtS);
+        func.instruction(&Instruction::I32And);
+
+        func.instruction(&Instruction::I32Or);
+        self.emit_trap_if_true(func);
+    }
+
+    fn emit_int_sub_overflow_check(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        // (rhs > 0 && lhs < MIN + rhs) || (rhs < 0 && lhs > MAX + rhs)
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64GtS);
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::I64Const(i64::MIN));
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Add);
+        func.instruction(&Instruction::I64LtS);
+        func.instruction(&Instruction::I32And);
+
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::I64Const(i64::MAX));
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Add);
+        func.instruction(&Instruction::I64GtS);
+        func.instruction(&Instruction::I32And);
+
+        func.instruction(&Instruction::I32Or);
+        self.emit_trap_if_true(func);
+    }
+
+    fn emit_int_mul_overflow_check(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        // Skip zero operands: 0 * x cannot overflow and avoids div-by-zero in check.
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64Ne);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64Ne);
+        func.instruction(&Instruction::I32And);
+        func.instruction(&Instruction::If(BlockType::Empty));
+
+        // Trap on MIN * -1 / -1 * MIN before division-based check.
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::I64Const(i64::MIN));
+        func.instruction(&Instruction::I64Eq);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Const(-1));
+        func.instruction(&Instruction::I64Eq);
+        func.instruction(&Instruction::I32And);
+
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Const(i64::MIN));
+        func.instruction(&Instruction::I64Eq);
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::I64Const(-1));
+        func.instruction(&Instruction::I64Eq);
+        func.instruction(&Instruction::I32And);
+        func.instruction(&Instruction::I32Or);
+        self.emit_trap_if_true(func);
+
+        // Check `((lhs * rhs) / rhs) == lhs` for non-zero rhs.
+        self.emit_get(func, lhs);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Mul);
+        func.instruction(&Instruction::LocalTee(self.scratch_i64_local));
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64DivS);
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::I64Ne);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::End);
+    }
+
+    fn emit_int_mod_overflow_check(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        // Match interpreter checked_rem semantics: MIN % -1 is overflow.
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::I64Const(i64::MIN));
+        func.instruction(&Instruction::I64Eq);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Const(-1));
+        func.instruction(&Instruction::I64Eq);
+        func.instruction(&Instruction::I32And);
+        self.emit_trap_if_true(func);
+    }
+
+    fn emit_int_shift_amount_check(&self, func: &mut Function, rhs: ValueId) {
+        // Valid shift amounts are 0..63.
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Const(64));
+        func.instruction(&Instruction::I64GeS);
+        func.instruction(&Instruction::I32Or);
+        self.emit_trap_if_true(func);
+    }
+
+    fn emit_int_neg_overflow_check(&self, func: &mut Function, operand: ValueId) {
+        self.emit_get(func, operand);
+        func.instruction(&Instruction::I64Const(i64::MIN));
+        func.instruction(&Instruction::I64Eq);
+        self.emit_trap_if_true(func);
+    }
 
     /// Emit `local.get` for a value.
     fn emit_get(&self, func: &mut Function, vid: ValueId) {
