@@ -858,29 +858,7 @@ fn format_binary_expr(node: &SyntaxNode) -> Doc {
     let op = node
         .children_with_tokens()
         .filter_map(|it| it.into_token())
-        .find(|tok| {
-            matches!(
-                tok.kind(),
-                SyntaxKind::Plus
-                    | SyntaxKind::Minus
-                    | SyntaxKind::Star
-                    | SyntaxKind::Slash
-                    | SyntaxKind::Percent
-                    | SyntaxKind::EqEq
-                    | SyntaxKind::BangEq
-                    | SyntaxKind::Lt
-                    | SyntaxKind::Gt
-                    | SyntaxKind::LtEq
-                    | SyntaxKind::GtEq
-                    | SyntaxKind::Amp
-                    | SyntaxKind::Pipe
-                    | SyntaxKind::Caret
-                    | SyntaxKind::LtLt
-                    | SyntaxKind::GtGt
-                    | SyntaxKind::AmpAmp
-                    | SyntaxKind::PipePipe
-            )
-        });
+        .find(|tok| tok.kind().is_binary_operator());
 
     if exprs.len() == 2 {
         let lhs = format_node(&exprs[0]);
@@ -901,12 +879,7 @@ fn format_unary_expr(node: &SyntaxNode) -> Doc {
     let op = node
         .children_with_tokens()
         .filter_map(|it| it.into_token())
-        .find(|tok| {
-            matches!(
-                tok.kind(),
-                SyntaxKind::Bang | SyntaxKind::Minus | SyntaxKind::Tilde
-            )
-        });
+        .find(|tok| tok.kind().is_unary_prefix_operator());
     let operand = node.children().find(|c| is_expr(c.kind()));
 
     let mut parts = Vec::new();
