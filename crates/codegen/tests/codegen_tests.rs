@@ -4,8 +4,7 @@
 use kyokara_hir::check_file;
 use kyokara_kir::lower::lower_module;
 
-/// Compile source to WASM, run `main()` via wasmtime, return the i64 result.
-fn run_main_i64(source: &str) -> i64 {
+fn instantiate_main(source: &str) -> (wasmtime::Store<()>, wasmtime::Instance) {
     let result = check_file(source);
     assert!(
         result.type_check.raw_diagnostics.is_empty(),
@@ -29,7 +28,12 @@ fn run_main_i64(source: &str) -> i64 {
     let mut store = wasmtime::Store::new(&engine, ());
     let instance =
         wasmtime::Instance::new(&mut store, &wasm_module, &[]).expect("instantiation failed");
+    (store, instance)
+}
 
+/// Compile source to WASM, run `main()` via wasmtime, return the i64 result.
+fn run_main_i64(source: &str) -> i64 {
+    let (mut store, instance) = instantiate_main(source);
     let main_fn = instance
         .get_typed_func::<(), i64>(&mut store, "main")
         .expect("main function not found");
@@ -38,30 +42,7 @@ fn run_main_i64(source: &str) -> i64 {
 
 /// Compile source to WASM, run `main()` via wasmtime, return the f64 result.
 fn run_main_f64(source: &str) -> f64 {
-    let result = check_file(source);
-    assert!(
-        result.type_check.raw_diagnostics.is_empty(),
-        "type errors: {:?}",
-        result.type_check.raw_diagnostics
-    );
-
-    let mut interner = result.interner;
-    let module = lower_module(
-        &result.item_tree,
-        &result.module_scope,
-        &result.type_check,
-        &mut interner,
-    );
-
-    let wasm_bytes =
-        kyokara_codegen::compile(&module, &result.item_tree, &interner).expect("codegen failed");
-
-    let engine = wasmtime::Engine::default();
-    let wasm_module = wasmtime::Module::new(&engine, &wasm_bytes).expect("invalid WASM module");
-    let mut store = wasmtime::Store::new(&engine, ());
-    let instance =
-        wasmtime::Instance::new(&mut store, &wasm_module, &[]).expect("instantiation failed");
-
+    let (mut store, instance) = instantiate_main(source);
     let main_fn = instance
         .get_typed_func::<(), f64>(&mut store, "main")
         .expect("main function not found");
@@ -70,190 +51,108 @@ fn run_main_f64(source: &str) -> f64 {
 
 /// Compile source to WASM, run `main()` via wasmtime, return the i32 result.
 fn run_main_i32(source: &str) -> i32 {
-    let result = check_file(source);
-    assert!(
-        result.type_check.raw_diagnostics.is_empty(),
-        "type errors: {:?}",
-        result.type_check.raw_diagnostics
-    );
-
-    let mut interner = result.interner;
-    let module = lower_module(
-        &result.item_tree,
-        &result.module_scope,
-        &result.type_check,
-        &mut interner,
-    );
-
-    let wasm_bytes =
-        kyokara_codegen::compile(&module, &result.item_tree, &interner).expect("codegen failed");
-
-    let engine = wasmtime::Engine::default();
-    let wasm_module = wasmtime::Module::new(&engine, &wasm_bytes).expect("invalid WASM module");
-    let mut store = wasmtime::Store::new(&engine, ());
-    let instance =
-        wasmtime::Instance::new(&mut store, &wasm_module, &[]).expect("instantiation failed");
-
+    let (mut store, instance) = instantiate_main(source);
     let main_fn = instance
         .get_typed_func::<(), i32>(&mut store, "main")
         .expect("main function not found");
     main_fn.call(&mut store, ()).expect("main trapped")
 }
 
+fn assert_i64_cases(cases: &[(&str, i64)]) {
+    for (source, expected) in cases {
+        assert_eq!(
+            run_main_i64(source),
+            *expected,
+            "unexpected i64 result for source:\n{source}"
+        );
+    }
+}
+
+fn assert_i32_cases(cases: &[(&str, i32)]) {
+    for (source, expected) in cases {
+        assert_eq!(
+            run_main_i32(source),
+            *expected,
+            "unexpected i32 result for source:\n{source}"
+        );
+    }
+}
+
+fn assert_f64_cases(cases: &[(&str, f64)]) {
+    for (source, expected) in cases {
+        let result = run_main_f64(source);
+        assert!(
+            (result - expected).abs() < f64::EPSILON,
+            "unexpected f64 result for source:\n{source}\nexpected {expected}, got {result}"
+        );
+    }
+}
+
 // ── Constants ─────────────────────────────────────────────────────
 
 #[test]
-fn test_int_constant() {
-    assert_eq!(run_main_i64("fn main() -> Int { 42 }"), 42);
-}
-
-#[test]
-fn test_negative_int_constant() {
-    assert_eq!(run_main_i64("fn main() -> Int { -7 }"), -7);
-}
-
-#[test]
-fn test_zero() {
-    assert_eq!(run_main_i64("fn main() -> Int { 0 }"), 0);
-}
-
-#[test]
-fn test_bool_true() {
-    assert_eq!(run_main_i32("fn main() -> Bool { true }"), 1);
-}
-
-#[test]
-fn test_bool_false() {
-    assert_eq!(run_main_i32("fn main() -> Bool { false }"), 0);
+fn test_constants() {
+    assert_i64_cases(&[
+        ("fn main() -> Int { 42 }", 42),
+        ("fn main() -> Int { -7 }", -7),
+        ("fn main() -> Int { 0 }", 0),
+    ]);
+    assert_i32_cases(&[
+        ("fn main() -> Bool { true }", 1),
+        ("fn main() -> Bool { false }", 0),
+    ]);
 }
 
 // ── Arithmetic ────────────────────────────────────────────────────
 
 #[test]
-fn test_int_add() {
-    assert_eq!(run_main_i64("fn main() -> Int { 3 + 4 }"), 7);
-}
-
-#[test]
-fn test_int_sub() {
-    assert_eq!(run_main_i64("fn main() -> Int { 10 - 3 }"), 7);
-}
-
-#[test]
-fn test_int_mul() {
-    assert_eq!(run_main_i64("fn main() -> Int { 6 * 7 }"), 42);
-}
-
-#[test]
-fn test_int_div() {
-    assert_eq!(run_main_i64("fn main() -> Int { 42 / 6 }"), 7);
-}
-
-#[test]
-fn test_int_mod() {
-    assert_eq!(run_main_i64("fn main() -> Int { 42 % 5 }"), 2);
-}
-
-#[test]
-fn test_int_complex_expr() {
-    assert_eq!(run_main_i64("fn main() -> Int { (3 + 4) * (10 - 8) }"), 14);
-}
-
-#[test]
-fn test_float_add() {
-    let result = run_main_f64("fn main() -> Float { 1.5 + 2.5 }");
-    assert!((result - 4.0).abs() < f64::EPSILON);
-}
-
-#[test]
-fn test_float_mul() {
-    let result = run_main_f64("fn main() -> Float { 3.0 * 2.0 }");
-    assert!((result - 6.0).abs() < f64::EPSILON);
-}
-
-#[test]
-fn test_float_mod() {
-    let result = run_main_f64("fn main() -> Float { 5.5 % 2.0 }");
-    assert!((result - 1.5).abs() < f64::EPSILON);
+fn test_arithmetic() {
+    assert_i64_cases(&[
+        ("fn main() -> Int { 3 + 4 }", 7),
+        ("fn main() -> Int { 10 - 3 }", 7),
+        ("fn main() -> Int { 6 * 7 }", 42),
+        ("fn main() -> Int { 42 / 6 }", 7),
+        ("fn main() -> Int { 42 % 5 }", 2),
+        ("fn main() -> Int { (3 + 4) * (10 - 8) }", 14),
+    ]);
+    assert_f64_cases(&[
+        ("fn main() -> Float { 1.5 + 2.5 }", 4.0),
+        ("fn main() -> Float { 3.0 * 2.0 }", 6.0),
+        ("fn main() -> Float { 5.5 % 2.0 }", 1.5),
+    ]);
 }
 
 // ── Comparisons ───────────────────────────────────────────────────
 
 #[test]
-fn test_int_eq_true() {
-    assert_eq!(run_main_i32("fn main() -> Bool { 42 == 42 }"), 1);
-}
-
-#[test]
-fn test_int_eq_false() {
-    assert_eq!(run_main_i32("fn main() -> Bool { 42 == 43 }"), 0);
-}
-
-#[test]
-fn test_int_lt() {
-    assert_eq!(run_main_i32("fn main() -> Bool { 3 < 5 }"), 1);
-}
-
-#[test]
-fn test_int_gt() {
-    assert_eq!(run_main_i32("fn main() -> Bool { 5 > 3 }"), 1);
+fn test_int_comparisons() {
+    assert_i32_cases(&[
+        ("fn main() -> Bool { 42 == 42 }", 1),
+        ("fn main() -> Bool { 42 == 43 }", 0),
+        ("fn main() -> Bool { 3 < 5 }", 1),
+        ("fn main() -> Bool { 5 > 3 }", 1),
+    ]);
 }
 
 // ── Unary operations ──────────────────────────────────────────────
 
 #[test]
-fn test_int_neg() {
-    assert_eq!(run_main_i64("fn main() -> Int { -(42) }"), -42);
-}
-
-#[test]
-fn test_bool_not() {
-    assert_eq!(run_main_i32("fn main() -> Bool { !true }"), 0);
-}
-
-#[test]
-fn test_bool_not_false() {
-    assert_eq!(run_main_i32("fn main() -> Bool { !false }"), 1);
-}
-
-#[test]
-fn test_bit_not() {
-    assert_eq!(run_main_i64("fn main() -> Int { ~42 }"), !42_i64);
-}
-
-#[test]
-fn test_bit_and() {
-    assert_eq!(run_main_i64("fn main() -> Int { 12 & 10 }"), 8);
-}
-
-#[test]
-fn test_bit_or() {
-    assert_eq!(run_main_i64("fn main() -> Int { 12 | 10 }"), 14);
-}
-
-#[test]
-fn test_bit_xor() {
-    assert_eq!(run_main_i64("fn main() -> Int { 12 ^ 10 }"), 6);
-}
-
-#[test]
-fn test_shift_left() {
-    assert_eq!(run_main_i64("fn main() -> Int { 1 << 5 }"), 32);
-}
-
-#[test]
-fn test_shift_right() {
-    assert_eq!(run_main_i64("fn main() -> Int { 128 >> 3 }"), 16);
-}
-
-#[test]
-fn test_logical_and_short_circuit_in_codegen() {
-    assert_eq!(run_main_i32("fn main() -> Bool { false && 1 / 0 == 0 }"), 0);
-}
-
-#[test]
-fn test_logical_or_short_circuit_in_codegen() {
-    assert_eq!(run_main_i32("fn main() -> Bool { true || 1 / 0 == 0 }"), 1);
+fn test_unary_bitwise_and_short_circuit_ops() {
+    assert_i64_cases(&[
+        ("fn main() -> Int { -(42) }", -42),
+        ("fn main() -> Int { ~42 }", !42_i64),
+        ("fn main() -> Int { 12 & 10 }", 8),
+        ("fn main() -> Int { 12 | 10 }", 14),
+        ("fn main() -> Int { 12 ^ 10 }", 6),
+        ("fn main() -> Int { 1 << 5 }", 32),
+        ("fn main() -> Int { 128 >> 3 }", 16),
+    ]);
+    assert_i32_cases(&[
+        ("fn main() -> Bool { !true }", 0),
+        ("fn main() -> Bool { !false }", 1),
+        ("fn main() -> Bool { false && 1 / 0 == 0 }", 0),
+        ("fn main() -> Bool { true || 1 / 0 == 0 }", 1),
+    ]);
 }
 
 // ── Let bindings ──────────────────────────────────────────────────

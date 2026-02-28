@@ -264,6 +264,30 @@ cargo run -p kyokara-cli -- test <file.ky>
 cargo run -p kyokara-cli -- test <file.ky> --explore --format json
 ```
 
+## Token Metrics
+
+Kyokara includes a repo-token utility for AI-context budgeting:
+
+```sh
+# Full tracked repo tokens (current worktree)
+python3 tools/repo_tokens.py
+
+# Rust-only tokens (all tracked .rs files)
+python3 tools/repo_tokens.py --include '**/*.rs'
+
+# Compare against main without checkout
+python3 tools/repo_tokens.py --rev origin/main
+
+# Show top 20 token-heavy files
+python3 tools/repo_tokens.py --top 20
+```
+
+The tool uses `tiktoken` with `cl100k_base` by default.  
+If needed: `python3 -m pip install --user tiktoken`
+
+See [`docs/token-metrics.md`](docs/token-metrics.md) for workflow details.
+Latest cleanup report: [`docs/test-harness-token-report-2026-02-28.md`](docs/test-harness-token-report-2026-02-28.md).
+
 ## License
 
 [MIT](LICENSE)
