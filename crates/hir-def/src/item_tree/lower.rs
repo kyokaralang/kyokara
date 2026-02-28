@@ -2,7 +2,7 @@
 //!
 //! Walks top-level CST items to build `ItemTree` + `ModuleScope`.
 
-use kyokara_diagnostics::Diagnostic;
+use kyokara_diagnostics::{Diagnostic, DiagnosticCode};
 use kyokara_intern::Interner;
 use kyokara_span::{FileId, Span};
 use kyokara_syntax::ast::AstNode;
@@ -91,10 +91,13 @@ impl ItemTreeCtx<'_> {
                 e.insert(import_idx);
             } else {
                 let span = self.node_span(import.syntax());
-                self.diagnostics.push(Diagnostic::error(
-                    format!("duplicate import `{}`", name.resolve(self.interner)),
-                    span,
-                ));
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        format!("duplicate import `{}`", name.resolve(self.interner)),
+                        span,
+                    )
+                    .with_code(DiagnosticCode::E0102),
+                );
             }
         }
 
@@ -144,10 +147,10 @@ impl ItemTreeCtx<'_> {
                     let name = tok.text();
                     if !seen.insert(name.to_string()) {
                         let span = self.node_span(p.syntax());
-                        self.diagnostics.push(Diagnostic::error(
-                            format!("duplicate parameter `{name}`"),
-                            span,
-                        ));
+                        self.diagnostics.push(
+                            Diagnostic::error(format!("duplicate parameter `{name}`"), span)
+                                .with_code(DiagnosticCode::E0102),
+                        );
                     }
                 }
             }
@@ -259,10 +262,13 @@ impl ItemTreeCtx<'_> {
             e.insert(idx);
         } else {
             let span = self.node_span(t.syntax());
-            self.diagnostics.push(Diagnostic::error(
-                format!("duplicate type `{}`", name.resolve(self.interner)),
-                span,
-            ));
+            self.diagnostics.push(
+                Diagnostic::error(
+                    format!("duplicate type `{}`", name.resolve(self.interner)),
+                    span,
+                )
+                .with_code(DiagnosticCode::E0102),
+            );
         }
 
         // Register constructors for ADTs
@@ -274,13 +280,16 @@ impl ItemTreeCtx<'_> {
                     e.insert((idx, vi));
                 } else {
                     let span = self.node_span(t.syntax());
-                    self.diagnostics.push(Diagnostic::error(
-                        format!(
-                            "duplicate constructor `{}`",
-                            variant.name.resolve(self.interner)
-                        ),
-                        span,
-                    ));
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            format!(
+                                "duplicate constructor `{}`",
+                                variant.name.resolve(self.interner)
+                            ),
+                            span,
+                        )
+                        .with_code(DiagnosticCode::E0102),
+                    );
                 }
             }
         }
@@ -301,10 +310,15 @@ impl ItemTreeCtx<'_> {
                 let fn_name_str = fn_name.resolve(self.interner);
                 let cap_name_str = name.resolve(self.interner);
                 let span = self.node_span(c.syntax());
-                self.diagnostics.push(Diagnostic::error(
-                    format!("duplicate function `{fn_name_str}` in capability `{cap_name_str}`"),
-                    span,
-                ));
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        format!(
+                            "duplicate function `{fn_name_str}` in capability `{cap_name_str}`"
+                        ),
+                        span,
+                    )
+                    .with_code(DiagnosticCode::E0102),
+                );
             }
         }
 
@@ -320,10 +334,13 @@ impl ItemTreeCtx<'_> {
             e.insert(idx);
         } else {
             let span = self.node_span(c.syntax());
-            self.diagnostics.push(Diagnostic::error(
-                format!("duplicate capability `{}`", name.resolve(self.interner)),
-                span,
-            ));
+            self.diagnostics.push(
+                Diagnostic::error(
+                    format!("duplicate capability `{}`", name.resolve(self.interner)),
+                    span,
+                )
+                .with_code(DiagnosticCode::E0102),
+            );
         }
     }
 
@@ -430,10 +447,13 @@ impl ItemTreeCtx<'_> {
                         let text = tok.text();
                         if !seen.insert(text.to_string()) {
                             let span = self.node_span(tp.syntax());
-                            self.diagnostics.push(Diagnostic::error(
-                                format!("duplicate type parameter `{text}`"),
-                                span,
-                            ));
+                            self.diagnostics.push(
+                                Diagnostic::error(
+                                    format!("duplicate type parameter `{text}`"),
+                                    span,
+                                )
+                                .with_code(DiagnosticCode::E0102),
+                            );
                         }
                         Some(Name::new(self.interner, text))
                     })
@@ -449,10 +469,13 @@ impl ItemTreeCtx<'_> {
             e.insert(idx);
         } else {
             let span = self.node_span(syntax);
-            self.diagnostics.push(Diagnostic::error(
-                format!("duplicate function `{}`", name.resolve(self.interner)),
-                span,
-            ));
+            self.diagnostics.push(
+                Diagnostic::error(
+                    format!("duplicate function `{}`", name.resolve(self.interner)),
+                    span,
+                )
+                .with_code(DiagnosticCode::E0102),
+            );
         }
     }
 
@@ -474,10 +497,10 @@ impl ItemTreeCtx<'_> {
                 let name = tok.text();
                 if !seen.insert(name.to_string()) {
                     let span = self.node_span(f.syntax());
-                    self.diagnostics.push(Diagnostic::error(
-                        format!("duplicate field `{name}` in record type"),
-                        span,
-                    ));
+                    self.diagnostics.push(
+                        Diagnostic::error(format!("duplicate field `{name}` in record type"), span)
+                            .with_code(DiagnosticCode::E0102),
+                    );
                 }
             }
         }

@@ -536,6 +536,7 @@ fn types_compatible(a: &Ty, b: &Ty) -> bool {
 
 fn error(message: String) -> Diagnostic {
     Diagnostic {
+        code: None,
         message,
         severity: Severity::Error,
         span: dummy_span(),

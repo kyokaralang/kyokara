@@ -5,7 +5,7 @@
 
 use la_arena::{Arena, ArenaMap};
 
-use kyokara_diagnostics::Diagnostic;
+use kyokara_diagnostics::{Diagnostic, DiagnosticCode};
 use kyokara_intern::Interner;
 use kyokara_span::{FileId, Span, TextRange};
 use kyokara_syntax::SyntaxKind;
@@ -788,10 +788,13 @@ impl BodyLowerCtx<'_> {
                     let name = tok.text();
                     if !seen.insert(name.to_string()) {
                         let span = self.node_span(f.syntax());
-                        self.diagnostics.push(Diagnostic::error(
-                            format!("duplicate field `{name}` in record literal"),
-                            span,
-                        ));
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                format!("duplicate field `{name}` in record literal"),
+                                span,
+                            )
+                            .with_code(DiagnosticCode::E0102),
+                        );
                     }
                 }
             }
@@ -850,10 +853,10 @@ impl BodyLowerCtx<'_> {
                     let name = tok.text();
                     if !seen.insert(name.to_string()) {
                         let span = self.node_span(p.syntax());
-                        self.diagnostics.push(Diagnostic::error(
-                            format!("duplicate parameter `{name}`"),
-                            span,
-                        ));
+                        self.diagnostics.push(
+                            Diagnostic::error(format!("duplicate parameter `{name}`"), span)
+                                .with_code(DiagnosticCode::E0102),
+                        );
                     }
                 }
             }
@@ -947,13 +950,16 @@ impl BodyLowerCtx<'_> {
                         .insert(pat_idx, ip.syntax().text_range());
                     if !binders.insert(name) {
                         let span = self.node_span(ip.syntax());
-                        self.diagnostics.push(Diagnostic::error(
-                            format!(
-                                "duplicate binding `{}` in pattern",
-                                name.resolve(self.interner)
-                            ),
-                            span,
-                        ));
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                format!(
+                                    "duplicate binding `{}` in pattern",
+                                    name.resolve(self.interner)
+                                ),
+                                span,
+                            )
+                            .with_code(DiagnosticCode::E0102),
+                        );
                     }
                     self.register_local_binding(name, pat_idx, ip.syntax().text_range(), origin);
                     pat_idx
@@ -1055,10 +1061,13 @@ impl BodyLowerCtx<'_> {
                                 file: self.file_id,
                                 range: tok.text_range(),
                             };
-                            self.diagnostics.push(Diagnostic::error(
-                                format!("duplicate field `{name}` in record pattern"),
-                                span,
-                            ));
+                            self.diagnostics.push(
+                                Diagnostic::error(
+                                    format!("duplicate field `{name}` in record pattern"),
+                                    span,
+                                )
+                                .with_code(DiagnosticCode::E0102),
+                            );
                         }
                     }
                 }

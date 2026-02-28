@@ -14,6 +14,22 @@ pub enum Severity {
     Hint,
 }
 
+/// Stable machine-readable diagnostic code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DiagnosticCode {
+    E0101,
+    E0102,
+}
+
+impl DiagnosticCode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::E0101 => "E0101",
+            Self::E0102 => "E0102",
+        }
+    }
+}
+
 /// A suggested fix for a diagnostic.
 #[derive(Debug, Clone)]
 pub struct Fix {
@@ -25,6 +41,7 @@ pub struct Fix {
 /// A compiler diagnostic (error, warning, etc.).
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
+    pub code: Option<DiagnosticCode>,
     pub severity: Severity,
     pub message: String,
     pub span: Span,
@@ -34,6 +51,7 @@ pub struct Diagnostic {
 impl Diagnostic {
     pub fn error(message: impl Into<String>, span: Span) -> Self {
         Self {
+            code: None,
             severity: Severity::Error,
             message: message.into(),
             span,
@@ -43,11 +61,17 @@ impl Diagnostic {
 
     pub fn warning(message: impl Into<String>, span: Span) -> Self {
         Self {
+            code: None,
             severity: Severity::Warning,
             message: message.into(),
             span,
             fixes: Vec::new(),
         }
+    }
+
+    pub fn with_code(mut self, code: DiagnosticCode) -> Self {
+        self.code = Some(code);
+        self
     }
 
     pub fn with_fix(mut self, fix: Fix) -> Self {

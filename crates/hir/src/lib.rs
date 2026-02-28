@@ -45,16 +45,10 @@ pub struct CheckResult {
 }
 
 /// Map lowering/body-lowering diagnostics to stable public diagnostic codes.
-///
-/// This is intentionally conservative until lowering diagnostics become
-/// structured enums: duplicate-definition style diagnostics map to `E0102`,
-/// and other lowering diagnostics map to `E0101`.
-pub fn lowering_diagnostic_code(message: &str) -> &'static str {
-    if message.contains("duplicate") {
-        "E0102"
-    } else {
-        "E0101"
-    }
+pub fn lowering_diagnostic_code(diag: &kyokara_diagnostics::Diagnostic) -> &'static str {
+    diag.code
+        .unwrap_or(kyokara_diagnostics::DiagnosticCode::E0101)
+        .as_str()
 }
 
 /// Render a surface-level [`TypeRef`] as a human-readable string.
@@ -508,15 +502,39 @@ mod tests {
 
     #[test]
     fn lowering_diagnostic_code_maps_duplicate() {
-        assert_eq!(
-            lowering_diagnostic_code("duplicate function `foo`"),
-            "E0102"
-        );
+        let diag = kyokara_diagnostics::Diagnostic::error(
+            "duplicate function `foo`",
+            kyokara_span::Span {
+                file: FileId(0),
+                range: kyokara_span::TextRange::default(),
+            },
+        )
+        .with_code(kyokara_diagnostics::DiagnosticCode::E0102);
+        assert_eq!(lowering_diagnostic_code(&diag), "E0102");
     }
 
     #[test]
     fn lowering_diagnostic_code_maps_non_duplicate() {
-        assert_eq!(lowering_diagnostic_code("unresolved name `foo`"), "E0101");
+        let diag = kyokara_diagnostics::Diagnostic::error(
+            "unresolved name `foo`",
+            kyokara_span::Span {
+                file: FileId(0),
+                range: kyokara_span::TextRange::default(),
+            },
+        );
+        assert_eq!(lowering_diagnostic_code(&diag), "E0101");
+    }
+
+    #[test]
+    fn lowering_diagnostic_code_ignores_message_without_structured_code() {
+        let diag = kyokara_diagnostics::Diagnostic::error(
+            "duplicate function `foo`",
+            kyokara_span::Span {
+                file: FileId(0),
+                range: kyokara_span::TextRange::default(),
+            },
+        );
+        assert_eq!(lowering_diagnostic_code(&diag), "E0101");
     }
 
     #[test]
