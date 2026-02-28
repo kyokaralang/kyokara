@@ -177,6 +177,35 @@ impl Interpreter {
             .collect()
     }
 
+    fn ensure_named_arity(
+        &self,
+        kind: &str,
+        callee: Name,
+        expected: usize,
+        actual: usize,
+    ) -> Result<(), RuntimeError> {
+        if expected == actual {
+            return Ok(());
+        }
+        let callee_name = callee.resolve(&self.interner);
+        Err(RuntimeError::TypeError(format!(
+            "arity mismatch for {kind} `{callee_name}`: expected {expected}, got {actual}"
+        )))
+    }
+
+    fn ensure_unnamed_arity(
+        kind: &str,
+        expected: usize,
+        actual: usize,
+    ) -> Result<(), RuntimeError> {
+        if expected == actual {
+            return Ok(());
+        }
+        Err(RuntimeError::TypeError(format!(
+            "arity mismatch for {kind}: expected {expected}, got {actual}"
+        )))
+    }
+
     /// Reorder call arguments to match parameter order when named args are present.
     ///
     /// Given a mix of positional and named `CallArg`s and the callable's parameter
@@ -256,6 +285,7 @@ impl Interpreter {
         let fn_name = {
             let fn_item = &self.item_tree.functions[fn_idx];
             self.ensure_user_fn_caps_allowed(fn_item)?;
+            self.ensure_named_arity("function", fn_item.name, fn_item.params.len(), args.len())?;
 
             // Use the shared environment with a new scope instead of allocating a fresh Env.
             self.env.push_scope();
@@ -605,6 +635,12 @@ impl Interpreter {
                     // Reorder args when named args are present so values match
                     // parameter order instead of call-site order.
                     let reordered = self.reorder_args_for_fn(args, &fn_item.params);
+                    self.ensure_named_arity(
+                        "function",
+                        fn_item.name,
+                        fn_item.params.len(),
+                        reordered.len(),
+                    )?;
 
                     let has_contracts = fn_body.requires.is_some()
                         || fn_body.ensures.is_some()
@@ -1004,6 +1040,7 @@ impl Interpreter {
                     body,
                     env: captured_env,
                 } => {
+                    Self::ensure_unnamed_arity("lambda", params.len(), args.len())?;
                     let mut env = captured_env;
                     env.push_scope();
                     for (pat_idx, val) in params.iter().zip(args) {
@@ -1015,11 +1052,14 @@ impl Interpreter {
                 FnValue::Constructor {
                     type_idx,
                     variant_idx,
-                    ..
+                    arity,
                 } => Ok(Value::Adt {
                     type_idx,
                     variant: variant_idx,
-                    fields: args.into_vec(),
+                    fields: {
+                        Self::ensure_unnamed_arity("constructor", arity, args.len())?;
+                        args.into_vec()
+                    },
                 }),
             },
             _ => Err(RuntimeError::TypeError(
@@ -1545,6 +1585,8 @@ impl Interpreter {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use std::rc::Rc;
+
     use kyokara_hir_def::item_tree::{FnItem, TypeDefKind, TypeItem, VariantDef};
     use kyokara_hir_def::path::Path;
     use kyokara_hir_def::type_ref::TypeRef;
@@ -1822,5 +1864,98 @@ mod tests {
         assert!(interp.env.lookup(param_name).is_none());
         let restored = interp.old_env.as_ref().and_then(|e| e.lookup(marker));
         assert!(matches!(restored, Some(Value::Int(99))));
+    }
+
+    #[test]
+    fn call_fn_with_too_few_args_returns_arity_error() {
+        let body = make_body_with_contracts(Expr::Literal(Literal::Int(1)), None, None, None);
+        let (mut interp, fn_idx, param_name) = make_interpreter_with_single_fn(body);
+
+        let err = interp
+            .call_fn(fn_idx, Args::new())
+            .expect_err("call should fail on arity mismatch");
+        assert!(matches!(err, RuntimeError::TypeError(msg) if msg.contains("arity")));
+        assert!(interp.env.lookup(param_name).is_none());
+    }
+
+    #[test]
+    fn call_lambda_with_too_few_args_returns_arity_error() {
+        let mut interner = Interner::new();
+        let param_name = Name::new(&mut interner, "x");
+
+        let mut pats = Arena::new();
+        let param_pat = pats.alloc(Pat::Bind { name: param_name });
+        let mut exprs = Arena::new();
+        let body_expr = exprs.alloc(Expr::Literal(Literal::Int(1)));
+        let lambda_body = Rc::new(Body {
+            exprs,
+            pats,
+            root: body_expr,
+            requires: None,
+            ensures: None,
+            invariant: None,
+            scopes: kyokara_hir_def::scope::ScopeTree::default(),
+            pat_scopes: Vec::new(),
+            expr_scopes: ArenaMap::default(),
+            expr_source_map: ArenaMap::default(),
+            pat_source_map: ArenaMap::default(),
+            local_binding_meta: ArenaMap::default(),
+        });
+
+        let mut interp = Interpreter::new(
+            ItemTree::default(),
+            ModuleScope::default(),
+            FxHashMap::default(),
+            FxHashMap::default(),
+            interner,
+            None,
+        );
+
+        let lambda = Value::Fn(Box::new(FnValue::Lambda {
+            params: vec![param_pat],
+            body_expr,
+            body: lambda_body,
+            env: Env::new(),
+        }));
+        let err = interp
+            .call_value(lambda, Args::new())
+            .expect_err("lambda call should fail on arity mismatch");
+        assert!(matches!(err, RuntimeError::TypeError(msg) if msg.contains("arity")));
+    }
+
+    #[test]
+    fn call_constructor_with_too_few_args_returns_arity_error() {
+        let mut interner = Interner::new();
+        let type_name = Name::new(&mut interner, "Pair");
+
+        let mut item_tree = ItemTree::default();
+        let type_idx = item_tree.types.alloc(TypeItem {
+            name: type_name,
+            is_pub: false,
+            type_params: Vec::new(),
+            kind: TypeDefKind::Record { fields: Vec::new() },
+        });
+
+        let mut interp = Interpreter::new(
+            item_tree,
+            ModuleScope::default(),
+            FxHashMap::default(),
+            FxHashMap::default(),
+            interner,
+            None,
+        );
+
+        let ctor = Value::Fn(Box::new(FnValue::Constructor {
+            type_idx,
+            variant_idx: 0,
+            arity: 2,
+        }));
+        let mut args = Args::new();
+        args.push(Value::Int(1));
+
+        let err = interp
+            .call_value(ctor, args)
+            .expect_err("constructor call should fail on arity mismatch");
+        assert!(matches!(err, RuntimeError::TypeError(msg) if msg.contains("arity")));
     }
 }
