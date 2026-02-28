@@ -7,7 +7,7 @@ mod expr;
 mod pat;
 
 use kyokara_diagnostics::Diagnostic;
-use kyokara_hir_def::body::Body;
+use kyokara_hir_def::body::{Body, LocalBindingOrigin};
 use kyokara_hir_def::expr::ExprIdx;
 use kyokara_hir_def::item_tree::{FnItem, FnItemIdx, ItemTree};
 use kyokara_hir_def::name::Name;
@@ -270,6 +270,24 @@ pub fn infer_body(
     ctx.current_expr = Some(body.root);
     let ret = ctx.ret_ty.clone();
     ctx.unify_or_err(&ret, &body_ty);
+
+    // Infer contract clause expressions so all sub-expressions get types.
+    // Without this, literals and intermediates inside requires/ensures
+    // would have no type entries, causing codegen to fail.
+    if let Some(req_expr) = body.requires {
+        ctx.infer_expr(req_expr, &Expectation::Has(Ty::Bool));
+    }
+    if let Some(ens_expr) = body.ensures {
+        // Bind the `result` pattern to the return type so name resolution
+        // finds it with the correct type (not Ty::Error).
+        for (pat_idx, meta) in body.local_binding_meta.iter() {
+            if meta.origin == LocalBindingOrigin::ContractResult {
+                ctx.pat_types.insert(pat_idx, ctx.ret_ty.clone());
+                ctx.local_types.insert(pat_idx, ctx.ret_ty.clone());
+            }
+        }
+        ctx.infer_expr(ens_expr, &Expectation::Has(Ty::Bool));
+    }
 
     // Resolve all types deeply.
     let mut expr_types = ArenaMap::default();
