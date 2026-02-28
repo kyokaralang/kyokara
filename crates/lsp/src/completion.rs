@@ -32,11 +32,44 @@ pub fn completions(
     // Hole completion: if at a `_`, suggest matching locals.
     add_hole_completions(analysis, source, offset, &mut items);
 
+    let items = dedup_completion_items(items);
+
     if items.is_empty() {
         None
     } else {
         Some(CompletionResponse::Array(items))
     }
+}
+
+fn dedup_completion_items(items: Vec<CompletionItem>) -> Vec<CompletionItem> {
+    let mut deduped = Vec::new();
+    let mut by_label = std::collections::HashMap::<String, usize>::new();
+
+    for item in items {
+        if let Some(&idx) = by_label.get(&item.label) {
+            if should_replace_completion(&deduped[idx], &item) {
+                deduped[idx] = item;
+            }
+            continue;
+        }
+        by_label.insert(item.label.clone(), deduped.len());
+        deduped.push(item);
+    }
+
+    deduped
+}
+
+fn should_replace_completion(existing: &CompletionItem, new_item: &CompletionItem) -> bool {
+    if existing.sort_text.is_none() && new_item.sort_text.is_some() {
+        return true;
+    }
+    if let (Some(existing_sort), Some(new_sort)) = (&existing.sort_text, &new_item.sort_text)
+        && new_sort < existing_sort
+    {
+        return true;
+    }
+    existing.kind != Some(CompletionItemKind::VARIABLE)
+        && new_item.kind == Some(CompletionItemKind::VARIABLE)
 }
 
 fn add_module_scope_completions(analysis: &FileAnalysis, items: &mut Vec<CompletionItem>) {
@@ -198,15 +231,36 @@ fn add_hole_completions(
     offset: TextSize,
     items: &mut Vec<CompletionItem>,
 ) {
+    use rowan::TokenAtOffset;
+
     let interner = &analysis.interner;
     let tree = &analysis.item_tree;
 
     // Check if cursor is at a hole (`_`).
     let root = analysis.syntax_root();
-    let token = root.token_at_offset(offset).left_biased();
-    let is_hole =
-        token.is_some_and(|t| t.parent().is_some_and(|p| p.kind() == SyntaxKind::HoleExpr));
-
+    let token = match root.token_at_offset(offset) {
+        TokenAtOffset::Single(tok) => Some(tok),
+        TokenAtOffset::Between(left, right) => {
+            if left
+                .parent()
+                .is_some_and(|p| p.kind() == SyntaxKind::HoleExpr)
+            {
+                Some(left)
+            } else if right
+                .parent()
+                .is_some_and(|p| p.kind() == SyntaxKind::HoleExpr)
+            {
+                Some(right)
+            } else {
+                Some(left)
+            }
+        }
+        TokenAtOffset::None => None,
+    };
+    let is_hole = token
+        .as_ref()
+        .and_then(|t| t.parent())
+        .is_some_and(|p| p.kind() == SyntaxKind::HoleExpr);
     if !is_hole {
         return;
     }
@@ -253,17 +307,24 @@ mod tests {
     use super::*;
     use crate::db::FileAnalysis;
 
+    fn completion_items(
+        analysis: &Arc<FileAnalysis>,
+        source: &str,
+        offset: TextSize,
+    ) -> Vec<CompletionItem> {
+        match completions(analysis, source, offset) {
+            Some(CompletionResponse::Array(items)) => items,
+            Some(other) => panic!("expected array completion response, got: {other:?}"),
+            None => Vec::new(),
+        }
+    }
+
     #[test]
     fn completion_includes_functions() {
         let source = "fn foo() -> Int { 42 }\nfn bar() -> Int { 0 }";
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
-        let resp = completions(&analysis, source, TextSize::from(0));
-        assert!(resp.is_some());
-        let items = match resp.unwrap() {
-            CompletionResponse::Array(items) => items,
-            _ => panic!("expected array"),
-        };
+        let items = completion_items(&analysis, source, TextSize::from(0));
         assert!(items.iter().any(|i| i.label == "foo"));
         assert!(items.iter().any(|i| i.label == "bar"));
     }
@@ -273,12 +334,70 @@ mod tests {
         let source = "fn foo() -> Int { 42 }";
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
-        let resp = completions(&analysis, source, TextSize::from(0));
-        let items = match resp.unwrap() {
-            CompletionResponse::Array(items) => items,
-            _ => panic!("expected array"),
-        };
+        let items = completion_items(&analysis, source, TextSize::from(0));
         assert!(items.iter().any(|i| i.label == "Int"));
         assert!(items.iter().any(|i| i.label == "Option"));
+    }
+
+    #[test]
+    fn completion_includes_locals_in_function_scope() {
+        let source = "fn main() -> Int {\n\
+                        let value = 1\n\
+                        value\n\
+                      }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let offset = TextSize::from(source.rfind("value").expect("value usage offset") as u32);
+        let items = completion_items(&analysis, source, offset);
+        assert!(
+            items.iter().any(|i| i.label == "value"),
+            "expected local binding in completion items: {items:?}"
+        );
+    }
+
+    #[test]
+    fn completion_shadowed_name_is_not_duplicated() {
+        let source = "fn main(x: Int) -> Int {\n\
+                        let x = 1\n\
+                        x\n\
+                      }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let offset = TextSize::from(source.rfind('x').expect("x usage offset") as u32);
+        let items = completion_items(&analysis, source, offset);
+        let x_count = items.iter().filter(|i| i.label == "x").count();
+        assert_eq!(
+            x_count, 1,
+            "shadowed name should appear once in completion list, got items: {items:?}"
+        );
+    }
+
+    #[test]
+    fn completion_hole_exact_type_is_ranked_first() {
+        let source = "fn pick(x: Int, flag: Bool) -> Int { _ }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let hole_offset = TextSize::from(source.find('_').expect("hole offset") as u32);
+        let items = completion_items(&analysis, source, hole_offset);
+
+        let x_item = items
+            .iter()
+            .find(|i| i.label == "x")
+            .expect("expected x completion at hole");
+        assert_eq!(
+            x_item.sort_text.as_deref(),
+            Some("0"),
+            "exact type match should have highest rank, got: {x_item:?}"
+        );
+
+        let flag_item = items
+            .iter()
+            .find(|i| i.label == "flag")
+            .expect("expected flag completion at hole");
+        assert_eq!(
+            flag_item.sort_text.as_deref(),
+            Some("1"),
+            "non-matching type should be lower-ranked, got: {flag_item:?}"
+        );
     }
 }

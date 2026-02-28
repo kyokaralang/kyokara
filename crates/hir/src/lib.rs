@@ -222,7 +222,7 @@ fn resolve_project_imports(
     // Collect what needs to be resolved (to avoid borrow conflicts).
     struct PendingImport {
         importing_mod: ModulePath,
-        resolve_name: Name,
+        import_path: Path,
         file_id: FileId,
     }
 
@@ -231,12 +231,12 @@ fn resolve_project_imports(
     for (mod_path, info) in graph.iter() {
         for imp in &info.item_tree.imports {
             // Resolve by the actual import path, not alias.
-            let Some(resolve_name) = imp.path.last() else {
+            if imp.path.segments.is_empty() {
                 continue;
-            };
+            }
             to_resolve.push(PendingImport {
                 importing_mod: mod_path.clone(),
-                resolve_name,
+                import_path: imp.path.clone(),
                 file_id: info.file_id,
             });
         }
@@ -246,27 +246,42 @@ fn resolve_project_imports(
     for pending in to_resolve {
         let PendingImport {
             importing_mod,
-            resolve_name,
+            import_path,
             file_id,
         } = pending;
 
         // Collect pub items from the target module.
         let pub_data = {
-            let candidates: Vec<ModulePath> = graph
+            let import_name = import_path
+                .segments
                 .iter()
-                .filter_map(|(mod_path, _)| {
-                    if mod_path.last() == Some(resolve_name) {
-                        Some(mod_path.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+                .map(|seg| seg.resolve(interner).to_owned())
+                .collect::<Vec<_>>()
+                .join(".");
+            let candidates: Vec<ModulePath> = if import_path.segments.len() > 1 {
+                let target_path = ModulePath(import_path.segments.clone());
+                if graph.get(&target_path).is_some() {
+                    vec![target_path]
+                } else {
+                    Vec::new()
+                }
+            } else {
+                let resolve_name = import_path.segments[0];
+                graph
+                    .iter()
+                    .filter_map(|(mod_path, _)| {
+                        if mod_path.last() == Some(resolve_name) {
+                            Some(mod_path.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            };
 
             if candidates.is_empty() {
-                let name_str = resolve_name.resolve(interner);
                 diagnostics.push(kyokara_diagnostics::Diagnostic::error(
-                    format!("unresolved import `{name_str}`"),
+                    format!("unresolved import `{import_name}`"),
                     kyokara_span::Span {
                         file: file_id,
                         range: kyokara_span::TextRange::default(),
@@ -276,7 +291,6 @@ fn resolve_project_imports(
             }
 
             if candidates.len() > 1 {
-                let name_str = resolve_name.resolve(interner);
                 let mut labels: Vec<String> = candidates
                     .iter()
                     .map(|path| {
@@ -294,7 +308,7 @@ fn resolve_project_imports(
                 labels.sort();
                 diagnostics.push(kyokara_diagnostics::Diagnostic::error(
                     format!(
-                        "ambiguous import `{name_str}`: matches {}",
+                        "ambiguous import `{import_name}`: matches {}",
                         labels.join(", ")
                     ),
                     kyokara_span::Span {

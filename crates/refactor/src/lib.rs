@@ -209,6 +209,7 @@ pub fn verify_single(source: &str, edits: &[TextEdit]) -> bool {
     let new_source = apply_edits(source, edits);
     let result = kyokara_hir::check_file(&new_source);
     result.type_check.raw_diagnostics.is_empty()
+        && result.type_check.body_lowering_diagnostics.is_empty()
         && result.parse_errors.is_empty()
         && result.lowering_diagnostics.is_empty()
 }

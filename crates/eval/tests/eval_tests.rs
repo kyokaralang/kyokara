@@ -2561,6 +2561,67 @@ fn run_project_rejects_ambiguous_import_last_segment() {
     }
 }
 
+#[test]
+fn run_project_qualified_import_resolves_duplicate_leaf_modules() {
+    // import a.math should resolve to a/math.ky even when b/math.ky exists.
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("a")).unwrap();
+    std::fs::create_dir_all(dir.path().join("b")).unwrap();
+
+    let a_math_path = dir.path().join("a").join("math.ky");
+    let mut a_math_file = std::fs::File::create(&a_math_path).unwrap();
+    writeln!(a_math_file, "pub fn value() -> Int {{ 1 }}").unwrap();
+
+    let b_math_path = dir.path().join("b").join("math.ky");
+    let mut b_math_file = std::fs::File::create(&b_math_path).unwrap();
+    writeln!(b_math_file, "pub fn value() -> Int {{ 2 }}").unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import a.math").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ value() }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path).expect("should succeed");
+    assert_eq!(result.value, Value::Int(1));
+}
+
+#[test]
+fn run_project_qualified_import_missing_path_reports_unresolved() {
+    // import c.math should not match a/math.ky or b/math.ky by leaf name.
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("a")).unwrap();
+    std::fs::create_dir_all(dir.path().join("b")).unwrap();
+
+    let a_math_path = dir.path().join("a").join("math.ky");
+    let mut a_math_file = std::fs::File::create(&a_math_path).unwrap();
+    writeln!(a_math_file, "pub fn value() -> Int {{ 1 }}").unwrap();
+
+    let b_math_path = dir.path().join("b").join("math.ky");
+    let mut b_math_file = std::fs::File::create(&b_math_path).unwrap();
+    writeln!(b_math_file, "pub fn value() -> Int {{ 2 }}").unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import c.math").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ value() }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path);
+    match result {
+        Ok(_) => panic!("expected unresolved import error"),
+        Err(e) => {
+            let err = e.to_string();
+            assert!(
+                err.contains("unresolved import"),
+                "expected unresolved import error, got: {err}"
+            );
+        }
+    }
+}
+
 // ── Issue #69: imported pub fn calling private helper ────────────────
 
 #[test]

@@ -284,17 +284,20 @@ mod tests {
     use super::*;
     use crate::db::FileAnalysis;
 
+    fn hover_text(analysis: &Arc<FileAnalysis>, source: &str, offset: TextSize) -> Option<String> {
+        hover(analysis, source, offset).map(|h| match h.contents {
+            HoverContents::Markup(m) => m.value,
+            _ => panic!("expected markup hover contents"),
+        })
+    }
+
     #[test]
     fn hover_on_function_name() {
         let source = "fn add(x: Int, y: Int) -> Int { x }";
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
-        let h = hover(&analysis, source, TextSize::from(3));
-        assert!(h.is_some());
-        let contents = match h.unwrap().contents {
-            HoverContents::Markup(m) => m.value,
-            _ => panic!("expected markup"),
-        };
+        let contents =
+            hover_text(&analysis, source, TextSize::from(3)).expect("hover should exist");
         assert!(contents.contains("fn add"), "got: {contents}");
     }
 
@@ -303,12 +306,76 @@ mod tests {
         let source = "type Color = Red | Blue";
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
-        let h = hover(&analysis, source, TextSize::from(5));
-        assert!(h.is_some());
-        let contents = match h.unwrap().contents {
-            HoverContents::Markup(m) => m.value,
-            _ => panic!("expected markup"),
-        };
+        let contents =
+            hover_text(&analysis, source, TextSize::from(5)).expect("hover should exist");
         assert!(contents.contains("type Color"), "got: {contents}");
+    }
+
+    #[test]
+    fn hover_on_capability_usage() {
+        let source = "cap Console {\n\
+                        fn print(s: String) -> Unit\n\
+                      }\n\
+                      fn effectful() -> Unit with Console { print(\"hi\") }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let cap_offset = source.find("Console {").expect("cap usage offset");
+        let contents = hover_text(&analysis, source, TextSize::from(cap_offset as u32))
+            .expect("hover should exist");
+        assert!(contents.contains("cap Console"), "got: {contents}");
+    }
+
+    #[test]
+    fn hover_on_variant_usage() {
+        let source = "type Color = | Red | Blue\nfn pick() -> Color { Red }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let variant_offset = source.rfind("Red").expect("variant usage offset");
+        let contents = hover_text(&analysis, source, TextSize::from(variant_offset as u32))
+            .expect("hover should exist");
+        assert!(contents.contains("Color::Red"), "got: {contents}");
+    }
+
+    #[test]
+    fn hover_on_local_variable_usage() {
+        let source = "fn id(x: Int) -> Int { x }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let local_offset = source.rfind('x').expect("local usage offset");
+        let contents = hover_text(&analysis, source, TextSize::from(local_offset as u32))
+            .expect("hover should exist");
+        assert!(contents.contains("x: Int"), "got: {contents}");
+    }
+
+    #[test]
+    fn hover_on_field_access() {
+        let source = "type Point = { x: Int }\nfn get(p: Point) -> Int { p.x }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let field_offset = source.rfind(".x").expect("field access offset") + 1;
+        let contents = hover_text(&analysis, source, TextSize::from(field_offset as u32))
+            .expect("hover should exist");
+        assert!(contents.contains("field `x`"), "got: {contents}");
+    }
+
+    #[test]
+    fn hover_on_import_alias_token() {
+        let source = "import math as M\nfn main() -> Int { 1 }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let alias_offset = source.find("M").expect("alias offset");
+        let contents = hover_text(&analysis, source, TextSize::from(alias_offset as u32))
+            .expect("hover should exist");
+        assert!(contents.contains("import M"), "got: {contents}");
+    }
+
+    #[test]
+    fn hover_on_non_symbol_returns_none() {
+        let source = "fn main() -> Int { 1 }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let brace_offset = source.find('{').expect("brace offset");
+        let h = hover(&analysis, source, TextSize::from(brace_offset as u32));
+        assert!(h.is_none(), "expected no hover on punctuation token");
     }
 }
