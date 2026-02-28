@@ -51,6 +51,60 @@ fn manifest_from_json(json: &str) -> CapabilityManifest {
     CapabilityManifest::from_json(json).unwrap()
 }
 
+fn run_project_with_files_err(files: &[(&str, &str)]) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, source) in files {
+        let path = dir.path().join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, source).unwrap();
+    }
+    let main_path = dir.path().join("main.ky");
+    match kyokara_eval::run_project(&main_path) {
+        Ok(result) => panic!("expected error, got {:?}", result.value),
+        Err(e) => e.to_string(),
+    }
+}
+
+fn run_project_with_files_manifest_ok(
+    files: &[(&str, &str)],
+    manifest: Option<CapabilityManifest>,
+) -> Value {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, source) in files {
+        let path = dir.path().join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, source).unwrap();
+    }
+    let main_path = dir.path().join("main.ky");
+    match kyokara_eval::run_project_with_manifest(&main_path, manifest) {
+        Ok(result) => result.value,
+        Err(e) => panic!("runtime error: {e}"),
+    }
+}
+
+fn run_project_with_files_manifest_err(
+    files: &[(&str, &str)],
+    manifest: Option<CapabilityManifest>,
+) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, source) in files {
+        let path = dir.path().join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, source).unwrap();
+    }
+    let main_path = dir.path().join("main.ky");
+    match kyokara_eval::run_project_with_manifest(&main_path, manifest) {
+        Ok(result) => panic!("expected error, got {:?}", result.value),
+        Err(e) => e.to_string(),
+    }
+}
+
 // ── Literal tests ────────────────────────────────────────────────────
 
 #[test]
@@ -1860,18 +1914,11 @@ fn manifest_allow_keys_constraint_rejected_until_enforced_issue_186() {
 
 #[test]
 fn project_manifest_allow_domains_constraint_rejected_until_enforced_issue_186() {
-    use std::io::Write;
-
-    let dir = tempfile::tempdir().unwrap();
-    let main_path = dir.path().join("main.ky");
-    let mut main_file = std::fs::File::create(&main_path).unwrap();
-    writeln!(main_file, "fn main() -> Int {{ 1 }}").unwrap();
-
     let manifest = manifest_from_json(r#"{"caps": {"Net": {"allow_domains": ["rates.example"]}}}"#);
-    let err = match kyokara_eval::run_project_with_manifest(&main_path, Some(manifest)) {
-        Ok(result) => panic!("expected error, got {:?}", result.value),
-        Err(e) => e.to_string(),
-    };
+    let err = run_project_with_files_manifest_err(
+        &[("main.ky", "fn main() -> Int { 1 }\n")],
+        Some(manifest),
+    );
     assert!(
         err.contains("allow_domains"),
         "expected field name in error, got: {err}"
@@ -1880,108 +1927,53 @@ fn project_manifest_allow_domains_constraint_rejected_until_enforced_issue_186()
 
 #[test]
 fn project_manifest_without_fine_grained_constraints_still_runs_issue_186_guard() {
-    use std::io::Write;
-
-    let dir = tempfile::tempdir().unwrap();
-    let main_path = dir.path().join("main.ky");
-    let mut main_file = std::fs::File::create(&main_path).unwrap();
-    writeln!(main_file, "fn main() -> Int {{ 1 }}").unwrap();
-
     let manifest = manifest_from_json(r#"{"caps": {"IO": {}, "Net": {}}}"#);
-    let result = kyokara_eval::run_project_with_manifest(&main_path, Some(manifest))
-        .expect("project should still run with capability-only manifest");
-    assert!(matches!(result.value, Value::Int(1)));
+    let val = run_project_with_files_manifest_ok(
+        &[("main.ky", "fn main() -> Int { 1 }\n")],
+        Some(manifest),
+    );
+    assert!(matches!(val, Value::Int(1)));
 }
 
 // ── Multi-file project diagnostics ──────────────────────────────────
 
 #[test]
 fn run_project_rejects_type_error_in_imported_module() {
-    use std::io::Write;
-
-    let dir = tempfile::tempdir().unwrap();
-
-    // util.ky has a type error: returns Bool where Int is declared.
-    let util_path = dir.path().join("util.ky");
-    let mut util_file = std::fs::File::create(&util_path).unwrap();
-    writeln!(util_file, "pub fn util() -> Int {{ true }}").unwrap();
-
-    // main.ky imports util and calls it.
-    let main_path = dir.path().join("main.ky");
-    let mut main_file = std::fs::File::create(&main_path).unwrap();
-    writeln!(main_file, "import util").unwrap();
-    writeln!(main_file, "fn main() -> Int {{ util() }}").unwrap();
-
-    let result = kyokara_eval::run_project(&main_path);
-    match result {
-        Ok(_) => panic!("expected type error from imported module"),
-        Err(e) => {
-            let err = e.to_string();
-            assert!(
-                err.contains("type error"),
-                "expected 'type error' in message, got: {err}"
-            );
-        }
-    }
+    let err = run_project_with_files_err(&[
+        ("util.ky", "pub fn util() -> Int { true }\n"),
+        ("main.ky", "import util\nfn main() -> Int { util() }\n"),
+    ]);
+    assert!(
+        err.contains("type error"),
+        "expected 'type error' in message, got: {err}"
+    );
 }
 
 #[test]
 fn run_project_rejects_parse_error_in_sibling_module() {
-    use std::io::Write;
-
-    let dir = tempfile::tempdir().unwrap();
-
-    // bad.ky has a syntax error (missing param name).
-    let bad_path = dir.path().join("bad.ky");
-    let mut bad_file = std::fs::File::create(&bad_path).unwrap();
-    writeln!(bad_file, "pub fn bad( -> Int {{ 42 }}").unwrap();
-
-    // main.ky is valid and doesn't import bad.
-    let main_path = dir.path().join("main.ky");
-    let mut main_file = std::fs::File::create(&main_path).unwrap();
-    writeln!(main_file, "fn main() -> Int {{ 42 }}").unwrap();
-
-    let result = kyokara_eval::run_project(&main_path);
-    match result {
-        Ok(_) => panic!("expected parse error from sibling module"),
-        Err(e) => {
-            let err = e.to_string();
-            assert!(
-                err.contains("parse error"),
-                "expected 'parse error' in message, got: {err}"
-            );
-        }
-    }
+    let err = run_project_with_files_err(&[
+        ("bad.ky", "pub fn bad( -> Int { 42 }\n"),
+        ("main.ky", "fn main() -> Int { 42 }\n"),
+    ]);
+    assert!(
+        err.contains("parse error"),
+        "expected 'parse error' in message, got: {err}"
+    );
 }
 
 #[test]
 fn run_project_rejects_lowering_error_in_sibling_module() {
-    use std::io::Write;
-
-    let dir = tempfile::tempdir().unwrap();
-
-    // dup.ky has a lowering error: duplicate function definition.
-    let dup_path = dir.path().join("dup.ky");
-    let mut dup_file = std::fs::File::create(&dup_path).unwrap();
-    writeln!(dup_file, "pub fn foo() -> Int {{ 1 }}").unwrap();
-    writeln!(dup_file, "pub fn foo() -> Int {{ 2 }}").unwrap();
-
-    // main.ky is valid.
-    let main_path = dir.path().join("main.ky");
-    let mut main_file = std::fs::File::create(&main_path).unwrap();
-    writeln!(main_file, "fn main() -> Int {{ 42 }}").unwrap();
-
-    let result = kyokara_eval::run_project(&main_path);
-    match result {
-        Ok(_) => panic!("expected lowering error from sibling module"),
-        Err(e) => {
-            let err = e.to_string();
-            assert!(
-                err.contains("lowering error") || err.contains("duplicate"),
-                "expected lowering/duplicate error in message, got: {err}"
-            );
-        }
-    }
+    let err = run_project_with_files_err(&[
+        (
+            "dup.ky",
+            "pub fn foo() -> Int { 1 }\npub fn foo() -> Int { 2 }\n",
+        ),
+        ("main.ky", "fn main() -> Int { 42 }\n"),
+    ]);
+    assert!(
+        err.contains("lowering error") || err.contains("duplicate"),
+        "expected lowering/duplicate error in message, got: {err}"
+    );
 }
 
 #[test]
@@ -2054,31 +2046,14 @@ fn run_ensures_result_and_user_result_coexist() {
 
 #[test]
 fn run_project_rejects_body_lowering_error_in_sibling_module() {
-    use std::io::Write;
-
-    let dir = tempfile::tempdir().unwrap();
-
-    // bad.ky has an unresolved name in the body.
-    let bad_path = dir.path().join("bad.ky");
-    let mut bad_file = std::fs::File::create(&bad_path).unwrap();
-    writeln!(bad_file, "pub fn oops() -> Int {{ unknown_name }}").unwrap();
-
-    // main.ky is valid and doesn't import bad.
-    let main_path = dir.path().join("main.ky");
-    let mut main_file = std::fs::File::create(&main_path).unwrap();
-    writeln!(main_file, "fn main() -> Int {{ 42 }}").unwrap();
-
-    let result = kyokara_eval::run_project(&main_path);
-    match result {
-        Ok(_) => panic!("expected body lowering error from sibling module"),
-        Err(e) => {
-            let err = e.to_string();
-            assert!(
-                err.contains("unresolved") || err.contains("lowering"),
-                "expected unresolved/lowering error in message, got: {err}"
-            );
-        }
-    }
+    let err = run_project_with_files_err(&[
+        ("bad.ky", "pub fn oops() -> Int { unknown_name }\n"),
+        ("main.ky", "fn main() -> Int { 42 }\n"),
+    ]);
+    assert!(
+        err.contains("unresolved") || err.contains("lowering"),
+        "expected unresolved/lowering error in message, got: {err}"
+    );
 }
 
 // ── Duplicate binding rejection (#161) ─────────────────────────────
