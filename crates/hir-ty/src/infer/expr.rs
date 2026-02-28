@@ -458,6 +458,15 @@ impl<'a> InferenceCtx<'a> {
     }
 
     fn infer_call(&mut self, callee: ExprIdx, args: &[CallArg]) -> Ty {
+        // ── Method call resolution ──────────────────────────────────
+        // If the callee is `expr.field(args)`, try resolving as a method
+        // call before falling through to normal field-access + call.
+        if let Expr::Field { base, field } = self.body.exprs[callee].clone() {
+            if let Some(result) = self.try_infer_method_call(callee, base, field, args) {
+                return result;
+            }
+        }
+
         let callee_ty = self.infer_expr(callee, &Expectation::None);
         let callee_ty = self.table.resolve_deep(&callee_ty);
 
@@ -1095,6 +1104,126 @@ impl<'a> InferenceCtx<'a> {
             .into_iter()
             .filter_map(|name| seen.remove(&name).map(|ty| (name, ty)))
             .collect()
+    }
+
+    /// Map a resolved type to its well-known type name for method lookup.
+    fn type_category_name(&self, ty: &Ty) -> Option<kyokara_hir_def::name::Name> {
+        let wk = &self.module_scope.well_known_names;
+        match ty {
+            Ty::String => wk.string,
+            Ty::Int => wk.int,
+            Ty::Float => wk.float,
+            Ty::Bool => wk.bool_,
+            Ty::Char => wk.char_,
+            Ty::Adt { def, .. } => Some(self.item_tree.types[*def].name),
+            _ => None,
+        }
+    }
+
+    /// Try to resolve `base.field(args)` as a method call.
+    ///
+    /// Returns `Some(return_type)` if a method was found, `None` if the caller
+    /// should fall through to normal field-access + call semantics.
+    fn try_infer_method_call(
+        &mut self,
+        callee: ExprIdx,
+        base: ExprIdx,
+        field: kyokara_hir_def::name::Name,
+        args: &[CallArg],
+    ) -> Option<Ty> {
+        // Infer the receiver type.
+        let base_ty = self.infer_expr(base, &Expectation::None);
+        let base_ty_resolved = self.table.resolve_deep(&base_ty);
+
+        // Skip method resolution for record/adt types that have actual fields,
+        // to let field access + call work for callable record fields.
+        match &base_ty_resolved {
+            Ty::Record { fields } => {
+                if fields.iter().any(|(n, _)| *n == field) {
+                    return None; // actual field exists, fall through
+                }
+            }
+            Ty::Adt { def, .. } => {
+                let type_item = &self.item_tree.types[*def];
+                if let TypeDefKind::Record { fields: def_fields } = &type_item.kind {
+                    if def_fields.iter().any(|(n, _)| *n == field) {
+                        return None; // actual field exists, fall through
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        // Look up method in the registry.
+        let type_name = self.type_category_name(&base_ty_resolved)?;
+        let fn_idx = self
+            .module_scope
+            .methods
+            .get(&(type_name, field))
+            .copied()?;
+
+        // Instantiate the method's function signature with fresh type variables.
+        let env = Self::make_env(
+            self.item_tree,
+            self.module_scope,
+            self.interner,
+            &self.type_params,
+        );
+        let (params, ret) = instantiate_fn_sig(fn_idx, &env, &mut self.table);
+
+        // The method's first parameter is the receiver (`self`).
+        // Unify receiver type with first param type.
+        if params.is_empty() {
+            return None; // degenerate case: method with no params
+        }
+        self.table.unify(&params[0], &base_ty);
+
+        // Record the callee expression type as the method's function type.
+        let fn_ty = Ty::Fn {
+            params: params.clone(),
+            ret: Box::new(ret.clone()),
+        };
+        self.expr_types.insert(callee, fn_ty);
+
+        // Check arity: caller provides args for params[1..] (receiver is implicit).
+        let expected_arg_count = params.len() - 1;
+        if args.len() != expected_arg_count {
+            self.push_diag(TyDiagnosticData::ArgCountMismatch {
+                expected: expected_arg_count,
+                actual: args.len(),
+            });
+            for arg in args {
+                match arg {
+                    CallArg::Positional(e) | CallArg::Named { value: e, .. } => {
+                        self.infer_expr(*e, &Expectation::None);
+                    }
+                }
+            }
+            return Some(Ty::Error);
+        }
+
+        // Type-check args against params[1..].
+        for (i, arg) in args.iter().enumerate() {
+            match arg {
+                CallArg::Positional(e) => {
+                    self.infer_expr(*e, &Expectation::Has(params[i + 1].clone()));
+                }
+                CallArg::Named { value: e, .. } => {
+                    // Named args in method calls: match against remaining params.
+                    self.infer_expr(*e, &Expectation::Has(params[i + 1].clone()));
+                }
+            }
+        }
+
+        // Record effect checking for the resolved method.
+        let method_name = self.item_tree.functions[fn_idx].name;
+        if let Some(&fn_idx_from_scope) = self.module_scope.functions.get(&method_name) {
+            let call_target = Some(method_name);
+            self.record_call_edge_if_top_level(call_target);
+            let _ = fn_idx_from_scope;
+        }
+
+        Some(ret)
     }
 
     fn infer_index(&mut self, base: ExprIdx, index: ExprIdx) -> Ty {

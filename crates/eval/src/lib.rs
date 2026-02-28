@@ -12,7 +12,7 @@ pub mod value;
 
 use kyokara_hir::{
     ModulePath, check_module, check_project, collect_item_tree, register_builtin_intrinsics,
-    register_builtin_types,
+    register_builtin_methods, register_builtin_types,
 };
 use kyokara_intern::Interner;
 use kyokara_span::FileId;
@@ -142,6 +142,7 @@ pub fn run_with_manifest(
         &mut item_result.module_scope,
         &mut interner,
     );
+    register_builtin_methods(&mut item_result.module_scope, &mut interner);
 
     // 6. Type-check.
     let type_check = check_module(
@@ -218,6 +219,7 @@ pub fn run_project_with_manifest(
         &mut entry_info.scope,
         &mut project.interner,
     );
+    register_builtin_methods(&mut entry_info.scope, &mut project.interner);
 
     // Collect fn bodies: start with the entry module's type check.
     let entry_tc = project

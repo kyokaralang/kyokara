@@ -4402,3 +4402,347 @@ fn eval_index_on_wrong_type() {
     // Indexing an Int should be a compile error
     assert!(check_has_compile_errors("fn main() -> Int { 42[0] }"));
 }
+
+// ── Method call syntax tests ────────────────────────────────────────
+
+// String methods
+#[test]
+fn eval_method_string_len() {
+    let val = run_ok(r#"fn main() -> Int { "hello".len() }"#);
+    assert!(matches!(val, Value::Int(5)));
+}
+
+#[test]
+fn eval_method_string_contains() {
+    let val = run_ok(r#"fn main() -> Bool { "hello world".contains("world") }"#);
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_method_string_trim() {
+    let val = run_ok(r#"fn main() -> String { "  hello  ".trim() }"#);
+    match val {
+        Value::String(s) => assert_eq!(s, "hello"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_method_string_to_upper() {
+    let val = run_ok(r#"fn main() -> String { "hello".to_upper() }"#);
+    match val {
+        Value::String(s) => assert_eq!(s, "HELLO"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_method_string_to_lower() {
+    let val = run_ok(r#"fn main() -> String { "HELLO".to_lower() }"#);
+    match val {
+        Value::String(s) => assert_eq!(s, "hello"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_method_string_starts_with() {
+    let val = run_ok(r#"fn main() -> Bool { "hello world".starts_with("hello") }"#);
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_method_string_ends_with() {
+    let val = run_ok(r#"fn main() -> Bool { "hello world".ends_with("world") }"#);
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_method_string_split() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let parts = "a,b,c".split(",")
+            list_len(parts)
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_method_string_lines() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let ls = "a\nb\nc".lines()
+            list_len(ls)
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_method_string_chars() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let cs = "hello".chars()
+            list_len(cs)
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(5)));
+}
+
+// List methods
+#[test]
+fn eval_method_list_len() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 1), 2)
+            xs.len()
+        }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_method_list_push() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_new(), 1)
+            let ys = xs.push(2)
+            ys.len()
+        }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_method_list_get() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 10), 20)
+            match xs.get(1) {
+                Some(v) => v
+                None => 0
+            }
+        }",
+    );
+    assert!(matches!(val, Value::Int(20)));
+}
+
+#[test]
+fn eval_method_list_is_empty() {
+    let val = run_ok(
+        "fn main() -> Bool {
+            let xs: List<Int> = list_new()
+            xs.is_empty()
+        }",
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_method_list_reverse() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 1), 2)
+            let ys = xs.reverse()
+            ys[0]
+        }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_method_list_map() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 1), 2)
+            let ys = xs.map(fn(x: Int) => x * 10)
+            ys[0]
+        }",
+    );
+    assert!(matches!(val, Value::Int(10)));
+}
+
+#[test]
+fn eval_method_list_filter() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
+            let ys = xs.filter(fn(x: Int) => x > 1)
+            ys.len()
+        }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_method_list_fold() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
+            xs.fold(0, fn(acc: Int, x: Int) => acc + x)
+        }",
+    );
+    assert!(matches!(val, Value::Int(6)));
+}
+
+#[test]
+fn eval_method_list_sort() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 3), 1), 2)
+            let sorted = xs.sort()
+            sorted[0]
+        }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_method_list_sort_by() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 3), 1), 2)
+            let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
+            sorted[2]
+        }",
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+// Map methods
+#[test]
+fn eval_method_map_insert_and_get() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let m = map_new()
+            let m2 = m.insert("a", 42)
+            match m2.get("a") {
+                Some(v) => v
+                None => 0
+            }
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(42)));
+}
+
+#[test]
+fn eval_method_map_contains() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            let m = map_insert(map_new(), "key", 1)
+            m.contains("key")
+        }"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_method_map_len() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let m = map_insert(map_insert(map_new(), "a", 1), "b", 2)
+            m.len()
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_method_map_keys() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let m = map_insert(map_new(), "a", 1)
+            let ks = m.keys()
+            list_len(ks)
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+// Conversion methods
+#[test]
+fn eval_method_int_to_string() {
+    let val = run_ok(r#"fn main() -> String { 42.to_string() }"#);
+    match val {
+        Value::String(s) => assert_eq!(s, "42"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_method_int_to_float() {
+    let val = run_ok("fn main() -> Float { 42.to_float() }");
+    match val {
+        Value::Float(f) => assert!((f - 42.0).abs() < f64::EPSILON),
+        other => panic!("expected Float, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_method_float_to_int() {
+    let val = run_ok("fn main() -> Int { 3.14.to_int() }");
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_method_char_to_string() {
+    let val = run_ok("fn main() -> String { 'a'.to_string() }");
+    match val {
+        Value::String(s) => assert_eq!(s, "a"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_method_int_abs() {
+    let val = run_ok("fn main() -> Int { (0 - 5).abs() }");
+    assert!(matches!(val, Value::Int(5)));
+}
+
+// Chaining
+#[test]
+fn eval_method_chaining_trim_len() {
+    let val = run_ok(r#"fn main() -> Int { "  hello  ".trim().len() }"#);
+    assert!(matches!(val, Value::Int(5)));
+}
+
+#[test]
+fn eval_method_chaining_push_push_len() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs: List<Int> = list_new()
+            xs.push(1).push(2).push(3).len()
+        }",
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_method_chaining_split_len() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            "a,b,c".split(",").len()
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+// Flat function still works alongside method syntax
+#[test]
+fn eval_method_flat_function_still_works() {
+    let val = run_ok(r#"fn main() -> Int { string_len("hello") }"#);
+    assert!(matches!(val, Value::Int(5)));
+}
+
+// Index + method chaining
+#[test]
+fn eval_method_index_then_method() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let xs = list_push(list_new(), "hello")
+            xs[0].len()
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(5)));
+}
