@@ -3,10 +3,10 @@
   "entry": "main.ky",
   "check": {
     "ok": false,
-    "messages_all": ["property bodies are not semantically checked"]
+    "messages_all": ["unresolved name `foo`"]
   },
   "run": {
     "ok": false,
-    "stderr_contains": ["property bodies are not semantically checked"]
+    "stderr_contains": ["unresolved name `foo`"]
   }
 }

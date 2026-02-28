@@ -106,6 +106,10 @@ pub struct PropertyItem {
     pub name: Name,
     pub params: Vec<FnParam>,
     pub has_body: bool,
+    /// Source range of the CST `PropertyDef` node (for matching back to syntax).
+    pub source_range: Option<TextRange>,
+    /// Link to the synthetic `FnItem` created for this property's body.
+    pub fn_idx: Option<FnItemIdx>,
 }
 
 /// A top-level let binding.

@@ -2,11 +2,20 @@
 
 use crate::choice::ChoiceSequence;
 
-/// Result of testing a single function.
+/// Whether a testable item is a contracted function or an explicit property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TestableKind {
+    Function,
+    Property,
+}
+
+/// Result of testing a single function or property.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FnTestResult {
-    /// Function name.
+    /// Function/property name.
     pub name: String,
+    /// Whether this is a function or property.
+    pub kind: TestableKind,
     /// Number of test cases that passed.
     pub passed: usize,
     /// Number of test cases discarded (precondition failed).
@@ -53,8 +62,12 @@ impl TestReport {
         let mut out = String::new();
 
         for result in &self.results {
+            let label = match result.kind {
+                TestableKind::Function => "fn",
+                TestableKind::Property => "property",
+            };
             if let Some(ref failure) = result.failure {
-                out.push_str(&format!("FAIL {}\n", result.name));
+                out.push_str(&format!("FAIL [{label}] {}\n", result.name));
                 out.push_str(&format!("  error: {}\n", failure.error));
                 out.push_str(&format!(
                     "  counterexample: ({})\n",
@@ -66,7 +79,7 @@ impl TestReport {
                 ));
             } else {
                 out.push_str(&format!(
-                    "ok   {} ({} passed, {} discarded)\n",
+                    "ok   [{label}] {} ({} passed, {} discarded)\n",
                     result.name, result.passed, result.discarded
                 ));
             }
@@ -82,10 +95,10 @@ impl TestReport {
         let total_fns = self.results.len();
         let failures = self.failure_count();
         if failures == 0 {
-            out.push_str(&format!("\n{total_fns} function(s) tested, all passed.\n"));
+            out.push_str(&format!("\n{total_fns} item(s) tested, all passed.\n"));
         } else {
             out.push_str(&format!(
-                "\n{total_fns} function(s) tested, {failures} failure(s).\n"
+                "\n{total_fns} item(s) tested, {failures} failure(s).\n"
             ));
         }
 

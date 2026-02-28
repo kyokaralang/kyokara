@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 
-use kyokara_pbt::{TestConfig, run_tests};
+use kyokara_pbt::{TestConfig, TestableKind, run_tests};
 use std::path::PathBuf;
 
 fn fixture(name: &str) -> String {
@@ -134,5 +134,99 @@ fn corpus_replay_detects_regression() {
     assert!(
         !report2.all_passed(),
         "corpus replay should still detect the regression"
+    );
+}
+
+#[test]
+fn property_pass_succeeds() {
+    let source = fixture("property_pass.ky");
+    let config = test_config();
+    let report = run_tests(&source, &config).unwrap();
+
+    assert!(
+        report.all_passed(),
+        "property_pass.ky should pass: {}",
+        report.format_human()
+    );
+    assert_eq!(report.results.len(), 1);
+    assert_eq!(report.results[0].name, "bool_identity");
+    assert_eq!(report.results[0].kind, TestableKind::Property);
+    assert!(report.results[0].passed > 0);
+}
+
+#[test]
+fn property_fail_detected() {
+    let source = fixture("property_fail.ky");
+    let config = test_config();
+    let report = run_tests(&source, &config).unwrap();
+
+    assert!(!report.all_passed(), "property_fail.ky should fail");
+    assert_eq!(report.failure_count(), 1);
+
+    let result = &report.results[0];
+    assert_eq!(result.name, "bad_abs");
+    assert_eq!(result.kind, TestableKind::Property);
+    let failure = result.failure.as_ref().unwrap();
+    assert!(
+        failure.error.contains("property returned false"),
+        "expected 'property returned false', got: {}",
+        failure.error
+    );
+
+    // Counterexample should be a negative number (abs(x) != x when x < 0).
+    assert!(!failure.args_display.is_empty());
+    let arg_val: i64 = failure.args_display[0].parse().unwrap();
+    assert!(arg_val < 0, "counterexample should be negative: {arg_val}");
+}
+
+#[test]
+fn mixed_discovery() {
+    let source = fixture("mixed.ky");
+    let config = test_config();
+    let report = run_tests(&source, &config).unwrap();
+
+    assert!(
+        report.all_passed(),
+        "mixed.ky should pass: {}",
+        report.format_human()
+    );
+
+    // Should have both a function and a property tested.
+    assert_eq!(
+        report.results.len(),
+        2,
+        "expected 2 results (fn + property)"
+    );
+
+    let fn_result = report
+        .results
+        .iter()
+        .find(|r| r.kind == TestableKind::Function)
+        .expect("should have a function result");
+    assert_eq!(fn_result.name, "is_positive");
+    assert!(fn_result.passed > 0);
+
+    let prop_result = report
+        .results
+        .iter()
+        .find(|r| r.kind == TestableKind::Property)
+        .expect("should have a property result");
+    assert_eq!(prop_result.name, "gt_antisymmetric");
+    assert!(prop_result.passed > 0);
+}
+
+#[test]
+fn property_type_check() {
+    // Valid property: should have no diagnostics.
+    let result = kyokara_hir::check_file("property p(a: Int, b: Int) { a + b == b + a }");
+    let all_diags: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .map(|(d, _)| format!("{d:?}"))
+        .collect();
+    assert!(
+        all_diags.is_empty(),
+        "valid property should have no type errors: {all_diags:?}"
     );
 }
