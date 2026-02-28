@@ -77,6 +77,16 @@ impl CompileGateErrors {
     }
 }
 
+fn validate_manifest_constraints(manifest: &CapabilityManifest) -> Result<(), RuntimeError> {
+    if let Some((capability, field)) = manifest.first_unsupported_constraint() {
+        return Err(RuntimeError::UnsupportedManifestConstraint {
+            capability,
+            field: field.to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Result of running a Kyokara program.
 pub struct RunResult {
     pub value: Value,
@@ -102,6 +112,10 @@ pub fn run_with_manifest(
     source: &str,
     manifest: Option<CapabilityManifest>,
 ) -> Result<RunResult, RuntimeError> {
+    if let Some(ref m) = manifest {
+        validate_manifest_constraints(m)?;
+    }
+
     let file_id = FileId(0);
 
     // 1. Parse.
@@ -181,6 +195,10 @@ pub fn run_project_with_manifest(
     entry_file: &std::path::Path,
     manifest: Option<CapabilityManifest>,
 ) -> Result<RunResult, RuntimeError> {
+    if let Some(ref m) = manifest {
+        validate_manifest_constraints(m)?;
+    }
+
     let mut project = check_project(entry_file);
 
     if let Some(err) = collect_project_compile_errors(&project).into_runtime_error() {
