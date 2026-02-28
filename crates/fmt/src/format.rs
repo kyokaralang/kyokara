@@ -103,6 +103,9 @@ fn format_node_inner(node: &SyntaxNode) -> Doc {
         SyntaxKind::PatList => format_pat_list(node),
 
         // Property
+        SyntaxKind::PropertyParamList => format_property_param_list(node),
+        SyntaxKind::PropertyParam => format_property_param(node),
+        SyntaxKind::WhereClause => format_where_clause(node),
         SyntaxKind::ForAllBinder => format_for_all_binder(node),
 
         // Error recovery — verbatim fallback
@@ -629,20 +632,70 @@ fn format_property_def(node: &SyntaxNode) -> Doc {
         parts.push(format_token(&name));
     }
 
-    if let Some(params) = find_child_node(node, SyntaxKind::ParamList) {
+    if let Some(params) = find_child_node(node, SyntaxKind::PropertyParamList) {
         parts.push(format_node(&params));
     }
 
-    // ForAllBinder
-    let binders = child_nodes(node, SyntaxKind::ForAllBinder);
-    for b in &binders {
-        parts.push(Doc::text(" "));
-        parts.push(format_node(b));
+    if let Some(where_clause) = find_child_node(node, SyntaxKind::WhereClause) {
+        parts.push(Doc::HardLine);
+        parts.push(format_node(&where_clause));
     }
 
     if let Some(body) = find_child_node(node, SyntaxKind::BlockExpr) {
         parts.push(Doc::text(" "));
         parts.push(format_node(&body));
+    }
+
+    Doc::concat(parts)
+}
+
+fn format_property_param_list(node: &SyntaxNode) -> Doc {
+    let params: Vec<Doc> = node
+        .children()
+        .filter(|c| c.kind() == SyntaxKind::PropertyParam)
+        .map(|c| format_node(&c))
+        .collect();
+
+    if params.is_empty() {
+        Doc::text("()")
+    } else {
+        Doc::concat(vec![
+            Doc::text("("),
+            Doc::join(params, Doc::text(", ")),
+            Doc::text(")"),
+        ])
+    }
+}
+
+fn format_property_param(node: &SyntaxNode) -> Doc {
+    let mut parts = Vec::new();
+
+    if let Some(name) = find_ident(node) {
+        parts.push(format_token(&name));
+    }
+
+    let type_expr = node.children().find(|c| is_type_expr(c.kind()));
+    if let Some(te) = type_expr {
+        parts.push(Doc::text(": "));
+        parts.push(format_node(&te));
+    }
+
+    // Generator expression (after `<-` token).
+    let gen_expr = node.children().find(|c| is_expr(c.kind()));
+    if let Some(ge) = gen_expr {
+        parts.push(Doc::text(" <- "));
+        parts.push(format_node(&ge));
+    }
+
+    Doc::concat(parts)
+}
+
+fn format_where_clause(node: &SyntaxNode) -> Doc {
+    let mut parts = vec![Doc::text("where"), Doc::text(" ")];
+
+    let expr = node.children().find(|c| is_expr(c.kind()));
+    if let Some(e) = expr {
+        parts.push(format_node(&e));
     }
 
     Doc::concat(parts)

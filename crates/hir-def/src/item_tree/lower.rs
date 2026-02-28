@@ -361,81 +361,55 @@ impl ItemTreeCtx<'_> {
     }
 
     fn lower_property_def(&mut self, p: &PropertyDef) {
-        let name = self.name_of(p);
+        use crate::item_tree::{GenSpec, PropertyParamSpec};
 
-        let mut params: Vec<FnParam> = Vec::new();
-        let mut refine_fns: Vec<Option<FnItemIdx>> = Vec::new();
+        let name = self.name_of(p);
         let bool_path = Path {
             segments: vec![Name::new(self.interner, "Bool")],
         };
 
-        if let Some(pl) = p.param_list() {
+        let mut params: Vec<PropertyParamSpec> = Vec::new();
+
+        if let Some(pl) = p.property_param_list() {
             for param in pl.params() {
                 let pname = param
                     .name_token()
                     .map(|tok| Name::new(self.interner, tok.text()))
                     .unwrap_or_else(|| Name::new(self.interner, "_"));
 
-                match param.type_expr() {
+                // Reject refined types in property params.
+                let ty = match param.type_expr() {
                     Some(TypeExpr::RefinedType(rt)) => {
-                        // Extract base type from the refined type.
-                        let base_ty = rt
-                            .base_type()
+                        let span = self.node_span(rt.syntax());
+                        self.diagnostics.push(Diagnostic::error(
+                            "refinement types are not allowed in property params; \
+                             move predicate to `where`",
+                            span,
+                        ));
+                        rt.base_type()
                             .map(|bt| self.lower_type_ref(&bt))
-                            .unwrap_or(TypeRef::Error);
-
-                        params.push(FnParam {
-                            name: pname,
-                            ty: base_ty.clone(),
-                        });
-
-                        // Create a synthetic FnItem for the predicate checker:
-                        // one param of the base type, returns Bool.
-                        let refine_name = rt
-                            .name_token()
-                            .map(|tok| Name::new(self.interner, tok.text()))
-                            .unwrap_or(pname);
-
-                        let refine_fn_idx = self.tree.functions.alloc(FnItem {
-                            name: Name::new(
-                                self.interner,
-                                &format!(
-                                    "__refine_{}_{}",
-                                    name.resolve(self.interner),
-                                    pname.resolve(self.interner)
-                                ),
-                            ),
-                            is_pub: false,
-                            type_params: vec![],
-                            params: vec![FnParam {
-                                name: refine_name,
-                                ty: base_ty,
-                            }],
-                            ret_type: Some(TypeRef::Path {
-                                path: bool_path.clone(),
-                                args: vec![],
-                            }),
-                            with_caps: vec![],
-                            pipe_caps: vec![],
-                            has_body: true,
-                            source_range: Some(rt.syntax().text_range()),
-                        });
-
-                        refine_fns.push(Some(refine_fn_idx));
+                            .unwrap_or(TypeRef::Error)
                     }
-                    Some(te) => {
-                        let ty = self.lower_type_ref(&te);
-                        params.push(FnParam { name: pname, ty });
-                        refine_fns.push(None);
-                    }
-                    None => {
-                        params.push(FnParam {
-                            name: pname,
-                            ty: TypeRef::Error,
-                        });
-                        refine_fns.push(None);
-                    }
-                }
+                    Some(te) => self.lower_type_ref(&te),
+                    None => TypeRef::Error,
+                };
+
+                let gen_spec = param
+                    .generator()
+                    .and_then(|expr| self.parse_gen_spec(&expr))
+                    .unwrap_or_else(|| {
+                        let span = self.node_span(param.syntax());
+                        self.diagnostics.push(Diagnostic::error(
+                            "invalid generator expression for property parameter",
+                            span,
+                        ));
+                        GenSpec::Auto
+                    });
+
+                params.push(PropertyParamSpec {
+                    param: FnParam { name: pname, ty },
+                    gen_spec,
+                });
             }
         }
 
@@ -444,12 +418,13 @@ impl ItemTreeCtx<'_> {
 
         // If the property has a body, create a synthetic FnItem so the body
         // gets lowered and type-checked alongside real functions.
+        let fn_params: Vec<FnParam> = params.iter().map(|ps| ps.param.clone()).collect();
         let fn_idx = if has_body {
             let idx = self.tree.functions.alloc(FnItem {
                 name,
                 is_pub: false,
                 type_params: vec![],
-                params: params.clone(),
+                params: fn_params,
                 ret_type: Some(TypeRef::Path {
                     path: bool_path,
                     args: vec![],
@@ -473,8 +448,140 @@ impl ItemTreeCtx<'_> {
             has_body,
             source_range,
             fn_idx,
-            refine_fns,
         });
+    }
+
+    /// Parse a `Gen.*()` call expression into a `GenSpec`.
+    ///
+    /// Recognizes: `Gen.auto()`, `Gen.int()`, `Gen.int_range(min, max)`,
+    /// `Gen.float()`, `Gen.float_range(min, max)`, `Gen.bool()`,
+    /// `Gen.string()`, `Gen.char()`, `Gen.list(inner)`, `Gen.map(k, v)`,
+    /// `Gen.option(inner)`, `Gen.result(ok, err)`.
+    fn parse_gen_spec(
+        &mut self,
+        expr: &kyokara_syntax::ast::nodes::Expr,
+    ) -> Option<crate::item_tree::GenSpec> {
+        use crate::item_tree::GenSpec;
+        use kyokara_syntax::ast::nodes::Expr;
+
+        // Must be a call expression: Gen.method(args...)
+        let Expr::Call(call) = expr else {
+            return None;
+        };
+
+        // Callee must be a field expression: Gen.method
+        let Expr::Field(field) = call.callee()? else {
+            return None;
+        };
+
+        // Base must be `Gen` identifier
+        let Expr::Path(base_path) = field.base()? else {
+            return None;
+        };
+        let path = base_path.path()?;
+        let first_seg = path.segments().next()?;
+        if first_seg.text() != "Gen" {
+            return None;
+        }
+
+        let method = field.field_token()?.text().to_string();
+
+        // Collect call arguments as expressions.
+        let args: Vec<kyokara_syntax::ast::nodes::Expr> = call
+            .arg_list()
+            .map(|al| al.args().collect())
+            .unwrap_or_default();
+
+        match method.as_str() {
+            "auto" if args.is_empty() => Some(GenSpec::Auto),
+            "int" if args.is_empty() => Some(GenSpec::Int),
+            "int_range" if args.len() == 2 => {
+                let min = self.extract_int_literal(&args[0])?;
+                let max = self.extract_int_literal(&args[1])?;
+                Some(GenSpec::IntRange { min, max })
+            }
+            "float" if args.is_empty() => Some(GenSpec::Float),
+            "float_range" if args.len() == 2 => {
+                let min = self.extract_float_literal(&args[0])?;
+                let max = self.extract_float_literal(&args[1])?;
+                Some(GenSpec::FloatRange { min, max })
+            }
+            "bool" if args.is_empty() => Some(GenSpec::Bool),
+            "string" if args.is_empty() => Some(GenSpec::String),
+            "char" if args.is_empty() => Some(GenSpec::Char),
+            "list" if args.len() == 1 => {
+                let inner = self.parse_gen_spec(&args[0])?;
+                Some(GenSpec::List(Box::new(inner)))
+            }
+            "map" if args.len() == 2 => {
+                let key = self.parse_gen_spec(&args[0])?;
+                let val = self.parse_gen_spec(&args[1])?;
+                Some(GenSpec::Map(Box::new(key), Box::new(val)))
+            }
+            "option" if args.len() == 1 => {
+                let inner = self.parse_gen_spec(&args[0])?;
+                Some(GenSpec::OptionOf(Box::new(inner)))
+            }
+            "result" if args.len() == 2 => {
+                let ok = self.parse_gen_spec(&args[0])?;
+                let err = self.parse_gen_spec(&args[1])?;
+                Some(GenSpec::ResultOf(Box::new(ok), Box::new(err)))
+            }
+            _ => None,
+        }
+    }
+
+    fn extract_int_literal(&self, expr: &kyokara_syntax::ast::nodes::Expr) -> Option<i64> {
+        use kyokara_syntax::ast::nodes::Expr;
+        match expr {
+            Expr::Literal(lit) => {
+                let tok = lit.token()?;
+                if tok.kind() == kyokara_syntax::SyntaxKind::IntLiteral {
+                    tok.text().replace('_', "").parse().ok()
+                } else {
+                    None
+                }
+            }
+            Expr::Unary(un) => {
+                // Handle negative: `-42`
+                let op = un.op_token()?;
+                if op.kind() == kyokara_syntax::SyntaxKind::Minus {
+                    let inner = self.extract_int_literal(&un.operand()?)?;
+                    Some(-inner)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn extract_float_literal(&self, expr: &kyokara_syntax::ast::nodes::Expr) -> Option<f64> {
+        use kyokara_syntax::ast::nodes::Expr;
+        match expr {
+            Expr::Literal(lit) => {
+                let tok = lit.token()?;
+                match tok.kind() {
+                    kyokara_syntax::SyntaxKind::FloatLiteral => {
+                        tok.text().replace('_', "").parse().ok()
+                    }
+                    kyokara_syntax::SyntaxKind::IntLiteral => {
+                        tok.text().replace('_', "").parse().ok()
+                    }
+                    _ => None,
+                }
+            }
+            Expr::Unary(un) => {
+                let op = un.op_token()?;
+                if op.kind() == kyokara_syntax::SyntaxKind::Minus {
+                    let inner = self.extract_float_literal(&un.operand()?)?;
+                    Some(-inner)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     fn lower_let_binding(&mut self, l: &LetBinding) {

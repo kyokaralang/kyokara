@@ -103,19 +103,52 @@ pub struct CapItem {
     pub functions: Vec<FnItemIdx>,
 }
 
+/// Specifies which generator to use for a property parameter.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GenSpec {
+    /// `Gen.auto()` — type-driven generation.
+    Auto,
+    /// `Gen.int()` — unconstrained integer.
+    Int,
+    /// `Gen.int_range(min, max)` — bounded integer.
+    IntRange { min: i64, max: i64 },
+    /// `Gen.float()` — unconstrained float.
+    Float,
+    /// `Gen.float_range(min, max)` — bounded float.
+    FloatRange { min: f64, max: f64 },
+    /// `Gen.bool()` — random boolean.
+    Bool,
+    /// `Gen.string()` — random string.
+    String,
+    /// `Gen.char()` — random character.
+    Char,
+    /// `Gen.list(inner)` — list with inner generator.
+    List(Box<GenSpec>),
+    /// `Gen.map(key, val)` — map with key/val generators.
+    Map(Box<GenSpec>, Box<GenSpec>),
+    /// `Gen.option(inner)` — optional with inner generator.
+    OptionOf(Box<GenSpec>),
+    /// `Gen.result(ok, err)` — result with ok/err generators.
+    ResultOf(Box<GenSpec>, Box<GenSpec>),
+}
+
+/// A property parameter with its generator spec.
+#[derive(Debug, Clone)]
+pub struct PropertyParamSpec {
+    pub param: FnParam,
+    pub gen_spec: GenSpec,
+}
+
 /// A property definition.
 #[derive(Debug, Clone)]
 pub struct PropertyItem {
     pub name: Name,
-    pub params: Vec<FnParam>,
+    pub params: Vec<PropertyParamSpec>,
     pub has_body: bool,
     /// Source range of the CST `PropertyDef` node (for matching back to syntax).
     pub source_range: Option<TextRange>,
     /// Link to the synthetic `FnItem` created for this property's body.
     pub fn_idx: Option<FnItemIdx>,
-    /// Per-param predicate checker: `Some(fn_idx)` when the param has a refined type.
-    /// Length == `params.len()`.
-    pub refine_fns: Vec<Option<FnItemIdx>>,
 }
 
 /// A top-level let binding.

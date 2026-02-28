@@ -21,7 +21,7 @@ use crate::token_set::TokenSet;
 
 /// Tokens that signal we should stop parsing an expression (recovery).
 const EXPR_RECOVERY: TokenSet = TokenSet::new(&[
-    LetKw, RBrace, Semicolon, RParen, Comma, FatArrow, TypeKw, FnKw, CapKw, PropertyKw,
+    LetKw, RBrace, Semicolon, RParen, Comma, FatArrow, TypeKw, FnKw, CapKw, PropertyKw, LeftArrow,
 ]);
 
 /// Entry point: parse an expression.
@@ -124,6 +124,15 @@ fn primary(p: &mut Parser<'_>) -> Option<CompletedMarker> {
         OldKw => old_expr(p),
         FnKw => lambda_expr(p),
         Ident => ident_or_path_or_record(p),
+        LeftArrow => {
+            p.error_recover(
+                "unexpected `<-` outside property parameter; \
+                 did you mean `< -` (comparison with negative) \
+                 or `name: Type <- Gen...` in a property parameter?",
+                EXPR_RECOVERY,
+            );
+            return None;
+        }
         _ => {
             p.error_recover("expected expression", EXPR_RECOVERY);
             return None;

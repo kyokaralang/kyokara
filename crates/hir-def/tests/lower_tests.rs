@@ -734,13 +734,430 @@ cap Console {
 
 #[test]
 fn collect_property_def() {
-    let src = "property commutative(x: Int, y: Int) { x + y == y + x }";
+    let src = "property commutative(x: Int <- Gen.auto(), y: Int <- Gen.auto()) { x + y == y + x }";
     let root = parse_source(src);
     let sf = SourceFile::cast(root).unwrap();
     let mut interner = Interner::new();
     let result = collect_item_tree(&sf, file_id(), &mut interner);
 
     assert_eq!(result.tree.properties.len(), 1);
+}
+
+#[test]
+fn collect_property_with_where() {
+    let src = "property p(x: Int <- Gen.auto()) where x > 0 { x > 0 }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    assert_eq!(result.tree.properties.len(), 1);
+    // Property should also generate a synthetic FnItem for type-checking.
+    assert!(
+        !result.tree.functions.is_empty(),
+        "property should generate a synthetic function"
+    );
+}
+
+#[test]
+fn collect_property_gen_spec_auto() {
+    use kyokara_hir_def::item_tree::GenSpec;
+    let src = "property p(x: Int <- Gen.auto()) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    let prop = &result.tree.properties[result.tree.properties.iter().next().unwrap().0];
+    assert_eq!(prop.params.len(), 1);
+    assert_eq!(prop.params[0].gen_spec, GenSpec::Auto);
+}
+
+#[test]
+fn collect_property_gen_spec_int() {
+    use kyokara_hir_def::item_tree::GenSpec;
+    let src = "property p(x: Int <- Gen.int()) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    let prop = &result.tree.properties[result.tree.properties.iter().next().unwrap().0];
+    assert_eq!(prop.params[0].gen_spec, GenSpec::Int);
+}
+
+#[test]
+fn collect_property_gen_spec_int_range() {
+    use kyokara_hir_def::item_tree::GenSpec;
+    let src = "property p(x: Int <- Gen.int_range(1, 100)) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    let prop = &result.tree.properties[result.tree.properties.iter().next().unwrap().0];
+    assert_eq!(
+        prop.params[0].gen_spec,
+        GenSpec::IntRange { min: 1, max: 100 }
+    );
+}
+
+#[test]
+fn collect_property_gen_spec_int_range_negative() {
+    use kyokara_hir_def::item_tree::GenSpec;
+    let src = "property p(x: Int <- Gen.int_range(-100, -1)) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    let prop = &result.tree.properties[result.tree.properties.iter().next().unwrap().0];
+    assert_eq!(
+        prop.params[0].gen_spec,
+        GenSpec::IntRange { min: -100, max: -1 }
+    );
+}
+
+#[test]
+fn collect_property_gen_spec_bool() {
+    use kyokara_hir_def::item_tree::GenSpec;
+    let src = "property p(x: Bool <- Gen.bool()) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    let prop = &result.tree.properties[result.tree.properties.iter().next().unwrap().0];
+    assert_eq!(prop.params[0].gen_spec, GenSpec::Bool);
+}
+
+#[test]
+fn collect_property_gen_spec_string() {
+    use kyokara_hir_def::item_tree::GenSpec;
+    let src = "property p(s: String <- Gen.string()) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    let prop = &result.tree.properties[result.tree.properties.iter().next().unwrap().0];
+    assert_eq!(prop.params[0].gen_spec, GenSpec::String);
+}
+
+#[test]
+fn collect_property_gen_spec_float_range() {
+    use kyokara_hir_def::item_tree::GenSpec;
+    let src = "property p(x: Float <- Gen.float_range(0.0, 1.0)) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    let prop = &result.tree.properties[result.tree.properties.iter().next().unwrap().0];
+    match &prop.params[0].gen_spec {
+        GenSpec::FloatRange { min, max } => {
+            assert!((min - 0.0).abs() < f64::EPSILON);
+            assert!((max - 1.0).abs() < f64::EPSILON);
+        }
+        other => panic!("expected FloatRange, got: {other:?}"),
+    }
+}
+
+#[test]
+fn collect_property_gen_spec_list() {
+    use kyokara_hir_def::item_tree::GenSpec;
+    let src = "property p(xs: List<Int> <- Gen.list(Gen.int())) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    let prop = &result.tree.properties[result.tree.properties.iter().next().unwrap().0];
+    assert_eq!(
+        prop.params[0].gen_spec,
+        GenSpec::List(Box::new(GenSpec::Int))
+    );
+}
+
+#[test]
+fn collect_property_gen_spec_option() {
+    use kyokara_hir_def::item_tree::GenSpec;
+    let src = "property p(x: Option<Int> <- Gen.option(Gen.int())) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    let prop = &result.tree.properties[result.tree.properties.iter().next().unwrap().0];
+    assert_eq!(
+        prop.params[0].gen_spec,
+        GenSpec::OptionOf(Box::new(GenSpec::Int))
+    );
+}
+
+#[test]
+fn collect_property_gen_spec_map() {
+    use kyokara_hir_def::item_tree::GenSpec;
+    let src = "property p(m: Map<String, Int> <- Gen.map(Gen.string(), Gen.int())) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    let prop = &result.tree.properties[result.tree.properties.iter().next().unwrap().0];
+    assert_eq!(
+        prop.params[0].gen_spec,
+        GenSpec::Map(Box::new(GenSpec::String), Box::new(GenSpec::Int))
+    );
+}
+
+#[test]
+fn collect_property_gen_spec_result() {
+    use kyokara_hir_def::item_tree::GenSpec;
+    let src = "property p(r: Result<Int, String> <- Gen.result(Gen.int(), Gen.string())) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    let prop = &result.tree.properties[result.tree.properties.iter().next().unwrap().0];
+    assert_eq!(
+        prop.params[0].gen_spec,
+        GenSpec::ResultOf(Box::new(GenSpec::Int), Box::new(GenSpec::String))
+    );
+}
+
+#[test]
+fn collect_property_gen_spec_nested_list_of_options() {
+    use kyokara_hir_def::item_tree::GenSpec;
+    // Use `Int` as the declared type to avoid `>>` lexer ambiguity with
+    // nested generics. The GenSpec is extracted from the generator expression,
+    // not the declared type.
+    let src = "property p(xs: Int <- Gen.list(Gen.option(Gen.int()))) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    let prop = &result.tree.properties[result.tree.properties.iter().next().unwrap().0];
+    assert_eq!(
+        prop.params[0].gen_spec,
+        GenSpec::List(Box::new(GenSpec::OptionOf(Box::new(GenSpec::Int))))
+    );
+}
+
+#[test]
+fn property_invalid_gen_method_produces_diagnostic() {
+    let src = "property p(x: Int <- Gen.invalid()) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid generator expression")),
+        "should have 'invalid generator' diagnostic: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn property_non_gen_base_produces_diagnostic() {
+    let src = "property p(x: Int <- Other.auto()) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid generator expression")),
+        "non-Gen base should produce diagnostic: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn property_literal_gen_produces_diagnostic() {
+    let src = "property p(x: Int <- 42) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid generator expression")),
+        "literal gen should produce diagnostic: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn property_gen_int_range_wrong_arg_count_produces_diagnostic() {
+    let src = "property p(x: Int <- Gen.int_range(1)) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid generator expression")),
+        "int_range with 1 arg should produce diagnostic: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn property_gen_int_range_non_literal_produces_diagnostic() {
+    let src = "property p(x: Int <- Gen.int_range(a, b)) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid generator expression")),
+        "int_range with non-literals should produce diagnostic: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn property_gen_auto_with_args_produces_diagnostic() {
+    let src = "property p(x: Int <- Gen.auto(42)) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid generator expression")),
+        "Gen.auto with args should produce diagnostic: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn property_gen_list_missing_inner_produces_diagnostic() {
+    let src = "property p(xs: List<Int> <- Gen.list()) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid generator expression")),
+        "Gen.list() with no args should produce diagnostic: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn property_gen_map_missing_arg_produces_diagnostic() {
+    let src = "property p(m: Map<Int, Int> <- Gen.map(Gen.int())) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid generator expression")),
+        "Gen.map with 1 arg should produce diagnostic: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn property_gen_nested_invalid_inner_produces_diagnostic() {
+    let src = "property p(xs: List<Int> <- Gen.list(Gen.invalid())) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid generator expression")),
+        "Gen.list(Gen.invalid()) should produce diagnostic: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn property_refined_type_param_produces_diagnostic() {
+    let src = "property p(x: { x: Int | x > 0 } <- Gen.auto()) { x > 0 }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    assert!(
+        result.diagnostics.iter().any(|d| d
+            .message
+            .contains("refinement types are not allowed in property params")),
+        "refined type in property param should produce targeted diagnostic: {:?}",
+        result.diagnostics
+    );
+    // Property should still be collected (base type extracted for recovery).
+    assert_eq!(result.tree.properties.len(), 1);
+}
+
+#[test]
+fn property_without_body_has_no_fn() {
+    let src = "property p(x: Int <- Gen.auto())";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    assert_eq!(result.tree.properties.len(), 1);
+    let prop = &result.tree.properties[result.tree.properties.iter().next().unwrap().0];
+    assert!(!prop.has_body);
+    assert!(
+        prop.fn_idx.is_none(),
+        "bodyless property should have no fn_idx"
+    );
+}
+
+#[test]
+fn property_multiple_gen_specs() {
+    use kyokara_hir_def::item_tree::GenSpec;
+    let src = "property p(a: Int <- Gen.int(), b: Bool <- Gen.bool(), c: String <- Gen.string()) { true }";
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    let prop = &result.tree.properties[result.tree.properties.iter().next().unwrap().0];
+    assert_eq!(prop.params.len(), 3);
+    assert_eq!(prop.params[0].gen_spec, GenSpec::Int);
+    assert_eq!(prop.params[1].gen_spec, GenSpec::Bool);
+    assert_eq!(prop.params[2].gen_spec, GenSpec::String);
 }
 
 #[test]

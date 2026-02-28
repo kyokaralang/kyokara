@@ -304,16 +304,61 @@ fn cap_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
 
 // ── Property Definition ─────────────────────────────────────────────
 
-/// `property Ident ParamList BlockExpr`
+/// `property Ident PropertyParamList WhereClause? BlockExpr`
 fn property_def(p: &mut Parser<'_>) -> CompletedMarker {
     let m = p.open();
     p.bump(); // property
     p.expect(Ident);
-    param_list(p);
+    property_param_list(p);
+    if p.at(WhereKw) {
+        where_clause(p);
+    }
     if p.at(LBrace) {
         super::expressions::block_expr(p);
     }
     m.complete(p, PropertyDef)
+}
+
+/// `'(' PropertyParam (',' PropertyParam)* ','? ')'`
+fn property_param_list(p: &mut Parser<'_>) {
+    let m = p.open();
+    p.expect(LParen);
+    if !p.at(RParen) {
+        property_param(p);
+        while p.eat(Comma) {
+            if p.at(RParen) {
+                break;
+            }
+            property_param(p);
+        }
+    }
+    p.expect(RParen);
+    m.complete(p, PropertyParamList);
+}
+
+/// `Ident ':' TypeExpr '<-' Expr`
+fn property_param(p: &mut Parser<'_>) {
+    let m = p.open();
+    p.expect(Ident);
+    p.expect(Colon);
+    super::types::type_expr(p);
+    if !p.eat(LeftArrow) {
+        p.error_recover(
+            "property parameters must use `<-` generator binding, e.g. `x: Int <- Gen.auto()`",
+            TokenSet::new(&[Comma, RParen]),
+        );
+    } else {
+        super::expressions::expr(p);
+    }
+    m.complete(p, PropertyParam);
+}
+
+/// `where Expr`
+fn where_clause(p: &mut Parser<'_>) {
+    let m = p.open();
+    p.bump(); // where
+    super::expressions::expr_no_record(p);
+    m.complete(p, WhereClause);
 }
 
 // ── Let Binding ─────────────────────────────────────────────────────

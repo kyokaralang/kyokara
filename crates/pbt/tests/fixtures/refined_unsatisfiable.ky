@@ -1,3 +1,6 @@
-property impossible(x: { x: Int | x > 0 && x < 0 }) {
-    true
+property impossible(x: Int <- Gen.auto())
+where
+  x > 0 && x < 0
+{
+  true
 }

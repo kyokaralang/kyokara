@@ -4,6 +4,6 @@ fn is_positive(x: Int) -> Bool
   x > 0
 }
 
-property gt_antisymmetric(a: Int, b: Int) {
+property gt_antisymmetric(a: Int <- Gen.auto(), b: Int <- Gen.auto()) {
   if a > b { b > a == false } else { true }
 }

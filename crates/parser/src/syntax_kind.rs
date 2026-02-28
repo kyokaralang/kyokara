@@ -116,6 +116,8 @@ pub enum SyntaxKind {
     // ── Operators ────────────────────────────────────────────────────
     /// `->`
     Arrow,
+    /// `<-`
+    LeftArrow,
     /// `=>`
     FatArrow,
     /// `=`
@@ -310,6 +312,12 @@ pub enum SyntaxKind {
     PatList,
 
     // Property
+    /// `(param: T <- gen, ...)` in property def.
+    PropertyParamList,
+    /// `name: Type <- GenExpr`
+    PropertyParam,
+    /// `where expr`
+    WhereClause,
     /// `for all x: T.` binder.
     ForAllBinder,
 
