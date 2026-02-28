@@ -417,12 +417,15 @@ impl BodyLowerCtx<'_> {
                 SyntaxKind::Minus => BinaryOp::Sub,
                 SyntaxKind::Star => BinaryOp::Mul,
                 SyntaxKind::Slash => BinaryOp::Div,
+                SyntaxKind::Percent => BinaryOp::Mod,
                 SyntaxKind::EqEq => BinaryOp::Eq,
                 SyntaxKind::BangEq => BinaryOp::NotEq,
                 SyntaxKind::Lt => BinaryOp::Lt,
                 SyntaxKind::Gt => BinaryOp::Gt,
                 SyntaxKind::LtEq => BinaryOp::LtEq,
                 SyntaxKind::GtEq => BinaryOp::GtEq,
+                SyntaxKind::AmpAmp => BinaryOp::And,
+                SyntaxKind::PipePipe => BinaryOp::Or,
                 _ => BinaryOp::Add,
             })
             .unwrap_or(BinaryOp::Add);

@@ -555,12 +555,15 @@ impl BinaryExpr {
                         | SyntaxKind::Minus
                         | SyntaxKind::Star
                         | SyntaxKind::Slash
+                        | SyntaxKind::Percent
                         | SyntaxKind::EqEq
                         | SyntaxKind::BangEq
                         | SyntaxKind::Lt
                         | SyntaxKind::Gt
                         | SyntaxKind::LtEq
                         | SyntaxKind::GtEq
+                        | SyntaxKind::AmpAmp
+                        | SyntaxKind::PipePipe
                 )
             })
     }

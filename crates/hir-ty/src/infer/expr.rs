@@ -298,7 +298,7 @@ impl<'a> InferenceCtx<'a> {
         let rhs_ty = self.infer_expr(rhs, &Expectation::Has(lhs_ty.clone()));
 
         match op {
-            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
                 let resolved = self.table.resolve_deep(&lhs_ty);
                 if !resolved.is_poison() && !matches!(resolved, Ty::Int | Ty::Float | Ty::Var(_)) {
                     self.push_diag(TyDiagnosticData::InvalidArithmeticOperand {
@@ -322,6 +322,11 @@ impl<'a> InferenceCtx<'a> {
                     return Ty::Error;
                 }
                 self.unify_or_err(&lhs_ty, &rhs_ty);
+                Ty::Bool
+            }
+            BinaryOp::And | BinaryOp::Or => {
+                self.unify_or_err(&Ty::Bool, &lhs_ty);
+                self.unify_or_err(&Ty::Bool, &rhs_ty);
                 Ty::Bool
             }
         }

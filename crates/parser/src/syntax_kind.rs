@@ -150,6 +150,12 @@ pub enum SyntaxKind {
     Amp,
     /// `?`
     Question,
+    /// `&&`
+    AmpAmp,
+    /// `||`
+    PipePipe,
+    /// `%`
+    Percent,
     /// `_` (text-agnostic wildcard / hole token).
     Underscore,
 

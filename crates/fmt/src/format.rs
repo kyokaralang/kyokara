@@ -865,6 +865,7 @@ fn format_binary_expr(node: &SyntaxNode) -> Doc {
                     | SyntaxKind::Minus
                     | SyntaxKind::Star
                     | SyntaxKind::Slash
+                    | SyntaxKind::Percent
                     | SyntaxKind::EqEq
                     | SyntaxKind::BangEq
                     | SyntaxKind::Lt
@@ -872,6 +873,8 @@ fn format_binary_expr(node: &SyntaxNode) -> Doc {
                     | SyntaxKind::LtEq
                     | SyntaxKind::GtEq
                     | SyntaxKind::Amp
+                    | SyntaxKind::AmpAmp
+                    | SyntaxKind::PipePipe
             )
         });
 
