@@ -208,6 +208,16 @@ property add_commutative(a: Int, b: Int) {
 
 Property bodies are lowered and type-checked (must return `Bool`). The PBT runner discovers properties alongside contracted functions and tests them with generated inputs.
 
+Properties support **refined types** on parameters for constrained generation:
+
+```kyokara
+property positive_is_positive(x: { x: Int | x > 0 }) {
+  x > 0
+}
+```
+
+Refined-type predicates are lowered as synthetic checker functions. The PBT runner uses rejection sampling (up to 1000 attempts) to generate values satisfying the predicate, and the shrinker respects refinement constraints. Unsatisfiable constraints are reported as errors. Refined types in non-property contexts (regular functions, type aliases) are still rejected.
+
 ### 2.9 Typed holes + partial compilation
 
 Holes are legal syntax:
@@ -558,7 +568,7 @@ injected as synthetic types before type-checking.
 * Capability enforcement: type-level checking (E0011) ✓ + runtime manifest enforcement (`--caps`, deny-by-default) ✓ (fine-grained fields currently fail closed with `UnsupportedManifestConstraint`)
 
 **v0.3 — Verification + Codegen + Replay**
-* Property-based test harness ✓ (`pbt` crate: choice-sequence engine, type-driven generators, 4-pass shrinker, corpus persistence; `kyokara test <file> --explore` discovers contract functions and explicit `property` declarations, generates random inputs, checks contracts/properties, shrinks counterexamples)
+* Property-based test harness ✓ (`pbt` crate: choice-sequence engine, type-driven generators, 4-pass shrinker, corpus persistence, refinement-constrained generation via rejection sampling; `kyokara test <file> --explore` discovers contract functions and explicit `property` declarations, generates random inputs, checks contracts/properties, shrinks counterexamples)
 * SMT integration for contract verification (restricted fragment: linear arithmetic + uninterpreted functions, best-effort, never blocks compilation)
 * KyokaraIR data structures ✓ (SSA, block params, text format, validator) + HIR→KIR lowering ✓ + WASM codegen MVP ✓ (scalars, control flow, function calls, ADTs, records via `codegen` crate + `wasm-encoder`; deferred: closures, strings, lists, maps, intrinsics, capabilities)
 * Capability sandbox runtime (host functions + manifest)

@@ -1,0 +1,3 @@
+property impossible(x: { x: Int | x > 0 && x < 0 }) {
+    true
+}

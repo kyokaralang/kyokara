@@ -110,6 +110,9 @@ pub struct PropertyItem {
     pub source_range: Option<TextRange>,
     /// Link to the synthetic `FnItem` created for this property's body.
     pub fn_idx: Option<FnItemIdx>,
+    /// Per-param predicate checker: `Some(fn_idx)` when the param has a refined type.
+    /// Length == `params.len()`.
+    pub refine_fns: Vec<Option<FnItemIdx>>,
 }
 
 /// A top-level let binding.

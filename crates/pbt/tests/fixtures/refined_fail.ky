@@ -1,0 +1,3 @@
+property bad_bound(x: { x: Int | x > 0 }) {
+    x > 100
+}

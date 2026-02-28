@@ -15,7 +15,7 @@
 - Explicit capabilities: `with Net`, `with Db`, `with Clock`, `with Secrets` — deny-by-default, manifest-enforced
 - ADTs and exhaustive pattern matching: `type Result[T, E] = | Ok(value: T) | Err(error: E)`
 - Contracts: `requires`, `ensures`, `old()` — checked at runtime, optionally verified by SMT (restricted fragment, best-effort)
-- Property-based tests: `property name(x: T) { expr }` as first-class syntax, bodies type-checked (must return Bool)
+- Property-based tests: `property name(x: T) { expr }` as first-class syntax, bodies type-checked (must return Bool), refined-type parameters for constrained generation (`x: { x: Int | x > 0 }`)
 - Typed holes: `?name(args)` compiles to structured hole specs with expected type, effects, and constraints
 - Pipeline operator: `x |> f(a=1)` desugars to `f(x, a=1)`
 - Error propagation: `expr?` desugars to early-return match on `Result`
@@ -38,7 +38,7 @@
 - [fmt](https://github.com/kyokaralang/kyokara/tree/main/crates/fmt): Canonical code formatter — Wadler-Lindig Doc IR, 2-space indent, 100-col width, import sorting, comment preservation, verbatim error fallback
 - [refactor](https://github.com/kyokaralang/kyokara/tree/main/crates/refactor): Semantic refactor engine — CST-based rename (function, type, capability, variant), add missing match cases, add missing capability annotation, transactional verification (apply edits in-memory, re-check, return Verified/Failed/Skipped status)
 - [lsp](https://github.com/kyokaralang/kyokara/tree/main/crates/lsp): LSP server with salsa incrementality — diagnostics, hover, go-to-definition, find references, completion, code actions (quickfixes), formatting
-- [pbt](https://github.com/kyokaralang/kyokara/tree/main/crates/pbt): Property-based testing — choice-sequence engine (SplitMix64 RNG, record/replay), type-driven generators (scalars, ADTs, records, Option, Result, List, Map), 4-pass shrinker (zero-suffix, block deletion, binary-search minimize, pair swap), corpus persistence, contract-for-free testing of `requires`/`ensures`/`invariant` functions, explicit `property` declarations (bodies type-checked, must return Bool)
+- [pbt](https://github.com/kyokaralang/kyokara/tree/main/crates/pbt): Property-based testing — choice-sequence engine (SplitMix64 RNG, record/replay), type-driven generators (scalars, ADTs, records, Option, Result, List, Map), 4-pass shrinker (zero-suffix, block deletion, binary-search minimize, pair swap), corpus persistence, contract-for-free testing of `requires`/`ensures`/`invariant` functions, explicit `property` declarations (bodies type-checked, must return Bool), refinement-constrained generation (rejection sampling)
 - [api](https://github.com/kyokaralang/kyokara/tree/main/crates/api): JSON serialization of all compiler outputs (diagnostics, typed AST, symbol graph with stable namespaced IDs, patches, refactor results)
 - [cli](https://github.com/kyokaralang/kyokara/tree/main/crates/cli): `kyokara check`, `kyokara run`, `kyokara fmt`, `kyokara refactor`, `kyokara test`, `kyokara lsp`
 
