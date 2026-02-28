@@ -154,7 +154,12 @@ mod tests {
 
     #[test]
     fn quickfix_for_missing_match_arms() {
-        let source = "type Color = Red | Blue\nfn pick(c: Color) -> Int {\n  match c {\n    Red => 1\n  }\n}";
+        let source = "type Color = | Red | Green | Blue\n\
+                      fn pick(c: Color) -> Int {\n\
+                        match c {\n\
+                          Red => 1\n\
+                        }\n\
+                      }";
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
 
@@ -168,17 +173,71 @@ mod tests {
                     .is_some_and(|c| *c == NumberOrString::String("E0009".into()))
             })
             .collect();
-
-        if e0009.is_empty() {
-            // Parser may not produce the exact structure needed; skip.
-            return;
-        }
+        assert!(
+            !e0009.is_empty(),
+            "expected E0009 diagnostic for non-exhaustive match, got: {diags:?}"
+        );
 
         let uri = Url::parse("file:///test.ky").unwrap();
         let actions = code_actions(&analysis, source, lsp_types::Range::default(), &uri, &diags);
         assert!(
             !actions.is_empty(),
             "should produce quickfix for missing match arms"
+        );
+    }
+
+    #[test]
+    fn quickfix_for_missing_capability() {
+        let source = r#"cap Console {
+    fn print(s: String) -> Unit
+}
+fn effectful() -> Unit with Console { print("hi") }
+fn pure_caller() -> Unit { effectful() }"#;
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let diags = crate::diagnostics::to_lsp_diagnostics(&analysis, source);
+        assert!(
+            diags.iter().any(|d| {
+                d.code
+                    .as_ref()
+                    .is_some_and(|c| *c == NumberOrString::String("E0011".into()))
+            }),
+            "expected E0011 diagnostic for missing capability, got: {diags:?}"
+        );
+
+        let uri = Url::parse("file:///test.ky").unwrap();
+        let actions = code_actions(&analysis, source, lsp_types::Range::default(), &uri, &diags);
+        assert!(
+            !actions.is_empty(),
+            "should produce quickfix for missing capability"
+        );
+    }
+
+    #[test]
+    fn no_quickfix_for_unrelated_diagnostic_code() {
+        let source = "fn main() -> Int { 1 }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let uri = Url::parse("file:///test.ky").unwrap();
+        let diagnostics = vec![lsp_types::Diagnostic {
+            range: lsp_types::Range::default(),
+            severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+            code: Some(NumberOrString::String("E0001".into())),
+            source: Some("kyokara".into()),
+            message: "unrelated diagnostic".into(),
+            ..Default::default()
+        }];
+
+        let actions = code_actions(
+            &analysis,
+            source,
+            lsp_types::Range::default(),
+            &uri,
+            &diagnostics,
+        );
+        assert!(
+            actions.is_empty(),
+            "unrelated diagnostic should not produce quickfixes, got: {actions:?}"
         );
     }
 }

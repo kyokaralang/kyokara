@@ -7,6 +7,7 @@ use kyokara_hir::ModuleScope;
 use kyokara_intern::Interner;
 use kyokara_parser::SyntaxKind;
 use kyokara_syntax::SyntaxNode;
+use rowan::TokenAtOffset;
 use text_size::TextSize;
 use tower_lsp::lsp_types::{Position, Range};
 
@@ -225,6 +226,25 @@ pub fn symbol_at_offset_with_scope(
         is_definition: false,
     } = base
     {
+        let token = match root.token_at_offset(offset) {
+            TokenAtOffset::Single(tok) => Some(tok),
+            TokenAtOffset::Between(left, right) => {
+                if left.kind() == SyntaxKind::Ident {
+                    Some(left)
+                } else {
+                    Some(right)
+                }
+            }
+            TokenAtOffset::None => None,
+        };
+        if let Some(tok) = token
+            && tok.kind() == SyntaxKind::Ident
+            && tok.text() == name
+            && crate::goto_def::find_local_def_range_syntax(root, name, offset).is_some()
+        {
+            return SymbolAtPosition::Local { name: name.clone() };
+        }
+
         // Check if name is actually known at module level.
         let is_fn = module_scope
             .functions
@@ -386,6 +406,76 @@ mod tests {
                 }
             ),
             "expected Function usage, got {sym:?}"
+        );
+    }
+
+    #[test]
+    fn symbol_classifier_shadowed_function_usage_is_local() {
+        let source = "fn foo() -> Int { 1 }\n\
+                      fn main() -> Int {\n\
+                        let foo = fn() => 2\n\
+                        foo()\n\
+                      }";
+        let result = kyokara_hir::check_file(source);
+        let root = SyntaxNode::new_root(result.green.clone());
+        let post_shadow = source.rfind("foo()").expect("shadowed call");
+        let sym = symbol_at_offset_with_scope(
+            &root,
+            TextSize::from(post_shadow as u32),
+            &result.module_scope,
+            &result.interner,
+        );
+        assert!(
+            matches!(sym, SymbolAtPosition::Local { ref name } if name == "foo"),
+            "shadowed call should classify as local, got: {sym:?}"
+        );
+    }
+
+    #[test]
+    fn symbol_classifier_pre_shadow_function_usage_stays_function() {
+        let source = "fn foo() -> Int { 1 }\n\
+                      fn main() -> Int {\n\
+                        foo()\n\
+                        let foo = fn() => 2\n\
+                        foo()\n\
+                      }";
+        let result = kyokara_hir::check_file(source);
+        let root = SyntaxNode::new_root(result.green.clone());
+        let pre_shadow = source.find("foo()").expect("pre-shadow call");
+        let sym = symbol_at_offset_with_scope(
+            &root,
+            TextSize::from(pre_shadow as u32),
+            &result.module_scope,
+            &result.interner,
+        );
+        assert!(
+            matches!(sym, SymbolAtPosition::Function { ref name, .. } if name == "foo"),
+            "pre-shadow call should classify as function, got: {sym:?}"
+        );
+    }
+
+    #[test]
+    fn symbol_classifier_block_shadow_does_not_leak() {
+        let source = "fn foo() -> Int { 1 }\n\
+                      fn main() -> Int {\n\
+                        {\n\
+                          let foo = fn() => 2;\n\
+                          foo()\n\
+                        };\n\
+                        foo()\n\
+                      }";
+        let result = kyokara_hir::check_file(source);
+        let root = SyntaxNode::new_root(result.green.clone());
+        let post_block = source.rfind("foo()").expect("post-block call");
+        let sym = symbol_at_offset_with_scope(
+            &root,
+            TextSize::from(post_block as u32),
+            &result.module_scope,
+            &result.interner,
+        );
+        assert!(
+            matches!(sym, SymbolAtPosition::Function { ref name, .. } if name == "foo"),
+            "post-block call should classify as function, got: {sym:?}"
         );
     }
 }
