@@ -10,18 +10,44 @@ fn file_id() -> FileId {
     FileId(0)
 }
 
+fn rename_action(
+    old_name: &str,
+    new_name: &str,
+    kind: SymbolKind,
+    target_file: Option<String>,
+) -> RefactorAction {
+    RefactorAction::RenameSymbol {
+        old_name: old_name.into(),
+        new_name: new_name.into(),
+        kind,
+        target_file,
+    }
+}
+
+fn rename_fn_action(old_name: &str, new_name: &str) -> RefactorAction {
+    rename_action(old_name, new_name, SymbolKind::Function, None)
+}
+
+fn rename_fn_action_for_target(
+    old_name: &str,
+    new_name: &str,
+    target_file: &std::path::Path,
+) -> RefactorAction {
+    rename_action(
+        old_name,
+        new_name,
+        SymbolKind::Function,
+        Some(target_file.display().to_string()),
+    )
+}
+
 // ── Rename function ─────────────────────────────────────────────────
 
 #[test]
 fn rename_fn_definition_and_calls() {
     let src = "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(1, 2) }";
     let result = kyokara_hir::check_file(src);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: None,
-    };
+    let action = rename_fn_action("add", "sum");
     let refactor = kyokara_refactor::refactor(&result, file_id(), action).unwrap();
 
     assert!(!refactor.edits.is_empty(), "expected edits");
@@ -150,12 +176,7 @@ fn main() -> Int {
     add
 }"#;
     let result = kyokara_hir::check_file(src);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: None,
-    };
+    let action = rename_fn_action("add", "sum");
     let refactor = kyokara_refactor::refactor(&result, file_id(), action).unwrap();
     let new_source = apply_edits(src, &refactor.edits);
 
@@ -177,12 +198,7 @@ fn main() -> Int {
 fn rename_conflict_error() {
     let src = "fn add(x: Int) -> Int { x }\nfn sum(x: Int) -> Int { x }";
     let result = kyokara_hir::check_file(src);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: None,
-    };
+    let action = rename_fn_action("add", "sum");
     let err = kyokara_refactor::refactor(&result, file_id(), action).unwrap_err();
     assert!(
         matches!(err, RefactorError::NameConflict { .. }),
@@ -194,12 +210,7 @@ fn rename_conflict_error() {
 fn rename_keyword_error() {
     let src = "fn add(x: Int) -> Int { x }";
     let result = kyokara_hir::check_file(src);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "fn".into(),
-        kind: SymbolKind::Function,
-        target_file: None,
-    };
+    let action = rename_fn_action("add", "fn");
     let err = kyokara_refactor::refactor(&result, file_id(), action).unwrap_err();
     assert!(
         matches!(err, RefactorError::NewNameIsKeyword { .. }),
@@ -211,12 +222,7 @@ fn rename_keyword_error() {
 fn rename_symbol_not_found() {
     let src = "fn add(x: Int) -> Int { x }";
     let result = kyokara_hir::check_file(src);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "nonexistent".into(),
-        new_name: "something".into(),
-        kind: SymbolKind::Function,
-        target_file: None,
-    };
+    let action = rename_fn_action("nonexistent", "something");
     let err = kyokara_refactor::refactor(&result, file_id(), action).unwrap_err();
     assert!(
         matches!(err, RefactorError::SymbolNotFound { .. }),
@@ -304,12 +310,10 @@ fn pure_caller() -> Unit { effectful() }"#;
 #[test]
 fn rename_multifile() {
     // Set up temp files for a multi-file project.
-    let dir = std::env::temp_dir().join("kyokara_refactor_test_multifile");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
-    let main_path = dir.join("main.ky");
-    let math_path = dir.join("math.ky");
+    let main_path = dir.path().join("main.ky");
+    let math_path = dir.path().join("math.ky");
 
     std::fs::write(
         &main_path,
@@ -323,12 +327,7 @@ fn rename_multifile() {
     .unwrap();
 
     let result = kyokara_hir::check_project(&main_path);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: None,
-    };
+    let action = rename_fn_action("add", "sum");
     let refactor = kyokara_refactor::refactor_project(&result, action).unwrap();
 
     // Should have edits in at least 2 files (definition in math.ky + usage in main.ky).
@@ -377,7 +376,6 @@ fn rename_multifile() {
     );
 
     // Clean up.
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // ── Project rename scoping (issue #63) ──────────────────────────────
@@ -386,12 +384,10 @@ fn rename_multifile() {
 fn project_rename_does_not_over_rename_unrelated_same_name_symbol() {
     // Two modules each define their own `fn add()` with no import relationship.
     // Renaming `add` → `sum` with target_file = main.ky should only rename main.ky's `add`.
-    let dir = std::env::temp_dir().join("kyokara_refactor_over_rename");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
-    let main_path = dir.join("main.ky");
-    let math_path = dir.join("math.ky");
+    let main_path = dir.path().join("main.ky");
+    let math_path = dir.path().join("math.ky");
 
     std::fs::write(
         &main_path,
@@ -401,12 +397,7 @@ fn project_rename_does_not_over_rename_unrelated_same_name_symbol() {
     std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x - y }\n").unwrap();
 
     let result = kyokara_hir::check_project(&main_path);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: Some(main_path.display().to_string()),
-    };
+    let action = rename_fn_action_for_target("add", "sum", &main_path);
     let refactor = kyokara_refactor::refactor_project(&result, action).unwrap();
 
     // main.ky should have the rename applied.
@@ -449,19 +440,15 @@ fn project_rename_does_not_over_rename_unrelated_same_name_symbol() {
         "math.ky should have NO edits (unrelated `add`), got {} edits",
         math_edits.len()
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn project_rename_ambiguous_without_target_file() {
     // Two modules define `fn add()`. Rename without target_file should error.
-    let dir = std::env::temp_dir().join("kyokara_refactor_ambiguous");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
-    let main_path = dir.join("main.ky");
-    let math_path = dir.join("math.ky");
+    let main_path = dir.path().join("main.ky");
+    let math_path = dir.path().join("math.ky");
 
     std::fs::write(
         &main_path,
@@ -471,31 +458,22 @@ fn project_rename_ambiguous_without_target_file() {
     std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x - y }\n").unwrap();
 
     let result = kyokara_hir::check_project(&main_path);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: None,
-    };
+    let action = rename_fn_action("add", "sum");
     let err = kyokara_refactor::refactor_project(&result, action).unwrap_err();
     assert!(
         matches!(err, RefactorError::AmbiguousRename { .. }),
         "expected AmbiguousRename error, got: {err:?}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn project_rename_with_import_renames_both_modules() {
     // math.ky defines `pub fn add()`, main.ky imports and uses it.
     // Renaming with target_file = math.ky should rename in both files.
-    let dir = std::env::temp_dir().join("kyokara_refactor_import_rename");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
-    let main_path = dir.join("main.ky");
-    let math_path = dir.join("math.ky");
+    let main_path = dir.path().join("main.ky");
+    let math_path = dir.path().join("math.ky");
 
     std::fs::write(
         &main_path,
@@ -509,12 +487,7 @@ fn project_rename_with_import_renames_both_modules() {
     .unwrap();
 
     let result = kyokara_hir::check_project(&main_path);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: Some(math_path.display().to_string()),
-    };
+    let action = rename_fn_action_for_target("add", "sum", &math_path);
     let refactor = kyokara_refactor::refactor_project(&result, action).unwrap();
 
     // Should have edits in both files.
@@ -560,20 +533,16 @@ fn project_rename_with_import_renames_both_modules() {
         new_main.contains("sum(10, 20)"),
         "main.ky should have sum call: {new_main}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn project_rename_alias_shadow_does_not_rename_unrelated_alias_import() {
     // main imports util as `math`; this must not count as importing math.ky.
-    let dir = std::env::temp_dir().join("kyokara_refactor_alias_shadow_no_overrename");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
-    let main_path = dir.join("main.ky");
-    let util_path = dir.join("util.ky");
-    let math_path = dir.join("math.ky");
+    let main_path = dir.path().join("main.ky");
+    let util_path = dir.path().join("util.ky");
+    let math_path = dir.path().join("math.ky");
 
     std::fs::write(
         &main_path,
@@ -584,12 +553,7 @@ fn project_rename_alias_shadow_does_not_rename_unrelated_alias_import() {
     std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x - y }\n").unwrap();
 
     let result = kyokara_hir::check_project(&main_path);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: Some(math_path.display().to_string()),
-    };
+    let action = rename_fn_action_for_target("add", "sum", &math_path);
     let refactor = kyokara_refactor::refactor_project(&result, action).unwrap();
 
     let main_edits: Vec<_> = refactor
@@ -625,20 +589,16 @@ fn project_rename_alias_shadow_does_not_rename_unrelated_alias_import() {
         new_math.contains("fn sum("),
         "math.ky should be renamed: {new_math}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn project_rename_alias_import_still_renames_true_import_source() {
     // main imports util as `math`; renaming util::add should still update main usage.
-    let dir = std::env::temp_dir().join("kyokara_refactor_alias_shadow_true_import");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
-    let main_path = dir.join("main.ky");
-    let util_path = dir.join("util.ky");
-    let math_path = dir.join("math.ky");
+    let main_path = dir.path().join("main.ky");
+    let util_path = dir.path().join("util.ky");
+    let math_path = dir.path().join("math.ky");
 
     std::fs::write(
         &main_path,
@@ -649,12 +609,7 @@ fn project_rename_alias_import_still_renames_true_import_source() {
     std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x - y }\n").unwrap();
 
     let result = kyokara_hir::check_project(&main_path);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: Some(util_path.display().to_string()),
-    };
+    let action = rename_fn_action_for_target("add", "sum", &util_path);
     let refactor = kyokara_refactor::refactor_project(&result, action).unwrap();
 
     let main_src = std::fs::read_to_string(&main_path).unwrap();
@@ -690,8 +645,6 @@ fn project_rename_alias_import_still_renames_true_import_source() {
         math_edits.is_empty(),
         "math.ky should not be edited when renaming util.ky symbol"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // ── Verification ────────────────────────────────────────────────────
@@ -700,12 +653,7 @@ fn project_rename_alias_import_still_renames_true_import_source() {
 fn verify_rename_passes() {
     let src = "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(1, 2) }";
     let result = kyokara_hir::check_file(src);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: None,
-    };
+    let action = rename_fn_action("add", "sum");
     let refactor = kyokara_refactor::refactor(&result, file_id(), action).unwrap();
     assert!(
         verify_single(src, &refactor.edits),
@@ -718,12 +666,7 @@ fn verify_rename_on_erroneous_source_fails() {
     let src = "fn add(x: Int, y: Int) -> Int { x + y }\n\
                fn main() -> Int { add(1, 2) + missing }";
     let result = kyokara_hir::check_file(src);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: None,
-    };
+    let action = rename_fn_action("add", "sum");
     let refactor = kyokara_refactor::refactor(&result, file_id(), action).unwrap();
     assert!(
         !verify_single(src, &refactor.edits),
@@ -737,12 +680,7 @@ fn verify_rename_on_erroneous_source_fails() {
 fn transact_rename_verified() {
     let src = "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(1, 2) }";
     let result = kyokara_hir::check_file(src);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: None,
-    };
+    let action = rename_fn_action("add", "sum");
     let tx = kyokara_refactor::transaction::transact(src, &result, file_id(), action).unwrap();
 
     assert!(
@@ -761,12 +699,7 @@ fn transact_rename_reports_failed_verification_when_source_has_errors() {
     let src = "fn add(x: Int, y: Int) -> Int { x + y }\n\
                fn main() -> Int { add(1, 2) + missing }";
     let result = kyokara_hir::check_file(src);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: None,
-    };
+    let action = rename_fn_action("add", "sum");
     let tx = kyokara_refactor::transaction::transact(src, &result, file_id(), action).unwrap();
 
     match tx.verification {
@@ -783,12 +716,10 @@ fn transact_rename_reports_failed_verification_when_source_has_errors() {
 
 #[test]
 fn transact_rename_multifile_verified() {
-    let dir = std::env::temp_dir().join("kyokara_tx_test_multifile");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
-    let main_path = dir.join("main.ky");
-    let math_path = dir.join("math.ky");
+    let main_path = dir.path().join("main.ky");
+    let math_path = dir.path().join("math.ky");
 
     std::fs::write(
         &main_path,
@@ -802,12 +733,7 @@ fn transact_rename_multifile_verified() {
     .unwrap();
 
     let result = kyokara_hir::check_project(&main_path);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: None,
-    };
+    let action = rename_fn_action("add", "sum");
     let tx = kyokara_refactor::transaction::transact_project(&main_path, &result, action).unwrap();
 
     assert!(
@@ -816,18 +742,14 @@ fn transact_rename_multifile_verified() {
         tx.verification
     );
     assert!(!tx.patched_sources.is_empty(), "expected patched sources");
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn transact_rename_multifile_reports_failed_verification_when_project_has_errors() {
-    let dir = std::env::temp_dir().join("kyokara_tx_test_multifile_failed_verification");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
-    let main_path = dir.join("main.ky");
-    let math_path = dir.join("math.ky");
+    let main_path = dir.path().join("main.ky");
+    let math_path = dir.path().join("math.ky");
 
     std::fs::write(
         &main_path,
@@ -841,12 +763,7 @@ fn transact_rename_multifile_reports_failed_verification_when_project_has_errors
     .unwrap();
 
     let result = kyokara_hir::check_project(&main_path);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: Some(math_path.display().to_string()),
-    };
+    let action = rename_fn_action_for_target("add", "sum", &math_path);
     let tx = kyokara_refactor::transaction::transact_project(&main_path, &result, action).unwrap();
 
     match tx.verification {
@@ -859,8 +776,6 @@ fn transact_rename_multifile_reports_failed_verification_when_project_has_errors
         }
         other => panic!("expected Failed verification, got {other:?}"),
     }
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // ── Quickfix transaction tests ───────────────────────────────────────
@@ -946,12 +861,7 @@ fn pure_caller() -> Unit { effectful() }"#;
 fn transact_skipped_when_forced() {
     let src = "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(1, 2) }";
     let result = kyokara_hir::check_file(src);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: None,
-    };
+    let action = rename_fn_action("add", "sum");
     let tx =
         kyokara_refactor::transaction::transact_force(src, &result, file_id(), action).unwrap();
 
@@ -965,12 +875,10 @@ fn transact_skipped_when_forced() {
 
 #[test]
 fn transact_project_skipped_when_forced() {
-    let dir = std::env::temp_dir().join("kyokara_tx_test_multifile_force");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
-    let main_path = dir.join("main.ky");
-    let math_path = dir.join("math.ky");
+    let main_path = dir.path().join("main.ky");
+    let math_path = dir.path().join("math.ky");
 
     std::fs::write(
         &main_path,
@@ -984,12 +892,7 @@ fn transact_project_skipped_when_forced() {
     .unwrap();
 
     let result = kyokara_hir::check_project(&main_path);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: None,
-    };
+    let action = rename_fn_action("add", "sum");
     let tx =
         kyokara_refactor::transaction::transact_project_force(&main_path, &result, action).unwrap();
 
@@ -1012,8 +915,6 @@ fn transact_project_skipped_when_forced() {
         combined.contains("sum(10, 20)"),
         "expected patched call site in force mode, got: {combined}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // ── IoError variant tests ──────────────────────────────────────────
@@ -1050,12 +951,10 @@ fn io_error_is_not_symbol_not_found() {
 fn transact_project_with_invalid_path_returns_io_error() {
     // Using a nonexistent entry path that will cause fs errors during verification.
     // First set up a valid project so the refactor succeeds, then we test error types.
-    let dir = std::env::temp_dir().join("kyokara_io_error_test");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
-    let main_path = dir.join("main.ky");
-    let math_path = dir.join("math.ky");
+    let main_path = dir.path().join("main.ky");
+    let math_path = dir.path().join("math.ky");
     std::fs::write(
         &main_path,
         "import math\nfn caller() -> Int { add(1, 2) }\n",
@@ -1064,12 +963,7 @@ fn transact_project_with_invalid_path_returns_io_error() {
     std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x + y }\n").unwrap();
 
     let result = kyokara_hir::check_project(&main_path);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: None,
-    };
+    let action = rename_fn_action("add", "sum");
 
     // This should succeed (valid project, valid rename).
     let tx = kyokara_refactor::transaction::transact_project(&main_path, &result, action);
@@ -1077,18 +971,14 @@ fn transact_project_with_invalid_path_returns_io_error() {
         tx.is_ok(),
         "valid project transact should succeed, got: {tx:?}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn transact_project_success_returns_verified() {
-    let dir = std::env::temp_dir().join("kyokara_io_success_test");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
-    let main_path = dir.join("main.ky");
-    let math_path = dir.join("math.ky");
+    let main_path = dir.path().join("main.ky");
+    let math_path = dir.path().join("math.ky");
     std::fs::write(
         &main_path,
         "import math\nfn caller() -> Int { add(1, 2) }\n",
@@ -1097,12 +987,7 @@ fn transact_project_success_returns_verified() {
     std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x + y }\n").unwrap();
 
     let result = kyokara_hir::check_project(&main_path);
-    let action = RefactorAction::RenameSymbol {
-        old_name: "add".into(),
-        new_name: "sum".into(),
-        kind: SymbolKind::Function,
-        target_file: None,
-    };
+    let action = rename_fn_action("add", "sum");
 
     let tx = kyokara_refactor::transaction::transact_project(&main_path, &result, action).unwrap();
     assert!(
@@ -1110,8 +995,6 @@ fn transact_project_success_returns_verified() {
         "expected Verified, got {:?}",
         tx.verification
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // ── File-qualified quickfix tests (#44) ──────────────────────────────
@@ -1170,12 +1053,10 @@ fn quickfix_action_target_file_none_for_single_file() {
 fn project_quickfix_match_cases_filters_by_target_file() {
     // Two modules, each with a match exhaustiveness error at potentially overlapping offsets.
     // target_file should select the correct module.
-    let dir = std::env::temp_dir().join("kyokara_qf_target_file_match");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
-    let main_path = dir.join("main.ky");
-    let math_path = dir.join("math.ky");
+    let main_path = dir.path().join("main.ky");
+    let math_path = dir.path().join("math.ky");
 
     // Both files define a type and a non-exhaustive match.
     // main.ky: type A with missing arm
@@ -1234,19 +1115,15 @@ fn project_quickfix_match_cases_filters_by_target_file() {
             .all(|e| e.file_id == math_info.file_id),
         "edits should target math.ky's file_id"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn project_quickfix_capability_filters_by_target_file() {
     // Two modules, each with an effect violation. target_file disambiguates.
-    let dir = std::env::temp_dir().join("kyokara_qf_target_file_cap");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
-    let main_path = dir.join("main.ky");
-    let math_path = dir.join("math.ky");
+    let main_path = dir.path().join("main.ky");
+    let math_path = dir.path().join("math.ky");
 
     std::fs::write(
         &main_path,
@@ -1293,20 +1170,16 @@ fn project_quickfix_capability_filters_by_target_file() {
         "should add Logger capability for main.ky, got edits: {:?}",
         refactor_result.edits
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn project_quickfix_wrong_target_file_returns_error() {
     // If target_file points to a file with no diagnostic at the given offset,
     // the quickfix should return NoDiagnosticAtOffset.
-    let dir = std::env::temp_dir().join("kyokara_qf_wrong_target");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
-    let main_path = dir.join("main.ky");
-    let math_path = dir.join("math.ky");
+    let main_path = dir.path().join("main.ky");
+    let math_path = dir.path().join("math.ky");
 
     std::fs::write(
         &main_path,
@@ -1342,8 +1215,6 @@ fn project_quickfix_wrong_target_file_returns_error() {
         matches!(err, RefactorError::NoDiagnosticAtOffset { .. }),
         "expected NoDiagnosticAtOffset when target_file has no diagnostic, got: {err:?}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
