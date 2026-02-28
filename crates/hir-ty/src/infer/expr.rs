@@ -298,7 +298,7 @@ impl<'a> InferenceCtx<'a> {
         let rhs_ty = self.infer_expr(rhs, &Expectation::Has(lhs_ty.clone()));
 
         match op {
-            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+            _ if op.is_numeric_arithmetic() => {
                 let resolved = self.table.resolve_deep(&lhs_ty);
                 if !resolved.is_poison() && !matches!(resolved, Ty::Int | Ty::Float | Ty::Var(_)) {
                     self.push_diag(TyDiagnosticData::InvalidArithmeticOperand {
@@ -309,11 +309,11 @@ impl<'a> InferenceCtx<'a> {
                 self.unify_or_err(&lhs_ty, &rhs_ty);
                 lhs_ty
             }
-            BinaryOp::Eq | BinaryOp::NotEq => {
+            _ if op.is_equality() => {
                 self.unify_or_err(&lhs_ty, &rhs_ty);
                 Ty::Bool
             }
-            BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq => {
+            _ if op.is_ordering() => {
                 let resolved = self.table.resolve_deep(&lhs_ty);
                 if !resolved.is_poison() && !matches!(resolved, Ty::Int | Ty::Float | Ty::Var(_)) {
                     self.push_diag(TyDiagnosticData::InvalidComparisonOperand {
@@ -324,16 +324,12 @@ impl<'a> InferenceCtx<'a> {
                 self.unify_or_err(&lhs_ty, &rhs_ty);
                 Ty::Bool
             }
-            BinaryOp::And | BinaryOp::Or => {
+            _ if op.is_logical() => {
                 self.unify_or_err(&Ty::Bool, &lhs_ty);
                 self.unify_or_err(&Ty::Bool, &rhs_ty);
                 Ty::Bool
             }
-            BinaryOp::BitAnd
-            | BinaryOp::BitOr
-            | BinaryOp::BitXor
-            | BinaryOp::Shl
-            | BinaryOp::Shr => {
+            _ if op.is_bitwise_or_shift() => {
                 let resolved = self.table.resolve_deep(&lhs_ty);
                 if !resolved.is_poison() && !matches!(resolved, Ty::Int | Ty::Var(_)) {
                     self.push_diag(TyDiagnosticData::InvalidArithmeticOperand {
@@ -344,6 +340,7 @@ impl<'a> InferenceCtx<'a> {
                 self.unify_or_err(&lhs_ty, &rhs_ty);
                 lhs_ty
             }
+            _ => Ty::Error,
         }
     }
 
