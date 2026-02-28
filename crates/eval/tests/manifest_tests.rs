@@ -4,9 +4,9 @@ use kyokara_eval::manifest::CapabilityManifest;
 
 #[test]
 fn parse_valid_manifest() {
-    let json = r#"{"caps": {"IO": {}, "Net": {}}}"#;
+    let json = r#"{"caps": {"io": {}, "Net": {}}}"#;
     let manifest = CapabilityManifest::from_json(json).unwrap();
-    assert!(manifest.is_granted("IO"));
+    assert!(manifest.is_granted("io"));
     assert!(manifest.is_granted("Net"));
     assert!(!manifest.is_granted("Db"));
 }
@@ -39,7 +39,7 @@ fn parse_manifest_with_fine_grained_constraints() {
 fn parse_empty_caps_manifest() {
     let json = r#"{"caps": {}}"#;
     let manifest = CapabilityManifest::from_json(json).unwrap();
-    assert!(!manifest.is_granted("IO"));
+    assert!(!manifest.is_granted("io"));
     assert!(!manifest.is_granted("Net"));
     assert!(manifest.caps.is_empty());
 }
@@ -67,12 +67,12 @@ fn parse_manifest_missing_caps_key() {
     let json = r#"{}"#;
     let manifest = CapabilityManifest::from_json(json).unwrap();
     assert!(manifest.caps.is_empty());
-    assert!(!manifest.is_granted("IO"));
+    assert!(!manifest.is_granted("io"));
 }
 
 #[test]
 fn parse_manifest_rejects_unknown_top_level_field() {
-    let json = r#"{"caps": {"IO": {}}, "unknown_field": true}"#;
+    let json = r#"{"caps": {"io": {}}, "unknown_field": true}"#;
     let result = CapabilityManifest::from_json(json);
     assert!(result.is_err(), "should reject unknown top-level field");
 }
@@ -80,7 +80,7 @@ fn parse_manifest_rejects_unknown_top_level_field() {
 #[test]
 fn parse_manifest_rejects_unknown_grant_field() {
     // Typo: allow_domain instead of allow_domains
-    let json = r#"{"caps": {"IO": {"allow_domain": ["example.com"]}}}"#;
+    let json = r#"{"caps": {"io": {"allow_domain": ["example.com"]}}}"#;
     let result = CapabilityManifest::from_json(json);
     assert!(result.is_err(), "should reject unknown grant field (typo)");
 }
