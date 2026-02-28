@@ -405,6 +405,11 @@ fn binary_op_name(op: BinaryOp) -> &'static str {
         BinaryOp::GtEq => "gte",
         BinaryOp::And => "and",
         BinaryOp::Or => "or",
+        BinaryOp::BitAnd => "bit_and",
+        BinaryOp::BitOr => "bit_or",
+        BinaryOp::BitXor => "bit_xor",
+        BinaryOp::Shl => "shl",
+        BinaryOp::Shr => "shr",
     }
 }
 
@@ -412,5 +417,6 @@ fn unary_op_name(op: UnaryOp) -> &'static str {
     match op {
         UnaryOp::Not => "not",
         UnaryOp::Neg => "neg",
+        UnaryOp::BitNot => "bit_not",
     }
 }

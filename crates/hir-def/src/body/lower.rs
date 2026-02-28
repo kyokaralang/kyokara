@@ -426,6 +426,11 @@ impl BodyLowerCtx<'_> {
                 SyntaxKind::GtEq => BinaryOp::GtEq,
                 SyntaxKind::AmpAmp => BinaryOp::And,
                 SyntaxKind::PipePipe => BinaryOp::Or,
+                SyntaxKind::Amp => BinaryOp::BitAnd,
+                SyntaxKind::Pipe => BinaryOp::BitOr,
+                SyntaxKind::Caret => BinaryOp::BitXor,
+                SyntaxKind::LtLt => BinaryOp::Shl,
+                SyntaxKind::GtGt => BinaryOp::Shr,
                 _ => BinaryOp::Add,
             })
             .unwrap_or(BinaryOp::Add);
@@ -448,6 +453,7 @@ impl BodyLowerCtx<'_> {
             .map(|tok| match tok.kind() {
                 SyntaxKind::Bang => UnaryOp::Not,
                 SyntaxKind::Minus => UnaryOp::Neg,
+                SyntaxKind::Tilde => UnaryOp::BitNot,
                 _ => UnaryOp::Not,
             })
             .unwrap_or(UnaryOp::Not);

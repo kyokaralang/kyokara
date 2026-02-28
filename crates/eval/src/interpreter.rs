@@ -917,6 +917,29 @@ impl Interpreter {
             (BinaryOp::Div, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
             (BinaryOp::Mod, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a % b)),
 
+            // Bitwise operations (Int only).
+            (BinaryOp::BitAnd, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a & b)),
+            (BinaryOp::BitOr, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a | b)),
+            (BinaryOp::BitXor, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a ^ b)),
+            (BinaryOp::Shl, Value::Int(a), Value::Int(b)) => {
+                if *b < 0 || *b >= 64 {
+                    Err(RuntimeError::TypeError(format!(
+                        "shift amount {b} out of range (0..63)"
+                    )))
+                } else {
+                    Ok(Value::Int(a.wrapping_shl(*b as u32)))
+                }
+            }
+            (BinaryOp::Shr, Value::Int(a), Value::Int(b)) => {
+                if *b < 0 || *b >= 64 {
+                    Err(RuntimeError::TypeError(format!(
+                        "shift amount {b} out of range (0..63)"
+                    )))
+                } else {
+                    Ok(Value::Int(a.wrapping_shr(*b as u32)))
+                }
+            }
+
             // String concatenation via +.
             (BinaryOp::Add, Value::String(a), Value::String(b)) => {
                 Ok(Value::String(format!("{a}{b}")))
@@ -967,6 +990,7 @@ impl Interpreter {
                 .ok_or(RuntimeError::IntegerOverflow),
             (UnaryOp::Neg, Value::Float(f)) => Ok(Value::Float(-f)),
             (UnaryOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
+            (UnaryOp::BitNot, Value::Int(n)) => Ok(Value::Int(!n)),
             _ => Err(RuntimeError::TypeError(format!(
                 "cannot apply {op:?} to {val:?}"
             ))),

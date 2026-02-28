@@ -156,6 +156,14 @@ pub enum SyntaxKind {
     PipePipe,
     /// `%`
     Percent,
+    /// `^`
+    Caret,
+    /// `~`
+    Tilde,
+    /// `<<`
+    LtLt,
+    /// `>>`
+    GtGt,
     /// `_` (text-agnostic wildcard / hole token).
     Underscore,
 
