@@ -471,8 +471,8 @@ fn bitwise_precedence_xor_between_and_or() {
 }
 
 #[test]
-fn shift_tighter_than_addition() {
-    // let x = a + b << c  → should parse as a + (b << c) → 2 BinaryExprs
+fn addition_tighter_than_shift() {
+    // let x = a + b << c  → should parse as (a + b) << c → 2 BinaryExprs
     let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, Ident, Plus, Ident, LtLt, Ident]);
     assert!(has_no_errors(&errors));
     assert_eq!(count_start_nodes(&events, BinaryExpr), 2);

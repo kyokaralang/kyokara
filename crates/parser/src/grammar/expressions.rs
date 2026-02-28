@@ -9,8 +9,8 @@
 //! - `|` (bitwise OR)  : (11, 12)
 //! - `^` (bitwise XOR) : (13, 14)
 //! - `&` (bitwise AND) : (15, 16)
-//! - `+` `-`           : (17, 18)
-//! - `<<` `>>`         : (19, 20)
+//! - `<<` `>>`         : (17, 18)
+//! - `+` `-`           : (19, 20)
 //! - `*` `/` `%`       : (21, 22)
 //! - Prefix `!` `-` `~`: right_bp 23
 //! - Postfix `?` `.` `()` : left_bp 25
@@ -76,8 +76,8 @@ fn expr_bp(p: &mut Parser<'_>, min_bp: u8) -> Option<CompletedMarker> {
             Pipe => (BinaryExpr, 11, 12),
             Caret => (BinaryExpr, 13, 14),
             Amp => (BinaryExpr, 15, 16),
-            Plus | Minus => (BinaryExpr, 17, 18),
-            LtLt | GtGt => (BinaryExpr, 19, 20),
+            LtLt | GtGt => (BinaryExpr, 17, 18),
+            Plus | Minus => (BinaryExpr, 19, 20),
             Star | Slash | Percent => (BinaryExpr, 21, 22),
             _ => break,
         };
