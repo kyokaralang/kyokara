@@ -30,12 +30,15 @@ pub enum BinaryOp {
     Sub,
     Mul,
     Div,
+    Mod,
     Eq,
     NotEq,
     Lt,
     Gt,
     LtEq,
     GtEq,
+    And,
+    Or,
 }
 
 /// Unary operators.

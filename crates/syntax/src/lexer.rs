@@ -83,6 +83,10 @@ enum Token {
     Ident,
 
     // ── Multi-char operators (ordered longest-first) ─────────────────
+    #[token("&&")]
+    AmpAmp,
+    #[token("||")]
+    PipePipe,
     #[token("|>")]
     PipeGt,
     #[token("->")]
@@ -115,6 +119,8 @@ enum Token {
     Star,
     #[token("/")]
     Slash,
+    #[token("%")]
+    Percent,
     #[token("|")]
     Pipe,
     #[token("&")]
@@ -163,6 +169,8 @@ impl Token {
                     SyntaxKind::from_keyword(text).unwrap_or(SyntaxKind::Ident)
                 }
             }
+            Token::AmpAmp => SyntaxKind::AmpAmp,
+            Token::PipePipe => SyntaxKind::PipePipe,
             Token::PipeGt => SyntaxKind::PipeGt,
             Token::Arrow => SyntaxKind::Arrow,
             Token::FatArrow => SyntaxKind::FatArrow,
@@ -178,6 +186,7 @@ impl Token {
             Token::Minus => SyntaxKind::Minus,
             Token::Star => SyntaxKind::Star,
             Token::Slash => SyntaxKind::Slash,
+            Token::Percent => SyntaxKind::Percent,
             Token::Pipe => SyntaxKind::Pipe,
             Token::Amp => SyntaxKind::Amp,
             Token::Question => SyntaxKind::Question,
@@ -331,9 +340,12 @@ mod tests {
             ("-", Minus),
             ("*", Star),
             ("/", Slash),
+            ("%", Percent),
             ("|", Pipe),
             ("|>", PipeGt),
+            ("||", PipePipe),
             ("&", Amp),
+            ("&&", AmpAmp),
             ("?", Question),
         ];
         for (text, expected) in cases {
@@ -360,6 +372,10 @@ mod tests {
         assert_eq!(lex_kinds(">="), [(GtEq, ">=")]);
         // `<=` should not be `<` + `=`
         assert_eq!(lex_kinds("<="), [(LtEq, "<=")]);
+        // `&&` should not be `&` + `&`
+        assert_eq!(lex_kinds("&&"), [(AmpAmp, "&&")]);
+        // `||` should not be `|` + `|`
+        assert_eq!(lex_kinds("||"), [(PipePipe, "||")]);
     }
 
     // ── Literals ─────────────────────────────────────────────────────

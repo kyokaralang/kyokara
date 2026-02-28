@@ -2848,3 +2848,225 @@ fn eval_invalid_escape_produces_diagnostic() {
     // Guard: invalid escape sequence is flagged at compile time.
     assert!(check_has_compile_errors(r#"fn main() -> String { "\q" }"#));
 }
+
+// ── Modulo operator tests ───────────────────────────────────────────
+
+#[test]
+fn eval_modulo_basic() {
+    let val = run_ok("fn main() -> Int { 10 % 3 }");
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
+fn eval_modulo_zero() {
+    let val = run_ok("fn main() -> Int { 7 % 7 }");
+    assert_eq!(val, Value::Int(0));
+}
+
+#[test]
+fn eval_modulo_larger_divisor() {
+    let val = run_ok("fn main() -> Int { 3 % 10 }");
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_modulo_negative() {
+    // Rust's checked_rem preserves sign of dividend.
+    // This parses as 0 - (7 % 3) = 0 - 1 = -1 due to precedence.
+    let val = run_ok("fn main() -> Int { 0 - 7 % 3 }");
+    assert_eq!(val, Value::Int(-1));
+}
+
+#[test]
+fn eval_modulo_division_by_zero() {
+    let err = run_err("fn main() -> Int { 10 % 0 }");
+    assert!(err.contains("division by zero"), "got: {err}");
+}
+
+#[test]
+fn eval_modulo_float() {
+    let val = run_ok("fn main() -> Float { 5.5 % 2.0 }");
+    assert!(matches!(val, Value::Float(f) if (f - 1.5).abs() < 1e-10));
+}
+
+#[test]
+fn eval_modulo_precedence_same_as_mul() {
+    // % has same precedence as * and /, left-associative.
+    // 10 % 3 * 2 should be (10 % 3) * 2 = 1 * 2 = 2
+    let val = run_ok("fn main() -> Int { 10 % 3 * 2 }");
+    assert_eq!(val, Value::Int(2));
+}
+
+#[test]
+fn eval_modulo_precedence_lower_than_nothing_higher_than_add() {
+    // 1 + 10 % 3 should be 1 + (10 % 3) = 1 + 1 = 2
+    let val = run_ok("fn main() -> Int { 1 + 10 % 3 }");
+    assert_eq!(val, Value::Int(2));
+}
+
+#[test]
+fn eval_modulo_type_error() {
+    assert!(check_has_compile_errors(
+        r#"fn main() -> Int { "hello" % 2 }"#
+    ));
+}
+
+// ── Logical AND operator tests ──────────────────────────────────────
+
+#[test]
+fn eval_and_true_true() {
+    let val = run_ok("fn main() -> Bool { true && true }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_and_true_false() {
+    let val = run_ok("fn main() -> Bool { true && false }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_and_false_true() {
+    let val = run_ok("fn main() -> Bool { false && true }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_and_false_false() {
+    let val = run_ok("fn main() -> Bool { false && false }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_and_short_circuit() {
+    // If LHS is false, RHS should not be evaluated.
+    // 1 / 0 would cause a runtime error, but && should short-circuit.
+    let val = run_ok("fn main() -> Bool { false && 1 / 0 == 0 }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_and_with_comparisons() {
+    let val = run_ok("fn main() -> Bool { 1 > 0 && 2 > 1 }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_and_with_comparisons_false() {
+    let val = run_ok("fn main() -> Bool { 1 > 0 && 2 < 1 }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_and_type_error() {
+    assert!(check_has_compile_errors("fn main() -> Bool { 1 && true }"));
+}
+
+// ── Logical OR operator tests ───────────────────────────────────────
+
+#[test]
+fn eval_or_true_true() {
+    let val = run_ok("fn main() -> Bool { true || true }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_or_true_false() {
+    let val = run_ok("fn main() -> Bool { true || false }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_or_false_true() {
+    let val = run_ok("fn main() -> Bool { false || true }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_or_false_false() {
+    let val = run_ok("fn main() -> Bool { false || false }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_or_short_circuit() {
+    // If LHS is true, RHS should not be evaluated.
+    // 1 / 0 would cause a runtime error, but || should short-circuit.
+    let val = run_ok("fn main() -> Bool { true || 1 / 0 == 0 }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_or_with_comparisons() {
+    let val = run_ok("fn main() -> Bool { 1 < 0 || 2 > 1 }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_or_type_error() {
+    assert!(check_has_compile_errors("fn main() -> Bool { 1 || true }"));
+}
+
+// ── Precedence: && binds tighter than || ────────────────────────────
+
+#[test]
+fn eval_or_and_precedence() {
+    // true || false && false should be true || (false && false) = true || false = true
+    let val = run_ok("fn main() -> Bool { true || false && false }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_and_or_precedence() {
+    // false && true || true should be (false && true) || true = false || true = true
+    let val = run_ok("fn main() -> Bool { false && true || true }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_and_or_precedence_2() {
+    // false || false && true should be false || (false && true) = false || false = false
+    let val = run_ok("fn main() -> Bool { false || false && true }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+// ── Combined operator tests ────────────────────────────────────────
+
+#[test]
+fn eval_modulo_with_logical() {
+    // 10 % 2 == 0 && 9 % 3 == 0
+    let val = run_ok("fn main() -> Bool { 10 % 2 == 0 && 9 % 3 == 0 }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_modulo_with_logical_false() {
+    let val = run_ok("fn main() -> Bool { 10 % 3 == 0 || 9 % 2 == 0 }");
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_chained_and() {
+    let val = run_ok("fn main() -> Bool { true && true && true && true }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_chained_or() {
+    let val = run_ok("fn main() -> Bool { false || false || false || true }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_not_and_or() {
+    // !false && true should be true
+    let val = run_ok("fn main() -> Bool { !false && true }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_not_or() {
+    // !true || false should be false
+    let val = run_ok("fn main() -> Bool { !true || false }");
+    assert_eq!(val, Value::Bool(false));
+}

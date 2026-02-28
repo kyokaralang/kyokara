@@ -396,12 +396,15 @@ fn binary_op_name(op: BinaryOp) -> &'static str {
         BinaryOp::Sub => "sub",
         BinaryOp::Mul => "mul",
         BinaryOp::Div => "div",
+        BinaryOp::Mod => "rem",
         BinaryOp::Eq => "eq",
         BinaryOp::NotEq => "neq",
         BinaryOp::Lt => "lt",
         BinaryOp::Gt => "gt",
         BinaryOp::LtEq => "lte",
         BinaryOp::GtEq => "gte",
+        BinaryOp::And => "and",
+        BinaryOp::Or => "or",
     }
 }
 
