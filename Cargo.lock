@@ -1050,6 +1050,7 @@ dependencies = [
  "kyokara-fmt",
  "kyokara-hir",
  "kyokara-lsp",
+ "kyokara-pbt",
  "kyokara-refactor",
  "kyokara-syntax",
  "serde_json",
@@ -1218,6 +1219,26 @@ dependencies = [
  "kyokara-intern",
  "kyokara-span",
  "kyokara-stdx",
+]
+
+[[package]]
+name = "kyokara-pbt"
+version = "0.0.0"
+dependencies = [
+ "kyokara-diagnostics",
+ "kyokara-eval",
+ "kyokara-hir",
+ "kyokara-hir-def",
+ "kyokara-intern",
+ "kyokara-span",
+ "kyokara-stdx",
+ "kyokara-syntax",
+ "la-arena",
+ "rustc-hash 2.1.1",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "tempfile",
 ]
 
 [[package]]

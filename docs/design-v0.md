@@ -550,7 +550,7 @@ injected as synthetic types before type-checking.
 * Capability enforcement: type-level checking (E0011) ✓ + runtime manifest enforcement (`--caps`, deny-by-default) ✓
 
 **v0.3 — Verification + Codegen + Replay**
-* Property-based test harness + stdlib generators
+* Property-based test harness ✓ (`pbt` crate: choice-sequence engine, type-driven generators, 4-pass shrinker, corpus persistence; `kyokara test <file> --explore` discovers contract functions, generates random inputs, checks contracts, shrinks counterexamples)
 * SMT integration for contract verification (restricted fragment: linear arithmetic + uninterpreted functions, best-effort, never blocks compilation)
 * KyokaraIR data structures ✓ (SSA, block params, text format, validator) + HIR→KIR lowering ✓ + WASM codegen MVP ✓ (scalars, control flow, function calls, ADTs, records via `codegen` crate + `wasm-encoder`; deferred: closures, strings, lists, maps, intrinsics, capabilities)
 * Capability sandbox runtime (host functions + manifest)
@@ -586,8 +586,9 @@ kyokara/
     fmt/           # canonical code formatter (Wadler-Lindig Doc IR)
     refactor/      # semantic refactor engine (rename, quickfix)
     lsp/           # LSP server with salsa incrementality
+    pbt/           # property-based testing (generators, shrinker, corpus)
     api/           # compiler-as-API, JSON serialization DTOs
-    cli/           # kyokara binary (check / run / fmt / refactor / lsp)
+    cli/           # kyokara binary (check / run / fmt / refactor / test / lsp)
   docs/            # design docs
   spec/            # formal grammar
 ```
@@ -632,5 +633,5 @@ Rust is recommended for:
 11. ~~Implement module system (convention-based layout, pub visibility, flat imports).~~ ✓
 12. ~~Implement LSP server with salsa incrementality (diagnostics, hover, goto-def, references, completion, code actions, formatting).~~ ✓
 13. Implement WASM runtime host functions for capabilities + replay log.
-14. Add property test runner and basic generators.
+14. ~~Add property test runner and basic generators.~~ ✓
 15. Integrate SMT solver for opt-in static verification.

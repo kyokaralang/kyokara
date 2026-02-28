@@ -6,6 +6,7 @@
 //! - `kyokara fmt <file>` — format a `.ky` file (v0.1)
 //! - `kyokara refactor <file>` — apply semantic refactors (v0.2)
 //! - `kyokara lsp` — start the Language Server Protocol server (v0.2)
+//! - `kyokara test <file>` — property-based testing of contract functions (v0.3)
 //! - `kyokara replay <file>` — replay execution trace (planned v0.3)
 
 use clap::{Parser, Subcommand};
@@ -51,6 +52,26 @@ enum Command {
     },
     /// Start the Language Server Protocol server.
     Lsp,
+    /// Property-based test functions with contracts.
+    Test {
+        /// Path to the .ky source file.
+        file: String,
+        /// Explore: generate random inputs (without this, only replays corpus).
+        #[arg(long)]
+        explore: bool,
+        /// Number of random test cases per function (default: 100).
+        #[arg(long, default_value = "100")]
+        num_tests: usize,
+        /// Fixed seed for deterministic generation.
+        #[arg(long)]
+        seed: Option<u64>,
+        /// Output format: "human" (default) or "json".
+        #[arg(long, default_value = "human")]
+        format: String,
+        /// Force multi-file project mode.
+        #[arg(long)]
+        project: bool,
+    },
     /// Apply a semantic refactor to a Kyokara source file.
     Refactor {
         /// Path to the .ky source file.
@@ -195,6 +216,65 @@ fn main() {
                         eprintln!("runtime error: {e}");
                         std::process::exit(1);
                     }
+                }
+            }
+        }
+        Command::Test {
+            file,
+            explore,
+            num_tests,
+            seed,
+            format,
+            project,
+        } => {
+            let path = std::path::Path::new(&file);
+            let is_multi_file = should_use_project_mode(path, project);
+
+            let corpus_base = path
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .to_path_buf();
+
+            let config = kyokara_pbt::TestConfig {
+                num_tests,
+                explore,
+                seed: seed.unwrap_or(0),
+                format: format.clone(),
+                corpus_base,
+            };
+
+            let report = if is_multi_file {
+                kyokara_pbt::run_project_tests(path, &config)
+            } else {
+                let source = match std::fs::read_to_string(&file) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("error: cannot read `{file}`: {e}");
+                        std::process::exit(1);
+                    }
+                };
+                kyokara_pbt::run_tests(&source, &config)
+            };
+
+            match report {
+                Ok(report) => {
+                    match format.as_str() {
+                        "json" => print!("{}", report.format_json()),
+                        _ => print!("{}", report.format_human()),
+                    }
+                    if !report.all_passed() {
+                        std::process::exit(1);
+                    }
+                    if report.results.is_empty()
+                        && !explore
+                        && !kyokara_pbt::corpus::has_any_corpus(&config.corpus_base)
+                    {
+                        eprintln!("No corpus found. Run with --explore to generate test cases.");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
                 }
             }
         }

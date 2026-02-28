@@ -1,0 +1,5 @@
+fn my_abs(x: Int) -> Int
+  ensures result >= 0
+{
+  x
+}
