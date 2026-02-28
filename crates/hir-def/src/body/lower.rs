@@ -13,7 +13,7 @@ use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::{
     self, ArgList, BinaryExpr, BlockExpr, BlockItem, CallExpr, ElseBranch, FieldExpr, FnDef,
     IfExpr, LambdaExpr, LiteralExpr, MatchExpr, NamedArg, OldExpr, PathExpr, PipelineExpr,
-    PropagateExpr, PropertyDef, RecordExpr, ReturnExpr, TypeExpr, UnaryExpr,
+    PropagateExpr, PropertyDef, RecordExpr, RefinedType, ReturnExpr, TypeExpr, UnaryExpr,
 };
 use kyokara_syntax::ast::traits::{HasName, HasTypeParams};
 
@@ -187,6 +187,72 @@ pub fn lower_property_body(
     let root = if let Some(body) = prop_def.body() {
         let range = body.syntax().text_range();
         let idx = ctx.lower_block(&body);
+        ctx.expr_source_map.insert(idx, range);
+        idx
+    } else {
+        ctx.alloc_expr(Expr::Missing)
+    };
+
+    BodyLowerResult {
+        body: Body {
+            exprs: ctx.exprs,
+            pats: ctx.pats,
+            root,
+            requires: None,
+            ensures: None,
+            invariant: None,
+            scopes: ctx.scopes,
+            pat_scopes: ctx.pat_scopes,
+            expr_scopes: ctx.expr_scopes,
+            expr_source_map: ctx.expr_source_map,
+            pat_source_map: ctx.pat_source_map,
+            local_binding_meta: ctx.local_binding_meta,
+        },
+        diagnostics: ctx.diagnostics,
+    }
+}
+
+/// Lower a refinement-type predicate body from CST to HIR.
+///
+/// Creates a synthetic function body for a `{ x: Base | predicate }` refined type:
+/// one parameter (the refinement variable) in scope, body = predicate expression.
+pub fn lower_refinement_body(
+    refined: &RefinedType,
+    module_scope: &ModuleScope,
+    file_id: FileId,
+    interner: &mut Interner,
+) -> BodyLowerResult {
+    let mut ctx = BodyLowerCtx {
+        exprs: Arena::new(),
+        pats: Arena::new(),
+        scopes: ScopeTree::default(),
+        pat_scopes: Vec::new(),
+        expr_scopes: ArenaMap::default(),
+        expr_source_map: ArenaMap::default(),
+        pat_source_map: ArenaMap::default(),
+        local_binding_meta: ArenaMap::default(),
+        diagnostics: Vec::new(),
+        file_id,
+        interner,
+        module_scope,
+        current_scope: None,
+        in_contract: false,
+    };
+
+    // Create root scope.
+    let root_scope = ctx.scopes.new_root();
+    ctx.current_scope = Some(root_scope);
+
+    // Register the refinement variable as Param(0).
+    if let Some(tok) = refined.name_token() {
+        let name = Name::new(ctx.interner, tok.text());
+        ctx.scopes.define(root_scope, name, ScopeDef::Param(0));
+    }
+
+    // Lower predicate expression as the body root.
+    let root = if let Some(pred) = refined.predicate() {
+        let range = pred.syntax().text_range();
+        let idx = ctx.lower_expr(&pred);
         ctx.expr_source_map.insert(idx, range);
         idx
     } else {

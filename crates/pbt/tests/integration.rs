@@ -230,3 +230,204 @@ fn property_type_check() {
         "valid property should have no type errors: {all_diags:?}"
     );
 }
+
+// ── Refined-type tests ────────────────────────────────────────────
+
+#[test]
+fn refined_pass_succeeds() {
+    let source = fixture("refined_pass.ky");
+    let config = test_config();
+    let report = run_tests(&source, &config).unwrap();
+
+    assert!(
+        report.all_passed(),
+        "refined_pass.ky should pass: {}",
+        report.format_human()
+    );
+    assert_eq!(report.results.len(), 1);
+    assert_eq!(report.results[0].name, "positive_is_positive");
+    assert_eq!(report.results[0].kind, TestableKind::Property);
+    assert!(report.results[0].passed > 0);
+}
+
+#[test]
+fn refined_fail_detected() {
+    let source = fixture("refined_fail.ky");
+    let config = test_config();
+    let report = run_tests(&source, &config).unwrap();
+
+    assert!(!report.all_passed(), "refined_fail.ky should fail");
+    assert_eq!(report.failure_count(), 1);
+
+    let result = &report.results[0];
+    assert_eq!(result.name, "bad_bound");
+    assert_eq!(result.kind, TestableKind::Property);
+    let failure = result.failure.as_ref().unwrap();
+    assert!(
+        failure.error.contains("property returned false"),
+        "expected 'property returned false', got: {}",
+        failure.error
+    );
+
+    // Counterexample should still satisfy x > 0 (refinement respected).
+    assert!(!failure.args_display.is_empty());
+    let arg_val: i64 = failure.args_display[0].parse().unwrap();
+    assert!(
+        arg_val > 0,
+        "counterexample should satisfy refinement x > 0, got: {arg_val}"
+    );
+}
+
+#[test]
+fn refined_shrink_respects_predicate() {
+    let source = fixture("refined_fail.ky");
+    let config = test_config();
+    let report = run_tests(&source, &config).unwrap();
+
+    let result = &report.results[0];
+    let failure = result.failure.as_ref().unwrap();
+
+    // After shrinking, the counterexample should still satisfy x > 0.
+    let arg_val: i64 = failure.args_display[0].parse().unwrap();
+    assert!(
+        arg_val > 0,
+        "shrunk counterexample should satisfy refinement: {arg_val}"
+    );
+    // Should be a small positive number (shrunk toward 1).
+    assert!(
+        arg_val <= 100,
+        "shrunk counterexample should be <= 100: {arg_val}"
+    );
+}
+
+#[test]
+fn refined_mixed_discovery() {
+    let source = fixture("refined_mixed.ky");
+    let config = test_config();
+    let report = run_tests(&source, &config).unwrap();
+
+    assert!(
+        report.all_passed(),
+        "refined_mixed.ky should pass: {}",
+        report.format_human()
+    );
+
+    // Should have both a contracted function and a refined property.
+    assert_eq!(
+        report.results.len(),
+        2,
+        "expected 2 results (fn + property)"
+    );
+
+    let fn_result = report
+        .results
+        .iter()
+        .find(|r| r.kind == TestableKind::Function)
+        .expect("should have a function result");
+    assert_eq!(fn_result.name, "clamp");
+    assert!(fn_result.passed > 0);
+
+    let prop_result = report
+        .results
+        .iter()
+        .find(|r| r.kind == TestableKind::Property)
+        .expect("should have a property result");
+    assert_eq!(prop_result.name, "pos_capped");
+    assert!(prop_result.passed > 0);
+}
+
+#[test]
+fn refined_unsatisfiable_reported() {
+    let source = fixture("refined_unsatisfiable.ky");
+    let config = test_config();
+    let report = run_tests(&source, &config).unwrap();
+
+    assert!(
+        !report.all_passed(),
+        "unsatisfiable refinement should report failure"
+    );
+
+    let result = &report.results[0];
+    assert_eq!(result.name, "impossible");
+    let failure = result.failure.as_ref().unwrap();
+    assert!(
+        failure.error.contains("unsatisfiable"),
+        "expected 'unsatisfiable' error, got: {}",
+        failure.error
+    );
+}
+
+#[test]
+fn refined_type_check() {
+    // Valid refined property: should have no type errors.
+    let result = kyokara_hir::check_file("property p(x: { x: Int | x > 0 }) { x > 0 }");
+    let all_diags: Vec<_> = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .map(|(d, _)| format!("{d:?}"))
+        .collect();
+    assert!(
+        all_diags.is_empty(),
+        "valid refined property should have no type errors: {all_diags:?}"
+    );
+}
+
+#[test]
+fn refined_non_property_still_rejected() {
+    // Refined type in a regular function param should still be rejected.
+    let result = kyokara_hir::check_file("fn foo(x: { x: Int | x > 0 }) -> Int { x }");
+    let has_refined_error = result
+        .lowering_diagnostics
+        .iter()
+        .any(|d| d.message.contains("refined types are not yet supported"));
+    assert!(
+        has_refined_error,
+        "refined type in regular fn should be rejected, diagnostics: {:?}",
+        result.lowering_diagnostics
+    );
+}
+
+#[test]
+fn refined_corpus_replay() {
+    let source = fixture("refined_fail.ky");
+    let corpus_dir = tempfile::tempdir().unwrap();
+
+    // First run: explore to find and save a failure.
+    let config = TestConfig {
+        num_tests: 50,
+        explore: true,
+        seed: 42,
+        format: "human".to_string(),
+        corpus_base: corpus_dir.path().to_path_buf(),
+    };
+    let report1 = run_tests(&source, &config).unwrap();
+    assert!(!report1.all_passed());
+
+    // Verify the counterexample satisfies the refinement.
+    let failure1 = report1.results[0].failure.as_ref().unwrap();
+    let arg_val: i64 = failure1.args_display[0].parse().unwrap();
+    assert!(arg_val > 0, "corpus entry should satisfy refinement");
+
+    // Second run: corpus-only replay.
+    let config2 = TestConfig {
+        num_tests: 0,
+        explore: false,
+        seed: 0,
+        format: "human".to_string(),
+        corpus_base: corpus_dir.path().to_path_buf(),
+    };
+    let report2 = run_tests(&source, &config2).unwrap();
+    assert!(
+        !report2.all_passed(),
+        "corpus replay should still detect the failure"
+    );
+
+    // Replayed counterexample should also satisfy refinement.
+    let failure2 = report2.results[0].failure.as_ref().unwrap();
+    let arg_val2: i64 = failure2.args_display[0].parse().unwrap();
+    assert!(
+        arg_val2 > 0,
+        "replayed corpus entry should satisfy refinement"
+    );
+}
