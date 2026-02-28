@@ -8,6 +8,7 @@ use kyokara_hir_def::item_tree::{FnItemIdx, FnParam, ItemTree, TypeDefKind, Type
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::resolver::ModuleScope;
+use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_intern::Interner;
 use kyokara_stdx::FxHashMap;
 
@@ -45,6 +46,11 @@ pub struct Interpreter {
 enum ControlFlow {
     Value(Value),
     Return(Value),
+}
+
+enum LogicalEvalStep {
+    ShortCircuit(Value),
+    NeedRhs,
 }
 
 impl ControlFlow {
@@ -249,26 +255,7 @@ impl Interpreter {
 
         let fn_item = &self.item_tree.functions[fn_idx];
 
-        // Check user-declared capabilities against the manifest (only when manifest exists
-        // and the function actually declares capabilities).
-        if let Some(manifest) = &self.manifest
-            && !fn_item.with_caps.is_empty()
-        {
-            let fn_name_str = fn_item.name.resolve(&self.interner).to_string();
-            for cap_ref in &fn_item.with_caps {
-                if let kyokara_hir_def::type_ref::TypeRef::Path { path, .. } = cap_ref
-                    && let Some(name) = path.last()
-                {
-                    let cap_str = name.resolve(&self.interner);
-                    if !manifest.is_granted(cap_str) {
-                        return Err(RuntimeError::CapabilityDenied {
-                            capability: cap_str.to_string(),
-                            function: fn_name_str,
-                        });
-                    }
-                }
-            }
-        }
+        self.ensure_user_fn_caps_allowed(fn_item)?;
 
         // Use the shared environment with a new scope instead of allocating a fresh Env.
         self.env.push_scope();
@@ -375,34 +362,15 @@ impl Interpreter {
                 let op = *op;
                 let lhs = *lhs;
                 let rhs = *rhs;
-                // Short-circuit evaluation for logical operators.
                 match op {
-                    BinaryOp::And => {
+                    BinaryOp::And | BinaryOp::Or => {
                         let lv = eval_propagate!(self, env, body, lhs);
-                        match lv {
-                            Value::Bool(false) => Ok(ControlFlow::Value(Value::Bool(false))),
-                            Value::Bool(true) => {
+                        match self.logical_eval_step(op, &lv)? {
+                            LogicalEvalStep::ShortCircuit(v) => Ok(ControlFlow::Value(v)),
+                            LogicalEvalStep::NeedRhs => {
                                 let rv = eval_propagate!(self, env, body, rhs);
                                 Ok(ControlFlow::Value(rv))
                             }
-                            _ => Err(RuntimeError::TypeError(format!(
-                                "expected Bool for &&, got {:?}",
-                                std::mem::discriminant(&lv),
-                            ))),
-                        }
-                    }
-                    BinaryOp::Or => {
-                        let lv = eval_propagate!(self, env, body, lhs);
-                        match lv {
-                            Value::Bool(true) => Ok(ControlFlow::Value(Value::Bool(true))),
-                            Value::Bool(false) => {
-                                let rv = eval_propagate!(self, env, body, rhs);
-                                Ok(ControlFlow::Value(rv))
-                            }
-                            _ => Err(RuntimeError::TypeError(format!(
-                                "expected Bool for ||, got {:?}",
-                                std::mem::discriminant(&lv),
-                            ))),
                         }
                     }
                     _ => {
@@ -423,6 +391,38 @@ impl Interpreter {
             Expr::Call { callee, args } => {
                 let callee_idx = *callee;
                 let args = args.clone();
+
+                // ── Method call resolution ──────────────────────────
+                // If callee is a Field expression, try method dispatch first.
+                if let Expr::Field { base, field } = &body.exprs[callee_idx] {
+                    let base_idx = *base;
+                    let field_name = *field;
+                    let base_val = eval_propagate!(self, env, body, base_idx);
+
+                    if let Some(method_fn) = self.resolve_method(&base_val, field_name) {
+                        let ordered = self.args_in_call_order(&args);
+                        let mut arg_vals = Args::with_capacity(ordered.len() + 1);
+                        arg_vals.push(base_val);
+                        for idx in &ordered {
+                            let v = eval_propagate!(self, env, body, *idx);
+                            arg_vals.push(v);
+                        }
+                        return self.call_value(method_fn, arg_vals).map(ControlFlow::Value);
+                    }
+
+                    // Not a method — fall through to field access + call.
+                    let callee_val = self.eval_field(base_val, field_name)?;
+                    let ordered = self.args_in_call_order(&args);
+                    let mut arg_vals = Args::with_capacity(ordered.len());
+                    for idx in &ordered {
+                        let v = eval_propagate!(self, env, body, *idx);
+                        arg_vals.push(v);
+                    }
+                    return self
+                        .call_value(callee_val, arg_vals)
+                        .map(ControlFlow::Value);
+                }
+
                 let callee_val = eval_propagate!(self, env, body, callee_idx);
 
                 // When calling a user function or lambda with named args,
@@ -466,6 +466,14 @@ impl Interpreter {
                 let field = *field;
                 let base_val = eval_propagate!(self, env, body, base_idx);
                 self.eval_field(base_val, field).map(ControlFlow::Value)
+            }
+
+            Expr::Index { base, index } => {
+                let base_idx = *base;
+                let index_idx = *index;
+                let base_val = eval_propagate!(self, env, body, base_idx);
+                let index_val = eval_propagate!(self, env, body, index_idx);
+                self.eval_index(base_val, index_val).map(ControlFlow::Value)
             }
 
             Expr::If {
@@ -586,34 +594,15 @@ impl Interpreter {
                 let op = *op;
                 let lhs = *lhs;
                 let rhs = *rhs;
-                // Short-circuit evaluation for logical operators.
                 match op {
-                    BinaryOp::And => {
+                    BinaryOp::And | BinaryOp::Or => {
                         let lv = eval_propagate_shared!(self, body, lhs);
-                        match lv {
-                            Value::Bool(false) => Ok(ControlFlow::Value(Value::Bool(false))),
-                            Value::Bool(true) => {
+                        match self.logical_eval_step(op, &lv)? {
+                            LogicalEvalStep::ShortCircuit(v) => Ok(ControlFlow::Value(v)),
+                            LogicalEvalStep::NeedRhs => {
                                 let rv = eval_propagate_shared!(self, body, rhs);
                                 Ok(ControlFlow::Value(rv))
                             }
-                            _ => Err(RuntimeError::TypeError(format!(
-                                "expected Bool for &&, got {:?}",
-                                std::mem::discriminant(&lv),
-                            ))),
-                        }
-                    }
-                    BinaryOp::Or => {
-                        let lv = eval_propagate_shared!(self, body, lhs);
-                        match lv {
-                            Value::Bool(true) => Ok(ControlFlow::Value(Value::Bool(true))),
-                            Value::Bool(false) => {
-                                let rv = eval_propagate_shared!(self, body, rhs);
-                                Ok(ControlFlow::Value(rv))
-                            }
-                            _ => Err(RuntimeError::TypeError(format!(
-                                "expected Bool for ||, got {:?}",
-                                std::mem::discriminant(&lv),
-                            ))),
                         }
                     }
                     _ => {
@@ -633,6 +622,37 @@ impl Interpreter {
 
             Expr::Call { callee, args } => {
                 let callee_idx = *callee;
+
+                // ── Method call resolution (shared path) ────────────
+                if let Expr::Field { base, field } = &body.exprs[callee_idx] {
+                    let base_idx = *base;
+                    let field_name = *field;
+                    let base_val = eval_propagate_shared!(self, body, base_idx);
+
+                    if let Some(method_fn) = self.resolve_method(&base_val, field_name) {
+                        let ordered = self.args_in_call_order(args);
+                        let mut arg_vals = Args::with_capacity(ordered.len() + 1);
+                        arg_vals.push(base_val);
+                        for idx in &ordered {
+                            let v = eval_propagate_shared!(self, body, *idx);
+                            arg_vals.push(v);
+                        }
+                        return self.call_value(method_fn, arg_vals).map(ControlFlow::Value);
+                    }
+
+                    // Not a method — fall through to field access + call.
+                    let callee_val = self.eval_field(base_val, field_name)?;
+                    let ordered = self.args_in_call_order(args);
+                    let mut arg_vals = Args::with_capacity(ordered.len());
+                    for idx in &ordered {
+                        let v = eval_propagate_shared!(self, body, *idx);
+                        arg_vals.push(v);
+                    }
+                    return self
+                        .call_value(callee_val, arg_vals)
+                        .map(ControlFlow::Value);
+                }
+
                 // Note: args borrows body.exprs[idx] immutably, which is compatible
                 // with passing body to eval_expr_shared (also immutable).
                 // The &mut self in eval_expr_shared doesn't conflict because body
@@ -650,25 +670,7 @@ impl Interpreter {
                     let fn_body = unsafe { &*fn_body };
                     let fn_item = &self.item_tree.functions[fn_idx];
 
-                    // Capability check.
-                    if let Some(manifest) = &self.manifest
-                        && !fn_item.with_caps.is_empty()
-                    {
-                        let fn_name_str = fn_item.name.resolve(&self.interner).to_string();
-                        for cap_ref in &fn_item.with_caps {
-                            if let kyokara_hir_def::type_ref::TypeRef::Path { path, .. } = cap_ref
-                                && let Some(name) = path.last()
-                            {
-                                let cap_str = name.resolve(&self.interner);
-                                if !manifest.is_granted(cap_str) {
-                                    return Err(RuntimeError::CapabilityDenied {
-                                        capability: cap_str.to_string(),
-                                        function: fn_name_str,
-                                    });
-                                }
-                            }
-                        }
-                    }
+                    self.ensure_user_fn_caps_allowed(fn_item)?;
 
                     // Reorder args when named args are present so values match
                     // parameter order instead of call-site order.
@@ -751,6 +753,14 @@ impl Interpreter {
                 let field = *field;
                 let base_val = eval_propagate_shared!(self, body, base_idx);
                 self.eval_field(base_val, field).map(ControlFlow::Value)
+            }
+
+            Expr::Index { base, index } => {
+                let base_idx = *base;
+                let index_idx = *index;
+                let base_val = eval_propagate_shared!(self, body, base_idx);
+                let index_val = eval_propagate_shared!(self, body, index_idx);
+                self.eval_index(base_val, index_val).map(ControlFlow::Value)
             }
 
             Expr::If {
@@ -1012,6 +1022,33 @@ impl Interpreter {
     }
 
     #[inline(always)]
+    fn logical_eval_step(
+        &self,
+        op: BinaryOp,
+        lhs: &Value,
+    ) -> Result<LogicalEvalStep, RuntimeError> {
+        match op {
+            BinaryOp::And => match lhs {
+                Value::Bool(false) => Ok(LogicalEvalStep::ShortCircuit(Value::Bool(false))),
+                Value::Bool(true) => Ok(LogicalEvalStep::NeedRhs),
+                _ => Err(RuntimeError::TypeError(format!(
+                    "expected Bool for &&, got {:?}",
+                    std::mem::discriminant(lhs),
+                ))),
+            },
+            BinaryOp::Or => match lhs {
+                Value::Bool(true) => Ok(LogicalEvalStep::ShortCircuit(Value::Bool(true))),
+                Value::Bool(false) => Ok(LogicalEvalStep::NeedRhs),
+                _ => Err(RuntimeError::TypeError(format!(
+                    "expected Bool for ||, got {:?}",
+                    std::mem::discriminant(lhs),
+                ))),
+            },
+            _ => unreachable!("logical_eval_step called for non-logical op"),
+        }
+    }
+
+    #[inline(always)]
     fn eval_unary(&self, op: UnaryOp, val: Value) -> Result<Value, RuntimeError> {
         match (op, &val) {
             (UnaryOp::Neg, Value::Int(n)) => n
@@ -1067,6 +1104,35 @@ impl Interpreter {
                 "called value is not a function".into(),
             )),
         }
+    }
+
+    fn ensure_user_fn_caps_allowed(
+        &self,
+        fn_item: &kyokara_hir_def::item_tree::FnItem,
+    ) -> Result<(), RuntimeError> {
+        let Some(manifest) = &self.manifest else {
+            return Ok(());
+        };
+
+        if fn_item.with_caps.is_empty() {
+            return Ok(());
+        }
+
+        for cap_ref in &fn_item.with_caps {
+            if let TypeRef::Path { path, .. } = cap_ref
+                && let Some(name) = path.last()
+            {
+                let cap_str = name.resolve(&self.interner);
+                if !manifest.is_granted(cap_str) {
+                    return Err(RuntimeError::CapabilityDenied {
+                        capability: cap_str.to_string(),
+                        function: fn_item.name.resolve(&self.interner).to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn make_some(&self, val: Value) -> Value {
@@ -1224,7 +1290,7 @@ impl Interpreter {
 
     fn eval_field(&self, base: Value, field: Name) -> Result<Value, RuntimeError> {
         match base {
-            Value::Record { fields } => {
+            Value::Record { fields, .. } => {
                 for (name, val) in &fields {
                     if *name == field {
                         return Ok(val.clone());
@@ -1245,6 +1311,98 @@ impl Interpreter {
             }
             _ => Err(RuntimeError::TypeError(
                 "field access on non-record value".into(),
+            )),
+        }
+    }
+
+    /// Map a runtime value to its well-known type name for method lookup.
+    fn value_type_name(&self, val: &Value) -> Option<Name> {
+        let wk = &self.module_scope.well_known_names;
+        match val {
+            Value::String(_) => wk.string,
+            Value::Int(_) => wk.int,
+            Value::Float(_) => wk.float,
+            Value::Bool(_) => wk.bool_,
+            Value::Char(_) => wk.char_,
+            Value::List(_) => wk.list,
+            Value::Map(_) => wk.map,
+            Value::Adt { type_idx, .. } => Some(self.item_tree.types[*type_idx].name),
+            Value::Record {
+                type_idx: Some(idx),
+                ..
+            } => Some(self.item_tree.types[*idx].name),
+            _ => None,
+        }
+    }
+
+    /// Try to resolve a method on a value's type. Returns the method as a
+    /// `Value::Fn` if found, `None` otherwise.
+    fn resolve_method(&self, base: &Value, method_name: Name) -> Option<Value> {
+        let type_name = self.value_type_name(base)?;
+        let fn_idx = self
+            .module_scope
+            .methods
+            .get(&(type_name, method_name))
+            .copied()?;
+
+        // Check if it maps to an intrinsic.
+        let fn_item = &self.item_tree.functions[fn_idx];
+        let fn_name = fn_item.name;
+
+        if let Some(intr) = self.intrinsics.get(&fn_name) {
+            Some(Value::Fn(Box::new(FnValue::Intrinsic(*intr))))
+        } else {
+            Some(Value::Fn(Box::new(FnValue::User(fn_idx))))
+        }
+    }
+
+    fn eval_index(&self, base: Value, index: Value) -> Result<Value, RuntimeError> {
+        match (&base, &index) {
+            (Value::List(items), Value::Int(i)) => {
+                let i = *i;
+                if i < 0 {
+                    return Err(RuntimeError::IndexOutOfBounds {
+                        index: i,
+                        len: items.len() as i64,
+                    });
+                }
+                let idx = i as usize;
+                if idx < items.len() {
+                    Ok(items[idx].clone())
+                } else {
+                    Err(RuntimeError::IndexOutOfBounds {
+                        index: i,
+                        len: items.len() as i64,
+                    })
+                }
+            }
+            (Value::String(s), Value::Int(i)) => {
+                let i = *i;
+                if i < 0 {
+                    return Err(RuntimeError::IndexOutOfBounds {
+                        index: i,
+                        len: s.chars().count() as i64,
+                    });
+                }
+                let idx = i as usize;
+                match s.chars().nth(idx) {
+                    Some(c) => Ok(Value::Char(c)),
+                    None => Err(RuntimeError::IndexOutOfBounds {
+                        index: i,
+                        len: s.chars().count() as i64,
+                    }),
+                }
+            }
+            (Value::Map(entries), key) => {
+                for (k, v) in entries {
+                    if k == key {
+                        return Ok(v.clone());
+                    }
+                }
+                Err(RuntimeError::KeyNotFound)
+            }
+            _ => Err(RuntimeError::TypeError(
+                "indexing requires List, String, or Map".into(),
             )),
         }
     }
@@ -1338,7 +1496,10 @@ impl Interpreter {
             Pat::Record {
                 fields: pat_fields, ..
             } => {
-                let Value::Record { fields: val_fields } = value else {
+                let Value::Record {
+                    fields: val_fields, ..
+                } = value
+                else {
                     return false;
                 };
                 // Each pattern field name must match a value field,
@@ -1428,7 +1589,7 @@ impl Interpreter {
         &mut self,
         env: &mut Env,
         body: &Body,
-        _path: Option<&kyokara_hir_def::path::Path>,
+        path: Option<&kyokara_hir_def::path::Path>,
         fields: &[(Name, ExprIdx)],
     ) -> Result<ControlFlow, RuntimeError> {
         let mut field_vals = Vec::with_capacity(fields.len());
@@ -1437,11 +1598,19 @@ impl Interpreter {
             field_vals.push((*name, val));
         }
 
+        // Resolve type index from path for method resolution.
+        let type_idx = path
+            .and_then(|p| p.segments.first())
+            .and_then(|name| self.module_scope.types.get(name).copied());
+
         // Record literals (`Name { field: value }`) always produce record
         // values. ADT constructors are handled separately through the call
         // path (`Name(value)`). This avoids misinterpreting record literals
         // as ADT constructors when names collide (issue #127).
-        Ok(ControlFlow::Value(Value::Record { fields: field_vals }))
+        Ok(ControlFlow::Value(Value::Record {
+            fields: field_vals,
+            type_idx,
+        }))
     }
 
     // --- Shared-env variants of helper methods ---
@@ -1539,7 +1708,7 @@ impl Interpreter {
     fn eval_record_lit_shared(
         &mut self,
         body: &Body,
-        _path: Option<&kyokara_hir_def::path::Path>,
+        path: Option<&kyokara_hir_def::path::Path>,
         fields: &[(Name, ExprIdx)],
     ) -> Result<ControlFlow, RuntimeError> {
         let mut field_vals = Vec::with_capacity(fields.len());
@@ -1548,8 +1717,15 @@ impl Interpreter {
             field_vals.push((*name, val));
         }
 
+        let type_idx = path
+            .and_then(|p| p.segments.first())
+            .and_then(|name| self.module_scope.types.get(name).copied());
+
         // Record literals always produce record values (see eval_record_lit).
-        Ok(ControlFlow::Value(Value::Record { fields: field_vals }))
+        Ok(ControlFlow::Value(Value::Record {
+            fields: field_vals,
+            type_idx,
+        }))
     }
 }
 

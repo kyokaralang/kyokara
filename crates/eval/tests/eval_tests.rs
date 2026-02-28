@@ -51,6 +51,60 @@ fn manifest_from_json(json: &str) -> CapabilityManifest {
     CapabilityManifest::from_json(json).unwrap()
 }
 
+fn run_project_with_files_err(files: &[(&str, &str)]) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, source) in files {
+        let path = dir.path().join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, source).unwrap();
+    }
+    let main_path = dir.path().join("main.ky");
+    match kyokara_eval::run_project(&main_path) {
+        Ok(result) => panic!("expected error, got {:?}", result.value),
+        Err(e) => e.to_string(),
+    }
+}
+
+fn run_project_with_files_manifest_ok(
+    files: &[(&str, &str)],
+    manifest: Option<CapabilityManifest>,
+) -> Value {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, source) in files {
+        let path = dir.path().join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, source).unwrap();
+    }
+    let main_path = dir.path().join("main.ky");
+    match kyokara_eval::run_project_with_manifest(&main_path, manifest) {
+        Ok(result) => result.value,
+        Err(e) => panic!("runtime error: {e}"),
+    }
+}
+
+fn run_project_with_files_manifest_err(
+    files: &[(&str, &str)],
+    manifest: Option<CapabilityManifest>,
+) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, source) in files {
+        let path = dir.path().join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, source).unwrap();
+    }
+    let main_path = dir.path().join("main.ky");
+    match kyokara_eval::run_project_with_manifest(&main_path, manifest) {
+        Ok(result) => panic!("expected error, got {:?}", result.value),
+        Err(e) => e.to_string(),
+    }
+}
+
 // ── Literal tests ────────────────────────────────────────────────────
 
 #[test]
@@ -1815,95 +1869,111 @@ fn run_with_manifest_none_allows_all() {
     assert!(matches!(val, Value::Unit));
 }
 
+#[test]
+fn manifest_allow_domains_constraint_rejected_until_enforced_issue_186() {
+    let manifest = manifest_from_json(r#"{"caps": {"Net": {"allow_domains": ["rates.example"]}}}"#);
+    let err = run_with_manifest_err("fn main() -> Int { 1 }", Some(manifest));
+    assert!(
+        err.contains("allow_domains"),
+        "expected field name in error, got: {err}"
+    );
+    assert!(
+        err.contains("Net"),
+        "expected capability name in error, got: {err}"
+    );
+}
+
+#[test]
+fn manifest_allow_tables_constraint_rejected_until_enforced_issue_186() {
+    let manifest = manifest_from_json(r#"{"caps": {"Db": {"allow_tables": ["payments"]}}}"#);
+    let err = run_with_manifest_err("fn main() -> Int { 1 }", Some(manifest));
+    assert!(
+        err.contains("allow_tables"),
+        "expected field name in error, got: {err}"
+    );
+    assert!(
+        err.contains("Db"),
+        "expected capability name in error, got: {err}"
+    );
+}
+
+#[test]
+fn manifest_allow_keys_constraint_rejected_until_enforced_issue_186() {
+    let manifest =
+        manifest_from_json(r#"{"caps": {"Secrets": {"allow_keys": ["PAYMENTS_API_KEY"]}}}"#);
+    let err = run_with_manifest_err("fn main() -> Int { 1 }", Some(manifest));
+    assert!(
+        err.contains("allow_keys"),
+        "expected field name in error, got: {err}"
+    );
+    assert!(
+        err.contains("Secrets"),
+        "expected capability name in error, got: {err}"
+    );
+}
+
+#[test]
+fn project_manifest_allow_domains_constraint_rejected_until_enforced_issue_186() {
+    let manifest = manifest_from_json(r#"{"caps": {"Net": {"allow_domains": ["rates.example"]}}}"#);
+    let err = run_project_with_files_manifest_err(
+        &[("main.ky", "fn main() -> Int { 1 }\n")],
+        Some(manifest),
+    );
+    assert!(
+        err.contains("allow_domains"),
+        "expected field name in error, got: {err}"
+    );
+}
+
+#[test]
+fn project_manifest_without_fine_grained_constraints_still_runs_issue_186_guard() {
+    let manifest = manifest_from_json(r#"{"caps": {"IO": {}, "Net": {}}}"#);
+    let val = run_project_with_files_manifest_ok(
+        &[("main.ky", "fn main() -> Int { 1 }\n")],
+        Some(manifest),
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
 // ── Multi-file project diagnostics ──────────────────────────────────
 
 #[test]
 fn run_project_rejects_type_error_in_imported_module() {
-    use std::io::Write;
-
-    let dir = tempfile::tempdir().unwrap();
-
-    // util.ky has a type error: returns Bool where Int is declared.
-    let util_path = dir.path().join("util.ky");
-    let mut util_file = std::fs::File::create(&util_path).unwrap();
-    writeln!(util_file, "pub fn util() -> Int {{ true }}").unwrap();
-
-    // main.ky imports util and calls it.
-    let main_path = dir.path().join("main.ky");
-    let mut main_file = std::fs::File::create(&main_path).unwrap();
-    writeln!(main_file, "import util").unwrap();
-    writeln!(main_file, "fn main() -> Int {{ util() }}").unwrap();
-
-    let result = kyokara_eval::run_project(&main_path);
-    match result {
-        Ok(_) => panic!("expected type error from imported module"),
-        Err(e) => {
-            let err = e.to_string();
-            assert!(
-                err.contains("type error"),
-                "expected 'type error' in message, got: {err}"
-            );
-        }
-    }
+    let err = run_project_with_files_err(&[
+        ("util.ky", "pub fn util() -> Int { true }\n"),
+        ("main.ky", "import util\nfn main() -> Int { util() }\n"),
+    ]);
+    assert!(
+        err.contains("type error"),
+        "expected 'type error' in message, got: {err}"
+    );
 }
 
 #[test]
 fn run_project_rejects_parse_error_in_sibling_module() {
-    use std::io::Write;
-
-    let dir = tempfile::tempdir().unwrap();
-
-    // bad.ky has a syntax error (missing param name).
-    let bad_path = dir.path().join("bad.ky");
-    let mut bad_file = std::fs::File::create(&bad_path).unwrap();
-    writeln!(bad_file, "pub fn bad( -> Int {{ 42 }}").unwrap();
-
-    // main.ky is valid and doesn't import bad.
-    let main_path = dir.path().join("main.ky");
-    let mut main_file = std::fs::File::create(&main_path).unwrap();
-    writeln!(main_file, "fn main() -> Int {{ 42 }}").unwrap();
-
-    let result = kyokara_eval::run_project(&main_path);
-    match result {
-        Ok(_) => panic!("expected parse error from sibling module"),
-        Err(e) => {
-            let err = e.to_string();
-            assert!(
-                err.contains("parse error"),
-                "expected 'parse error' in message, got: {err}"
-            );
-        }
-    }
+    let err = run_project_with_files_err(&[
+        ("bad.ky", "pub fn bad( -> Int { 42 }\n"),
+        ("main.ky", "fn main() -> Int { 42 }\n"),
+    ]);
+    assert!(
+        err.contains("parse error"),
+        "expected 'parse error' in message, got: {err}"
+    );
 }
 
 #[test]
 fn run_project_rejects_lowering_error_in_sibling_module() {
-    use std::io::Write;
-
-    let dir = tempfile::tempdir().unwrap();
-
-    // dup.ky has a lowering error: duplicate function definition.
-    let dup_path = dir.path().join("dup.ky");
-    let mut dup_file = std::fs::File::create(&dup_path).unwrap();
-    writeln!(dup_file, "pub fn foo() -> Int {{ 1 }}").unwrap();
-    writeln!(dup_file, "pub fn foo() -> Int {{ 2 }}").unwrap();
-
-    // main.ky is valid.
-    let main_path = dir.path().join("main.ky");
-    let mut main_file = std::fs::File::create(&main_path).unwrap();
-    writeln!(main_file, "fn main() -> Int {{ 42 }}").unwrap();
-
-    let result = kyokara_eval::run_project(&main_path);
-    match result {
-        Ok(_) => panic!("expected lowering error from sibling module"),
-        Err(e) => {
-            let err = e.to_string();
-            assert!(
-                err.contains("lowering error") || err.contains("duplicate"),
-                "expected lowering/duplicate error in message, got: {err}"
-            );
-        }
-    }
+    let err = run_project_with_files_err(&[
+        (
+            "dup.ky",
+            "pub fn foo() -> Int { 1 }\npub fn foo() -> Int { 2 }\n",
+        ),
+        ("main.ky", "fn main() -> Int { 42 }\n"),
+    ]);
+    assert!(
+        err.contains("lowering error") || err.contains("duplicate"),
+        "expected lowering/duplicate error in message, got: {err}"
+    );
 }
 
 #[test]
@@ -1976,31 +2046,14 @@ fn run_ensures_result_and_user_result_coexist() {
 
 #[test]
 fn run_project_rejects_body_lowering_error_in_sibling_module() {
-    use std::io::Write;
-
-    let dir = tempfile::tempdir().unwrap();
-
-    // bad.ky has an unresolved name in the body.
-    let bad_path = dir.path().join("bad.ky");
-    let mut bad_file = std::fs::File::create(&bad_path).unwrap();
-    writeln!(bad_file, "pub fn oops() -> Int {{ unknown_name }}").unwrap();
-
-    // main.ky is valid and doesn't import bad.
-    let main_path = dir.path().join("main.ky");
-    let mut main_file = std::fs::File::create(&main_path).unwrap();
-    writeln!(main_file, "fn main() -> Int {{ 42 }}").unwrap();
-
-    let result = kyokara_eval::run_project(&main_path);
-    match result {
-        Ok(_) => panic!("expected body lowering error from sibling module"),
-        Err(e) => {
-            let err = e.to_string();
-            assert!(
-                err.contains("unresolved") || err.contains("lowering"),
-                "expected unresolved/lowering error in message, got: {err}"
-            );
-        }
-    }
+    let err = run_project_with_files_err(&[
+        ("bad.ky", "pub fn oops() -> Int { unknown_name }\n"),
+        ("main.ky", "fn main() -> Int { 42 }\n"),
+    ]);
+    assert!(
+        err.contains("unresolved") || err.contains("lowering"),
+        "expected unresolved/lowering error in message, got: {err}"
+    );
 }
 
 // ── Duplicate binding rejection (#161) ─────────────────────────────
@@ -2997,6 +3050,30 @@ fn eval_or_short_circuit() {
 }
 
 #[test]
+fn eval_and_short_circuit_inside_lambda() {
+    let src = r#"
+        fn main() -> Bool {
+            let f = fn() => false && 1 / 0 == 0
+            f()
+        }
+    "#;
+    let val = run_ok(src);
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_or_short_circuit_inside_lambda() {
+    let src = r#"
+        fn main() -> Bool {
+            let f = fn() => true || 1 / 0 == 0
+            f()
+        }
+    "#;
+    let val = run_ok(src);
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
 fn eval_or_with_comparisons() {
     let val = run_ok("fn main() -> Bool { 1 < 0 || 2 > 1 }");
     assert_eq!(val, Value::Bool(true));
@@ -3513,7 +3590,7 @@ fn eval_parse_int_overflow_fails() {
 #[test]
 fn eval_parse_float_basic() {
     let val = run_ok(r#"fn main() -> Float { parse_float("3.14") }"#);
-    assert_eq!(val, Value::Float(3.14));
+    assert_eq!(val, Value::Float(314.0 / 100.0));
 }
 
 #[test]
@@ -4136,4 +4213,895 @@ fn eval_list_sort_by_runtime_error() {
         }",
     );
     assert!(err.contains("division by zero"), "got: {err}");
+}
+
+// ── Index syntax tests ──────────────────────────────────────────────
+
+#[test]
+fn eval_index_list_basic() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 10), 20)
+            xs[0]
+        }",
+    );
+    assert!(matches!(val, Value::Int(10)));
+}
+
+#[test]
+fn eval_index_list_last() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 10), 20)
+            xs[1]
+        }",
+    );
+    assert!(matches!(val, Value::Int(20)));
+}
+
+#[test]
+fn eval_index_list_out_of_bounds() {
+    let err = run_err(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 10), 20)
+            xs[5]
+        }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
+}
+
+#[test]
+fn eval_index_list_negative() {
+    let err = run_err(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 10), 20)
+            xs[0 - 1]
+        }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
+}
+
+#[test]
+fn eval_index_list_empty() {
+    let err = run_err(
+        "fn main() -> Int {
+            let xs: List<Int> = list_new()
+            xs[0]
+        }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
+}
+
+#[test]
+fn eval_index_string_basic() {
+    let val = run_ok(
+        "fn main() -> Char {
+            \"hello\"[1]
+        }",
+    );
+    assert!(matches!(val, Value::Char('e')));
+}
+
+#[test]
+fn eval_index_string_first() {
+    let val = run_ok(
+        "fn main() -> Char {
+            \"hello\"[0]
+        }",
+    );
+    assert!(matches!(val, Value::Char('h')));
+}
+
+#[test]
+fn eval_index_string_last() {
+    let val = run_ok(
+        "fn main() -> Char {
+            \"hello\"[4]
+        }",
+    );
+    assert!(matches!(val, Value::Char('o')));
+}
+
+#[test]
+fn eval_index_string_out_of_bounds() {
+    let err = run_err(
+        "fn main() -> Char {
+            \"hello\"[10]
+        }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
+}
+
+#[test]
+fn eval_index_string_empty() {
+    let err = run_err(
+        "fn main() -> Char {
+            \"\"[0]
+        }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
+}
+
+#[test]
+fn eval_index_map_basic() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let m = map_insert(map_new(), \"a\", 42)
+            m[\"a\"]
+        }",
+    );
+    assert!(matches!(val, Value::Int(42)));
+}
+
+#[test]
+fn eval_index_map_missing_key() {
+    let err = run_err(
+        "fn main() -> Int {
+            let m = map_insert(map_new(), \"a\", 42)
+            m[\"b\"]
+        }",
+    );
+    assert!(err.contains("key not found"), "got: {err}");
+}
+
+#[test]
+fn eval_index_chained_list() {
+    // Nested list indexing: list of lists
+    let val = run_ok(
+        "fn main() -> Int {
+            let inner = list_push(list_push(list_new(), 10), 20)
+            let outer = list_push(list_new(), inner)
+            outer[0][1]
+        }",
+    );
+    assert!(matches!(val, Value::Int(20)));
+}
+
+#[test]
+fn eval_index_with_expression() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 10), 20), 30)
+            xs[1 + 1]
+        }",
+    );
+    assert!(matches!(val, Value::Int(30)));
+}
+
+#[test]
+fn eval_index_string_unicode() {
+    // Multi-byte Unicode chars: indexing by char position, not byte position
+    // "héllo" has 5 chars; 'é' is multi-byte in UTF-8 but still 1 char
+    let source = format!(
+        "fn main() -> Char {{
+            let s = \"{}\"
+            s[1]
+        }}",
+        "h\u{00e9}llo"
+    );
+    let val = run_ok(&source);
+    assert!(matches!(val, Value::Char('\u{00e9}')));
+}
+
+#[test]
+fn eval_index_list_then_field() {
+    // Index a list of records, then access a field
+    let val = run_ok(
+        "type Point = { x: Int, y: Int }
+        fn main() -> Int {
+            let p = Point { x: 3, y: 4 }
+            let xs = list_push(list_new(), p)
+            xs[0].x
+        }",
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_index_on_wrong_type() {
+    // Indexing an Int should be a compile error
+    assert!(check_has_compile_errors("fn main() -> Int { 42[0] }"));
+}
+
+// ── Method call syntax tests ────────────────────────────────────────
+
+// String methods
+#[test]
+fn eval_method_string_len() {
+    let val = run_ok(r#"fn main() -> Int { "hello".len() }"#);
+    assert!(matches!(val, Value::Int(5)));
+}
+
+#[test]
+fn eval_method_string_contains() {
+    let val = run_ok(r#"fn main() -> Bool { "hello world".contains("world") }"#);
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_method_string_trim() {
+    let val = run_ok(r#"fn main() -> String { "  hello  ".trim() }"#);
+    match val {
+        Value::String(s) => assert_eq!(s, "hello"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_method_string_to_upper() {
+    let val = run_ok(r#"fn main() -> String { "hello".to_upper() }"#);
+    match val {
+        Value::String(s) => assert_eq!(s, "HELLO"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_method_string_to_lower() {
+    let val = run_ok(r#"fn main() -> String { "HELLO".to_lower() }"#);
+    match val {
+        Value::String(s) => assert_eq!(s, "hello"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_method_string_starts_with() {
+    let val = run_ok(r#"fn main() -> Bool { "hello world".starts_with("hello") }"#);
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_method_string_ends_with() {
+    let val = run_ok(r#"fn main() -> Bool { "hello world".ends_with("world") }"#);
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_method_string_split() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let parts = "a,b,c".split(",")
+            list_len(parts)
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_method_string_lines() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let ls = "a\nb\nc".lines()
+            list_len(ls)
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_method_string_chars() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let cs = "hello".chars()
+            list_len(cs)
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(5)));
+}
+
+// List methods
+#[test]
+fn eval_method_list_len() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 1), 2)
+            xs.len()
+        }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_method_list_push() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_new(), 1)
+            let ys = xs.push(2)
+            ys.len()
+        }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_method_list_get() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 10), 20)
+            match xs.get(1) {
+                Some(v) => v
+                None => 0
+            }
+        }",
+    );
+    assert!(matches!(val, Value::Int(20)));
+}
+
+#[test]
+fn eval_method_list_is_empty() {
+    let val = run_ok(
+        "fn main() -> Bool {
+            let xs: List<Int> = list_new()
+            xs.is_empty()
+        }",
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_method_list_reverse() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 1), 2)
+            let ys = xs.reverse()
+            ys[0]
+        }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_method_list_map() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_new(), 1), 2)
+            let ys = xs.map(fn(x: Int) => x * 10)
+            ys[0]
+        }",
+    );
+    assert!(matches!(val, Value::Int(10)));
+}
+
+#[test]
+fn eval_method_list_filter() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
+            let ys = xs.filter(fn(x: Int) => x > 1)
+            ys.len()
+        }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_method_list_fold() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
+            xs.fold(0, fn(acc: Int, x: Int) => acc + x)
+        }",
+    );
+    assert!(matches!(val, Value::Int(6)));
+}
+
+#[test]
+fn eval_method_list_sort() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 3), 1), 2)
+            let sorted = xs.sort()
+            sorted[0]
+        }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_method_list_sort_by() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = list_push(list_push(list_push(list_new(), 3), 1), 2)
+            let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
+            sorted[2]
+        }",
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+// Map methods
+#[test]
+fn eval_method_map_insert_and_get() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let m = map_new()
+            let m2 = m.insert("a", 42)
+            match m2.get("a") {
+                Some(v) => v
+                None => 0
+            }
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(42)));
+}
+
+#[test]
+fn eval_method_map_contains() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            let m = map_insert(map_new(), "key", 1)
+            m.contains("key")
+        }"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_method_map_len() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let m = map_insert(map_insert(map_new(), "a", 1), "b", 2)
+            m.len()
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_method_map_keys() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let m = map_insert(map_new(), "a", 1)
+            let ks = m.keys()
+            list_len(ks)
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+// Conversion methods
+#[test]
+fn eval_method_int_to_string() {
+    let val = run_ok(r#"fn main() -> String { 42.to_string() }"#);
+    match val {
+        Value::String(s) => assert_eq!(s, "42"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_method_int_to_float() {
+    let val = run_ok("fn main() -> Float { 42.to_float() }");
+    match val {
+        Value::Float(f) => assert!((f - 42.0).abs() < f64::EPSILON),
+        other => panic!("expected Float, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_method_float_to_int() {
+    let val = run_ok("fn main() -> Int { 3.14.to_int() }");
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_method_char_to_string() {
+    let val = run_ok("fn main() -> String { 'a'.to_string() }");
+    match val {
+        Value::String(s) => assert_eq!(s, "a"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_method_int_abs() {
+    let val = run_ok("fn main() -> Int { (0 - 5).abs() }");
+    assert!(matches!(val, Value::Int(5)));
+}
+
+// Chaining
+#[test]
+fn eval_method_chaining_trim_len() {
+    let val = run_ok(r#"fn main() -> Int { "  hello  ".trim().len() }"#);
+    assert!(matches!(val, Value::Int(5)));
+}
+
+#[test]
+fn eval_method_chaining_push_push_len() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs: List<Int> = list_new()
+            xs.push(1).push(2).push(3).len()
+        }",
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_method_chaining_split_len() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            "a,b,c".split(",").len()
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+// Flat function still works alongside method syntax
+#[test]
+fn eval_method_flat_function_still_works() {
+    let val = run_ok(r#"fn main() -> Int { string_len("hello") }"#);
+    assert!(matches!(val, Value::Int(5)));
+}
+
+// Index + method chaining
+#[test]
+fn eval_method_index_then_method() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let xs = list_push(list_new(), "hello")
+            xs[0].len()
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(5)));
+}
+
+// ── User-defined method tests ───────────────────────────────────────
+
+#[test]
+fn eval_user_method_on_record() {
+    let val = run_ok(
+        r#"
+        type Point = { x: Int, y: Int }
+
+        fn Point.sum(self) -> Int {
+            self.x + self.y
+        }
+
+        fn main() -> Int {
+            let p = Point { x: 3, y: 4 }
+            p.sum()
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(7)));
+}
+
+#[test]
+fn eval_user_method_with_extra_args() {
+    let val = run_ok(
+        r#"
+        type Counter = { value: Int }
+
+        fn Counter.add(self, n: Int) -> Counter {
+            Counter { value: self.value + n }
+        }
+
+        fn main() -> Int {
+            let c = Counter { value: 10 }
+            let c2 = c.add(5)
+            c2.value
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(15)));
+}
+
+#[test]
+fn eval_user_method_chaining() {
+    let val = run_ok(
+        r#"
+        type Counter = { value: Int }
+
+        fn Counter.inc(self) -> Counter {
+            Counter { value: self.value + 1 }
+        }
+
+        fn main() -> Int {
+            let c = Counter { value: 0 }
+            c.inc().inc().inc().value
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_user_method_on_adt() {
+    let val = run_ok(
+        r#"
+        type Shape = | Circle(Int) | Rect(Int, Int)
+
+        fn Shape.area(self) -> Int {
+            match self {
+                Circle(r) => r * r * 3
+                Rect(w, h) => w * h
+            }
+        }
+
+        fn main() -> Int {
+            let s = Rect(4, 5)
+            s.area()
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(20)));
+}
+
+#[test]
+fn eval_user_method_field_and_method_coexist() {
+    // A record with a field named `x` and a method named `len`.
+    // Accessing `p.x` should be field access, `p.len()` should be method call.
+    let val = run_ok(
+        r#"
+        type Vec2 = { x: Int, y: Int }
+
+        fn Vec2.len(self) -> Int {
+            self.x + self.y
+        }
+
+        fn main() -> Int {
+            let v = Vec2 { x: 3, y: 4 }
+            v.x + v.len()
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(10)));
+}
+
+#[test]
+fn eval_user_method_returns_self_type() {
+    let val = run_ok(
+        r#"
+        type Pair = { a: Int, b: Int }
+
+        fn Pair.swap(self) -> Pair {
+            Pair { a: self.b, b: self.a }
+        }
+
+        fn main() -> Int {
+            let p = Pair { a: 1, b: 2 }
+            let swapped = p.swap()
+            swapped.a
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_user_method_multiple_methods_same_type() {
+    let val = run_ok(
+        r#"
+        type Box = { val: Int }
+
+        fn Box.get(self) -> Int {
+            self.val
+        }
+
+        fn Box.double(self) -> Box {
+            Box { val: self.val * 2 }
+        }
+
+        fn main() -> Int {
+            let b = Box { val: 5 }
+            b.double().get()
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(10)));
+}
+
+#[test]
+fn eval_user_method_with_self_and_typed_params() {
+    let val = run_ok(
+        r#"
+        type Acc = { total: Int }
+
+        fn Acc.add_all(self, a: Int, b: Int, c: Int) -> Acc {
+            Acc { total: self.total + a + b + c }
+        }
+
+        fn main() -> Int {
+            let acc = Acc { total: 0 }
+            acc.add_all(1, 2, 3).total
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(6)));
+}
+
+#[test]
+fn eval_user_method_and_free_fn_coexist() {
+    // A free function and a method with different names on the same type.
+    let val = run_ok(
+        r#"
+        type Num = { n: Int }
+
+        fn make_num(x: Int) -> Num {
+            Num { n: x }
+        }
+
+        fn Num.value(self) -> Int {
+            self.n
+        }
+
+        fn main() -> Int {
+            let x = make_num(42)
+            x.value()
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(42)));
+}
+
+#[test]
+fn eval_user_method_self_explicit_type_annotation() {
+    // User can also write `self: Point` explicitly.
+    let val = run_ok(
+        r#"
+        type Point = { x: Int, y: Int }
+
+        fn Point.sum(self: Point) -> Int {
+            self.x + self.y
+        }
+
+        fn main() -> Int {
+            let p = Point { x: 10, y: 20 }
+            p.sum()
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(30)));
+}
+
+#[test]
+fn eval_user_method_on_adt_circle() {
+    let val = run_ok(
+        r#"
+        type Shape = | Circle(Int) | Rect(Int, Int)
+
+        fn Shape.describe(self) -> String {
+            match self {
+                Circle(_) => "circle"
+                Rect(_, _) => "rect"
+            }
+        }
+
+        fn main() -> String {
+            let s = Circle(5)
+            s.describe()
+        }
+        "#,
+    );
+    assert_eq!(val, Value::String("circle".into()));
+}
+
+#[test]
+fn eval_user_method_using_other_methods() {
+    // Method that calls another method on the same type.
+    let val = run_ok(
+        r#"
+        type Wrapper = { inner: Int }
+
+        fn Wrapper.get(self) -> Int {
+            self.inner
+        }
+
+        fn Wrapper.get_plus(self, n: Int) -> Int {
+            self.get() + n
+        }
+
+        fn main() -> Int {
+            let w = Wrapper { inner: 10 }
+            w.get_plus(5)
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(15)));
+}
+
+// ── Chaining edge cases ────────────────────────────────────────
+
+#[test]
+fn eval_index_then_method() {
+    // xs[0].len() — index into a list of strings, then call method
+    let val = run_ok(
+        r#"
+        fn main() -> Int {
+            let xs = list_push(list_push(list_new(), "hello"), "world")
+            xs[0].len()
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(5)));
+}
+
+#[test]
+fn eval_method_then_index() {
+    // "hello".chars()[1] — method returning list, then index
+    let val = run_ok(
+        r#"
+        fn main() -> Char {
+            "hello".chars()[1]
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Char('e')));
+}
+
+#[test]
+fn eval_method_chain_then_index() {
+    // "a,b,c".split(",")[2] — method returning list, then index
+    let val = run_ok(
+        r#"
+        fn main() -> String {
+            "a,b,c".split(",")[2]
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::String(s) if s == "c"));
+}
+
+#[test]
+fn eval_index_then_field() {
+    // xs[0].x — index into list of records, then field access
+    let val = run_ok(
+        r#"
+        type Point = { x: Int, y: Int }
+        fn main() -> Int {
+            let xs = list_push(list_new(), Point { x: 42, y: 7 })
+            xs[0].x
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(42)));
+}
+
+#[test]
+fn eval_no_method_on_int() {
+    // 42.len() should produce a type error about no method
+    let err = run_err(
+        r#"
+        fn main() -> Int {
+            42.len()
+        }
+        "#,
+    );
+    assert!(
+        err.contains("no method"),
+        "expected 'no method' error, got: {err}"
+    );
+}
+
+#[test]
+fn eval_no_method_on_string() {
+    // "hello".nonexistent() should produce a method error
+    let err = run_err(
+        r#"
+        fn main() -> Int {
+            "hello".nonexistent()
+        }
+        "#,
+    );
+    assert!(
+        err.contains("no method"),
+        "expected 'no method' error, got: {err}"
+    );
+}
+
+#[test]
+fn eval_flat_fn_and_method_both_work() {
+    // string_len("hello") and "hello".len() both return 5
+    let val = run_ok(
+        r#"
+        fn main() -> Int {
+            let a = string_len("hello")
+            let b = "hello".len()
+            a + b
+        }
+        "#,
+    );
+    assert!(matches!(val, Value::Int(10)));
 }

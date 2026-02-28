@@ -40,6 +40,13 @@ impl<'a> LoweringCtx<'a> {
                 let bv = self.lower_expr(base);
                 self.builder.push_field_get(bv, field, ty)
             }
+            Expr::Index { base, index } => {
+                let _bv = self.lower_expr(base);
+                let _iv = self.lower_expr(index);
+                // TODO: lower to proper index instruction when KIR supports it
+                let id = self.next_hole_id();
+                self.builder.push_hole(id, vec![], ty)
+            }
             Expr::If {
                 condition,
                 then_branch,

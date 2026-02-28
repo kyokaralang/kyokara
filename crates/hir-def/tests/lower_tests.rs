@@ -754,7 +754,7 @@ fn collect_property_with_where() {
     assert_eq!(result.tree.properties.len(), 1);
     // Property should also generate a synthetic FnItem for type-checking.
     assert!(
-        result.tree.functions.len() >= 1,
+        !result.tree.functions.is_empty(),
         "property should generate a synthetic function"
     );
 }

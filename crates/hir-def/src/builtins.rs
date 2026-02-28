@@ -177,6 +177,86 @@ pub fn register_builtin_intrinsics(
     }
 }
 
+/// Register built-in methods that map existing intrinsics to method-call syntax.
+///
+/// For example, `string_len` becomes callable as `s.len()` by registering
+/// `("String", "len") → FnItemIdx` in `scope.methods`.
+///
+/// Also populates `scope.well_known_names` with cached primitive type names.
+pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner) {
+    use crate::resolver::WellKnownNames;
+
+    // Cache well-known type names for method resolution in type inference.
+    scope.well_known_names = WellKnownNames {
+        string: Some(Name::new(interner, "String")),
+        int: Some(Name::new(interner, "Int")),
+        float: Some(Name::new(interner, "Float")),
+        bool_: Some(Name::new(interner, "Bool")),
+        char_: Some(Name::new(interner, "Char")),
+        list: Some(Name::new(interner, "List")),
+        map: Some(Name::new(interner, "Map")),
+    };
+
+    // (intrinsic_fn_name, receiver_type_name, method_name)
+    let mappings: &[(&str, &str, &str)] = &[
+        // String methods
+        ("string_len", "String", "len"),
+        ("string_contains", "String", "contains"),
+        ("string_starts_with", "String", "starts_with"),
+        ("string_ends_with", "String", "ends_with"),
+        ("string_trim", "String", "trim"),
+        ("string_split", "String", "split"),
+        ("string_substring", "String", "substring"),
+        ("string_to_upper", "String", "to_upper"),
+        ("string_to_lower", "String", "to_lower"),
+        ("string_concat", "String", "concat"),
+        ("string_lines", "String", "lines"),
+        ("string_chars", "String", "chars"),
+        // List methods
+        ("list_push", "List", "push"),
+        ("list_len", "List", "len"),
+        ("list_get", "List", "get"),
+        ("list_head", "List", "head"),
+        ("list_tail", "List", "tail"),
+        ("list_is_empty", "List", "is_empty"),
+        ("list_reverse", "List", "reverse"),
+        ("list_concat", "List", "concat"),
+        ("list_map", "List", "map"),
+        ("list_filter", "List", "filter"),
+        ("list_fold", "List", "fold"),
+        ("list_sort", "List", "sort"),
+        ("list_sort_by", "List", "sort_by"),
+        // Map methods
+        ("map_insert", "Map", "insert"),
+        ("map_get", "Map", "get"),
+        ("map_contains", "Map", "contains"),
+        ("map_remove", "Map", "remove"),
+        ("map_len", "Map", "len"),
+        ("map_keys", "Map", "keys"),
+        ("map_values", "Map", "values"),
+        ("map_is_empty", "Map", "is_empty"),
+        // Int methods
+        ("int_to_string", "Int", "to_string"),
+        ("int_to_float", "Int", "to_float"),
+        ("abs", "Int", "abs"),
+        // Float methods
+        ("float_to_int", "Float", "to_int"),
+        ("float_abs", "Float", "abs"),
+        // Char methods
+        ("char_to_string", "Char", "to_string"),
+    ];
+
+    for &(intrinsic_name, type_name, method_name) in mappings {
+        let intr_name = Name::new(interner, intrinsic_name);
+        let ty_name = Name::new(interner, type_name);
+        let meth_name = Name::new(interner, method_name);
+
+        if let Some(&fn_idx) = scope.functions.get(&intr_name) {
+            scope.methods.insert((ty_name, meth_name), fn_idx);
+        }
+    }
+}
+
 /// Helper to build a simple intrinsic FnItem.
 fn mk_intrinsic(
     interner: &mut Interner,
@@ -205,6 +285,7 @@ fn mk_intrinsic(
             pipe_caps: Vec::new(),
             has_body: false,
             source_range: None,
+            receiver_type: None,
         },
     )
 }

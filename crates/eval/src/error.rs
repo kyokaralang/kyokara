@@ -40,6 +40,17 @@ pub enum RuntimeError {
         function: String,
     },
 
+    #[error(
+        "unsupported manifest constraint: {capability}.{field} (fine-grained constraints are not enforced yet)"
+    )]
+    UnsupportedManifestConstraint { capability: String, field: String },
+
     #[error("integer overflow")]
     IntegerOverflow,
+
+    #[error("index out of bounds: index {index}, length {len}")]
+    IndexOutOfBounds { index: i64, len: i64 },
+
+    #[error("key not found in map")]
+    KeyNotFound,
 }

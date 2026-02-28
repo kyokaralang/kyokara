@@ -30,6 +30,8 @@ pub enum Value {
     },
     Record {
         fields: Vec<(Name, Value)>,
+        /// Optional type index for named record types (used for method resolution).
+        type_idx: Option<TypeItemIdx>,
     },
     List(Vec<Value>),
     Map(Vec<(Value, Value)>),
@@ -76,7 +78,7 @@ impl PartialEq for Value {
                     fields: f2,
                 },
             ) => t1 == t2 && v1 == v2 && f1 == f2,
-            (Value::Record { fields: f1 }, Value::Record { fields: f2 }) => f1 == f2,
+            (Value::Record { fields: f1, .. }, Value::Record { fields: f2, .. }) => f1 == f2,
             (Value::List(a), Value::List(b)) => a == b,
             (Value::Map(a), Value::Map(b)) => a == b,
             // Functions are never equal.
@@ -107,7 +109,7 @@ impl Value {
                     format!("<variant {variant}>({})", fs.join(", "))
                 }
             }
-            Value::Record { fields } => {
+            Value::Record { fields, .. } => {
                 let fs: Vec<String> = fields
                     .iter()
                     .map(|(n, v)| format!("{}: {}", n.resolve(interner), v.display(interner)))

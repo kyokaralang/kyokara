@@ -28,6 +28,10 @@ fn fetch_rate(base: Currency, quote: Currency) -> Result[Float, HttpError] with 
 
 A pure function has no `with` clause. It *cannot* do I/O. This isn't a convention — it's a compiler guarantee.
 
+Current runtime scope:
+- Manifest checks are enforced for capability presence (`IO` intrinsics + user `with Cap` functions).
+- Fine-grained manifest fields (`allow_domains`, `allow_tables`, `allow_keys`) are fail-closed right now: if any are present, execution is rejected until resource-aware host operations are implemented.
+
 ### 2. Deterministic Replay
 
 Every effectful execution produces a replay log. The runtime executes effects through a single handler interface that records each request and response. Run the same log back and get identical behavior.
@@ -259,6 +263,30 @@ cargo run -p kyokara-cli -- test <file.ky>
 # PBT: JSON output
 cargo run -p kyokara-cli -- test <file.ky> --explore --format json
 ```
+
+## Token Metrics
+
+Kyokara includes a repo-token utility for AI-context budgeting:
+
+```sh
+# Full tracked repo tokens (current worktree)
+python3 tools/repo_tokens.py
+
+# Rust-only tokens (all tracked .rs files)
+python3 tools/repo_tokens.py --include '**/*.rs'
+
+# Compare against main without checkout
+python3 tools/repo_tokens.py --rev origin/main
+
+# Show top 20 token-heavy files
+python3 tools/repo_tokens.py --top 20
+```
+
+The tool uses `tiktoken` with `cl100k_base` by default.  
+If needed: `python3 -m pip install --user tiktoken`
+
+See [`docs/token-metrics.md`](docs/token-metrics.md) for workflow details.
+Latest cleanup report: [`docs/test-harness-token-report-2026-02-28.md`](docs/test-harness-token-report-2026-02-28.md).
 
 ## License
 

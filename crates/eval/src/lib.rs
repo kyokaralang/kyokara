@@ -12,7 +12,7 @@ pub mod value;
 
 use kyokara_hir::{
     ModulePath, check_module, check_project, collect_item_tree, register_builtin_intrinsics,
-    register_builtin_types,
+    register_builtin_methods, register_builtin_types,
 };
 use kyokara_intern::Interner;
 use kyokara_span::FileId;
@@ -77,6 +77,16 @@ impl CompileGateErrors {
     }
 }
 
+fn validate_manifest_constraints(manifest: &CapabilityManifest) -> Result<(), RuntimeError> {
+    if let Some((capability, field)) = manifest.first_unsupported_constraint() {
+        return Err(RuntimeError::UnsupportedManifestConstraint {
+            capability,
+            field: field.to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Result of running a Kyokara program.
 pub struct RunResult {
     pub value: Value,
@@ -102,6 +112,10 @@ pub fn run_with_manifest(
     source: &str,
     manifest: Option<CapabilityManifest>,
 ) -> Result<RunResult, RuntimeError> {
+    if let Some(ref m) = manifest {
+        validate_manifest_constraints(m)?;
+    }
+
     let file_id = FileId(0);
 
     // 1. Parse.
@@ -128,6 +142,7 @@ pub fn run_with_manifest(
         &mut item_result.module_scope,
         &mut interner,
     );
+    register_builtin_methods(&mut item_result.module_scope, &mut interner);
 
     // 6. Type-check.
     let type_check = check_module(
@@ -181,6 +196,10 @@ pub fn run_project_with_manifest(
     entry_file: &std::path::Path,
     manifest: Option<CapabilityManifest>,
 ) -> Result<RunResult, RuntimeError> {
+    if let Some(ref m) = manifest {
+        validate_manifest_constraints(m)?;
+    }
+
     let mut project = check_project(entry_file);
 
     if let Some(err) = collect_project_compile_errors(&project).into_runtime_error() {
@@ -200,6 +219,7 @@ pub fn run_project_with_manifest(
         &mut entry_info.scope,
         &mut project.interner,
     );
+    register_builtin_methods(&mut entry_info.scope, &mut project.interner);
 
     // Collect fn bodies: start with the entry module's type check.
     let entry_tc = project

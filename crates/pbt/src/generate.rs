@@ -384,6 +384,7 @@ fn gen_record(
     }
     GenResult::Ok(Value::Record {
         fields: result_fields,
+        type_idx: None,
     })
 }
 

@@ -178,6 +178,45 @@ impl FnDef {
     pub fn invariant_clause(&self) -> Option<InvariantClause> {
         support::child(&self.syntax)
     }
+
+    /// For method definitions (`fn Type.method(...)`), returns the receiver
+    /// type name token (`Type`). Returns `None` for regular function defs.
+    pub fn receiver_type_token(&self) -> Option<SyntaxToken> {
+        // A method has a Dot token directly inside FnDef (not in a child node).
+        let has_dot = self
+            .syntax
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .any(|tok| tok.kind() == SyntaxKind::Dot);
+        if !has_dot {
+            return None;
+        }
+        // The first Ident token is the receiver type name.
+        self.syntax
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .find(|tok| tok.kind() == SyntaxKind::Ident)
+    }
+
+    /// For method definitions (`fn Type.method(...)`), returns the method
+    /// name token. Returns `None` for regular function defs.
+    pub fn method_name_token(&self) -> Option<SyntaxToken> {
+        // Only valid for method defs (those with a Dot token).
+        let has_dot = self
+            .syntax
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .any(|tok| tok.kind() == SyntaxKind::Dot);
+        if !has_dot {
+            return None;
+        }
+        // The second Ident token (after the dot) is the method name.
+        self.syntax
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .filter(|tok| tok.kind() == SyntaxKind::Ident)
+            .nth(1)
+    }
 }
 
 define_ast_node!(CapDef, CapDef);
@@ -458,6 +497,7 @@ pub enum Expr {
     Unary(UnaryExpr),
     Call(CallExpr),
     Field(FieldExpr),
+    Index(IndexExpr),
     Pipeline(PipelineExpr),
     Propagate(PropagateExpr),
     Match(MatchExpr),
@@ -480,6 +520,7 @@ impl Expr {
             SyntaxKind::UnaryExpr => UnaryExpr::cast(node).map(Expr::Unary),
             SyntaxKind::CallExpr => CallExpr::cast(node).map(Expr::Call),
             SyntaxKind::FieldExpr => FieldExpr::cast(node).map(Expr::Field),
+            SyntaxKind::IndexExpr => IndexExpr::cast(node).map(Expr::Index),
             SyntaxKind::PipelineExpr => PipelineExpr::cast(node).map(Expr::Pipeline),
             SyntaxKind::PropagateExpr => PropagateExpr::cast(node).map(Expr::Propagate),
             SyntaxKind::MatchExpr => MatchExpr::cast(node).map(Expr::Match),
@@ -503,6 +544,7 @@ impl Expr {
             Expr::Unary(n) => n.syntax(),
             Expr::Call(n) => n.syntax(),
             Expr::Field(n) => n.syntax(),
+            Expr::Index(n) => n.syntax(),
             Expr::Pipeline(n) => n.syntax(),
             Expr::Propagate(n) => n.syntax(),
             Expr::Match(n) => n.syntax(),
@@ -552,29 +594,7 @@ impl BinaryExpr {
         self.syntax
             .children_with_tokens()
             .filter_map(|it| it.into_token())
-            .find(|tok| {
-                matches!(
-                    tok.kind(),
-                    SyntaxKind::Plus
-                        | SyntaxKind::Minus
-                        | SyntaxKind::Star
-                        | SyntaxKind::Slash
-                        | SyntaxKind::Percent
-                        | SyntaxKind::EqEq
-                        | SyntaxKind::BangEq
-                        | SyntaxKind::Lt
-                        | SyntaxKind::Gt
-                        | SyntaxKind::LtEq
-                        | SyntaxKind::GtEq
-                        | SyntaxKind::Amp
-                        | SyntaxKind::Pipe
-                        | SyntaxKind::Caret
-                        | SyntaxKind::LtLt
-                        | SyntaxKind::GtGt
-                        | SyntaxKind::AmpAmp
-                        | SyntaxKind::PipePipe
-                )
-            })
+            .find(|tok| tok.kind().is_binary_operator())
     }
 }
 
@@ -589,12 +609,7 @@ impl UnaryExpr {
         self.syntax
             .children_with_tokens()
             .filter_map(|it| it.into_token())
-            .find(|tok| {
-                matches!(
-                    tok.kind(),
-                    SyntaxKind::Bang | SyntaxKind::Minus | SyntaxKind::Tilde
-                )
-            })
+            .find(|tok| tok.kind().is_unary_prefix_operator())
     }
 }
 
@@ -648,6 +663,18 @@ impl FieldExpr {
             .filter_map(|it| it.into_token())
             .filter(|tok| tok.kind() == SyntaxKind::Ident)
             .last()
+    }
+}
+
+define_ast_node!(IndexExpr, IndexExpr);
+
+impl IndexExpr {
+    pub fn base(&self) -> Option<Expr> {
+        self.syntax.children().find_map(Expr::cast)
+    }
+
+    pub fn index(&self) -> Option<Expr> {
+        self.syntax.children().filter_map(Expr::cast).nth(1)
     }
 }
 

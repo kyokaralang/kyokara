@@ -433,7 +433,8 @@ Runtime enforces capabilities via a JSON manifest loaded with `--caps`:
 * `kyokara run program.ky --caps caps.json`
 * deny-by-default: when a manifest is present, only listed capabilities are allowed
 * no manifest = allow-all (backward compatible)
-* optional fine-grained allowlists (domains, tables, secret names) parsed but not yet enforced
+* optional fine-grained allowlists (`allow_domains`, `allow_tables`, `allow_keys`) are parsed and validated fail-closed
+* if a manifest contains those fine-grained fields, runtime returns a structured error (`UnsupportedManifestConstraint`) until resource-aware enforcement is implemented
 
 Enforcement points:
 * **Intrinsic I/O** — `print` and `println` require the `"IO"` capability
@@ -454,7 +455,7 @@ Example manifest:
 }
 ```
 
-Implementation: `CapabilityManifest` and `CapabilityGrant` types in `kyokara-eval::manifest`, loaded via `run_with_manifest()` and `run_project_with_manifest()`. The `Interpreter` checks capabilities before dispatching intrinsics and before entering user functions with `with_caps` annotations.
+Implementation: `CapabilityManifest` and `CapabilityGrant` types in `kyokara-eval::manifest`, loaded via `run_with_manifest()` and `run_project_with_manifest()`. Entry points validate unsupported fine-grained constraints before execution, and the `Interpreter` checks capabilities before dispatching intrinsics and before entering user functions with `with_caps` annotations.
 
 ### 8.2 Deterministic replay
 
@@ -569,7 +570,7 @@ injected as synthetic types before type-checking.
 * Refactor engine: rename symbol (single-file + multi-file), add missing match cases, add missing capability annotation ✓ — CST-based, post-refactor verification, structured TextEdit patches
 * Refactor transactions: atomic refactor operations with in-memory re-check ✓ — `transact()` / `transact_project()` apply edits, re-run the type checker, and return `VerificationStatus` (Verified / Failed / Skipped). CLI gates `--apply` on verification passing; `--force` bypasses. API returns `"typechecked"` / `"failed"` / `"skipped"` status with structured verification diagnostics (message, code, span). Quickfix actions accept `--target-file` to disambiguate which module an offset refers to in project mode. CLI auto-detects project mode for `main.ky` with sibling `.ky` files; `--project` flag forces project mode for other entry files.
 * LSP server: salsa incrementality, diagnostics, hover, go-to-definition, find references, completion, code actions (quickfixes), formatting ✓
-* Capability enforcement: type-level checking (E0011) ✓ + runtime manifest enforcement (`--caps`, deny-by-default) ✓
+* Capability enforcement: type-level checking (E0011) ✓ + runtime manifest enforcement (`--caps`, deny-by-default) ✓ (fine-grained fields currently fail closed with `UnsupportedManifestConstraint`)
 
 **v0.3 — Verification + Codegen + Replay**
 * Property-based test harness ✓ (`pbt` crate: choice-sequence engine, type-driven generators with `Gen.*` specs and `<-` bindings, 4-pass shrinker, corpus persistence, `where`-constrained generation via discard budgets; `kyokara test <file> --explore` discovers contract functions and explicit `property` declarations, generates random inputs, checks contracts/properties, shrinks counterexamples)

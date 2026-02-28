@@ -147,13 +147,19 @@ fn variant_field_list(p: &mut Parser<'_>) {
 // ── Function Definition ─────────────────────────────────────────────
 
 /// `pub? fn Ident TypeParamList? ParamList ReturnType? FnContract? BlockExpr`
+/// or method: `pub? fn Ident '.' Ident TypeParamList? ParamList ReturnType? FnContract? BlockExpr`
 pub(super) fn fn_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
     let m = p.open();
     if is_pub {
         p.bump(); // pub
     }
     p.bump(); // fn
-    p.expect(Ident);
+    p.expect(Ident); // function name, or receiver type name for methods
+    // Method syntax: fn Type.method(...)
+    if p.at(Dot) {
+        p.bump(); // .
+        p.expect(Ident); // method name
+    }
     if p.at(Lt) {
         type_param_list(p);
     }
@@ -187,8 +193,11 @@ fn param_list(p: &mut Parser<'_>) {
 fn param(p: &mut Parser<'_>) {
     let m = p.open();
     p.expect(Ident);
-    p.expect(Colon);
-    super::types::type_expr(p);
+    // The `: Type` part is optional to support bare `self` in method defs.
+    // Semantic validation ensures only `self` can omit the type annotation.
+    if p.eat(Colon) {
+        super::types::type_expr(p);
+    }
     m.complete(p, Param);
 }
 
