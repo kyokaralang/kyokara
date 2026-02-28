@@ -197,6 +197,7 @@ impl LanguageServer for KyokaraLanguageServer {
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let uri = params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
+        let include_declaration = params.context.include_declaration;
 
         let sources = self.sources.read().await;
         let analyses = self.analyses.read().await;
@@ -211,7 +212,13 @@ impl LanguageServer for KyokaraLanguageServer {
             return Ok(None);
         };
 
-        let refs = crate::references::find_references(analysis, source, offset, &uri);
+        let refs = crate::references::find_references_with_options(
+            analysis,
+            source,
+            offset,
+            &uri,
+            include_declaration,
+        );
         if refs.is_empty() {
             Ok(None)
         } else {
@@ -340,6 +347,59 @@ mod tests {
             .await
             .expect("request call should succeed")
             .expect("request should produce a response")
+    }
+
+    fn reference_start_positions(resp: &Response) -> Vec<(u64, u64)> {
+        let Some(result) = resp.result() else {
+            return Vec::new();
+        };
+        let Some(items) = result.as_array() else {
+            return Vec::new();
+        };
+
+        items
+            .iter()
+            .filter_map(|loc| {
+                let start = loc.get("range")?.get("start")?;
+                Some((
+                    start.get("line")?.as_u64()?,
+                    start.get("character")?.as_u64()?,
+                ))
+            })
+            .collect()
+    }
+
+    fn hover_markup(resp: &Response) -> Option<String> {
+        let result = resp.result()?;
+        if result.is_null() {
+            return None;
+        }
+        result
+            .get("contents")
+            .and_then(|v| v.get("value"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    }
+
+    fn completion_labels(resp: &Response) -> Vec<String> {
+        let Some(result) = resp.result() else {
+            return Vec::new();
+        };
+        if result.is_null() {
+            return Vec::new();
+        }
+
+        result
+            .get("items")
+            .and_then(Value::as_array)
+            .or_else(|| result.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| item.get("label").and_then(Value::as_str))
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -567,6 +627,235 @@ mod tests {
         assert!(
             completion_after_close.result().is_some_and(Value::is_null),
             "closed document should return null completion: {completion_after_close:?}"
+        );
+
+        drain.abort();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn references_respect_include_declaration_flag() {
+        let (mut service, mut socket) = LspService::new(KyokaraLanguageServer::new);
+        let drain = tokio::spawn(async move { while socket.next().await.is_some() {} });
+
+        initialize(&mut service).await;
+
+        let uri = "file:///test.ky";
+        let source = "fn foo() -> Int { 42 }\nfn bar() -> Int { foo() }\n";
+
+        call_notification(
+            &mut service,
+            "textDocument/didOpen",
+            json!({
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": "kyokara",
+                    "version": 1,
+                    "text": source
+                }
+            }),
+        )
+        .await;
+
+        let refs_with_decl = call_request(
+            &mut service,
+            "textDocument/references",
+            20,
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": 21 },
+                "context": { "includeDeclaration": true }
+            }),
+        )
+        .await;
+        assert!(
+            refs_with_decl.is_ok(),
+            "references request should succeed: {refs_with_decl:?}"
+        );
+        let with_decl_positions = reference_start_positions(&refs_with_decl);
+        assert_eq!(
+            with_decl_positions.len(),
+            2,
+            "expected definition + call when includeDeclaration=true, got: {with_decl_positions:?}"
+        );
+        assert!(
+            with_decl_positions.contains(&(0, 3)),
+            "definition position should be included, got: {with_decl_positions:?}"
+        );
+
+        let refs_without_decl = call_request(
+            &mut service,
+            "textDocument/references",
+            21,
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": 21 },
+                "context": { "includeDeclaration": false }
+            }),
+        )
+        .await;
+        assert!(
+            refs_without_decl.is_ok(),
+            "references request should succeed: {refs_without_decl:?}"
+        );
+        let without_decl_positions = reference_start_positions(&refs_without_decl);
+        assert_eq!(
+            without_decl_positions.len(),
+            1,
+            "expected only usage when includeDeclaration=false, got: {without_decl_positions:?}"
+        );
+        assert!(
+            !without_decl_positions.contains(&(0, 3)),
+            "definition position should be excluded, got: {without_decl_positions:?}"
+        );
+
+        drain.abort();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn lifecycle_did_change_recomputes_analysis() {
+        let (mut service, mut socket) = LspService::new(KyokaraLanguageServer::new);
+        let drain = tokio::spawn(async move { while socket.next().await.is_some() {} });
+
+        initialize(&mut service).await;
+
+        let uri = "file:///test.ky";
+        let source_v1 = "fn foo() -> Int { 1 }\nfn main() -> Int { foo() }\n";
+        let source_v2 = "fn baz() -> Int { 2 }\nfn main() -> Int { baz() }\n";
+
+        call_notification(
+            &mut service,
+            "textDocument/didOpen",
+            json!({
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": "kyokara",
+                    "version": 1,
+                    "text": source_v1
+                }
+            }),
+        )
+        .await;
+
+        let hover_before = call_request(
+            &mut service,
+            "textDocument/hover",
+            30,
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": 19 }
+            }),
+        )
+        .await;
+        assert!(hover_before.is_ok(), "hover should succeed before change");
+        let before_text = hover_markup(&hover_before).expect("expected hover before change");
+        assert!(
+            before_text.contains("fn foo"),
+            "expected hover for foo before change, got: {before_text}"
+        );
+
+        call_notification(
+            &mut service,
+            "textDocument/didChange",
+            json!({
+                "textDocument": { "uri": uri, "version": 2 },
+                "contentChanges": [{ "text": source_v2 }]
+            }),
+        )
+        .await;
+
+        let hover_after = call_request(
+            &mut service,
+            "textDocument/hover",
+            31,
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": 19 }
+            }),
+        )
+        .await;
+        assert!(hover_after.is_ok(), "hover should succeed after change");
+        let after_text = hover_markup(&hover_after).expect("expected hover after change");
+        assert!(
+            after_text.contains("fn baz"),
+            "expected hover for baz after change, got: {after_text}"
+        );
+
+        drain.abort();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn lifecycle_did_save_with_text_recomputes_analysis() {
+        let (mut service, mut socket) = LspService::new(KyokaraLanguageServer::new);
+        let drain = tokio::spawn(async move { while socket.next().await.is_some() {} });
+
+        initialize(&mut service).await;
+
+        let uri = "file:///test.ky";
+        let source_v1 = "fn foo() -> Int { 1 }\n";
+        let source_v2 = "fn foo() -> Int { 1 }\nfn baz() -> Int { 2 }\n";
+
+        call_notification(
+            &mut service,
+            "textDocument/didOpen",
+            json!({
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": "kyokara",
+                    "version": 1,
+                    "text": source_v1
+                }
+            }),
+        )
+        .await;
+
+        let completion_before = call_request(
+            &mut service,
+            "textDocument/completion",
+            40,
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 0, "character": 0 }
+            }),
+        )
+        .await;
+        assert!(
+            completion_before.is_ok(),
+            "completion should succeed before save"
+        );
+        let labels_before = completion_labels(&completion_before);
+        assert!(
+            !labels_before.iter().any(|l| l == "baz"),
+            "baz should not exist before save, got labels: {labels_before:?}"
+        );
+
+        call_notification(
+            &mut service,
+            "textDocument/didSave",
+            json!({
+                "textDocument": { "uri": uri },
+                "text": source_v2
+            }),
+        )
+        .await;
+
+        let completion_after = call_request(
+            &mut service,
+            "textDocument/completion",
+            41,
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": 0 }
+            }),
+        )
+        .await;
+        assert!(
+            completion_after.is_ok(),
+            "completion should succeed after save"
+        );
+        let labels_after = completion_labels(&completion_after);
+        assert!(
+            labels_after.iter().any(|l| l == "baz"),
+            "baz should appear after save with new text, got labels: {labels_after:?}"
         );
 
         drain.abort();

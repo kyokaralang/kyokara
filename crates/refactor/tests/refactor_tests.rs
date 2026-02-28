@@ -962,6 +962,59 @@ fn transact_skipped_when_forced() {
     assert_eq!(tx.patched_sources.len(), 1);
 }
 
+#[test]
+fn transact_project_skipped_when_forced() {
+    let dir = std::env::temp_dir().join("kyokara_tx_test_multifile_force");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let main_path = dir.join("main.ky");
+    let math_path = dir.join("math.ky");
+
+    std::fs::write(
+        &main_path,
+        "import math\nfn main() -> Int {\n    let x = add(10, 20)\n    x\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &math_path,
+        "pub fn add(x: Int, y: Int) -> Int {\n    x + y\n}\n",
+    )
+    .unwrap();
+
+    let result = kyokara_hir::check_project(&main_path);
+    let action = RefactorAction::RenameSymbol {
+        old_name: "add".into(),
+        new_name: "sum".into(),
+        kind: SymbolKind::Function,
+        target_file: None,
+    };
+    let tx =
+        kyokara_refactor::transaction::transact_project_force(&main_path, &result, action).unwrap();
+
+    assert!(
+        matches!(tx.verification, VerificationStatus::Skipped),
+        "expected Skipped, got {:?}",
+        tx.verification
+    );
+    assert!(
+        !tx.patched_sources.is_empty(),
+        "expected patched sources in project force mode"
+    );
+    let combined = tx
+        .patched_sources
+        .iter()
+        .map(|(_, src)| src.as_str())
+        .collect::<Vec<_>>()
+        .join("\n---\n");
+    assert!(
+        combined.contains("sum(10, 20)"),
+        "expected patched call site in force mode, got: {combined}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ── IoError variant tests ──────────────────────────────────────────
 
 #[test]
