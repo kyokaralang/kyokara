@@ -330,24 +330,81 @@ impl ItemTreeCtx<'_> {
     fn lower_property_def(&mut self, p: &PropertyDef) {
         let name = self.name_of(p);
 
-        let params: Vec<FnParam> = p
-            .param_list()
-            .map(|pl| {
-                pl.params()
-                    .map(|param| {
-                        let pname = param
+        let mut params: Vec<FnParam> = Vec::new();
+        let mut refine_fns: Vec<Option<FnItemIdx>> = Vec::new();
+        let bool_path = Path {
+            segments: vec![Name::new(self.interner, "Bool")],
+        };
+
+        if let Some(pl) = p.param_list() {
+            for param in pl.params() {
+                let pname = param
+                    .name_token()
+                    .map(|tok| Name::new(self.interner, tok.text()))
+                    .unwrap_or_else(|| Name::new(self.interner, "_"));
+
+                match param.type_expr() {
+                    Some(TypeExpr::RefinedType(rt)) => {
+                        // Extract base type from the refined type.
+                        let base_ty = rt
+                            .base_type()
+                            .map(|bt| self.lower_type_ref(&bt))
+                            .unwrap_or(TypeRef::Error);
+
+                        params.push(FnParam {
+                            name: pname,
+                            ty: base_ty.clone(),
+                        });
+
+                        // Create a synthetic FnItem for the predicate checker:
+                        // one param of the base type, returns Bool.
+                        let refine_name = rt
                             .name_token()
                             .map(|tok| Name::new(self.interner, tok.text()))
-                            .unwrap_or_else(|| Name::new(self.interner, "_"));
-                        let ty = param
-                            .type_expr()
-                            .map(|t| self.lower_type_ref(&t))
-                            .unwrap_or(TypeRef::Error);
-                        FnParam { name: pname, ty }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+                            .unwrap_or(pname);
+
+                        let refine_fn_idx = self.tree.functions.alloc(FnItem {
+                            name: Name::new(
+                                self.interner,
+                                &format!(
+                                    "__refine_{}_{}",
+                                    name.resolve(self.interner),
+                                    pname.resolve(self.interner)
+                                ),
+                            ),
+                            is_pub: false,
+                            type_params: vec![],
+                            params: vec![FnParam {
+                                name: refine_name,
+                                ty: base_ty,
+                            }],
+                            ret_type: Some(TypeRef::Path {
+                                path: bool_path.clone(),
+                                args: vec![],
+                            }),
+                            with_caps: vec![],
+                            pipe_caps: vec![],
+                            has_body: true,
+                            source_range: Some(rt.syntax().text_range()),
+                        });
+
+                        refine_fns.push(Some(refine_fn_idx));
+                    }
+                    Some(te) => {
+                        let ty = self.lower_type_ref(&te);
+                        params.push(FnParam { name: pname, ty });
+                        refine_fns.push(None);
+                    }
+                    None => {
+                        params.push(FnParam {
+                            name: pname,
+                            ty: TypeRef::Error,
+                        });
+                        refine_fns.push(None);
+                    }
+                }
+            }
+        }
 
         let has_body = p.body().is_some();
         let source_range = Some(p.syntax().text_range());
@@ -355,9 +412,6 @@ impl ItemTreeCtx<'_> {
         // If the property has a body, create a synthetic FnItem so the body
         // gets lowered and type-checked alongside real functions.
         let fn_idx = if has_body {
-            let bool_path = Path {
-                segments: vec![Name::new(self.interner, "Bool")],
-            };
             let idx = self.tree.functions.alloc(FnItem {
                 name,
                 is_pub: false,
@@ -385,6 +439,7 @@ impl ItemTreeCtx<'_> {
             has_body,
             source_range,
             fn_idx,
+            refine_fns,
         });
     }
 
