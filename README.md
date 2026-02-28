@@ -286,6 +286,7 @@ The tool uses `tiktoken` with `cl100k_base` by default.
 If needed: `python3 -m pip install --user tiktoken`
 
 See [`docs/token-metrics.md`](docs/token-metrics.md) for workflow details.
+Latest cleanup report: [`docs/test-harness-token-report-2026-02-28.md`](docs/test-harness-token-report-2026-02-28.md).
 
 ## License
 
