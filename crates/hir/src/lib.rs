@@ -11,7 +11,8 @@ pub use kyokara_hir_def::builtins::register_builtin_intrinsics;
 pub use kyokara_hir_def::builtins::register_builtin_types;
 pub use kyokara_hir_def::item_tree::lower::collect_item_tree;
 pub use kyokara_hir_def::item_tree::{
-    CapItem, FnItem, FnParam, ItemTree, TypeDefKind, TypeItem, VariantDef,
+    CapItem, FnItem, FnParam, ItemTree, PropertyItem, PropertyItemIdx, TypeDefKind, TypeItem,
+    VariantDef,
 };
 pub use kyokara_hir_def::module_graph::{ModuleGraph, ModuleInfo, ModulePath, discover_modules};
 pub use kyokara_hir_def::name::Name;

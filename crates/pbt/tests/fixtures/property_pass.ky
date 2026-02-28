@@ -1,0 +1,3 @@
+property bool_identity(a: Bool) {
+  (a == true) == a
+}

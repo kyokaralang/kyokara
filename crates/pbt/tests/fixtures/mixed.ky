@@ -1,0 +1,9 @@
+fn is_positive(x: Int) -> Bool
+  ensures result == (x > 0)
+{
+  x > 0
+}
+
+property gt_antisymmetric(a: Int, b: Int) {
+  if a > b { b > a == false } else { true }
+}

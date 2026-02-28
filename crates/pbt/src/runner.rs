@@ -18,7 +18,7 @@ use kyokara_syntax::ast::nodes::SourceFile;
 use crate::choice::{ChoiceRecorder, ChoiceReplayer, ChoiceSequence};
 use crate::corpus::{self, CorpusEntry};
 use crate::generate::{self, GenResult};
-use crate::report::{FailureInfo, FnTestResult, TestReport};
+use crate::report::{FailureInfo, FnTestResult, TestReport, TestableKind};
 use crate::shrink::{self, ShrinkOutcome};
 
 /// Configuration for a PBT run.
@@ -51,6 +51,13 @@ impl Default for TestConfig {
 /// A function that's eligible for testing.
 struct TestableFunction {
     idx: FnItemIdx,
+    name: String,
+    param_types: Vec<kyokara_hir_def::type_ref::TypeRef>,
+}
+
+/// A property that's eligible for testing.
+struct TestableProperty {
+    fn_idx: FnItemIdx,
     name: String,
     param_types: Vec<kyokara_hir_def::type_ref::TypeRef>,
 }
@@ -106,8 +113,9 @@ pub fn run_tests(source: &str, config: &TestConfig) -> Result<TestReport, String
         ));
     }
 
-    // 7. Discover testable functions.
+    // 7. Discover testable functions and properties.
     let testable = discover_testable(&item_result.tree, &type_check.fn_bodies, &interner);
+    let properties = discover_properties(&item_result.tree, &interner);
 
     // 8. Create interpreter.
     let mut interp = Interpreter::new(
@@ -120,7 +128,7 @@ pub fn run_tests(source: &str, config: &TestConfig) -> Result<TestReport, String
     );
 
     // 9. Run tests.
-    run_test_loop(&mut interp, &testable, config)
+    run_test_loop(&mut interp, &testable, &properties, config)
 }
 
 /// Parse, type-check, and run PBT on a multi-file project.
@@ -163,6 +171,7 @@ pub fn run_project_tests(
         .ok_or("entry module not found")?;
 
     let testable = discover_testable(&entry_info.item_tree, &fn_bodies, &project.interner);
+    let properties = discover_properties(&entry_info.item_tree, &project.interner);
 
     let mut interp = Interpreter::new(
         entry_info.item_tree.clone(),
@@ -173,7 +182,7 @@ pub fn run_project_tests(
         None,
     );
 
-    run_test_loop(&mut interp, &testable, config)
+    run_test_loop(&mut interp, &testable, &properties, config)
 }
 
 /// Discover functions with contracts that have generatable parameter types.
@@ -224,34 +233,79 @@ fn discover_testable(
     testable
 }
 
-/// The core test loop: for each testable function, run explore + corpus.
+/// Discover properties with bodies and generatable parameter types.
+fn discover_properties(
+    item_tree: &kyokara_hir_def::item_tree::ItemTree,
+    interner: &Interner,
+) -> Vec<TestableProperty> {
+    let mut properties = Vec::new();
+
+    for (_, prop) in item_tree.properties.iter() {
+        let Some(fn_idx) = prop.fn_idx else {
+            continue;
+        };
+
+        let all_generatable = prop
+            .params
+            .iter()
+            .all(|p| generate::is_generatable(&p.ty, item_tree, interner));
+
+        if !all_generatable {
+            continue;
+        }
+
+        let param_types: Vec<_> = prop.params.iter().map(|p| p.ty.clone()).collect();
+        properties.push(TestableProperty {
+            fn_idx,
+            name: prop.name.resolve(interner).to_string(),
+            param_types,
+        });
+    }
+
+    properties
+}
+
+/// The core test loop: for each testable function/property, run explore + corpus.
 fn run_test_loop(
     interp: &mut Interpreter,
     testable: &[TestableFunction],
+    properties: &[TestableProperty],
     config: &TestConfig,
 ) -> Result<TestReport, String> {
     let mut results = Vec::new();
     let mut skipped = Vec::new();
 
+    // Collect fn_idxs that are property-backing synthetic functions.
+    let property_fn_idxs: Vec<FnItemIdx> = properties.iter().map(|p| p.fn_idx).collect();
+
     // Collect all function names from the item tree for the "skipped" list.
-    let all_fn_names: Vec<String> = {
+    let all_fn_names: Vec<(String, FnItemIdx)> = {
         let it = interp.item_tree();
         let int = interp.interner();
         it.functions
             .iter()
-            .map(|(_, f)| f.name.resolve(int).to_string())
+            .map(|(idx, f)| (f.name.resolve(int).to_string(), idx))
             .collect()
     };
 
     let testable_names: Vec<&str> = testable.iter().map(|t| t.name.as_str()).collect();
-    for name in &all_fn_names {
-        if name != "main" && !testable_names.contains(&name.as_str()) {
+    for (name, idx) in &all_fn_names {
+        // Skip main, tested functions, and property-backing synthetic functions.
+        if name != "main"
+            && !testable_names.contains(&name.as_str())
+            && !property_fn_idxs.contains(idx)
+        {
             skipped.push(name.clone());
         }
     }
 
     for func in testable {
         let result = test_single_function(interp, func, config);
+        results.push(result);
+    }
+
+    for prop in properties {
+        let result = test_single_property(interp, prop, config);
         results.push(result);
     }
 
@@ -279,6 +333,7 @@ fn test_single_function(
             TestOutcome::Fail(error, args_display) => {
                 return FnTestResult {
                     name: func.name.clone(),
+                    kind: TestableKind::Function,
                     passed,
                     discarded,
                     total,
@@ -336,6 +391,7 @@ fn test_single_function(
 
                     return FnTestResult {
                         name: func.name.clone(),
+                        kind: TestableKind::Function,
                         passed,
                         discarded,
                         total,
@@ -367,8 +423,111 @@ fn test_single_function(
 
     FnTestResult {
         name: func.name.clone(),
+        kind: TestableKind::Function,
         passed,
         discarded,
+        total,
+        failure: None,
+    }
+}
+
+/// Test a single property: generate inputs and check that it returns true.
+fn test_single_property(
+    interp: &mut Interpreter,
+    prop: &TestableProperty,
+    config: &TestConfig,
+) -> FnTestResult {
+    let mut passed = 0usize;
+    let mut total = 0usize;
+
+    // Phase 1: Replay corpus entries.
+    let corpus_entries = corpus::load_entries(&config.corpus_base, &prop.name);
+    for entry in &corpus_entries {
+        let seq = ChoiceSequence::new(entry.choices.clone(), entry.maxima.clone());
+        total += 1;
+        match run_single_property_test(interp, prop, &seq) {
+            TestOutcome::Pass => passed += 1,
+            TestOutcome::Discard => {} // Properties have no preconditions
+            TestOutcome::Fail(error, args_display) => {
+                return FnTestResult {
+                    name: prop.name.clone(),
+                    kind: TestableKind::Property,
+                    passed,
+                    discarded: 0,
+                    total,
+                    failure: Some(FailureInfo {
+                        error,
+                        args_display,
+                        choices: seq,
+                    }),
+                };
+            }
+        }
+    }
+
+    // Phase 2: Explore (if enabled).
+    if config.explore {
+        for i in 0..config.num_tests {
+            let seed = config
+                .seed
+                .wrapping_add(prop.fn_idx.into_raw().into_u32() as u64 * 10000 + i as u64);
+            let mut recorder = ChoiceRecorder::new(seed);
+
+            let args = match generate_property_args(prop, &mut recorder, interp) {
+                Some(a) => a,
+                None => {
+                    total += 1;
+                    continue;
+                }
+            };
+
+            let seq = recorder.into_sequence();
+            total += 1;
+
+            match call_and_classify_property(interp, prop.fn_idx, args) {
+                TestOutcome::Pass => passed += 1,
+                TestOutcome::Discard => {}
+                TestOutcome::Fail(error, args_display) => {
+                    // Shrink the failing case.
+                    let shrunk = shrink_property_failure(interp, prop, &seq);
+
+                    // Re-run with shrunk sequence to get the display args.
+                    let (shrunk_error, shrunk_args) =
+                        replay_property_for_display(interp, prop, &shrunk)
+                            .unwrap_or((error, args_display));
+
+                    // Save to corpus.
+                    let entry = CorpusEntry {
+                        function: prop.name.clone(),
+                        choices: shrunk.choices.clone(),
+                        maxima: shrunk.maxima.clone(),
+                        error: shrunk_error.clone(),
+                        args_display: shrunk_args.clone(),
+                    };
+                    let _ = corpus::save_entry(&config.corpus_base, &entry);
+
+                    return FnTestResult {
+                        name: prop.name.clone(),
+                        kind: TestableKind::Property,
+                        passed,
+                        discarded: 0,
+                        total,
+                        failure: Some(FailureInfo {
+                            error: shrunk_error,
+                            args_display: shrunk_args,
+                            choices: shrunk,
+                        }),
+                    };
+                }
+            }
+        }
+    }
+
+    FnTestResult {
+        name: prop.name.clone(),
+        kind: TestableKind::Property,
+        passed,
+        discarded: 0,
         total,
         failure: None,
     }
@@ -466,5 +625,100 @@ fn replay_for_display(
         }
         Err(e) => Some((format!("runtime error: {e}"), args_display)),
         Ok(_) => None,
+    }
+}
+
+// ── Property-specific helpers ──────────────────────────────────────
+
+/// Generate arguments for a property using a choice source.
+fn generate_property_args(
+    prop: &TestableProperty,
+    source: &mut dyn crate::choice::ChoiceSource,
+    interp: &Interpreter,
+) -> Option<Args> {
+    let item_tree = interp.item_tree();
+    let module_scope = interp.module_scope();
+    let interner = interp.interner();
+
+    let mut args = Args::new();
+    for ty in &prop.param_types {
+        match generate::generate(ty, source, item_tree, module_scope, interner) {
+            GenResult::Ok(val) => args.push(val),
+            GenResult::Unsupported | GenResult::Exhausted => return None,
+        }
+    }
+    Some(args)
+}
+
+/// Call a property and classify the result.
+///
+/// Properties return Bool: true → Pass, false → Fail.
+/// No preconditions, so no Discard.
+fn call_and_classify_property(
+    interp: &mut Interpreter,
+    fn_idx: FnItemIdx,
+    args: Args,
+) -> TestOutcome {
+    use kyokara_eval::value::Value;
+
+    let args_display: Vec<String> = args.iter().map(|v| v.display(interp.interner())).collect();
+
+    match interp.call_fn_by_idx(fn_idx, args) {
+        Ok(Value::Bool(true)) => TestOutcome::Pass,
+        Ok(Value::Bool(false)) => {
+            TestOutcome::Fail("property returned false".to_string(), args_display)
+        }
+        Ok(_) => TestOutcome::Fail("property did not return Bool".to_string(), args_display),
+        Err(e) => TestOutcome::Fail(format!("runtime error: {e}"), args_display),
+    }
+}
+
+/// Run a single property test case from a choice sequence.
+fn run_single_property_test(
+    interp: &mut Interpreter,
+    prop: &TestableProperty,
+    seq: &ChoiceSequence,
+) -> TestOutcome {
+    let mut replayer = ChoiceReplayer::new(seq.clone());
+    let args = match generate_property_args(prop, &mut replayer, interp) {
+        Some(a) => a,
+        None => return TestOutcome::Discard,
+    };
+    call_and_classify_property(interp, prop.fn_idx, args)
+}
+
+/// Shrink a failing property choice sequence.
+fn shrink_property_failure(
+    interp: &mut Interpreter,
+    prop: &TestableProperty,
+    failing_seq: &ChoiceSequence,
+) -> ChoiceSequence {
+    shrink::shrink(
+        failing_seq,
+        &mut |candidate| match run_single_property_test(interp, prop, candidate) {
+            TestOutcome::Fail(_, _) => ShrinkOutcome::StillFails,
+            TestOutcome::Pass => ShrinkOutcome::Passes,
+            TestOutcome::Discard => ShrinkOutcome::Invalid,
+        },
+    )
+}
+
+/// Replay a shrunk property sequence and capture the display values.
+fn replay_property_for_display(
+    interp: &mut Interpreter,
+    prop: &TestableProperty,
+    seq: &ChoiceSequence,
+) -> Option<(String, Vec<String>)> {
+    use kyokara_eval::value::Value;
+
+    let mut replayer = ChoiceReplayer::new(seq.clone());
+    let args = generate_property_args(prop, &mut replayer, interp)?;
+    let args_display: Vec<String> = args.iter().map(|v| v.display(interp.interner())).collect();
+
+    match interp.call_fn_by_idx(prop.fn_idx, args) {
+        Ok(Value::Bool(true)) => None,
+        Ok(Value::Bool(false)) => Some(("property returned false".to_string(), args_display)),
+        Ok(_) => Some(("property did not return Bool".to_string(), args_display)),
+        Err(e) => Some((format!("runtime error: {e}"), args_display)),
     }
 }

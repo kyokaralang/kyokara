@@ -1,0 +1,3 @@
+property bad_abs(x: Int) {
+  abs(x) == x
+}

@@ -197,9 +197,16 @@ fn withdraw(acct: Account, amt: Money) -> Result[Account, WithdrawError]
 ### 2.8 Property-based tests
 
 ```kyokara
-property "sort is idempotent" for all xs: List[Int] =
+property sort_idempotent(xs: List[Int]) {
   List.sort(List.sort(xs)) == List.sort(xs)
+}
+
+property add_commutative(a: Int, b: Int) {
+  a + b == b + a
+}
 ```
+
+Property bodies are lowered and type-checked (must return `Bool`). The PBT runner discovers properties alongside contracted functions and tests them with generated inputs.
 
 ### 2.9 Typed holes + partial compilation
 
@@ -550,7 +557,7 @@ injected as synthetic types before type-checking.
 * Capability enforcement: type-level checking (E0011) ✓ + runtime manifest enforcement (`--caps`, deny-by-default) ✓
 
 **v0.3 — Verification + Codegen + Replay**
-* Property-based test harness ✓ (`pbt` crate: choice-sequence engine, type-driven generators, 4-pass shrinker, corpus persistence; `kyokara test <file> --explore` discovers contract functions, generates random inputs, checks contracts, shrinks counterexamples)
+* Property-based test harness ✓ (`pbt` crate: choice-sequence engine, type-driven generators, 4-pass shrinker, corpus persistence; `kyokara test <file> --explore` discovers contract functions and explicit `property` declarations, generates random inputs, checks contracts/properties, shrinks counterexamples)
 * SMT integration for contract verification (restricted fragment: linear arithmetic + uninterpreted functions, best-effort, never blocks compilation)
 * KyokaraIR data structures ✓ (SSA, block params, text format, validator) + HIR→KIR lowering ✓ + WASM codegen MVP ✓ (scalars, control flow, function calls, ADTs, records via `codegen` crate + `wasm-encoder`; deferred: closures, strings, lists, maps, intrinsics, capabilities)
 * Capability sandbox runtime (host functions + manifest)
