@@ -8,6 +8,7 @@ use kyokara_hir_def::item_tree::{FnItemIdx, FnParam, ItemTree, TypeDefKind, Type
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::resolver::ModuleScope;
+use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_intern::Interner;
 use kyokara_stdx::FxHashMap;
 
@@ -254,26 +255,7 @@ impl Interpreter {
 
         let fn_item = &self.item_tree.functions[fn_idx];
 
-        // Check user-declared capabilities against the manifest (only when manifest exists
-        // and the function actually declares capabilities).
-        if let Some(manifest) = &self.manifest
-            && !fn_item.with_caps.is_empty()
-        {
-            let fn_name_str = fn_item.name.resolve(&self.interner).to_string();
-            for cap_ref in &fn_item.with_caps {
-                if let kyokara_hir_def::type_ref::TypeRef::Path { path, .. } = cap_ref
-                    && let Some(name) = path.last()
-                {
-                    let cap_str = name.resolve(&self.interner);
-                    if !manifest.is_granted(cap_str) {
-                        return Err(RuntimeError::CapabilityDenied {
-                            capability: cap_str.to_string(),
-                            function: fn_name_str,
-                        });
-                    }
-                }
-            }
-        }
+        self.ensure_user_fn_caps_allowed(fn_item)?;
 
         // Use the shared environment with a new scope instead of allocating a fresh Env.
         self.env.push_scope();
@@ -617,25 +599,7 @@ impl Interpreter {
                     let fn_body = unsafe { &*fn_body };
                     let fn_item = &self.item_tree.functions[fn_idx];
 
-                    // Capability check.
-                    if let Some(manifest) = &self.manifest
-                        && !fn_item.with_caps.is_empty()
-                    {
-                        let fn_name_str = fn_item.name.resolve(&self.interner).to_string();
-                        for cap_ref in &fn_item.with_caps {
-                            if let kyokara_hir_def::type_ref::TypeRef::Path { path, .. } = cap_ref
-                                && let Some(name) = path.last()
-                            {
-                                let cap_str = name.resolve(&self.interner);
-                                if !manifest.is_granted(cap_str) {
-                                    return Err(RuntimeError::CapabilityDenied {
-                                        capability: cap_str.to_string(),
-                                        function: fn_name_str,
-                                    });
-                                }
-                            }
-                        }
-                    }
+                    self.ensure_user_fn_caps_allowed(fn_item)?;
 
                     // Reorder args when named args are present so values match
                     // parameter order instead of call-site order.
@@ -1061,6 +1025,35 @@ impl Interpreter {
                 "called value is not a function".into(),
             )),
         }
+    }
+
+    fn ensure_user_fn_caps_allowed(
+        &self,
+        fn_item: &kyokara_hir_def::item_tree::FnItem,
+    ) -> Result<(), RuntimeError> {
+        let Some(manifest) = &self.manifest else {
+            return Ok(());
+        };
+
+        if fn_item.with_caps.is_empty() {
+            return Ok(());
+        }
+
+        for cap_ref in &fn_item.with_caps {
+            if let TypeRef::Path { path, .. } = cap_ref
+                && let Some(name) = path.last()
+            {
+                let cap_str = name.resolve(&self.interner);
+                if !manifest.is_granted(cap_str) {
+                    return Err(RuntimeError::CapabilityDenied {
+                        capability: cap_str.to_string(),
+                        function: fn_item.name.resolve(&self.interner).to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn make_some(&self, val: Value) -> Value {
