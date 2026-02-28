@@ -226,6 +226,10 @@ impl<'a> FuncCodegen<'a> {
         // After if/else, emit the merge block (it wasn't emitted by either arm).
         if let Some(mid) = merge_id {
             self.emit_block_chain(func, mid, outer_stop, emitted)?;
+        } else {
+            // Both arms diverge (e.g., both return) — no merge block.
+            // Emit unreachable to satisfy WASM type checking.
+            func.instruction(&Instruction::Unreachable);
         }
 
         Ok(())
@@ -334,6 +338,17 @@ impl<'a> FuncCodegen<'a> {
                 }) => {
                     // Look through the branch to find its merge.
                     if let Some(merge) = self.find_branch_merge_deep(then_target, else_target) {
+                        chain.push(merge);
+                        current = merge;
+                        continue;
+                    }
+                    break;
+                }
+                Some(Terminator::Switch {
+                    cases, default, ..
+                }) => {
+                    // Look through the switch to find its merge.
+                    if let Some(merge) = self.find_switch_merge(cases, default.as_ref()) {
                         chain.push(merge);
                         current = merge;
                         continue;
@@ -478,6 +493,9 @@ impl<'a> FuncCodegen<'a> {
         // Emit merge block body if it exists.
         if let Some(merge_id) = merge_block_id {
             self.emit_block_chain(func, merge_id, outer_stop, emitted)?;
+        } else {
+            // All arms diverge — emit unreachable.
+            func.instruction(&Instruction::Unreachable);
         }
 
         Ok(())
@@ -541,29 +559,33 @@ impl<'a> FuncCodegen<'a> {
         Ok(())
     }
 
-    /// Find the merge block for a switch: the block that all cases jump to.
+    /// Find the merge block for a switch: the block that all cases converge to.
+    /// Follows full chains (through nested Branch/Switch) to find the common
+    /// merge point, similar to `find_branch_merge_deep`.
     fn find_switch_merge(
         &self,
         cases: &[kyokara_kir::block::SwitchCase],
         default: Option<&kyokara_kir::block::BranchTarget>,
     ) -> Option<BlockId> {
-        let mut targets = FxHashMap::default();
+        let mut chains: Vec<Vec<BlockId>> = Vec::new();
 
         for case in cases {
-            let block = &self.kir_func.blocks[case.target.block];
-            if let Some(Terminator::Jump(jmp)) = &block.terminator {
-                *targets.entry(jmp.block).or_insert(0u32) += 1;
-            }
+            chains.push(self.follow_chain(case.target.block));
         }
         if let Some(def) = default {
-            let block = &self.kir_func.blocks[def.block];
-            if let Some(Terminator::Jump(jmp)) = &block.terminator {
-                *targets.entry(jmp.block).or_insert(0u32) += 1;
+            chains.push(self.follow_chain(def.block));
+        }
+
+        let first_chain = chains.first()?;
+
+        // Find the first block in the first chain that appears in all others.
+        for block in first_chain {
+            if chains[1..].iter().all(|c| c.contains(block)) {
+                return Some(*block);
             }
         }
 
-        // Return the most common target.
-        targets.into_iter().max_by_key(|(_, c)| *c).map(|(b, _)| b)
+        None
     }
 
     // ── Block param stores ────────────────────────────────────────
