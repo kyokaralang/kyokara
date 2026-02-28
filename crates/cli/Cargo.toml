@@ -12,6 +12,7 @@ path = "src/main.rs"
 kyokara-api.workspace = true
 kyokara-refactor.workspace = true
 kyokara-eval.workspace = true
+kyokara-pbt.workspace = true
 kyokara-fmt.workspace = true
 kyokara-hir.workspace = true
 kyokara-lsp.workspace = true
