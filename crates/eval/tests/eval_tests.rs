@@ -2997,6 +2997,30 @@ fn eval_or_short_circuit() {
 }
 
 #[test]
+fn eval_and_short_circuit_inside_lambda() {
+    let src = r#"
+        fn main() -> Bool {
+            let f = fn() => false && 1 / 0 == 0
+            f()
+        }
+    "#;
+    let val = run_ok(src);
+    assert_eq!(val, Value::Bool(false));
+}
+
+#[test]
+fn eval_or_short_circuit_inside_lambda() {
+    let src = r#"
+        fn main() -> Bool {
+            let f = fn() => true || 1 / 0 == 0
+            f()
+        }
+    "#;
+    let val = run_ok(src);
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
 fn eval_or_with_comparisons() {
     let val = run_ok("fn main() -> Bool { 1 < 0 || 2 > 1 }");
     assert_eq!(val, Value::Bool(true));
@@ -3513,7 +3537,7 @@ fn eval_parse_int_overflow_fails() {
 #[test]
 fn eval_parse_float_basic() {
     let val = run_ok(r#"fn main() -> Float { parse_float("3.14") }"#);
-    assert_eq!(val, Value::Float(3.14));
+    assert_eq!(val, Value::Float(314.0 / 100.0));
 }
 
 #[test]

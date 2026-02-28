@@ -150,6 +150,11 @@ fn test_int_div() {
 }
 
 #[test]
+fn test_int_mod() {
+    assert_eq!(run_main_i64("fn main() -> Int { 42 % 5 }"), 2);
+}
+
+#[test]
 fn test_int_complex_expr() {
     assert_eq!(run_main_i64("fn main() -> Int { (3 + 4) * (10 - 8) }"), 14);
 }
@@ -164,6 +169,12 @@ fn test_float_add() {
 fn test_float_mul() {
     let result = run_main_f64("fn main() -> Float { 3.0 * 2.0 }");
     assert!((result - 6.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn test_float_mod() {
+    let result = run_main_f64("fn main() -> Float { 5.5 % 2.0 }");
+    assert!((result - 1.5).abs() < f64::EPSILON);
 }
 
 // ── Comparisons ───────────────────────────────────────────────────
@@ -203,6 +214,46 @@ fn test_bool_not() {
 #[test]
 fn test_bool_not_false() {
     assert_eq!(run_main_i32("fn main() -> Bool { !false }"), 1);
+}
+
+#[test]
+fn test_bit_not() {
+    assert_eq!(run_main_i64("fn main() -> Int { ~42 }"), !42_i64);
+}
+
+#[test]
+fn test_bit_and() {
+    assert_eq!(run_main_i64("fn main() -> Int { 12 & 10 }"), 8);
+}
+
+#[test]
+fn test_bit_or() {
+    assert_eq!(run_main_i64("fn main() -> Int { 12 | 10 }"), 14);
+}
+
+#[test]
+fn test_bit_xor() {
+    assert_eq!(run_main_i64("fn main() -> Int { 12 ^ 10 }"), 6);
+}
+
+#[test]
+fn test_shift_left() {
+    assert_eq!(run_main_i64("fn main() -> Int { 1 << 5 }"), 32);
+}
+
+#[test]
+fn test_shift_right() {
+    assert_eq!(run_main_i64("fn main() -> Int { 128 >> 3 }"), 16);
+}
+
+#[test]
+fn test_logical_and_short_circuit_in_codegen() {
+    assert_eq!(run_main_i32("fn main() -> Bool { false && 1 / 0 == 0 }"), 0);
+}
+
+#[test]
+fn test_logical_or_short_circuit_in_codegen() {
+    assert_eq!(run_main_i32("fn main() -> Bool { true || 1 / 0 == 0 }"), 1);
 }
 
 // ── Let bindings ──────────────────────────────────────────────────
@@ -1476,6 +1527,12 @@ fn test_single_variant_match() {
 fn test_int_division_by_zero_traps() {
     // WASM i64.div_s traps on division by zero.
     assert!(run_main_traps("fn main() -> Int { 10 / 0 }"));
+}
+
+#[test]
+fn test_int_mod_by_zero_traps() {
+    // WASM i64.rem_s traps on division by zero.
+    assert!(run_main_traps("fn main() -> Int { 10 % 0 }"));
 }
 
 #[test]

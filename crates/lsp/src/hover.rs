@@ -96,50 +96,9 @@ fn render_fn_signature(item: &FnItem, interner: &Interner, tree: &ItemTree) -> S
     format!("fn {name}({params_str}){ret}{caps}")
 }
 
-#[allow(clippy::only_used_in_recursion)]
 fn display_ty_ref(ty_ref: &kyokara_hir::TypeRef, interner: &Interner, tree: &ItemTree) -> String {
-    use kyokara_hir::TypeRef;
-    match ty_ref {
-        TypeRef::Path { path, args } => {
-            let base = path.last().map(|n| n.resolve(interner)).unwrap_or("?");
-            if args.is_empty() {
-                base.to_string()
-            } else {
-                let args_str: Vec<String> = args
-                    .iter()
-                    .map(|a| display_ty_ref(a, interner, tree))
-                    .collect();
-                format!("{base}<{}>", args_str.join(", "))
-            }
-        }
-        TypeRef::Fn { params, ret } => {
-            let params_str: Vec<String> = params
-                .iter()
-                .map(|p| display_ty_ref(p, interner, tree))
-                .collect();
-            let ret_str = display_ty_ref(ret, interner, tree);
-            format!("({}) -> {ret_str}", params_str.join(", "))
-        }
-        TypeRef::Record { fields } => {
-            let fields_str: Vec<String> = fields
-                .iter()
-                .map(|(n, t): &(kyokara_hir::Name, TypeRef)| {
-                    format!(
-                        "{}: {}",
-                        n.resolve(interner),
-                        display_ty_ref(t, interner, tree)
-                    )
-                })
-                .collect();
-            format!("{{ {} }}", fields_str.join(", "))
-        }
-        TypeRef::Refined { name, base, .. } => {
-            let n = name.resolve(interner);
-            let b = display_ty_ref(base, interner, tree);
-            format!("{{{n}: {b} | ...}}")
-        }
-        TypeRef::Error => "?".to_string(),
-    }
+    let _ = tree;
+    kyokara_hir::display_type_ref(ty_ref, interner)
 }
 
 fn hover_type(name: &str, tree: &ItemTree, interner: &Interner) -> Option<String> {
@@ -299,6 +258,19 @@ mod tests {
         let contents =
             hover_text(&analysis, source, TextSize::from(3)).expect("hover should exist");
         assert!(contents.contains("fn add"), "got: {contents}");
+    }
+
+    #[test]
+    fn hover_function_signature_keeps_full_type_paths() {
+        let source = "fn render(x: foo.bar.Baz) -> foo.bar.Baz { x }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let contents =
+            hover_text(&analysis, source, TextSize::from(3)).expect("hover should exist");
+        assert!(
+            contents.contains("foo.bar.Baz"),
+            "expected full path in hover signature, got: {contents}"
+        );
     }
 
     #[test]
