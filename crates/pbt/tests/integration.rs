@@ -820,3 +820,82 @@ where
     assert!(result.passed > 0, "should have passing tests");
     assert!(result.discarded > 0, "should have some discards");
 }
+
+#[test]
+fn property_invalid_range_reports_generator_error_not_where_unsat() {
+    let source = "property p(x: Int <- Gen.int_range(10, 1)) { x > 0 }";
+    let config = test_config();
+    let report = run_tests(source, &config).unwrap();
+    assert!(!report.all_passed(), "invalid range should fail");
+
+    let failure = report.results[0]
+        .failure
+        .as_ref()
+        .expect("must have failure");
+    assert!(
+        failure
+            .error
+            .contains("invalid or unsupported generator configuration"),
+        "expected generator-specific failure, got: {}",
+        failure.error
+    );
+    assert!(
+        !failure.error.contains("where"),
+        "invalid generator should not be reported as where-unsat: {}",
+        failure.error
+    );
+}
+
+#[test]
+fn project_invalid_range_reports_generator_error_not_where_unsat() {
+    let config = test_config();
+    let (_dir, main_path) = write_project(&[(
+        "main.ky",
+        "property p(x: Int <- Gen.int_range(10, 1)) { x > 0 }\n",
+    )]);
+    let report = run_project_tests(&main_path, &config).unwrap();
+    assert!(
+        !report.all_passed(),
+        "invalid range should fail in project mode"
+    );
+
+    let failure = report.results[0]
+        .failure
+        .as_ref()
+        .expect("must have failure");
+    assert!(
+        failure
+            .error
+            .contains("invalid or unsupported generator configuration"),
+        "expected generator-specific failure, got: {}",
+        failure.error
+    );
+    assert!(
+        !failure.error.contains("where"),
+        "invalid generator should not be reported as where-unsat: {}",
+        failure.error
+    );
+}
+
+#[test]
+fn where_unsat_still_reports_where_unsatisfiable() {
+    let source = "property impossible(x: Int <- Gen.int()) where x > 0 && x < 0 { true }";
+    let config = test_config();
+    let report = run_tests(source, &config).unwrap();
+    assert!(!report.all_passed(), "unsatisfiable where should fail");
+
+    let failure = report.results[0]
+        .failure
+        .as_ref()
+        .expect("must have failure");
+    assert!(
+        failure.error.contains("unsatisfiable"),
+        "expected unsatisfiable failure, got: {}",
+        failure.error
+    );
+    assert!(
+        failure.error.contains("where"),
+        "expected where-unsat message, got: {}",
+        failure.error
+    );
+}
