@@ -6,7 +6,7 @@ use kyokara_intern::Interner;
 use smallvec::SmallVec;
 
 use crate::error::RuntimeError;
-use crate::value::Value;
+use crate::value::{MapKey, Value};
 
 /// Stack-allocated argument vector for function calls.
 pub type Args = SmallVec<[Value; 4]>;
@@ -232,33 +232,31 @@ impl IntrinsicFn {
             }
 
             // ── Map (simple) ─────────────────────────────────────
-            IntrinsicFn::MapNew => Ok(Value::Map(Vec::new())),
+            IntrinsicFn::MapNew => Ok(Value::Map(Box::default())),
             IntrinsicFn::MapInsert => {
                 let Value::Map(entries) = &args[0] else {
                     return Err(RuntimeError::TypeError("map_insert expects a Map".into()));
                 };
-                let key = &args[1];
-                let val = &args[2];
-                let mut new_entries: Vec<(Value, Value)> =
-                    entries.iter().filter(|(k, _)| k != key).cloned().collect();
-                new_entries.push((key.clone(), val.clone()));
-                Ok(Value::Map(new_entries))
+                let key = MapKey::from_value(&args[1])?;
+                let mut new_map = entries.clone();
+                new_map.insert(key, args[2].clone());
+                Ok(Value::Map(new_map))
             }
             IntrinsicFn::MapContains => {
                 let Value::Map(entries) = &args[0] else {
                     return Err(RuntimeError::TypeError("map_contains expects a Map".into()));
                 };
-                let key = &args[1];
-                Ok(Value::Bool(entries.iter().any(|(k, _)| k == key)))
+                let key = MapKey::from_value(&args[1])?;
+                Ok(Value::Bool(entries.contains_key(&key)))
             }
             IntrinsicFn::MapRemove => {
                 let Value::Map(entries) = &args[0] else {
                     return Err(RuntimeError::TypeError("map_remove expects a Map".into()));
                 };
-                let key = &args[1];
-                let new_entries: Vec<(Value, Value)> =
-                    entries.iter().filter(|(k, _)| k != key).cloned().collect();
-                Ok(Value::Map(new_entries))
+                let key = MapKey::from_value(&args[1])?;
+                let mut new_map = entries.clone();
+                new_map.shift_remove(&key);
+                Ok(Value::Map(new_map))
             }
             IntrinsicFn::MapLen => {
                 let Value::Map(entries) = &args[0] else {
@@ -270,17 +268,13 @@ impl IntrinsicFn {
                 let Value::Map(entries) = &args[0] else {
                     return Err(RuntimeError::TypeError("map_keys expects a Map".into()));
                 };
-                Ok(Value::List(
-                    entries.iter().map(|(k, _)| k.clone()).collect(),
-                ))
+                Ok(Value::List(entries.keys().map(MapKey::to_value).collect()))
             }
             IntrinsicFn::MapValues => {
                 let Value::Map(entries) = &args[0] else {
                     return Err(RuntimeError::TypeError("map_values expects a Map".into()));
                 };
-                Ok(Value::List(
-                    entries.iter().map(|(_, v)| v.clone()).collect(),
-                ))
+                Ok(Value::List(entries.values().cloned().collect()))
             }
             IntrinsicFn::MapIsEmpty => {
                 let Value::Map(entries) = &args[0] else {

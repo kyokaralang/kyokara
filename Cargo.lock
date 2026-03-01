@@ -1091,6 +1091,7 @@ dependencies = [
 name = "kyokara-eval"
 version = "0.0.0"
 dependencies = [
+ "indexmap",
  "kyokara-diagnostics",
  "kyokara-hir",
  "kyokara-hir-def",
@@ -1225,6 +1226,7 @@ dependencies = [
 name = "kyokara-pbt"
 version = "0.0.0"
 dependencies = [
+ "indexmap",
  "kyokara-diagnostics",
  "kyokara-eval",
  "kyokara-hir",

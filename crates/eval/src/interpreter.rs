@@ -16,7 +16,7 @@ use crate::env::Env;
 use crate::error::RuntimeError;
 use crate::intrinsics::{self, Args, IntrinsicFn};
 use crate::manifest::CapabilityManifest;
-use crate::value::{FnValue, Value};
+use crate::value::{FnValue, MapKey, Value};
 
 /// Tree-walking interpreter state.
 pub struct Interpreter {
@@ -1249,13 +1249,12 @@ impl Interpreter {
                 let Value::Map(entries) = &args[0] else {
                     return Err(RuntimeError::TypeError("map_get expects a Map".into()));
                 };
-                let key = &args[1];
-                for (k, v) in entries {
-                    if k == key {
-                        return Ok(self.make_some(v.clone()));
-                    }
+                let key = MapKey::from_value(&args[1])?;
+                if let Some(v) = entries.get(&key) {
+                    Ok(self.make_some(v.clone()))
+                } else {
+                    Ok(self.make_none())
                 }
-                Ok(self.make_none())
             }
             IntrinsicFn::ListMap => {
                 let Value::List(xs) = &args[0] else {
@@ -1491,12 +1490,8 @@ impl Interpreter {
                 }
             }
             (Value::Map(entries), key) => {
-                for (k, v) in entries {
-                    if k == key {
-                        return Ok(v.clone());
-                    }
-                }
-                Err(RuntimeError::KeyNotFound)
+                let k = MapKey::from_value(key)?;
+                entries.get(&k).cloned().ok_or(RuntimeError::KeyNotFound)
             }
             _ => Err(RuntimeError::TypeError(
                 "indexing requires List, String, or Map".into(),

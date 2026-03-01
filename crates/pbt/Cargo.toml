@@ -13,6 +13,7 @@ kyokara-syntax.workspace = true
 kyokara-hir-def.workspace = true
 kyokara-hir.workspace = true
 kyokara-eval.workspace = true
+indexmap.workspace = true
 la-arena.workspace = true
 rustc-hash.workspace = true
 serde.workspace = true

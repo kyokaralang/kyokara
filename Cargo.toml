@@ -59,6 +59,7 @@ clap = { version = "4", features = ["derive"] }
 thiserror = "2"
 wasm-encoder = "0.225"
 wasmtime = "29"
+indexmap = "2"
 rustc-hash = "2"
 smol_str = "0.3"
 smallvec = { version = "1", features = ["union"] }

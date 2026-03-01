@@ -4196,8 +4196,8 @@ fn eval_list_sort_unsortable() {
         }",
     );
     assert!(
-        err.contains("unsortable") || err.contains("list_sort"),
-        "got: {err}"
+        err.contains("cannot be sorted"),
+        "expected compile-time sort rejection, got: {err}"
     );
 }
 
@@ -5255,4 +5255,332 @@ fn eval_flat_fn_and_method_both_work() {
         "#,
     );
     assert!(matches!(val, Value::Int(10)));
+}
+
+// ── Map (IndexMap backing store) tests ─────────────────────────────
+
+#[test]
+fn eval_map_int_keys() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let m = Map.new().insert(1, 100).insert(2, 200).insert(3, 300)
+            m[2]
+        }",
+    );
+    assert!(matches!(val, Value::Int(200)));
+}
+
+#[test]
+fn eval_map_bool_keys() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let m = Map.new().insert(true, 1).insert(false, 0)
+            m[true] + m[false]
+        }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_map_char_keys() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let m = Map.new().insert('a', 1).insert('b', 2)
+            m['a'] + m['b']
+        }",
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_map_mixed_operations() {
+    // Insert, overwrite, remove, check contains on missing
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            let m = Map.new()
+                .insert("x", 1)
+                .insert("y", 2)
+                .insert("x", 99)
+                .remove("y")
+            let has_x = m.contains("x")
+            let has_y = m.contains("y")
+            let len_ok = m.len() == 1
+            has_x && !has_y && len_ok
+        }"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_map_insertion_order_preserved() {
+    // Keys should come back in insertion order (IndexMap guarantee)
+    let val = run_ok(
+        r#"fn main() -> String {
+            let m = Map.new()
+                .insert("c", 3)
+                .insert("a", 1)
+                .insert("b", 2)
+            let ks = m.keys()
+            match ks.head() {
+                Some(k) => k
+                None => "fail"
+            }
+        }"#,
+    );
+    match val {
+        Value::String(s) => assert_eq!(s, "c", "first key should be 'c' (insertion order)"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_map_overwrite_preserves_position() {
+    // Overwriting a key should keep its original insertion position
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let m = Map.new()
+                .insert("a", 1)
+                .insert("b", 2)
+                .insert("a", 99)
+            match m.get("a") {
+                Some(v) => v
+                None => 0
+            }
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(99)));
+}
+
+#[test]
+fn eval_map_values_after_overwrite() {
+    // After overwrite, values() should reflect the update
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let m = Map.new()
+                .insert("a", 1)
+                .insert("b", 2)
+                .insert("a", 100)
+            m.values().fold(0, fn(acc: Int, x: Int) => acc + x)
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(102)));
+}
+
+#[test]
+fn eval_map_remove_nonexistent_key() {
+    // Removing a key that doesn't exist should be a no-op
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let m = Map.new().insert("a", 1)
+            let m2 = m.remove("zzz")
+            m2.len()
+        }"#,
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_map_get_after_remove() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            let m = Map.new().insert("a", 1).insert("b", 2)
+            let m2 = m.remove("a")
+            match m2.get("a") {
+                Some(_) => false
+                None => true
+            }
+        }"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_map_many_inserts() {
+    // Verify O(1) behavior doesn't break with more entries
+    let val = run_ok(
+        "fn main() -> Int {
+            let m = Map.new()
+                .insert(1, 10)
+                .insert(2, 20)
+                .insert(3, 30)
+                .insert(4, 40)
+                .insert(5, 50)
+                .insert(6, 60)
+                .insert(7, 70)
+                .insert(8, 80)
+                .insert(9, 90)
+                .insert(10, 100)
+            m[5] + m[10]
+        }",
+    );
+    assert!(matches!(val, Value::Int(150)));
+}
+
+#[test]
+fn eval_map_immutable_semantics() {
+    // Original map should be unchanged after insert on a copy
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            let m1 = Map.new().insert("a", 1)
+            let m2 = m1.insert("b", 2)
+            m1.len() == 1 && m2.len() == 2
+        }"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_map_index_with_int_key() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let m = Map.new().insert(42, 999)
+            m[42]
+        }",
+    );
+    assert!(matches!(val, Value::Int(999)));
+}
+
+#[test]
+fn eval_map_contains_missing() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            let m = Map.new().insert("a", 1)
+            m.contains("z")
+        }"#,
+    );
+    assert!(matches!(val, Value::Bool(false)));
+}
+
+#[test]
+fn eval_map_empty_keys_and_values() {
+    let val = run_ok(
+        "fn main() -> Bool {
+            let m = Map.new()
+            m.keys().is_empty() && m.values().is_empty()
+        }",
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+// ── Map key type compile-time rejection ────────────────────────────
+
+#[test]
+fn eval_map_float_key_rejected_at_compile_time() {
+    let err = run_err(
+        "fn main() -> Int {
+            let m = Map.new().insert(3.14, 1)
+            0
+        }",
+    );
+    assert!(
+        err.contains("cannot be used as a map key"),
+        "expected compile-time map key rejection, got: {err}"
+    );
+}
+
+#[test]
+fn eval_map_list_key_rejected_at_compile_time() {
+    let err = run_err(
+        "fn main() -> Int {
+            let xs = List.new().push(1)
+            let m = Map.new().insert(xs, 1)
+            0
+        }",
+    );
+    assert!(
+        err.contains("cannot be used as a map key"),
+        "expected compile-time map key rejection, got: {err}"
+    );
+}
+
+#[test]
+fn eval_map_fn_key_rejected_at_compile_time() {
+    let err = run_err(
+        "fn helper() -> Int { 0 }
+         fn main() -> Int {
+            let m = Map.new().insert(helper, 1)
+            0
+        }",
+    );
+    assert!(
+        err.contains("cannot be used as a map key"),
+        "expected compile-time map key rejection, got: {err}"
+    );
+}
+
+#[test]
+fn eval_map_valid_keys_no_rejection() {
+    // Guard test: valid key types (Int, String, Char, Bool) should NOT trigger rejection
+    run_ok(
+        r#"fn main() -> Bool {
+            let m1 = Map.new().insert(1, "int key")
+            let m2 = Map.new().insert("str", "string key")
+            let m3 = Map.new().insert('c', "char key")
+            let m4 = Map.new().insert(true, "bool key")
+            m1.len() == 1 && m2.len() == 1 && m3.len() == 1 && m4.len() == 1
+        }"#,
+    );
+}
+
+// ── List.sort() element type compile-time rejection ─────────────
+
+#[test]
+fn eval_list_sort_unsortable_list_of_lists() {
+    let err = run_err(
+        "fn main() -> Int {
+            let xs = List.new().push(List.new())
+            let sorted = xs.sort()
+            0
+        }",
+    );
+    assert!(
+        err.contains("cannot be sorted"),
+        "expected compile-time sort rejection, got: {err}"
+    );
+}
+
+#[test]
+fn eval_list_sort_unsortable_list_of_fns() {
+    let err = run_err(
+        "fn helper() -> Int { 0 }
+         fn main() -> Int {
+            let xs = List.new().push(helper)
+            let sorted = xs.sort()
+            0
+        }",
+    );
+    assert!(
+        err.contains("cannot be sorted"),
+        "expected compile-time sort rejection, got: {err}"
+    );
+}
+
+#[test]
+fn eval_list_sort_unsortable_list_of_maps() {
+    let err = run_err(
+        "fn main() -> Int {
+            let xs = List.new().push(Map.new())
+            let sorted = xs.sort()
+            0
+        }",
+    );
+    assert!(
+        err.contains("cannot be sorted"),
+        "expected compile-time sort rejection, got: {err}"
+    );
+}
+
+#[test]
+fn eval_list_sort_valid_types_no_rejection() {
+    // Guard test: sortable types (Int, Float, String, Char, Bool) should NOT be rejected
+    run_ok(
+        r#"fn main() -> Bool {
+            let ints = List.new().push(3).push(1).push(2).sort()
+            let floats = List.new().push(3.0).push(1.0).push(2.0).sort()
+            let strings = List.new().push("c").push("a").push("b").sort()
+            let chars = List.new().push('c').push('a').push('b').sort()
+            let bools = List.new().push(true).push(false).sort()
+            ints.len() == 3 && floats.len() == 3 && strings.len() == 3 && chars.len() == 3 && bools.len() == 2
+        }"#,
+    );
 }
