@@ -172,6 +172,20 @@ Human ergonomics sugar is allowed only if lossless and equivalent to canonical A
 
 Prefer additive evolution. Breaking changes require deprecation windows and migration guidance/tooling.
 
+## Visibility policy (canonical decision)
+
+Kyokara uses this intrinsic visibility matrix:
+
+| Category | Canonical form | Import required | Example |
+|---|---|---|---|
+| Prelude builtin value types | Type namespace + methods | No | `List.new()`, `Map.new()`, `Set.new()`, `xs.len()` |
+| Pure no-owner utilities | Module-qualified | Yes | `math.min(a, b)` |
+| Effectful utilities | Capability module-qualified | Yes | `io.println("x")`, `fs.read_file(path)` |
+| Internal intrinsic IDs | Not user-visible | N/A | `list_new`, `map_insert`, `set_contains` |
+
+Global/free-function intrinsic spellings are non-canonical and rejected in user
+space. If referenced, diagnostics may include migration hints to canonical forms.
+
 ## Mechanically-checkable criteria
 
 The following can be enforced by lints/tooling:
@@ -182,6 +196,7 @@ The following can be enforced by lints/tooling:
 4. unnamed boolean flags in function signatures
 5. unnamespaced canonical runtime APIs
 6. unstable parameter ordering changes across versions
+7. forbidden global intrinsic spellings resolving in user scope
 
 ## API-surface conformance checklist
 

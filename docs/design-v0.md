@@ -524,6 +524,12 @@ v0 stdlib is implemented via intrinsic functions in the eval crate, exposed thro
 a canonical API surface: method calls for value-owned behavior, module-qualified calls
 for no-owner utilities and effects, and type-namespaced constructors.
 
+Canonical visibility matrix:
+* Prelude builtin value types (no import): `List.new()`, `Map.new()`, `Set.new()`, value methods.
+* Pure no-owner utilities (imported module): `math.*`
+* Effectful utilities (imported capability modules): `io.*`, `fs.*`
+* Internal intrinsic IDs (`list_new`, `map_insert`, etc.) are implementation detail only.
+
 Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
 injected as synthetic types before type-checking. Synthetic modules (`io`, `math`, `fs`)
 require explicit `import io` / `import math` / `import fs` in all modes.
