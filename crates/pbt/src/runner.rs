@@ -604,11 +604,26 @@ fn test_single_property(
             let mut recorder = ChoiceRecorder::new(seed);
 
             let args = match generate_property_args(prop, &mut recorder, interp) {
-                Some(a) => a,
-                None => {
+                PropertyArgsResult::Ready(args) => args,
+                PropertyArgsResult::Exhausted => {
                     discarded += 1;
                     total += 1;
                     continue;
+                }
+                PropertyArgsResult::Unsupported => {
+                    total += 1;
+                    return FnTestResult {
+                        name: prop.name.clone(),
+                        kind: TestableKind::Property,
+                        passed,
+                        discarded,
+                        total,
+                        failure: Some(FailureInfo {
+                            error: "invalid or unsupported generator configuration".to_string(),
+                            args_display: vec![],
+                            choices: ChoiceSequence::new(vec![], vec![]),
+                        }),
+                    };
                 }
             };
 
@@ -782,12 +797,18 @@ fn replay_for_display(
 
 // ── Property-specific helpers ──────────────────────────────────────
 
+enum PropertyArgsResult {
+    Ready(Args),
+    Exhausted,
+    Unsupported,
+}
+
 /// Generate arguments for a property using its generator specs.
 fn generate_property_args(
     prop: &TestableProperty,
     source: &mut dyn crate::choice::ChoiceSource,
     interp: &Interpreter,
-) -> Option<Args> {
+) -> PropertyArgsResult {
     let item_tree = interp.item_tree();
     let module_scope = interp.module_scope();
     let interner = interp.interner();
@@ -796,10 +817,11 @@ fn generate_property_args(
     for (ty, spec) in prop.param_types.iter().zip(prop.gen_specs.iter()) {
         match generate::generate_from_spec(spec, ty, source, item_tree, module_scope, interner) {
             GenResult::Ok(val) => args.push(val),
-            GenResult::Unsupported | GenResult::Exhausted => return None,
+            GenResult::Unsupported => return PropertyArgsResult::Unsupported,
+            GenResult::Exhausted => return PropertyArgsResult::Exhausted,
         }
     }
-    Some(args)
+    PropertyArgsResult::Ready(args)
 }
 
 /// Call a property and classify the result.
@@ -833,11 +855,14 @@ fn run_single_property_test(
     seq: &ChoiceSequence,
 ) -> TestOutcome {
     let mut replayer = ChoiceReplayer::new(seq.clone());
-    let args = match generate_property_args(prop, &mut replayer, interp) {
-        Some(a) => a,
-        None => return TestOutcome::Discard,
-    };
-    call_and_classify_property(interp, prop.fn_idx, args)
+    match generate_property_args(prop, &mut replayer, interp) {
+        PropertyArgsResult::Ready(args) => call_and_classify_property(interp, prop.fn_idx, args),
+        PropertyArgsResult::Exhausted => TestOutcome::Discard,
+        PropertyArgsResult::Unsupported => TestOutcome::Fail(
+            "invalid or unsupported generator configuration".to_string(),
+            vec![],
+        ),
+    }
 }
 
 /// Shrink a failing property choice sequence.
@@ -869,7 +894,16 @@ fn replay_property_for_display(
     use kyokara_eval::value::Value;
 
     let mut replayer = ChoiceReplayer::new(seq.clone());
-    let args = generate_property_args(prop, &mut replayer, interp)?;
+    let args = match generate_property_args(prop, &mut replayer, interp) {
+        PropertyArgsResult::Ready(args) => args,
+        PropertyArgsResult::Exhausted => return None,
+        PropertyArgsResult::Unsupported => {
+            return Some((
+                "invalid or unsupported generator configuration".to_string(),
+                vec![],
+            ));
+        }
+    };
 
     let args_display: Vec<String> = args.iter().map(|v| v.display(interp.interner())).collect();
 
