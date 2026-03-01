@@ -38,6 +38,17 @@ pub struct ModuleScope {
     pub imports: FxHashMap<Name, usize>,
     /// Method definitions: `(receiver_type_name, method_name)` → `FnItemIdx`.
     pub methods: FxHashMap<(Name, Name), FnItemIdx>,
+    /// Synthetic modules: `module_name` → `{ fn_name → FnItemIdx }`.
+    /// Module-qualified calls like `io.println(s)` resolve through this.
+    pub synthetic_modules: FxHashMap<Name, FxHashMap<Name, FnItemIdx>>,
+    /// Static methods: `(type_name, method_name)` → `FnItemIdx`.
+    /// Type-namespaced constructors like `List.new()` resolve through this.
+    pub static_methods: FxHashMap<(Name, Name), FnItemIdx>,
+    /// Internal lookup table: intrinsic name → FnItemIdx.
+    /// Populated by `register_builtin_intrinsics`, used by method/module/static registration.
+    /// Not part of the public name resolution — intrinsics are only reachable through
+    /// methods, synthetic modules, or static methods.
+    pub intrinsic_fn_lookup: FxHashMap<Name, FnItemIdx>,
     /// Cached primitive type names for method resolution.
     pub well_known_names: WellKnownNames,
 }
@@ -69,6 +80,10 @@ pub enum ResolvedName {
     },
     /// An import.
     Import(usize),
+    /// A synthetic module (io, math, fs).
+    Module(Name),
+    /// A static method target type (e.g., `List` in `List.new()`).
+    StaticMethodType(Name),
 }
 
 impl<'a> Resolver<'a> {
@@ -102,6 +117,18 @@ impl<'a> Resolver<'a> {
         }
         if let Some(&idx) = self.module.caps.get(&name) {
             return Some(ResolvedName::Cap(idx));
+        }
+
+        // 2b. Synthetic modules (io, math, fs) — available after `import io`.
+        if self.module.synthetic_modules.contains_key(&name) {
+            return Some(ResolvedName::Module(name));
+        }
+
+        // 2c. Static method types — types with static methods (List, Map)
+        // are already resolved as Type above; this is a fallback for
+        // the case where the type name needs to resolve for `.new()` calls.
+        if self.module.static_methods.keys().any(|(tn, _)| *tn == name) {
+            // Already covered by Type resolution above for builtin types.
         }
 
         // 3. Constructors
@@ -146,6 +173,11 @@ impl<'a> Resolver<'a> {
         }
         if let Some(&idx) = self.module.caps.get(&name) {
             return Some(ResolvedName::Cap(idx));
+        }
+
+        // 2b. Synthetic modules.
+        if self.module.synthetic_modules.contains_key(&name) {
+            return Some(ResolvedName::Module(name));
         }
 
         // 3. Constructors

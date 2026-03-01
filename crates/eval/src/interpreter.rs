@@ -34,6 +34,10 @@ pub struct Interpreter {
     option_some: Option<(TypeItemIdx, usize)>,
     /// Cached Option::None constructor (type_idx, variant_idx).
     option_none: Option<(TypeItemIdx, usize)>,
+    /// Cached Result::Ok constructor (type_idx, variant_idx).
+    result_ok: Option<(TypeItemIdx, usize)>,
+    /// Cached Result::Err constructor (type_idx, variant_idx).
+    result_err: Option<(TypeItemIdx, usize)>,
     /// Optional capability manifest for deny-by-default enforcement.
     manifest: Option<CapabilityManifest>,
     /// Shared environment used across all function calls to avoid per-call allocation.
@@ -101,8 +105,12 @@ impl Interpreter {
 
         let some_name = Name::new(&mut interner, "Some");
         let none_name = Name::new(&mut interner, "None");
+        let ok_name = Name::new(&mut interner, "Ok");
+        let err_name = Name::new(&mut interner, "Err");
         let option_some = module_scope.constructors.get(&some_name).copied();
         let option_none = module_scope.constructors.get(&none_name).copied();
+        let result_ok = module_scope.constructors.get(&ok_name).copied();
+        let result_err = module_scope.constructors.get(&err_name).copied();
 
         Interpreter {
             item_tree,
@@ -114,6 +122,8 @@ impl Interpreter {
             old_env: None,
             option_some,
             option_none,
+            result_ok,
+            result_err,
             manifest,
             env: Env::new(),
             current_fn: None,
@@ -386,11 +396,42 @@ impl Interpreter {
                 let callee_idx = *callee;
                 let args = args.clone();
 
-                // ── Method call resolution ──────────────────────────
-                // If callee is a Field expression, try method dispatch first.
+                // ── Module-qualified / static method / method call resolution ──
                 if let Expr::Field { base, field } = &body.exprs[callee_idx] {
                     let base_idx = *base;
                     let field_name = *field;
+
+                    // Before evaluating base as a value, check if it's a synthetic
+                    // module or a type with static methods.
+                    if let Expr::Path(ref path) = body.exprs[base_idx]
+                        && path.is_single()
+                    {
+                        let seg = path.segments[0];
+
+                        // Module-qualified call: io.println(s), math.min(a, b)
+                        if let Some(fn_val) = self.resolve_module_fn(seg, field_name) {
+                            let ordered = self.args_in_call_order(&args);
+                            let mut arg_vals = Args::with_capacity(ordered.len());
+                            for idx in &ordered {
+                                let v = eval_propagate!(self, env, body, *idx);
+                                arg_vals.push(v);
+                            }
+                            return self.call_value(fn_val, arg_vals).map(ControlFlow::Value);
+                        }
+
+                        // Static method call: List.new(), Map.new()
+                        if let Some(fn_val) = self.resolve_static_method(seg, field_name) {
+                            let ordered = self.args_in_call_order(&args);
+                            let mut arg_vals = Args::with_capacity(ordered.len());
+                            for idx in &ordered {
+                                let v = eval_propagate!(self, env, body, *idx);
+                                arg_vals.push(v);
+                            }
+                            return self.call_value(fn_val, arg_vals).map(ControlFlow::Value);
+                        }
+                    }
+
+                    // Method call: value.method(args)
                     let base_val = eval_propagate!(self, env, body, base_idx);
 
                     if let Some(method_fn) = self.resolve_method(&base_val, field_name) {
@@ -617,10 +658,40 @@ impl Interpreter {
             Expr::Call { callee, args } => {
                 let callee_idx = *callee;
 
-                // ── Method call resolution (shared path) ────────────
+                // ── Module-qualified / static method / method call resolution (shared path) ──
                 if let Expr::Field { base, field } = &body.exprs[callee_idx] {
                     let base_idx = *base;
                     let field_name = *field;
+
+                    // Before evaluating base as a value, check module/static dispatch.
+                    if let Expr::Path(ref path) = body.exprs[base_idx]
+                        && path.is_single()
+                    {
+                        let seg = path.segments[0];
+
+                        // Module-qualified call: io.println(s)
+                        if let Some(fn_val) = self.resolve_module_fn(seg, field_name) {
+                            let ordered = self.args_in_call_order(args);
+                            let mut arg_vals = Args::with_capacity(ordered.len());
+                            for idx in &ordered {
+                                let v = eval_propagate_shared!(self, body, *idx);
+                                arg_vals.push(v);
+                            }
+                            return self.call_value(fn_val, arg_vals).map(ControlFlow::Value);
+                        }
+
+                        // Static method call: List.new()
+                        if let Some(fn_val) = self.resolve_static_method(seg, field_name) {
+                            let ordered = self.args_in_call_order(args);
+                            let mut arg_vals = Args::with_capacity(ordered.len());
+                            for idx in &ordered {
+                                let v = eval_propagate_shared!(self, body, *idx);
+                                arg_vals.push(v);
+                            }
+                            return self.call_value(fn_val, arg_vals).map(ControlFlow::Value);
+                        }
+                    }
+
                     let base_val = eval_propagate_shared!(self, body, base_idx);
 
                     if let Some(method_fn) = self.resolve_method(&base_val, field_name) {
@@ -823,25 +894,12 @@ impl Interpreter {
             return Ok(Value::Fn(Box::new(FnValue::User(fn_idx))));
         }
 
-        // 3. Module-level functions (checked before intrinsics so that user-defined
-        //    functions can shadow builtins like `abs`, `min`, `max`).
-        //    Only resolve as a user function if it has a body — intrinsic stubs
-        //    are registered in module_scope.functions for type checking but lack
-        //    bodies, so they fall through to step 4.
+        // 3. Module-level user functions (with bodies).
+        //    Intrinsic stubs are no longer in scope.functions — they're only
+        //    reachable via methods, modules, or static methods.
         if let Some(&fn_idx) = self.module_scope.functions.get(&name)
             && self.fn_bodies.contains_key(&fn_idx)
         {
-            return Ok(Value::Fn(Box::new(FnValue::User(fn_idx))));
-        }
-
-        // 4. Intrinsics (fallback for names that have no user-defined body).
-        if let Some(&intr) = self.intrinsics.get(&name) {
-            return Ok(Value::Fn(Box::new(FnValue::Intrinsic(intr))));
-        }
-
-        // 5. Module-level functions without bodies (shouldn't normally happen
-        //    after step 3+4, but kept as a fallback for robustness).
-        if let Some(&fn_idx) = self.module_scope.functions.get(&name) {
             return Ok(Value::Fn(Box::new(FnValue::User(fn_idx))));
         }
 
@@ -1124,6 +1182,24 @@ impl Interpreter {
         }
     }
 
+    fn make_ok(&self, val: Value) -> Value {
+        let (type_idx, variant) = self.result_ok.expect("Result::Ok not registered");
+        Value::Adt {
+            type_idx,
+            variant,
+            fields: vec![val],
+        }
+    }
+
+    fn make_err(&self, val: Value) -> Value {
+        let (type_idx, variant) = self.result_err.expect("Result::Err not registered");
+        Value::Adt {
+            type_idx,
+            variant,
+            fields: vec![val],
+        }
+    }
+
     fn check_intrinsic_cap(&self, intr: IntrinsicFn) -> Result<(), RuntimeError> {
         if let Some(ref manifest) = self.manifest
             && let Some(cap) = intr.required_capability()
@@ -1255,6 +1331,28 @@ impl Interpreter {
                 }
                 Ok(Value::List(items))
             }
+            IntrinsicFn::ParseInt => {
+                let Value::String(s) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "parse_int expects a String argument".into(),
+                    ));
+                };
+                match s.parse::<i64>() {
+                    Ok(n) => Ok(self.make_ok(Value::Int(n))),
+                    Err(e) => Ok(self.make_err(Value::String(format!("{e}")))),
+                }
+            }
+            IntrinsicFn::ParseFloat => {
+                let Value::String(s) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "parse_float expects a String argument".into(),
+                    ));
+                };
+                match s.parse::<f64>() {
+                    Ok(n) => Ok(self.make_ok(Value::Float(n))),
+                    Err(e) => Ok(self.make_err(Value::String(format!("{e}")))),
+                }
+            }
             _ => Err(RuntimeError::TypeError("unknown complex intrinsic".into())),
         }
     }
@@ -1303,6 +1401,34 @@ impl Interpreter {
                 ..
             } => Some(self.item_tree.types[*idx].name),
             _ => None,
+        }
+    }
+
+    /// Try to resolve a module-qualified call: `io.println(s)`, `math.min(a, b)`.
+    /// Returns the function as a `Value::Fn` if found, `None` otherwise.
+    fn resolve_module_fn(&self, module_name: Name, fn_name: Name) -> Option<Value> {
+        let mod_fns = self.module_scope.synthetic_modules.get(&module_name)?;
+        let &fn_idx = mod_fns.get(&fn_name)?;
+        let fn_item = &self.item_tree.functions[fn_idx];
+        if let Some(intr) = self.intrinsics.get(&fn_item.name) {
+            Some(Value::Fn(Box::new(FnValue::Intrinsic(*intr))))
+        } else {
+            Some(Value::Fn(Box::new(FnValue::User(fn_idx))))
+        }
+    }
+
+    /// Try to resolve a static method call: `List.new()`, `Map.new()`.
+    /// Returns the function as a `Value::Fn` if found, `None` otherwise.
+    fn resolve_static_method(&self, type_name: Name, method_name: Name) -> Option<Value> {
+        let &fn_idx = self
+            .module_scope
+            .static_methods
+            .get(&(type_name, method_name))?;
+        let fn_item = &self.item_tree.functions[fn_idx];
+        if let Some(intr) = self.intrinsics.get(&fn_item.name) {
+            Some(Value::Fn(Box::new(FnValue::Intrinsic(*intr))))
+        } else {
+            Some(Value::Fn(Box::new(FnValue::User(fn_idx))))
         }
     }
 

@@ -18,9 +18,18 @@ pub fn completions(
     source: &str,
     offset: TextSize,
 ) -> Option<CompletionResponse> {
+    // Dot-completion: if cursor is after `module.` or `Type.`, only show members.
+    if let Some(dot_items) = try_dot_completion(analysis, offset) {
+        return if dot_items.is_empty() {
+            None
+        } else {
+            Some(CompletionResponse::Array(dot_items))
+        };
+    }
+
     let mut items = Vec::new();
 
-    // Module scope: functions, types, caps, constructors.
+    // Module scope: functions, types, caps, constructors, synthetic modules.
     add_module_scope_completions(analysis, &mut items);
 
     // Builtin types.
@@ -70,6 +79,91 @@ fn should_replace_completion(existing: &CompletionItem, new_item: &CompletionIte
     }
     existing.kind != Some(CompletionItemKind::VARIABLE)
         && new_item.kind == Some(CompletionItemKind::VARIABLE)
+}
+
+/// If the cursor is right after `module_name.` or `TypeName.`, return member completions.
+fn try_dot_completion(
+    analysis: &Arc<FileAnalysis>,
+    offset: TextSize,
+) -> Option<Vec<CompletionItem>> {
+    let root = analysis.syntax_root();
+    let interner = &analysis.interner;
+    let scope = &analysis.module_scope;
+    let tree = &analysis.item_tree;
+
+    // Find the token at or just before the cursor.
+    let token = root.token_at_offset(offset).left_biased()?;
+
+    // Walk up to find a FieldExpr parent — the cursor is on the field name or just after the dot.
+    let field_expr = token
+        .parent_ancestors()
+        .find(|n| n.kind() == SyntaxKind::FieldExpr)?;
+
+    // Get the base expression (first child that's an expr node).
+    let base_node = field_expr
+        .children()
+        .find(|n| n.kind() == SyntaxKind::PathExpr)?;
+
+    // The base should be a single-segment path (e.g., `io`, `List`).
+    let path_node = base_node
+        .children()
+        .find(|n| n.kind() == SyntaxKind::Path)?;
+    let ident = path_node
+        .children_with_tokens()
+        .filter_map(|c| c.into_token())
+        .find(|t| t.kind() == SyntaxKind::Ident)?;
+    let base_name = ident.text().to_string();
+
+    let mut items = Vec::new();
+
+    // Check synthetic modules: io.println, math.min, fs.read_file, etc.
+    for (mod_name, mod_fns) in &scope.synthetic_modules {
+        if mod_name.resolve(interner) == base_name {
+            for (fn_name, fn_idx) in mod_fns {
+                let fn_item = &tree.functions[*fn_idx];
+                let params: Vec<String> = fn_item
+                    .params
+                    .iter()
+                    .map(|p| p.name.resolve(interner).to_string())
+                    .collect();
+                let ret = fn_item.ret_type.as_ref().map(|_| " -> ...").unwrap_or("");
+                let detail = format!("fn({params}){ret}", params = params.join(", "));
+                items.push(CompletionItem {
+                    label: fn_name.resolve(interner).to_string(),
+                    kind: Some(CompletionItemKind::FUNCTION),
+                    detail: Some(detail),
+                    ..Default::default()
+                });
+            }
+            return Some(items);
+        }
+    }
+
+    // Check static methods: List.new, Map.new, etc.
+    for ((ty_name, method_name), fn_idx) in &scope.static_methods {
+        if ty_name.resolve(interner) == base_name {
+            let fn_item = &tree.functions[*fn_idx];
+            let params: Vec<String> = fn_item
+                .params
+                .iter()
+                .map(|p| p.name.resolve(interner).to_string())
+                .collect();
+            let ret = fn_item.ret_type.as_ref().map(|_| " -> ...").unwrap_or("");
+            let detail = format!("fn({params}){ret}", params = params.join(", "));
+            items.push(CompletionItem {
+                label: method_name.resolve(interner).to_string(),
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some(detail),
+                ..Default::default()
+            });
+        }
+    }
+
+    if items.is_empty() {
+        None // Not a module or type with static methods — fall through to normal completion.
+    } else {
+        Some(items)
+    }
 }
 
 fn add_module_scope_completions(analysis: &FileAnalysis, items: &mut Vec<CompletionItem>) {
@@ -127,6 +221,16 @@ fn add_module_scope_completions(analysis: &FileAnalysis, items: &mut Vec<Complet
         items.push(CompletionItem {
             label: name.resolve(interner).to_string(),
             kind: Some(CompletionItemKind::ENUM_MEMBER),
+            ..Default::default()
+        });
+    }
+
+    // Synthetic modules (io, math, fs) — only when imported (present in scope).
+    for mod_name in scope.synthetic_modules.keys() {
+        items.push(CompletionItem {
+            label: mod_name.resolve(interner).to_string(),
+            kind: Some(CompletionItemKind::MODULE),
+            detail: Some("module".into()),
             ..Default::default()
         });
     }
@@ -369,6 +473,92 @@ mod tests {
         assert_eq!(
             x_count, 1,
             "shadowed name should appear once in completion list, got items: {items:?}"
+        );
+    }
+
+    #[test]
+    fn completion_includes_synthetic_modules() {
+        // In single-file mode, synthetic modules are auto-imported.
+        let source = "fn main() -> Int { 0 }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let items = completion_items(&analysis, source, TextSize::from(0));
+        assert!(
+            items.iter().any(|i| i.label == "io"),
+            "expected 'io' module in completions: {items:?}"
+        );
+        assert!(
+            items.iter().any(|i| i.label == "math"),
+            "expected 'math' module in completions: {items:?}"
+        );
+        assert!(
+            items.iter().any(|i| i.label == "fs"),
+            "expected 'fs' module in completions: {items:?}"
+        );
+    }
+
+    #[test]
+    fn completion_dot_after_module_shows_members() {
+        let source = "fn main() -> Unit { io.println(\"hi\") }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        // Cursor on "println" — inside FieldExpr with base "io".
+        let offset = TextSize::from(source.find("println").expect("println offset") as u32);
+        let items = completion_items(&analysis, source, offset);
+        assert!(
+            items.iter().any(|i| i.label == "println"),
+            "expected 'println' in io dot-completion: {items:?}"
+        );
+        assert!(
+            items.iter().any(|i| i.label == "print"),
+            "expected 'print' in io dot-completion: {items:?}"
+        );
+        // Should NOT include top-level items like Int, Option, etc.
+        assert!(
+            !items.iter().any(|i| i.label == "Int"),
+            "dot-completion should not include builtins: {items:?}"
+        );
+    }
+
+    #[test]
+    fn completion_dot_after_type_shows_static_methods() {
+        // Use Int return type to avoid parser issues with List[Int].
+        let source = "fn main() -> Int {\n  let xs = List.new()\n  xs.len()\n}";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        // Cursor on "new" — inside FieldExpr with base "List".
+        let new_pos = source.find("new").expect("new offset");
+        let offset = TextSize::from(new_pos as u32);
+        let items = completion_items(&analysis, source, offset);
+        assert!(
+            items.iter().any(|i| i.label == "new"),
+            "expected 'new' in List dot-completion: {items:?}"
+        );
+        // Should NOT include top-level items.
+        assert!(
+            !items.iter().any(|i| i.label == "Int"),
+            "dot-completion should not include builtins: {items:?}"
+        );
+    }
+
+    #[test]
+    fn completion_no_free_function_intrinsics() {
+        // Intrinsics should NOT appear as top-level completions.
+        let source = "fn main() -> Int { 0 }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let items = completion_items(&analysis, source, TextSize::from(0));
+        assert!(
+            !items.iter().any(|i| i.label == "println"),
+            "intrinsic 'println' should NOT be a top-level completion: {items:?}"
+        );
+        assert!(
+            !items.iter().any(|i| i.label == "list_len"),
+            "intrinsic 'list_len' should NOT be a top-level completion: {items:?}"
+        );
+        assert!(
+            !items.iter().any(|i| i.label == "map_new"),
+            "intrinsic 'map_new' should NOT be a top-level completion: {items:?}"
         );
     }
 

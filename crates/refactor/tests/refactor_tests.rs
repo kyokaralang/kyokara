@@ -276,9 +276,10 @@ fn pick(c: Color) -> Int {
 #[test]
 fn add_missing_capability() {
     let src = r#"cap Console {
-    fn print(s: String) -> Unit
+    fn emit(s: String) -> Unit
 }
-fn effectful() -> Unit with Console { print("hi") }
+fn emit(s: String) -> Unit { }
+fn effectful() -> Unit with Console { emit("hi") }
 fn pure_caller() -> Unit { effectful() }"#;
     let result = kyokara_hir::check_file(src);
 
@@ -824,9 +825,10 @@ fn pick(c: Color) -> Int {
 #[test]
 fn quickfix_capability_transact_verified() {
     let src = r#"cap Console {
-    fn print(s: String) -> Unit
+    fn emit(s: String) -> Unit
 }
-fn effectful() -> Unit with Console { print("hi") }
+fn emit(s: String) -> Unit { }
+fn effectful() -> Unit with Console { emit("hi") }
 fn pure_caller() -> Unit { effectful() }"#;
     let result = kyokara_hir::check_file(src);
 

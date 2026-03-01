@@ -12,7 +12,8 @@ pub mod value;
 
 use kyokara_hir::{
     ModulePath, check_module, check_project, collect_item_tree, register_builtin_intrinsics,
-    register_builtin_methods, register_builtin_types,
+    register_builtin_methods, register_builtin_types, register_static_methods,
+    register_synthetic_modules,
 };
 use kyokara_intern::Interner;
 use kyokara_span::FileId;
@@ -136,13 +137,20 @@ pub fn run_with_manifest(
         &mut interner,
     );
 
-    // 5. Register intrinsic function signatures in the item tree + module scope.
+    // 5. Register intrinsic function signatures and canonical API surface.
     register_builtin_intrinsics(
         &mut item_result.tree,
         &mut item_result.module_scope,
         &mut interner,
     );
     register_builtin_methods(&mut item_result.module_scope, &mut interner);
+    register_synthetic_modules(
+        &mut item_result.tree,
+        &mut item_result.module_scope,
+        &mut interner,
+        true, // auto-import in single-file mode
+    );
+    register_static_methods(&mut item_result.module_scope, &mut interner);
 
     // 6. Type-check.
     let type_check = check_module(
@@ -213,13 +221,20 @@ pub fn run_project_with_manifest(
         .get_mut(&entry_path)
         .ok_or(RuntimeError::NoMainFunction)?;
 
-    // Register intrinsics in the entry module.
+    // Register intrinsics and canonical API surface in the entry module.
     register_builtin_intrinsics(
         &mut entry_info.item_tree,
         &mut entry_info.scope,
         &mut project.interner,
     );
     register_builtin_methods(&mut entry_info.scope, &mut project.interner);
+    register_synthetic_modules(
+        &mut entry_info.item_tree,
+        &mut entry_info.scope,
+        &mut project.interner,
+        false, // project mode: require explicit imports
+    );
+    register_static_methods(&mut entry_info.scope, &mut project.interner);
 
     // Collect fn bodies: start with the entry module's type check.
     let entry_tc = project

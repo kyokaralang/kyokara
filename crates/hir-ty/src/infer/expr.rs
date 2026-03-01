@@ -259,6 +259,11 @@ impl<'a> InferenceCtx<'a> {
             Some(ResolvedName::Cap(_)) => self.non_value_name_in_expr("capability", name),
             Some(ResolvedName::Import(_)) => self.non_value_name_in_expr("import", name),
 
+            // Module names (io, math, fs) are not values — they're only valid
+            // as dot-call prefixes (io.println). Bare usage is an error.
+            Some(ResolvedName::Module(_)) => Ty::Error,
+            Some(ResolvedName::StaticMethodType(_)) => Ty::Error,
+
             None => Ty::Error,
         }
     }
@@ -458,6 +463,15 @@ impl<'a> InferenceCtx<'a> {
     }
 
     fn infer_call(&mut self, callee: ExprIdx, args: &[CallArg]) -> Ty {
+        // ── Module-qualified and static method call resolution ───────
+        // Before method call resolution, check if callee is `module.fn()`
+        // or `Type.static_method()` (e.g., `io.println(s)`, `List.new()`).
+        if let Expr::Field { base, field } = self.body.exprs[callee].clone()
+            && let Some(result) = self.try_infer_qualified_call(callee, base, field, args)
+        {
+            return result;
+        }
+
         // ── Method call resolution ──────────────────────────────────
         // If the callee is `expr.field(args)`, try resolving as a method
         // call before falling through to normal field-access + call.
@@ -642,7 +656,16 @@ impl<'a> InferenceCtx<'a> {
             return;
         };
 
-        if let Some(&fn_idx) = self.module_scope.functions.get(&name) {
+        // Look up the function in scope.functions first, then fall back to intrinsic_fn_lookup
+        // (intrinsics are no longer in scope.functions but still need effect checking).
+        let fn_idx = self
+            .module_scope
+            .functions
+            .get(&name)
+            .or_else(|| self.module_scope.intrinsic_fn_lookup.get(&name))
+            .copied();
+
+        if let Some(fn_idx) = fn_idx {
             let fn_item = &self.item_tree.functions[fn_idx];
             let env = Self::make_env(
                 self.item_tree,
@@ -1139,6 +1162,116 @@ impl<'a> InferenceCtx<'a> {
         }
     }
 
+    /// Try to resolve `base.field(args)` as a module-qualified or static method call.
+    ///
+    /// Handles patterns like `io.println(s)`, `math.min(a, b)`, `List.new()`.
+    /// Returns `Some(return_type)` if resolved, `None` to fall through.
+    fn try_infer_qualified_call(
+        &mut self,
+        callee: ExprIdx,
+        base: ExprIdx,
+        field: kyokara_hir_def::name::Name,
+        args: &[CallArg],
+    ) -> Option<Ty> {
+        let Expr::Path(ref path) = self.body.exprs[base] else {
+            return None;
+        };
+        if !path.is_single() {
+            return None;
+        }
+        let name = path.segments[0];
+
+        // Module-qualified call: io.println(s), math.min(a, b), fs.read_file(path)
+        if let Some(mod_fns) = self.module_scope.synthetic_modules.get(&name) {
+            if let Some(&fn_idx) = mod_fns.get(&field) {
+                return Some(self.infer_qualified_fn_call(callee, fn_idx, args));
+            }
+            // Module exists but function not found — emit diagnostic.
+            let mod_str = name.resolve(self.interner);
+            let fn_str = field.resolve(self.interner);
+            self.push_diag(TyDiagnosticData::NoSuchMethod {
+                method: format!("{mod_str}.{fn_str}"),
+                ty: Ty::Error,
+            });
+            for arg in args {
+                match arg {
+                    CallArg::Positional(e) | CallArg::Named { value: e, .. } => {
+                        self.infer_expr(*e, &Expectation::None);
+                    }
+                }
+            }
+            return Some(Ty::Error);
+        }
+
+        // Static method call: List.new(), Map.new()
+        if self.module_scope.types.contains_key(&name)
+            && let Some(&fn_idx) = self.module_scope.static_methods.get(&(name, field))
+        {
+            return Some(self.infer_qualified_fn_call(callee, fn_idx, args));
+        }
+
+        None
+    }
+
+    /// Infer a call to a resolved FnItemIdx (no receiver). Used for module-qualified
+    /// and static method calls.
+    fn infer_qualified_fn_call(
+        &mut self,
+        callee: ExprIdx,
+        fn_idx: kyokara_hir_def::item_tree::FnItemIdx,
+        args: &[CallArg],
+    ) -> Ty {
+        let env = Self::make_env(
+            self.item_tree,
+            self.module_scope,
+            self.interner,
+            &self.type_params,
+        );
+        let (params, ret) = instantiate_fn_sig(fn_idx, &env, &mut self.table);
+
+        // Record the callee type.
+        let fn_ty = Ty::Fn {
+            params: params.clone(),
+            ret: Box::new(ret.clone()),
+        };
+        self.expr_types.insert(callee, fn_ty);
+
+        // Check arity.
+        if args.len() != params.len() {
+            self.push_diag(TyDiagnosticData::ArgCountMismatch {
+                expected: params.len(),
+                actual: args.len(),
+            });
+            for arg in args {
+                match arg {
+                    CallArg::Positional(e) | CallArg::Named { value: e, .. } => {
+                        self.infer_expr(*e, &Expectation::None);
+                    }
+                }
+            }
+            return Ty::Error;
+        }
+
+        // Type-check args.
+        for (i, arg) in args.iter().enumerate() {
+            match arg {
+                CallArg::Positional(e) => {
+                    self.infer_expr(*e, &Expectation::Has(params[i].clone()));
+                }
+                CallArg::Named { value: e, .. } => {
+                    self.infer_expr(*e, &Expectation::Has(params[i].clone()));
+                }
+            }
+        }
+
+        // Effect checking: look up the function's required capabilities.
+        let method_name = self.item_tree.functions[fn_idx].name;
+        self.record_call_edge_if_top_level(Some(method_name));
+        self.check_call_effects_if_function(Some(method_name));
+
+        ret
+    }
+
     /// Try to resolve `base.field(args)` as a method call.
     ///
     /// Returns `Some(return_type)` if a method was found, `None` if the caller
@@ -1260,11 +1393,9 @@ impl<'a> InferenceCtx<'a> {
 
         // Record effect checking for the resolved method.
         let method_name = self.item_tree.functions[fn_idx].name;
-        if let Some(&fn_idx_from_scope) = self.module_scope.functions.get(&method_name) {
-            let call_target = Some(method_name);
-            self.record_call_edge_if_top_level(call_target);
-            let _ = fn_idx_from_scope;
-        }
+        let call_target = Some(method_name);
+        self.record_call_edge_if_top_level(call_target);
+        self.check_call_effects_if_function(call_target);
 
         Some(ret)
     }

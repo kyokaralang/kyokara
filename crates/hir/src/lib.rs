@@ -10,6 +10,8 @@ pub use kyokara_hir_def::body::Body;
 pub use kyokara_hir_def::builtins::register_builtin_intrinsics;
 pub use kyokara_hir_def::builtins::register_builtin_methods;
 pub use kyokara_hir_def::builtins::register_builtin_types;
+pub use kyokara_hir_def::builtins::register_static_methods;
+pub use kyokara_hir_def::builtins::register_synthetic_modules;
 pub use kyokara_hir_def::item_tree::lower::collect_item_tree;
 pub use kyokara_hir_def::item_tree::{
     CapItem, FnItem, FnParam, ItemTree, PropertyItem, PropertyItemIdx, TypeDefKind, TypeItem,
@@ -135,6 +137,14 @@ pub fn check_file(source: &str) -> CheckResult {
         &mut interner,
     );
     register_builtin_methods(&mut item_result.module_scope, &mut interner);
+    // In single-file mode, auto-import all synthetic modules.
+    register_synthetic_modules(
+        &mut item_result.tree,
+        &mut item_result.module_scope,
+        &mut interner,
+        true, // auto_import
+    );
+    register_static_methods(&mut item_result.module_scope, &mut interner);
 
     // 5. Type-check all functions (Pass 2 + 3).
     let type_check = check_module(
@@ -222,6 +232,15 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
             &mut interner,
         );
         register_builtin_methods(&mut item_result.module_scope, &mut interner);
+        // In project mode, synthetic modules require explicit `import io` etc.
+        // Register them but don't auto-import.
+        register_synthetic_modules(
+            &mut item_result.tree,
+            &mut item_result.module_scope,
+            &mut interner,
+            false, // not auto_import in project mode
+        );
+        register_static_methods(&mut item_result.module_scope, &mut interner);
 
         all_lowering_diagnostics.extend(item_result.diagnostics);
 
@@ -352,6 +371,18 @@ fn resolve_project_imports(
             };
 
             if candidates.is_empty() {
+                // Check if it's a synthetic module import (io, math, fs).
+                // If so, the modules are already registered — this import just
+                // makes the name available in scope. Nothing else to do.
+                if import_path.segments.len() == 1 {
+                    let seg_name = import_path.segments[0];
+                    let importing_info = graph.get(&importing_mod);
+                    let is_synthetic = importing_info
+                        .is_some_and(|info| info.scope.synthetic_modules.contains_key(&seg_name));
+                    if is_synthetic {
+                        continue; // synthetic module already registered
+                    }
+                }
                 diagnostics.push(kyokara_diagnostics::Diagnostic::error(
                     format!("unresolved import `{import_name}`"),
                     kyokara_span::Span {
