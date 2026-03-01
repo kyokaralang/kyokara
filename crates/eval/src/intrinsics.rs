@@ -258,6 +258,9 @@ impl IntrinsicFn {
                     return Err(RuntimeError::TypeError("map_insert expects a Map".into()));
                 };
                 let key = MapKey::from_value(&key_value)?;
+                if entries.get(&key) == Some(&value) {
+                    return Ok(Value::Map(entries));
+                }
                 Rc::make_mut(&mut entries).insert(key, value);
                 Ok(Value::Map(entries))
             }
@@ -280,6 +283,9 @@ impl IntrinsicFn {
                     return Err(RuntimeError::TypeError("map_remove expects a Map".into()));
                 };
                 let key = MapKey::from_value(&key_value)?;
+                if !entries.contains_key(&key) {
+                    return Ok(Value::Map(entries));
+                }
                 Rc::make_mut(&mut entries).shift_remove(&key);
                 Ok(Value::Map(entries))
             }
@@ -321,6 +327,9 @@ impl IntrinsicFn {
                     return Err(RuntimeError::TypeError("set_insert expects a Set".into()));
                 };
                 let elem = MapKey::from_value(&elem_value)?;
+                if entries.contains(&elem) {
+                    return Ok(Value::Set(entries));
+                }
                 Rc::make_mut(&mut entries).insert(elem);
                 Ok(Value::Set(entries))
             }
@@ -343,6 +352,9 @@ impl IntrinsicFn {
                     return Err(RuntimeError::TypeError("set_remove expects a Set".into()));
                 };
                 let elem = MapKey::from_value(&elem_value)?;
+                if !entries.contains(&elem) {
+                    return Ok(Value::Set(entries));
+                }
                 Rc::make_mut(&mut entries).shift_remove(&elem);
                 Ok(Value::Set(entries))
             }
@@ -1015,6 +1027,57 @@ mod tests {
     }
 
     #[test]
+    fn map_remove_missing_keeps_shared_storage() {
+        let mut base = IndexMap::new();
+        base.insert(MapKey::Int(1), Value::Int(10));
+        let original = Value::map(base);
+        let alias = original.clone();
+
+        let removed = IntrinsicFn::MapRemove
+            .call(smallvec![original, Value::Int(99)])
+            .expect("map_remove should succeed");
+
+        let Value::Map(alias_entries) = &alias else {
+            panic!("alias should remain a map");
+        };
+        let Value::Map(removed_entries) = &removed else {
+            panic!("result should be a map");
+        };
+
+        assert_eq!(removed_entries.len(), 1);
+        assert!(
+            Rc::ptr_eq(alias_entries, removed_entries),
+            "map_remove missing key should not detach shared storage"
+        );
+    }
+
+    #[test]
+    fn map_insert_same_value_keeps_shared_storage() {
+        let mut base = IndexMap::new();
+        base.insert(MapKey::Int(1), Value::Int(10));
+        let original = Value::map(base);
+        let alias = original.clone();
+
+        let inserted = IntrinsicFn::MapInsert
+            .call(smallvec![original, Value::Int(1), Value::Int(10)])
+            .expect("map_insert should succeed");
+
+        let Value::Map(alias_entries) = &alias else {
+            panic!("alias should remain a map");
+        };
+        let Value::Map(inserted_entries) = &inserted else {
+            panic!("result should be a map");
+        };
+
+        assert_eq!(inserted_entries.len(), 1);
+        assert_eq!(inserted_entries.get(&MapKey::Int(1)), Some(&Value::Int(10)));
+        assert!(
+            Rc::ptr_eq(alias_entries, inserted_entries),
+            "map_insert with identical value should not detach shared storage"
+        );
+    }
+
+    #[test]
     fn set_insert_detaches_when_storage_is_shared() {
         let mut base = IndexSet::new();
         base.insert(MapKey::Int(1));
@@ -1121,6 +1184,56 @@ mod tests {
         assert!(
             ptr::eq(before_ptr, Rc::as_ptr(removed_entries)),
             "set_remove should mutate in-place when storage is uniquely owned"
+        );
+    }
+
+    #[test]
+    fn set_insert_duplicate_keeps_shared_storage() {
+        let mut base = IndexSet::new();
+        base.insert(MapKey::Int(1));
+        let original = Value::set(base);
+        let alias = original.clone();
+
+        let inserted = IntrinsicFn::SetInsert
+            .call(smallvec![original, Value::Int(1)])
+            .expect("set_insert should succeed");
+
+        let Value::Set(alias_entries) = &alias else {
+            panic!("alias should remain a set");
+        };
+        let Value::Set(inserted_entries) = &inserted else {
+            panic!("result should be a set");
+        };
+
+        assert_eq!(inserted_entries.len(), 1);
+        assert!(
+            Rc::ptr_eq(alias_entries, inserted_entries),
+            "set_insert duplicate should not detach shared storage"
+        );
+    }
+
+    #[test]
+    fn set_remove_missing_keeps_shared_storage() {
+        let mut base = IndexSet::new();
+        base.insert(MapKey::Int(1));
+        let original = Value::set(base);
+        let alias = original.clone();
+
+        let removed = IntrinsicFn::SetRemove
+            .call(smallvec![original, Value::Int(99)])
+            .expect("set_remove should succeed");
+
+        let Value::Set(alias_entries) = &alias else {
+            panic!("alias should remain a set");
+        };
+        let Value::Set(removed_entries) = &removed else {
+            panic!("result should be a set");
+        };
+
+        assert_eq!(removed_entries.len(), 1);
+        assert!(
+            Rc::ptr_eq(alias_entries, removed_entries),
+            "set_remove missing value should not detach shared storage"
         );
     }
 }

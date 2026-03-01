@@ -1,0 +1,4 @@
+fn main() -> Int {
+  let xs = List.new().push(1)
+  xs[2]
+}

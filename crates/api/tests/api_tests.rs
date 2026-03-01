@@ -3598,6 +3598,48 @@ fn check_set_valid_element_types_have_no_set_diagnostic() {
     );
 }
 
+// ── Map key type diagnostics (E0024) ────────────────────────────────
+
+#[test]
+fn check_map_invalid_key_type_reports_e0024() {
+    let output = check(
+        r#"fn main() -> Int {
+            let m = Map.new().insert(3.14, 1)
+            m.len()
+        }"#,
+        "test.ky",
+    );
+
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0024" && d.message.contains("map key")),
+        "expected E0024 map key diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_map_valid_key_types_have_no_map_key_diagnostic() {
+    let output = check(
+        r#"fn helper() -> Bool {
+            let i = Map.new().insert(1, "x")
+            let s = Map.new().insert("k", 1)
+            let c = Map.new().insert('a', 1)
+            let b = Map.new().insert(true, 1)
+            i.len() == 1 && s.len() == 1 && c.len() == 1 && b.len() == 1
+        }"#,
+        "test.ky",
+    );
+
+    assert!(
+        output.diagnostics.iter().all(|d| d.code != "E0024"),
+        "expected no E0024 diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
 // ── Modulo, logical AND, logical OR operator type-check tests ───────
 
 #[test]
