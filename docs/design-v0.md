@@ -522,14 +522,15 @@ v0 stdlib is implemented via intrinsic functions in the eval crate, exposed thro
 a canonical API surface: method calls for value-owned behavior, module-qualified calls
 for no-owner utilities and effects, and type-namespaced constructors.
 
-Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, and `Map<K, V>` are
+Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `Map<K, V>`, and `ParseError` are
 injected as synthetic types before type-checking. Synthetic modules (`io`, `math`, `fs`)
-are auto-imported in single-file mode and require explicit `import` in project mode.
+require explicit `import io` / `import math` / `import fs` in all modes.
 Zero intrinsic free functions exist in user scope.
 
 **Implemented (v0.1+):**
 * `Option<T>` — builtin ADT (`Some(T) | None`), used as return type for safe lookups ✓
 * `Result<T, E>` — builtin ADT (`Ok(T) | Err(E)`), `?` propagation works ✓
+* `ParseError` — builtin ADT (`InvalidInt(String) | InvalidFloat(String)`), used as error type for `parse_int`/`parse_float` ✓
 * `List<T>` — opaque builtin type backed by `Vec<Value>` ✓
   * Constructor: `List.new()`
   * Methods: `xs.push(v)`, `xs.len()`, `xs.get(i)` → `Option<T>`, `xs.head()` → `Option<T>`, `xs.tail()`, `xs.is_empty()`, `xs.reverse()`, `xs.concat(ys)`
@@ -537,7 +538,7 @@ Zero intrinsic free functions exist in user scope.
 * `Map<K, V>` — opaque builtin type backed by `IndexMap<MapKey, Value>` (insertion-order-preserving hash map, O(1) lookup). Keys must be hashable types (Int, String, Char, Bool, Unit); floats and functions are rejected at runtime. ✓
   * Constructor: `Map.new()`
   * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()` → `List<K>`, `m.values()` → `List<V>`, `m.is_empty()`
-* String methods ✓ — `s.len()` (char count), `s.contains(t)`, `s.starts_with(t)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)` → `List<String>`, `s.substring(a, b)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()`, `s.chars()`, `s.parse_int()` → `Result<Int, String>`, `s.parse_float()` → `Result<Float, String>`
+* String methods ✓ — `s.len()` (char count), `s.contains(t)`, `s.starts_with(t)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)` → `List<String>`, `s.substring(a, b)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()`, `s.chars()`, `s.parse_int()` → `Result<Int, ParseError>`, `s.parse_float()` → `Result<Float, ParseError>`
 * Char methods ✓ — `c.to_string()`
 * Int methods ✓ — `n.abs()`, `n.to_string()`, `n.to_float()`
 * Float methods ✓ — `f.abs()`, `f.to_int()`

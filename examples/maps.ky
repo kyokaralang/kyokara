@@ -1,25 +1,25 @@
 // Map operations: insert, lookup, keys/values.
 
 fn main() -> Int {
-  let m = map_insert(map_insert(map_insert(map_new(), "x", 10), "y", 20), "z", 30)
+  let m = Map.new().insert("x", 10).insert("y", 20).insert("z", 30)
 
   // Lookup
-  let x_val = match map_get(m, "x") {
+  let x_val = match m.get("x") {
     Some(v) => v
     None => 0
   }
 
   // Overwrite "x" with 99
-  let m2 = map_insert(m, "x", 99)
-  let new_x = match map_get(m2, "x") {
+  let m2 = m.insert("x", 99)
+  let new_x = match m2.get("x") {
     Some(v) => v
     None => 0
   }
 
   // keys and values
-  let keys = map_keys(m2)
-  let vals = map_values(m2)
-  let sum = list_fold(vals, 0, fn(acc: Int, v: Int) => acc + v)
+  let keys = m2.keys()
+  let vals = m2.values()
+  let sum = vals.fold(0, fn(acc: Int, v: Int) => acc + v)
 
   // x_val (10) + new_x (99) + sum (99 + 20 + 30 = 149) = 258
   x_val + new_x + sum

@@ -12,7 +12,8 @@ use crate::resolver::ModuleScope;
 use crate::type_ref::TypeRef;
 use kyokara_intern::Interner;
 
-/// Inject `Option<T>` and `Result<T, E>` into the item tree and module scope.
+/// Inject `Option<T>`, `Result<T, E>`, and `ParseError` into the item tree
+/// and module scope.
 ///
 /// Uses `Vacant` entry checks so that user-defined types with the same
 /// names (registered during item tree collection) take precedence.
@@ -25,6 +26,7 @@ pub fn register_builtin_types(
     register_result(tree, scope, interner);
     register_list(tree, scope, interner);
     register_map(tree, scope, interner);
+    register_parse_error(tree, scope, interner);
 }
 
 /// `type Option<T> = | Some(T) | None`
@@ -158,6 +160,53 @@ fn register_result(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut 
         e.insert((idx, 1));
     }
 }
+/// `type ParseError = | InvalidInt(String) | InvalidFloat(String)`
+fn register_parse_error(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
+    let parse_error_name = Name::new(interner, "ParseError");
+
+    if scope.types.contains_key(&parse_error_name) {
+        return;
+    }
+
+    let invalid_int_name = Name::new(interner, "InvalidInt");
+    let invalid_float_name = Name::new(interner, "InvalidFloat");
+
+    let string_ref = TypeRef::Path {
+        path: Path::single(Name::new(interner, "String")),
+        args: Vec::new(),
+    };
+
+    let idx = tree.types.alloc(TypeItem {
+        name: parse_error_name,
+        is_pub: false,
+        type_params: vec![],
+        kind: TypeDefKind::Adt {
+            variants: vec![
+                VariantDef {
+                    name: invalid_int_name,
+                    fields: vec![string_ref.clone()],
+                },
+                VariantDef {
+                    name: invalid_float_name,
+                    fields: vec![string_ref],
+                },
+            ],
+        },
+    });
+
+    scope.types.insert(parse_error_name, idx);
+
+    if let std::collections::hash_map::Entry::Vacant(e) = scope.constructors.entry(invalid_int_name)
+    {
+        e.insert((idx, 0));
+    }
+    if let std::collections::hash_map::Entry::Vacant(e) =
+        scope.constructors.entry(invalid_float_name)
+    {
+        e.insert((idx, 1));
+    }
+}
+
 /// Allocate all intrinsic FnItem signatures in the item tree and return
 /// a lookup table `name → FnItemIdx`. Does NOT insert into `scope.functions`.
 ///
@@ -268,14 +317,13 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
 /// Module-qualified calls like `io.println(s)` resolve through `scope.synthetic_modules`.
 /// Each module's FnItems are allocated in the item tree (via `register_builtin_intrinsics`).
 ///
-/// **Important:** This function registers the modules, but they are NOT injected into scope
-/// automatically. The user must write `import io` to make `io.*` available. In single-file
-/// mode, all synthetic modules are auto-imported for convenience.
+/// **Important:** This function registers the module definitions, but they are NOT available
+/// for name resolution until explicitly imported. Call [`activate_synthetic_imports`] after
+/// processing the item tree's import list to mark which modules are actually imported.
 pub fn register_synthetic_modules(
     tree: &mut ItemTree,
     scope: &mut ModuleScope,
     interner: &mut Interner,
-    auto_import: bool,
 ) {
     // (module_name, intrinsic_fn_name, method_name, requires_capability)
     let module_fns: &[(&str, &[(&str, &str)])] = &[
@@ -323,12 +371,28 @@ pub fn register_synthetic_modules(
 
         scope.synthetic_modules.insert(mod_name, mod_fns);
     }
+}
 
-    if auto_import {
-        // In single-file mode, all synthetic modules are available without explicit import.
-        // (The modules are already in synthetic_modules; this is a no-op since resolve_name
-        // checks synthetic_modules directly.)
+/// Scan an item tree's import list and activate any synthetic module imports.
+///
+/// For each `import io` / `import math` / `import fs` found in the item tree,
+/// adds the module name to `scope.imported_modules` so that the resolver and
+/// type inference allow module-qualified calls through that module.
+pub fn activate_synthetic_imports(
+    tree: &ItemTree,
+    scope: &mut ModuleScope,
+    interner: &mut Interner,
+) {
+    for import in &tree.imports {
+        if import.path.segments.len() == 1 {
+            let seg = import.path.segments[0];
+            if scope.synthetic_modules.contains_key(&seg) {
+                scope.imported_modules.insert(seg);
+            }
+        }
     }
+    // Suppress unused-mut warning when there are no imports.
+    let _ = interner;
 }
 
 /// Create FnItem for a new module intrinsic (e.g., read_line, read_stdin).
@@ -931,32 +995,40 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
             int_ty.clone(),
         ),
         // ── Parsing ──────────────────────────────────────────────
-        // parse_int(s: String) -> Result<Int, String>
+        // parse_int(s: String) -> Result<Int, ParseError>
         {
-            let result_int_string = TypeRef::Path {
+            let parse_error_ty = TypeRef::Path {
+                path: Path::single(Name::new(interner, "ParseError")),
+                args: Vec::new(),
+            };
+            let result_int = TypeRef::Path {
                 path: Path::single(Name::new(interner, "Result")),
-                args: vec![int_ty.clone(), string_ty.clone()],
+                args: vec![int_ty.clone(), parse_error_ty],
             };
             mk_intrinsic(
                 interner,
                 "parse_int",
                 vec![],
                 vec![("s", string_ty.clone())],
-                result_int_string,
+                result_int,
             )
         },
-        // parse_float(s: String) -> Result<Float, String>
+        // parse_float(s: String) -> Result<Float, ParseError>
         {
-            let result_float_string = TypeRef::Path {
+            let parse_error_ty = TypeRef::Path {
+                path: Path::single(Name::new(interner, "ParseError")),
+                args: Vec::new(),
+            };
+            let result_float = TypeRef::Path {
                 path: Path::single(Name::new(interner, "Result")),
-                args: vec![float_ty.clone(), string_ty.clone()],
+                args: vec![float_ty.clone(), parse_error_ty],
             };
             mk_intrinsic(
                 interner,
                 "parse_float",
                 vec![],
                 vec![("s", string_ty.clone())],
-                result_float_string,
+                result_float,
             )
         },
         // ── String decomposition ─────────────────────────────────

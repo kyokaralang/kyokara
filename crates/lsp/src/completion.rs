@@ -478,7 +478,7 @@ mod tests {
 
     #[test]
     fn completion_includes_synthetic_modules() {
-        // In single-file mode, synthetic modules are auto-imported.
+        // Synthetic module names are always suggested in completion (for discoverability).
         let source = "fn main() -> Int { 0 }";
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn completion_dot_after_module_shows_members() {
-        let source = "fn main() -> Unit { io.println(\"hi\") }";
+        let source = "import io\nfn main() -> Unit { io.println(\"hi\") }";
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
         // Cursor on "println" — inside FieldExpr with base "io".

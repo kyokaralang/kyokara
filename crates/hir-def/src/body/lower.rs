@@ -486,13 +486,14 @@ impl BodyLowerCtx<'_> {
             && self.resolve_name(name).is_none()
         {
             let span = self.node_span(pe.syntax());
-            self.diagnostics.push(
-                Diagnostic::error(
-                    format!("unresolved name `{}`", name.resolve(self.interner)),
-                    span,
-                )
-                .with_kind(DiagnosticKind::UnresolvedName),
-            );
+            let name_str = name.resolve(self.interner);
+            let msg = if let Some(hint) = legacy_intrinsic_hint(name_str) {
+                format!("unresolved name `{name_str}`; {hint}")
+            } else {
+                format!("unresolved name `{name_str}`")
+            };
+            self.diagnostics
+                .push(Diagnostic::error(msg, span).with_kind(DiagnosticKind::UnresolvedName));
         }
 
         self.alloc_expr(Expr::Path(path))
@@ -1211,3 +1212,65 @@ impl BodyLowerCtx<'_> {
 // Type aliases for CST types to avoid confusion with HIR types.
 type ExprCst = nodes::Expr;
 type PatCst = nodes::Pat;
+
+/// Return a hint for removed free-function intrinsic names, pointing to the
+/// canonical replacement. Returns `None` if the name is not a known legacy
+/// intrinsic.
+fn legacy_intrinsic_hint(name: &str) -> Option<&'static str> {
+    match name {
+        // io module
+        "print" => Some("use `io.print()` (requires `import io`)"),
+        "println" => Some("use `io.println()` (requires `import io`)"),
+        "read_line" => Some("use `io.read_line()` (requires `import io`)"),
+        "read_stdin" => Some("use `io.read_stdin()` (requires `import io`)"),
+        // fs module
+        "read_file" => Some("use `fs.read_file()` (requires `import fs`)"),
+        // math module
+        "min" => Some("use `math.min()` (requires `import math`)"),
+        "max" => Some("use `math.max()` (requires `import math`)"),
+        "float_min" | "fmin" => Some("use `math.fmin()` (requires `import math`)"),
+        "float_max" | "fmax" => Some("use `math.fmax()` (requires `import math`)"),
+        // constructors
+        "list_new" => Some("use `List.new()`"),
+        "map_new" => Some("use `Map.new()`"),
+        // methods on values
+        "abs" | "float_abs" => Some("use `n.abs()` (method on Int or Float)"),
+        "list_len" => Some("use `xs.len()` (method on List)"),
+        "list_push" => Some("use `xs.push(val)` (method on List)"),
+        "list_pop" => Some("use `xs.pop()` (method on List)"),
+        "list_get" => Some("use `xs.get(i)` (method on List)"),
+        "list_set" => Some("use `xs.set(i, val)` (method on List)"),
+        "list_map" => Some("use `xs.map(f)` (method on List)"),
+        "list_filter" => Some("use `xs.filter(f)` (method on List)"),
+        "list_fold" => Some("use `xs.fold(init, f)` (method on List)"),
+        "list_contains" => Some("use `xs.contains(val)` (method on List)"),
+        "list_reverse" => Some("use `xs.reverse()` (method on List)"),
+        "list_sort" => Some("use `xs.sort()` (method on List)"),
+        "map_insert" => Some("use `m.insert(k, v)` (method on Map)"),
+        "map_get" => Some("use `m.get(k)` (method on Map)"),
+        "map_remove" => Some("use `m.remove(k)` (method on Map)"),
+        "map_contains_key" => Some("use `m.contains_key(k)` (method on Map)"),
+        "map_keys" => Some("use `m.keys()` (method on Map)"),
+        "map_values" => Some("use `m.values()` (method on Map)"),
+        "map_len" => Some("use `m.len()` (method on Map)"),
+        "string_len" => Some("use `s.len()` (method on String)"),
+        "string_concat" => Some("use `s.concat(t)` (method on String)"),
+        "string_slice" => Some("use `s.slice(start, end)` (method on String)"),
+        "string_contains" => Some("use `s.contains(sub)` (method on String)"),
+        "string_starts_with" => Some("use `s.starts_with(prefix)` (method on String)"),
+        "string_ends_with" => Some("use `s.ends_with(suffix)` (method on String)"),
+        "string_to_upper" => Some("use `s.to_upper()` (method on String)"),
+        "string_to_lower" => Some("use `s.to_lower()` (method on String)"),
+        "string_trim" => Some("use `s.trim()` (method on String)"),
+        "string_split" => Some("use `s.split(sep)` (method on String)"),
+        "string_replace" => Some("use `s.replace(from, to)` (method on String)"),
+        "string_chars" => Some("use `s.chars()` (method on String)"),
+        "int_to_string" => Some("use `n.to_string()` (method on Int)"),
+        "char_to_string" => Some("use `c.to_string()` (method on Char)"),
+        "int_to_float" => Some("use `n.to_float()` (method on Int)"),
+        "float_to_int" => Some("use `f.to_int()` (method on Float)"),
+        "parse_int" => Some("use `s.parse_int()` (method on String)"),
+        "parse_float" => Some("use `s.parse_float()` (method on String)"),
+        _ => None,
+    }
+}

@@ -5,9 +5,9 @@ use kyokara_eval::interpreter::Interpreter;
 use kyokara_eval::intrinsics::Args;
 use kyokara_hir::ModulePath;
 use kyokara_hir::{
-    check_module, check_project, collect_item_tree, register_builtin_intrinsics,
-    register_builtin_methods, register_builtin_types, register_static_methods,
-    register_synthetic_modules,
+    activate_synthetic_imports, check_module, check_project, collect_item_tree,
+    register_builtin_intrinsics, register_builtin_methods, register_builtin_types,
+    register_static_methods, register_synthetic_modules,
 };
 use kyokara_hir_def::item_tree::FnItemIdx;
 use kyokara_intern::Interner;
@@ -105,7 +105,11 @@ pub fn run_tests(source: &str, config: &TestConfig) -> Result<TestReport, String
         &mut item_result.tree,
         &mut item_result.module_scope,
         &mut interner,
-        true,
+    );
+    activate_synthetic_imports(
+        &item_result.tree,
+        &mut item_result.module_scope,
+        &mut interner,
     );
     register_static_methods(&mut item_result.module_scope, &mut interner);
 
@@ -172,7 +176,11 @@ pub fn run_project_tests(
         &mut entry_info.item_tree,
         &mut entry_info.scope,
         &mut project.interner,
-        false,
+    );
+    activate_synthetic_imports(
+        &entry_info.item_tree,
+        &mut entry_info.scope,
+        &mut project.interner,
     );
     register_static_methods(&mut entry_info.scope, &mut project.interner);
 

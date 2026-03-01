@@ -1590,14 +1590,56 @@ fn eval_abs() {
 
 #[test]
 fn eval_min() {
-    let val = run_ok("fn main() -> Int { math.min(3, 7) }");
+    let val = run_ok("import math\nfn main() -> Int { math.min(3, 7) }");
     assert!(matches!(val, Value::Int(3)));
 }
 
 #[test]
 fn eval_max() {
-    let val = run_ok("fn main() -> Int { math.max(3, 7) }");
+    let val = run_ok("import math\nfn main() -> Int { math.max(3, 7) }");
     assert!(matches!(val, Value::Int(7)));
+}
+
+// ── import enforcement tests ────────────────────────────────────────
+// Synthetic modules require explicit `import` even in single-file mode.
+
+#[test]
+fn eval_io_without_import_fails() {
+    let err = run_err(r#"fn main() -> Unit { io.println("hi") }"#);
+    assert!(
+        err.contains("unresolved name"),
+        "expected unresolved name error, got: {err}"
+    );
+}
+
+#[test]
+fn eval_math_without_import_fails() {
+    let err = run_err("fn main() -> Int { math.min(1, 2) }");
+    assert!(
+        err.contains("unresolved name"),
+        "expected unresolved name error, got: {err}"
+    );
+}
+
+#[test]
+fn eval_fs_without_import_fails() {
+    let err = run_err(r#"fn main() -> String { fs.read_file("x") }"#);
+    assert!(
+        err.contains("unresolved name"),
+        "expected unresolved name error, got: {err}"
+    );
+}
+
+#[test]
+fn eval_io_with_import_works() {
+    let val = run_ok("import io\nfn main() -> Unit { io.println(\"ok\") }");
+    assert!(matches!(val, Value::Unit));
+}
+
+#[test]
+fn eval_math_with_import_works() {
+    let val = run_ok("import math\nfn main() -> Int { math.min(1, 2) }");
+    assert!(matches!(val, Value::Int(1)));
 }
 
 #[test]
@@ -1657,7 +1699,8 @@ fn eval_map_list_interop() {
 fn no_manifest_print_works() {
     // No manifest = allow all (backward compat).
     let val = run_with_manifest_ok(
-        r#"fn main() -> Unit {
+        r#"import io
+        fn main() -> Unit {
             io.println("hello")
         }"#,
         None,
@@ -1669,7 +1712,8 @@ fn no_manifest_print_works() {
 fn manifest_with_io_print_works() {
     let manifest = manifest_from_json(r#"{"caps": {"io": {}}}"#);
     let val = run_with_manifest_ok(
-        r#"fn main() -> Unit {
+        r#"import io
+        fn main() -> Unit {
             io.println("hello")
         }"#,
         Some(manifest),
@@ -1681,7 +1725,8 @@ fn manifest_with_io_print_works() {
 fn manifest_without_io_print_denied() {
     let manifest = manifest_from_json(r#"{"caps": {"Net": {}}}"#);
     let err = run_with_manifest_err(
-        r#"fn main() -> Unit {
+        r#"import io
+        fn main() -> Unit {
             io.print("hello")
         }"#,
         Some(manifest),
@@ -1694,7 +1739,8 @@ fn manifest_without_io_print_denied() {
 fn manifest_without_io_println_denied() {
     let manifest = manifest_from_json(r#"{"caps": {"Net": {}}}"#);
     let err = run_with_manifest_err(
-        r#"fn main() -> Unit {
+        r#"import io
+        fn main() -> Unit {
             io.println("hello")
         }"#,
         Some(manifest),
@@ -1719,7 +1765,8 @@ fn manifest_with_io_pure_intrinsics_work() {
 fn empty_manifest_denies_io() {
     let manifest = manifest_from_json(r#"{"caps": {}}"#);
     let err = run_with_manifest_err(
-        r#"fn main() -> Unit {
+        r#"import io
+        fn main() -> Unit {
             io.println("hello")
         }"#,
         Some(manifest),
@@ -1846,7 +1893,8 @@ fn manifest_grants_unused_cap() {
     // Manifest grants Net, program only uses IO — that's fine.
     let manifest = manifest_from_json(r#"{"caps": {"Net": {}, "io": {}}}"#);
     let val = run_with_manifest_ok(
-        r#"fn main() -> Unit {
+        r#"import io
+        fn main() -> Unit {
             io.println("hello")
         }"#,
         Some(manifest),
@@ -1857,7 +1905,11 @@ fn manifest_grants_unused_cap() {
 #[test]
 fn capability_denied_error_message_format() {
     let manifest = manifest_from_json(r#"{"caps": {}}"#);
-    let err = run_with_manifest_err(r#"fn main() -> Unit { io.println("x") }"#, Some(manifest));
+    let err = run_with_manifest_err(
+        r#"import io
+        fn main() -> Unit { io.println("x") }"#,
+        Some(manifest),
+    );
     // Should contain both the capability name and the function name.
     assert!(err.contains("io"));
     assert!(err.contains("Println"));
@@ -1865,7 +1917,7 @@ fn capability_denied_error_message_format() {
 
 #[test]
 fn run_with_manifest_none_allows_all() {
-    let val = run_with_manifest_ok(r#"fn main() -> Unit { io.println("ok") }"#, None);
+    let val = run_with_manifest_ok("import io\nfn main() -> Unit { io.println(\"ok\") }", None);
     assert!(matches!(val, Value::Unit));
 }
 
@@ -3518,7 +3570,7 @@ fn eval_tilde_and_logical_not_distinct() {
 }
 
 // ── parse_int tests ─────────────────────────────────────────────────
-// parse_int now returns Result<Int, String>.
+// parse_int returns Result<Int, ParseError>.
 
 #[test]
 fn eval_parse_int_basic() {
@@ -3664,7 +3716,7 @@ fn eval_parse_int_overflow_fails() {
 }
 
 // ── parse_float tests ───────────────────────────────────────────────
-// parse_float now returns Result<Float, String>.
+// parse_float returns Result<Float, ParseError>.
 
 #[test]
 fn eval_parse_float_basic() {
@@ -3799,6 +3851,72 @@ fn eval_parse_float_non_numeric_fails() {
     assert_eq!(val, Value::Bool(true));
 }
 
+// ── ParseError variant matching tests ────────────────────────────────
+
+#[test]
+fn eval_parse_int_error_is_invalid_int() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            match "abc".parse_int() {
+                Ok(_) => false
+                Err(e) => match e {
+                    InvalidInt(_) => true
+                    InvalidFloat(_) => false
+                }
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_parse_float_error_is_invalid_float() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            match "xyz".parse_float() {
+                Ok(_) => false
+                Err(e) => match e {
+                    InvalidInt(_) => false
+                    InvalidFloat(_) => true
+                }
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_parse_int_error_carries_message() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            match "not_a_number".parse_int() {
+                Ok(_) => false
+                Err(e) => match e {
+                    InvalidInt(msg) => msg.len() > 0
+                    InvalidFloat(_) => false
+                }
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_parse_float_error_carries_message() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            match "not_a_float".parse_float() {
+                Ok(_) => false
+                Err(e) => match e {
+                    InvalidInt(_) => false
+                    InvalidFloat(msg) => msg.len() > 0
+                }
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Bool(true));
+}
+
 // ── string_lines tests ─────────────────────────────────────────────
 
 #[test]
@@ -3914,7 +4032,7 @@ fn eval_read_file_basic() {
     let file_path = dir.path().join("test.txt");
     std::fs::write(&file_path, "hello world").unwrap();
     let path_str = file_path.to_str().unwrap();
-    let source = format!(r#"fn main() -> String {{ fs.read_file("{path_str}") }}"#);
+    let source = format!("import fs\nfn main() -> String {{ fs.read_file(\"{path_str}\") }}");
     let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
     let val = run_with_manifest_ok(&source, Some(manifest));
     assert_eq!(val, Value::String("hello world".to_string()));
@@ -3926,7 +4044,8 @@ fn eval_read_file_multiline() {
     let file_path = dir.path().join("multi.txt");
     std::fs::write(&file_path, "line1\nline2\nline3\n").unwrap();
     let path_str = file_path.to_str().unwrap();
-    let source = format!(r#"fn main() -> Int {{ fs.read_file("{path_str}").lines().len() }}"#);
+    let source =
+        format!("import fs\nfn main() -> Int {{ fs.read_file(\"{path_str}\").lines().len() }}");
     let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
     let val = run_with_manifest_ok(&source, Some(manifest));
     assert_eq!(val, Value::Int(3));
@@ -3938,7 +4057,7 @@ fn eval_read_file_empty() {
     let file_path = dir.path().join("empty.txt");
     std::fs::write(&file_path, "").unwrap();
     let path_str = file_path.to_str().unwrap();
-    let source = format!(r#"fn main() -> String {{ fs.read_file("{path_str}") }}"#);
+    let source = format!("import fs\nfn main() -> String {{ fs.read_file(\"{path_str}\") }}");
     let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
     let val = run_with_manifest_ok(&source, Some(manifest));
     assert_eq!(val, Value::String(String::new()));
@@ -3950,14 +4069,15 @@ fn eval_read_file_no_manifest() {
     let file_path = dir.path().join("test.txt");
     std::fs::write(&file_path, "allowed").unwrap();
     let path_str = file_path.to_str().unwrap();
-    let source = format!(r#"fn main() -> String {{ fs.read_file("{path_str}") }}"#);
+    let source = format!("import fs\nfn main() -> String {{ fs.read_file(\"{path_str}\") }}");
     let val = run_with_manifest_ok(&source, None);
     assert_eq!(val, Value::String("allowed".to_string()));
 }
 
 #[test]
 fn eval_read_file_not_found() {
-    let source = r#"fn main() -> String { fs.read_file("/nonexistent/path/to/file.txt") }"#;
+    let source =
+        "import fs\nfn main() -> String { fs.read_file(\"/nonexistent/path/to/file.txt\") }";
     let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
     let err = run_with_manifest_err(source, Some(manifest));
     assert!(err.contains("read_file"), "got: {err}");
@@ -3969,7 +4089,7 @@ fn eval_read_file_denied_no_cap() {
     let file_path = dir.path().join("test.txt");
     std::fs::write(&file_path, "secret").unwrap();
     let path_str = file_path.to_str().unwrap();
-    let source = format!(r#"fn main() -> String {{ fs.read_file("{path_str}") }}"#);
+    let source = format!("import fs\nfn main() -> String {{ fs.read_file(\"{path_str}\") }}");
     let manifest = manifest_from_json(r#"{"caps": {}}"#);
     let err = run_with_manifest_err(&source, Some(manifest));
     assert!(err.contains("capability denied"), "got: {err}");
@@ -3982,7 +4102,7 @@ fn eval_read_file_denied_wrong_cap() {
     let file_path = dir.path().join("test.txt");
     std::fs::write(&file_path, "secret").unwrap();
     let path_str = file_path.to_str().unwrap();
-    let source = format!(r#"fn main() -> String {{ fs.read_file("{path_str}") }}"#);
+    let source = format!("import fs\nfn main() -> String {{ fs.read_file(\"{path_str}\") }}");
     let manifest = manifest_from_json(r#"{"caps": {"io": {}}}"#);
     let err = run_with_manifest_err(&source, Some(manifest));
     assert!(err.contains("capability denied"), "got: {err}");
@@ -3994,7 +4114,7 @@ fn eval_read_file_with_both_caps() {
     let file_path = dir.path().join("test.txt");
     std::fs::write(&file_path, "both caps").unwrap();
     let path_str = file_path.to_str().unwrap();
-    let source = format!(r#"fn main() -> String {{ fs.read_file("{path_str}") }}"#);
+    let source = format!("import fs\nfn main() -> String {{ fs.read_file(\"{path_str}\") }}");
     let manifest = manifest_from_json(r#"{"caps": {"io": {}, "fs": {}}}"#);
     let val = run_with_manifest_ok(&source, Some(manifest));
     assert_eq!(val, Value::String("both caps".to_string()));

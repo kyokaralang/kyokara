@@ -1182,7 +1182,10 @@ impl<'a> InferenceCtx<'a> {
         let name = path.segments[0];
 
         // Module-qualified call: io.println(s), math.min(a, b), fs.read_file(path)
-        if let Some(mod_fns) = self.module_scope.synthetic_modules.get(&name) {
+        // Only resolves if the module has been explicitly imported.
+        if self.module_scope.imported_modules.contains(&name)
+            && let Some(mod_fns) = self.module_scope.synthetic_modules.get(&name)
+        {
             if let Some(&fn_idx) = mod_fns.get(&field) {
                 return Some(self.infer_qualified_fn_call(callee, fn_idx, args));
             }

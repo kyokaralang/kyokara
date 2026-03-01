@@ -1,3 +1,5 @@
+import io
+
 fn apply(f: fn(Int) -> Int, x: Int) -> Int {
   f(x)
 }
@@ -10,6 +12,6 @@ fn compose(x: Int) -> Int {
 }
 
 fn main() -> Unit {
-  println(string_concat("apply(double, 7) = ", int_to_string(apply(double, 7))))
-  println(string_concat("compose(3) = ", int_to_string(compose(3))))
+  io.println("apply(double, 7) = ".concat(apply(double, 7).to_string()))
+  io.println("compose(3) = ".concat(compose(3).to_string()))
 }
