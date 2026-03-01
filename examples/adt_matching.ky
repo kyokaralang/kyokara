@@ -1,3 +1,5 @@
+import io
+
 type Color = | Red | Green | Blue
 
 fn color_name(c: Color) -> String {
@@ -20,7 +22,7 @@ fn area(s: Shape) -> Int {
 }
 
 fn main() -> Unit {
-  println(color_name(Green))
-  println(string_concat("circle area: ", int_to_string(area(Circle(5)))))
-  println(string_concat("rect area: ", int_to_string(area(Rect(4, 6)))))
+  io.println(color_name(Green))
+  io.println("circle area: ".concat(area(Circle(5)).to_string()))
+  io.println("rect area: ".concat(area(Rect(4, 6)).to_string()))
 }

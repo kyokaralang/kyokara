@@ -1,3 +1,5 @@
+import io
+
 fn abs(x: Int) -> Int
   ensures result >= 0
 {
@@ -23,10 +25,10 @@ fn clamp(x: Int, lo: Int, hi: Int) -> Int
 }
 
 fn main() -> Unit {
-  println(string_concat("abs(-5) = ", int_to_string(abs(-5))))
-  println(string_concat("abs(3)  = ", int_to_string(abs(3))))
-  println(string_concat("increment(9) = ", int_to_string(increment(9))))
-  println(string_concat("clamp(50, 0, 10) = ", int_to_string(clamp(50, 0, 10))))
-  println(string_concat("clamp(-5, 0, 10) = ", int_to_string(clamp(-5, 0, 10))))
-  println(string_concat("clamp(7, 0, 10)  = ", int_to_string(clamp(7, 0, 10))))
+  io.println("abs(-5) = ".concat(abs(-5).to_string()))
+  io.println("abs(3)  = ".concat(abs(3).to_string()))
+  io.println("increment(9) = ".concat(increment(9).to_string()))
+  io.println("clamp(50, 0, 10) = ".concat(clamp(50, 0, 10).to_string()))
+  io.println("clamp(-5, 0, 10) = ".concat(clamp(-5, 0, 10).to_string()))
+  io.println("clamp(7, 0, 10)  = ".concat(clamp(7, 0, 10).to_string()))
 }

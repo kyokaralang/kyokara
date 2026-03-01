@@ -1,16 +1,18 @@
+import io
+
 fn greet(first: String, last: String) -> String {
-  string_concat("Hello, ", string_concat(first, string_concat(" ", last)))
+  "Hello, ".concat(first.concat(" ".concat(last)))
 }
 
 fn repeat(s: String, n: Int) -> String {
   if n <= 0 {
     ""
   } else {
-    string_concat(s, repeat(s, n - 1))
+    s.concat(repeat(s, n - 1))
   }
 }
 
 fn main() -> Unit {
-  println(greet("Ada", "Lovelace"))
-  println(repeat("ha", 5))
+  io.println(greet("Ada", "Lovelace"))
+  io.println(repeat("ha", 5))
 }

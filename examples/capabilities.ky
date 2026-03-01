@@ -14,7 +14,7 @@ fn log(msg: String) -> Unit with Console {
 fn copy_file(src: String, dst: String) -> Unit with FileSystem, Console {
   let content = read_file(src)
   write_file(dst, content)
-  log(string_concat("Copied ", string_concat(src, string_concat(" to ", dst))))
+  log("Copied ".concat(src.concat(" to ".concat(dst))))
 }
 
 fn pure_transform(x: Int) -> Int {

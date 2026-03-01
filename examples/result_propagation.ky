@@ -1,3 +1,5 @@
+import io
+
 fn parse_positive(n: Int) -> Result<Int, String> {
   if n > 0 {
     Ok(n)
@@ -13,12 +15,12 @@ fn double_positive(n: Int) -> Result<Int, String> {
 
 fn show_result(r: Result<Int, String>) -> String {
   match r {
-    Ok(v) => string_concat("Ok(", string_concat(int_to_string(v), ")"))
-    Err(e) => string_concat("Err(", string_concat(e, ")"))
+    Ok(v) => "Ok(".concat(v.to_string().concat(")"))
+    Err(e) => "Err(".concat(e.concat(")"))
   }
 }
 
 fn main() -> Unit {
-  println(show_result(double_positive(5)))
-  println(show_result(double_positive(-3)))
+  io.println(show_result(double_positive(5)))
+  io.println(show_result(double_positive(-3)))
 }

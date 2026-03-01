@@ -4,21 +4,21 @@ fn double(x: Int) -> Int { x * 2 }
 
 fn main() -> Int {
   // Build a list [1, 2, 3, 4, 5]
-  let xs = list_push(list_push(list_push(list_push(list_push(list_new(), 1), 2), 3), 4), 5)
+  let xs = List.new().push(1).push(2).push(3).push(4).push(5)
 
   // Map: [2, 4, 6, 8, 10]
-  let doubled = list_map(xs, double)
+  let doubled = xs.map(double)
 
   // Filter: [6, 8, 10]
-  let big = list_filter(doubled, fn(x: Int) => x > 4)
+  let big = doubled.filter(fn(x: Int) => x > 4)
 
   // Fold: 6 + 8 + 10 = 24
-  let total = list_fold(big, 0, fn(acc: Int, x: Int) => acc + x)
+  let total = big.fold(0, fn(acc: Int, x: Int) => acc + x)
 
   // Verify other operations
-  let rev = list_reverse(xs)
-  let combined = list_concat(xs, rev)
+  let rev = xs.reverse()
+  let combined = xs.concat(rev)
 
-  // total (24) + list_len(combined) (10) = 34
-  total + list_len(combined)
+  // total (24) + combined.len() (10) = 34
+  total + combined.len()
 }
