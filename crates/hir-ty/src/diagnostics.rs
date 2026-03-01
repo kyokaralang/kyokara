@@ -60,6 +60,8 @@ pub enum TyDiagnosticData {
     NoSuchMethod { method: String, ty: Ty },
     /// Non-hashable type used as a Map key.
     InvalidMapKey { ty: Ty },
+    /// Non-hashable type used as a Set element.
+    InvalidSetElement { ty: Ty },
     /// Unsortable element type used with `List.sort()`.
     UnsortableElement { ty: Ty },
 }
@@ -93,6 +95,7 @@ impl TyDiagnosticData {
             TyDiagnosticData::InvalidIndexTarget { .. } => "E0022",
             TyDiagnosticData::NoSuchMethod { .. } => "E0023",
             TyDiagnosticData::InvalidMapKey { .. } => "E0024",
+            TyDiagnosticData::InvalidSetElement { .. } => "E0026",
             TyDiagnosticData::UnsortableElement { .. } => "E0025",
         }
     }
@@ -208,6 +211,12 @@ impl TyDiagnosticData {
             TyDiagnosticData::InvalidMapKey { ty } => {
                 format!(
                     "`{}` cannot be used as a map key (only Int, String, Char, Bool, Unit)",
+                    dt(ty),
+                )
+            }
+            TyDiagnosticData::InvalidSetElement { ty } => {
+                format!(
+                    "`{}` cannot be used as a set element (only Int, String, Char, Bool, Unit)",
                     dt(ty),
                 )
             }

@@ -5877,6 +5877,207 @@ fn eval_map_valid_keys_no_rejection() {
     );
 }
 
+// ── Set<T> behavior tests ───────────────────────────────────────────────
+
+#[test]
+fn eval_set_new_is_empty() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            Set.new().is_empty()
+        }"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_set_insert_contains_and_len() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            let s = Set.new().insert(1).insert(2).insert(3)
+            s.contains(2) && s.len() == 3
+        }"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_set_insert_deduplicates_values() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            let s = Set.new().insert("x").insert("x").insert("x")
+            s.len() == 1 && s.contains("x")
+        }"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_set_remove_existing_and_missing() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            let s1 = Set.new().insert("a").insert("b")
+            let s2 = s1.remove("a")
+            let s3 = s2.remove("zzz")
+            !s2.contains("a") && s2.len() == 1 && s3.len() == 1
+        }"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_set_immutable_semantics() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            let s1 = Set.new().insert(1)
+            let s2 = s1.insert(2)
+            s1.len() == 1 && s2.len() == 2
+        }"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_set_values_preserve_insertion_order() {
+    let val = run_ok(
+        r#"fn main() -> String {
+            let s = Set.new().insert("c").insert("a").insert("b")
+            let vals = s.values()
+            match vals.head() {
+                Some(v) => v
+                None => "fail"
+            }
+        }"#,
+    );
+    match val {
+        Value::String(s) => assert_eq!(s, "c"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_set_values_remove_and_reinsert_goes_to_end() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            let s = Set.new().insert("a").insert("b").remove("a").insert("a")
+            let vals = s.values()
+            match vals.get(0) {
+                Some(first) =>
+                    match vals.get(1) {
+                        Some(second) => first == "b" && second == "a"
+                        None => false
+                    }
+                None => false
+            }
+        }"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+// ── Set element type compile-time rejection ─────────────────────────
+
+#[test]
+fn eval_set_float_element_rejected_at_compile_time() {
+    let err = run_err(
+        r#"fn main() -> Int {
+            let s = Set.new().insert(3.14)
+            s.len()
+        }"#,
+    );
+    assert!(
+        err.contains("cannot be used as a set element"),
+        "expected compile-time set element rejection, got: {err}"
+    );
+}
+
+#[test]
+fn eval_set_list_element_rejected_at_compile_time() {
+    let err = run_err(
+        r#"fn main() -> Int {
+            let xs = List.new().push(1)
+            let s = Set.new().insert(xs)
+            s.len()
+        }"#,
+    );
+    assert!(
+        err.contains("cannot be used as a set element"),
+        "expected compile-time set element rejection, got: {err}"
+    );
+}
+
+#[test]
+fn eval_set_fn_element_rejected_at_compile_time() {
+    let err = run_err(
+        r#"fn helper() -> Int { 0 }
+           fn main() -> Int {
+             let s = Set.new().insert(helper)
+             s.len()
+           }"#,
+    );
+    assert!(
+        err.contains("cannot be used as a set element"),
+        "expected compile-time set element rejection, got: {err}"
+    );
+}
+
+#[test]
+fn eval_set_valid_elements_no_rejection() {
+    run_ok(
+        r#"fn main() -> Bool {
+            let s1 = Set.new().insert(1)
+            let s2 = Set.new().insert("str")
+            let s3 = Set.new().insert('c')
+            let s4 = Set.new().insert(true)
+            s1.len() == 1 && s2.len() == 1 && s3.len() == 1 && s4.len() == 1
+        }"#,
+    );
+}
+
+#[test]
+fn eval_list_rebinding_chain_preserves_prior_versions() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            let xs0 = List.new()
+            let xs1 = xs0.push(1)
+            let xs2 = xs1.push(2)
+            let xs3 = xs2.push(3)
+            let xs4 = xs3.push(4)
+            let xs5 = xs4.push(5)
+            xs0.len() == 0 && xs3.len() == 3 && xs5.len() == 5
+        }"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_map_rebinding_chain_preserves_prior_versions() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            let m0 = Map.new()
+            let m1 = m0.insert(1, 10)
+            let m2 = m1.insert(2, 20)
+            let m3 = m2.insert(3, 30)
+            let m4 = m3.insert(4, 40)
+            m0.len() == 0 && m2.len() == 2 && m4.len() == 4
+        }"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_set_rebinding_chain_preserves_prior_versions() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            let s0 = Set.new()
+            let s1 = s0.insert(1)
+            let s2 = s1.insert(2)
+            let s3 = s2.insert(3)
+            let s4 = s3.insert(4)
+            s0.len() == 0 && s2.len() == 2 && s4.len() == 4
+        }"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
 // ── List.sort() element type compile-time rejection ─────────────
 
 #[test]

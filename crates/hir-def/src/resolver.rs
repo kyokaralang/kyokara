@@ -21,6 +21,7 @@ pub struct WellKnownNames {
     pub char_: Option<Name>,
     pub list: Option<Name>,
     pub map: Option<Name>,
+    pub set: Option<Name>,
 }
 
 /// Module-level scope: items + constructors + imports.

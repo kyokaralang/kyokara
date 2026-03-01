@@ -1,8 +1,10 @@
 //! Built-in functions available to Kyokara programs.
 
+use std::rc::Rc;
+
+use indexmap::{IndexMap, IndexSet};
 use kyokara_hir_def::name::Name;
 use kyokara_intern::Interner;
-
 use smallvec::SmallVec;
 
 use crate::error::RuntimeError;
@@ -44,6 +46,14 @@ pub enum IntrinsicFn {
     MapKeys,
     MapValues,
     MapIsEmpty,
+    // Set<T>
+    SetNew,
+    SetInsert,
+    SetContains,
+    SetRemove,
+    SetLen,
+    SetIsEmpty,
+    SetValues,
 
     // String ops
     StringLen,
@@ -166,7 +176,7 @@ impl IntrinsicFn {
             }
 
             // ── List (simple) ────────────────────────────────────
-            IntrinsicFn::ListNew => Ok(Value::List(Vec::new())),
+            IntrinsicFn::ListNew => Ok(Value::list(Vec::new())),
             IntrinsicFn::ListPush => {
                 let mut args = args;
                 let val = args.pop().ok_or(RuntimeError::TypeError(
@@ -178,7 +188,7 @@ impl IntrinsicFn {
                 else {
                     return Err(RuntimeError::TypeError("list_push expects a List".into()));
                 };
-                xs.push(val);
+                Rc::make_mut(&mut xs).push(val);
                 Ok(Value::List(xs))
             }
             IntrinsicFn::ListLen => {
@@ -192,9 +202,9 @@ impl IntrinsicFn {
                     return Err(RuntimeError::TypeError("list_tail expects a List".into()));
                 };
                 if xs.is_empty() {
-                    Ok(Value::List(Vec::new()))
+                    Ok(Value::list(Vec::new()))
                 } else {
-                    Ok(Value::List(xs[1..].to_vec()))
+                    Ok(Value::list(xs[1..].to_vec()))
                 }
             }
             IntrinsicFn::ListIsEmpty => {
@@ -211,9 +221,9 @@ impl IntrinsicFn {
                         "list_reverse expects a List".into(),
                     ));
                 };
-                let mut rev = xs.clone();
+                let mut rev = xs.as_ref().clone();
                 rev.reverse();
-                Ok(Value::List(rev))
+                Ok(Value::list(rev))
             }
             IntrinsicFn::ListConcat => {
                 let Value::List(a) = &args[0] else {
@@ -226,21 +236,33 @@ impl IntrinsicFn {
                         "list_concat expects List arguments".into(),
                     ));
                 };
-                let mut result = a.clone();
+                let mut result = a.as_ref().clone();
                 result.extend(b.iter().cloned());
-                Ok(Value::List(result))
+                Ok(Value::list(result))
             }
 
             // ── Map (simple) ─────────────────────────────────────
-            IntrinsicFn::MapNew => Ok(Value::Map(Box::default())),
+            IntrinsicFn::MapNew => Ok(Value::map(IndexMap::new())),
             IntrinsicFn::MapInsert => {
-                let Value::Map(entries) = &args[0] else {
+                let mut args = args;
+                let value = args.pop().ok_or(RuntimeError::TypeError(
+                    "map_insert: missing value argument".into(),
+                ))?;
+                let key_value = args.pop().ok_or(RuntimeError::TypeError(
+                    "map_insert: missing key argument".into(),
+                ))?;
+                let Value::Map(mut entries) = args.pop().ok_or(RuntimeError::TypeError(
+                    "map_insert: missing map argument".into(),
+                ))?
+                else {
                     return Err(RuntimeError::TypeError("map_insert expects a Map".into()));
                 };
-                let key = MapKey::from_value(&args[1])?;
-                let mut new_map = entries.clone();
-                new_map.insert(key, args[2].clone());
-                Ok(Value::Map(new_map))
+                let key = MapKey::from_value(&key_value)?;
+                if entries.get(&key) == Some(&value) {
+                    return Ok(Value::Map(entries));
+                }
+                Rc::make_mut(&mut entries).insert(key, value);
+                Ok(Value::Map(entries))
             }
             IntrinsicFn::MapContains => {
                 let Value::Map(entries) = &args[0] else {
@@ -250,13 +272,22 @@ impl IntrinsicFn {
                 Ok(Value::Bool(entries.contains_key(&key)))
             }
             IntrinsicFn::MapRemove => {
-                let Value::Map(entries) = &args[0] else {
+                let mut args = args;
+                let key_value = args.pop().ok_or(RuntimeError::TypeError(
+                    "map_remove: missing key argument".into(),
+                ))?;
+                let Value::Map(mut entries) = args.pop().ok_or(RuntimeError::TypeError(
+                    "map_remove: missing map argument".into(),
+                ))?
+                else {
                     return Err(RuntimeError::TypeError("map_remove expects a Map".into()));
                 };
-                let key = MapKey::from_value(&args[1])?;
-                let mut new_map = entries.clone();
-                new_map.shift_remove(&key);
-                Ok(Value::Map(new_map))
+                let key = MapKey::from_value(&key_value)?;
+                if !entries.contains_key(&key) {
+                    return Ok(Value::Map(entries));
+                }
+                Rc::make_mut(&mut entries).shift_remove(&key);
+                Ok(Value::Map(entries))
             }
             IntrinsicFn::MapLen => {
                 let Value::Map(entries) = &args[0] else {
@@ -268,19 +299,82 @@ impl IntrinsicFn {
                 let Value::Map(entries) = &args[0] else {
                     return Err(RuntimeError::TypeError("map_keys expects a Map".into()));
                 };
-                Ok(Value::List(entries.keys().map(MapKey::to_value).collect()))
+                Ok(Value::list(entries.keys().map(MapKey::to_value).collect()))
             }
             IntrinsicFn::MapValues => {
                 let Value::Map(entries) = &args[0] else {
                     return Err(RuntimeError::TypeError("map_values expects a Map".into()));
                 };
-                Ok(Value::List(entries.values().cloned().collect()))
+                Ok(Value::list(entries.values().cloned().collect()))
             }
             IntrinsicFn::MapIsEmpty => {
                 let Value::Map(entries) = &args[0] else {
                     return Err(RuntimeError::TypeError("map_is_empty expects a Map".into()));
                 };
                 Ok(Value::Bool(entries.is_empty()))
+            }
+            // ── Set (simple) ─────────────────────────────────────
+            IntrinsicFn::SetNew => Ok(Value::set(IndexSet::new())),
+            IntrinsicFn::SetInsert => {
+                let mut args = args;
+                let elem_value = args.pop().ok_or(RuntimeError::TypeError(
+                    "set_insert: missing element argument".into(),
+                ))?;
+                let Value::Set(mut entries) = args.pop().ok_or(RuntimeError::TypeError(
+                    "set_insert: missing set argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError("set_insert expects a Set".into()));
+                };
+                let elem = MapKey::from_value(&elem_value)?;
+                if entries.contains(&elem) {
+                    return Ok(Value::Set(entries));
+                }
+                Rc::make_mut(&mut entries).insert(elem);
+                Ok(Value::Set(entries))
+            }
+            IntrinsicFn::SetContains => {
+                let Value::Set(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError("set_contains expects a Set".into()));
+                };
+                let elem = MapKey::from_value(&args[1])?;
+                Ok(Value::Bool(entries.contains(&elem)))
+            }
+            IntrinsicFn::SetRemove => {
+                let mut args = args;
+                let elem_value = args.pop().ok_or(RuntimeError::TypeError(
+                    "set_remove: missing element argument".into(),
+                ))?;
+                let Value::Set(mut entries) = args.pop().ok_or(RuntimeError::TypeError(
+                    "set_remove: missing set argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError("set_remove expects a Set".into()));
+                };
+                let elem = MapKey::from_value(&elem_value)?;
+                if !entries.contains(&elem) {
+                    return Ok(Value::Set(entries));
+                }
+                Rc::make_mut(&mut entries).shift_remove(&elem);
+                Ok(Value::Set(entries))
+            }
+            IntrinsicFn::SetLen => {
+                let Value::Set(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError("set_len expects a Set".into()));
+                };
+                Ok(Value::Int(entries.len() as i64))
+            }
+            IntrinsicFn::SetIsEmpty => {
+                let Value::Set(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError("set_is_empty expects a Set".into()));
+                };
+                Ok(Value::Bool(entries.is_empty()))
+            }
+            IntrinsicFn::SetValues => {
+                let Value::Set(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError("set_values expects a Set".into()));
+                };
+                Ok(Value::list(entries.iter().map(MapKey::to_value).collect()))
             }
 
             // ── String ops ───────────────────────────────────────
@@ -354,7 +448,7 @@ impl IntrinsicFn {
                     .split(delim.as_str())
                     .map(|p| Value::String(p.to_string()))
                     .collect();
-                Ok(Value::List(parts))
+                Ok(Value::list(parts))
             }
             IntrinsicFn::StringSubstring => {
                 let Value::String(s) = &args[0] else {
@@ -497,7 +591,7 @@ impl IntrinsicFn {
                     ));
                 };
                 let lines: Vec<Value> = s.lines().map(|l| Value::String(l.to_string())).collect();
-                Ok(Value::List(lines))
+                Ok(Value::list(lines))
             }
             IntrinsicFn::StringChars => {
                 let Value::String(s) = &args[0] else {
@@ -506,7 +600,7 @@ impl IntrinsicFn {
                     ));
                 };
                 let chars: Vec<Value> = s.chars().map(Value::Char).collect();
-                Ok(Value::List(chars))
+                Ok(Value::list(chars))
             }
 
             // ── File I/O ──────────────────────────────────────────
@@ -549,12 +643,12 @@ impl IntrinsicFn {
                     return Err(RuntimeError::TypeError("list_sort expects a List".into()));
                 };
                 if xs.is_empty() {
-                    return Ok(Value::List(Vec::new()));
+                    return Ok(Value::list(Vec::new()));
                 }
                 match &xs[0] {
                     Value::Int(_) => {
                         let mut ints = Vec::with_capacity(xs.len());
-                        for v in xs {
+                        for v in xs.iter() {
                             let Value::Int(n) = v else {
                                 return Err(RuntimeError::TypeError(
                                     "list_sort: mixed types in list".into(),
@@ -563,11 +657,11 @@ impl IntrinsicFn {
                             ints.push(*n);
                         }
                         ints.sort();
-                        Ok(Value::List(ints.into_iter().map(Value::Int).collect()))
+                        Ok(Value::list(ints.into_iter().map(Value::Int).collect()))
                     }
                     Value::Float(_) => {
                         let mut floats = Vec::with_capacity(xs.len());
-                        for v in xs {
+                        for v in xs.iter() {
                             let Value::Float(f) = v else {
                                 return Err(RuntimeError::TypeError(
                                     "list_sort: mixed types in list".into(),
@@ -576,11 +670,11 @@ impl IntrinsicFn {
                             floats.push(*f);
                         }
                         floats.sort_by(f64::total_cmp);
-                        Ok(Value::List(floats.into_iter().map(Value::Float).collect()))
+                        Ok(Value::list(floats.into_iter().map(Value::Float).collect()))
                     }
                     Value::String(_) => {
                         let mut strings = Vec::with_capacity(xs.len());
-                        for v in xs {
+                        for v in xs.iter() {
                             let Value::String(s) = v else {
                                 return Err(RuntimeError::TypeError(
                                     "list_sort: mixed types in list".into(),
@@ -589,13 +683,13 @@ impl IntrinsicFn {
                             strings.push(s.clone());
                         }
                         strings.sort();
-                        Ok(Value::List(
+                        Ok(Value::list(
                             strings.into_iter().map(Value::String).collect(),
                         ))
                     }
                     Value::Char(_) => {
                         let mut chars = Vec::with_capacity(xs.len());
-                        for v in xs {
+                        for v in xs.iter() {
                             let Value::Char(c) = v else {
                                 return Err(RuntimeError::TypeError(
                                     "list_sort: mixed types in list".into(),
@@ -604,11 +698,11 @@ impl IntrinsicFn {
                             chars.push(*c);
                         }
                         chars.sort();
-                        Ok(Value::List(chars.into_iter().map(Value::Char).collect()))
+                        Ok(Value::list(chars.into_iter().map(Value::Char).collect()))
                     }
                     Value::Bool(_) => {
                         let mut bools = Vec::with_capacity(xs.len());
-                        for v in xs {
+                        for v in xs.iter() {
                             let Value::Bool(b) = v else {
                                 return Err(RuntimeError::TypeError(
                                     "list_sort: mixed types in list".into(),
@@ -617,7 +711,7 @@ impl IntrinsicFn {
                             bools.push(*b);
                         }
                         bools.sort();
-                        Ok(Value::List(bools.into_iter().map(Value::Bool).collect()))
+                        Ok(Value::list(bools.into_iter().map(Value::Bool).collect()))
                     }
                     _ => Err(RuntimeError::TypeError(
                         "list_sort: unsortable element type".into(),
@@ -686,6 +780,17 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (Name::new(interner, "map_keys"), IntrinsicFn::MapKeys),
         (Name::new(interner, "map_values"), IntrinsicFn::MapValues),
         (Name::new(interner, "map_is_empty"), IntrinsicFn::MapIsEmpty),
+        // Set
+        (Name::new(interner, "set_new"), IntrinsicFn::SetNew),
+        (Name::new(interner, "set_insert"), IntrinsicFn::SetInsert),
+        (
+            Name::new(interner, "set_contains"),
+            IntrinsicFn::SetContains,
+        ),
+        (Name::new(interner, "set_remove"), IntrinsicFn::SetRemove),
+        (Name::new(interner, "set_len"), IntrinsicFn::SetLen),
+        (Name::new(interner, "set_is_empty"), IntrinsicFn::SetIsEmpty),
+        (Name::new(interner, "set_values"), IntrinsicFn::SetValues),
         // String
         (Name::new(interner, "string_len"), IntrinsicFn::StringLen),
         (
@@ -750,4 +855,385 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (Name::new(interner, "list_sort"), IntrinsicFn::ListSort),
         (Name::new(interner, "list_sort_by"), IntrinsicFn::ListSortBy),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ptr;
+    use std::rc::Rc;
+
+    use indexmap::IndexMap;
+    use smallvec::smallvec;
+
+    use super::*;
+
+    #[test]
+    fn list_push_detaches_when_storage_is_shared() {
+        let original = Value::list(vec![Value::Int(1)]);
+        let alias = original.clone();
+
+        let pushed = IntrinsicFn::ListPush
+            .call(smallvec![original, Value::Int(2)])
+            .expect("list_push should succeed");
+
+        let Value::List(alias_items) = &alias else {
+            panic!("alias should remain a list");
+        };
+        let Value::List(pushed_items) = &pushed else {
+            panic!("result should be a list");
+        };
+
+        assert_eq!(alias_items.len(), 1);
+        assert_eq!(pushed_items.len(), 2);
+        assert_eq!(alias_items[0], Value::Int(1));
+        assert_eq!(pushed_items[1], Value::Int(2));
+        assert!(
+            !Rc::ptr_eq(alias_items, pushed_items),
+            "mutation through list_push must detach shared storage"
+        );
+    }
+
+    #[test]
+    fn list_push_reuses_storage_when_not_shared() {
+        let original = Value::list(vec![Value::Int(1)]);
+        let before_ptr = match &original {
+            Value::List(items) => Rc::as_ptr(items),
+            _ => panic!("expected list"),
+        };
+
+        let pushed = IntrinsicFn::ListPush
+            .call(smallvec![original, Value::Int(2)])
+            .expect("list_push should succeed");
+
+        let Value::List(pushed_items) = &pushed else {
+            panic!("result should be a list");
+        };
+
+        assert_eq!(pushed_items.len(), 2);
+        assert!(
+            ptr::eq(before_ptr, Rc::as_ptr(pushed_items)),
+            "list_push should mutate in-place when storage is uniquely owned"
+        );
+    }
+
+    #[test]
+    fn map_insert_detaches_when_storage_is_shared() {
+        let mut base = IndexMap::new();
+        base.insert(MapKey::Int(1), Value::Int(10));
+        let original = Value::map(base);
+        let alias = original.clone();
+
+        let inserted = IntrinsicFn::MapInsert
+            .call(smallvec![original, Value::Int(2), Value::Int(20)])
+            .expect("map_insert should succeed");
+
+        let Value::Map(alias_entries) = &alias else {
+            panic!("alias should remain a map");
+        };
+        let Value::Map(inserted_entries) = &inserted else {
+            panic!("result should be a map");
+        };
+
+        assert_eq!(alias_entries.len(), 1);
+        assert_eq!(inserted_entries.len(), 2);
+        assert_eq!(alias_entries.get(&MapKey::Int(2)), None);
+        assert_eq!(inserted_entries.get(&MapKey::Int(2)), Some(&Value::Int(20)));
+        assert!(
+            !Rc::ptr_eq(alias_entries, inserted_entries),
+            "mutation through map_insert must detach shared storage"
+        );
+    }
+
+    #[test]
+    fn map_insert_reuses_storage_when_not_shared() {
+        let mut base = IndexMap::new();
+        base.insert(MapKey::Int(1), Value::Int(10));
+        let original = Value::map(base);
+        let before_ptr = match &original {
+            Value::Map(entries) => Rc::as_ptr(entries),
+            _ => panic!("expected map"),
+        };
+
+        let inserted = IntrinsicFn::MapInsert
+            .call(smallvec![original, Value::Int(2), Value::Int(20)])
+            .expect("map_insert should succeed");
+
+        let Value::Map(inserted_entries) = &inserted else {
+            panic!("result should be a map");
+        };
+
+        assert_eq!(inserted_entries.len(), 2);
+        assert_eq!(inserted_entries.get(&MapKey::Int(2)), Some(&Value::Int(20)));
+        assert!(
+            ptr::eq(before_ptr, Rc::as_ptr(inserted_entries)),
+            "map_insert should mutate in-place when storage is uniquely owned"
+        );
+    }
+
+    #[test]
+    fn map_remove_detaches_when_storage_is_shared() {
+        let mut base = IndexMap::new();
+        base.insert(MapKey::Int(1), Value::Int(10));
+        base.insert(MapKey::Int(2), Value::Int(20));
+        let original = Value::map(base);
+        let alias = original.clone();
+
+        let removed = IntrinsicFn::MapRemove
+            .call(smallvec![original, Value::Int(2)])
+            .expect("map_remove should succeed");
+
+        let Value::Map(alias_entries) = &alias else {
+            panic!("alias should remain a map");
+        };
+        let Value::Map(removed_entries) = &removed else {
+            panic!("result should be a map");
+        };
+
+        assert_eq!(alias_entries.len(), 2);
+        assert_eq!(removed_entries.len(), 1);
+        assert_eq!(alias_entries.get(&MapKey::Int(2)), Some(&Value::Int(20)));
+        assert_eq!(removed_entries.get(&MapKey::Int(2)), None);
+        assert!(
+            !Rc::ptr_eq(alias_entries, removed_entries),
+            "mutation through map_remove must detach shared storage"
+        );
+    }
+
+    #[test]
+    fn map_remove_reuses_storage_when_not_shared() {
+        let mut base = IndexMap::new();
+        base.insert(MapKey::Int(1), Value::Int(10));
+        base.insert(MapKey::Int(2), Value::Int(20));
+        let original = Value::map(base);
+        let before_ptr = match &original {
+            Value::Map(entries) => Rc::as_ptr(entries),
+            _ => panic!("expected map"),
+        };
+
+        let removed = IntrinsicFn::MapRemove
+            .call(smallvec![original, Value::Int(2)])
+            .expect("map_remove should succeed");
+
+        let Value::Map(removed_entries) = &removed else {
+            panic!("result should be a map");
+        };
+
+        assert_eq!(removed_entries.len(), 1);
+        assert_eq!(removed_entries.get(&MapKey::Int(2)), None);
+        assert!(
+            ptr::eq(before_ptr, Rc::as_ptr(removed_entries)),
+            "map_remove should mutate in-place when storage is uniquely owned"
+        );
+    }
+
+    #[test]
+    fn map_remove_missing_keeps_shared_storage() {
+        let mut base = IndexMap::new();
+        base.insert(MapKey::Int(1), Value::Int(10));
+        let original = Value::map(base);
+        let alias = original.clone();
+
+        let removed = IntrinsicFn::MapRemove
+            .call(smallvec![original, Value::Int(99)])
+            .expect("map_remove should succeed");
+
+        let Value::Map(alias_entries) = &alias else {
+            panic!("alias should remain a map");
+        };
+        let Value::Map(removed_entries) = &removed else {
+            panic!("result should be a map");
+        };
+
+        assert_eq!(removed_entries.len(), 1);
+        assert!(
+            Rc::ptr_eq(alias_entries, removed_entries),
+            "map_remove missing key should not detach shared storage"
+        );
+    }
+
+    #[test]
+    fn map_insert_same_value_keeps_shared_storage() {
+        let mut base = IndexMap::new();
+        base.insert(MapKey::Int(1), Value::Int(10));
+        let original = Value::map(base);
+        let alias = original.clone();
+
+        let inserted = IntrinsicFn::MapInsert
+            .call(smallvec![original, Value::Int(1), Value::Int(10)])
+            .expect("map_insert should succeed");
+
+        let Value::Map(alias_entries) = &alias else {
+            panic!("alias should remain a map");
+        };
+        let Value::Map(inserted_entries) = &inserted else {
+            panic!("result should be a map");
+        };
+
+        assert_eq!(inserted_entries.len(), 1);
+        assert_eq!(inserted_entries.get(&MapKey::Int(1)), Some(&Value::Int(10)));
+        assert!(
+            Rc::ptr_eq(alias_entries, inserted_entries),
+            "map_insert with identical value should not detach shared storage"
+        );
+    }
+
+    #[test]
+    fn set_insert_detaches_when_storage_is_shared() {
+        let mut base = IndexSet::new();
+        base.insert(MapKey::Int(1));
+        let original = Value::set(base);
+        let alias = original.clone();
+
+        let inserted = IntrinsicFn::SetInsert
+            .call(smallvec![original, Value::Int(2)])
+            .expect("set_insert should succeed");
+
+        let Value::Set(alias_entries) = &alias else {
+            panic!("alias should remain a set");
+        };
+        let Value::Set(inserted_entries) = &inserted else {
+            panic!("result should be a set");
+        };
+
+        assert_eq!(alias_entries.len(), 1);
+        assert_eq!(inserted_entries.len(), 2);
+        assert!(!alias_entries.contains(&MapKey::Int(2)));
+        assert!(inserted_entries.contains(&MapKey::Int(2)));
+        assert!(
+            !Rc::ptr_eq(alias_entries, inserted_entries),
+            "mutation through set_insert must detach shared storage"
+        );
+    }
+
+    #[test]
+    fn set_insert_reuses_storage_when_not_shared() {
+        let mut base = IndexSet::new();
+        base.insert(MapKey::Int(1));
+        let original = Value::set(base);
+        let before_ptr = match &original {
+            Value::Set(entries) => Rc::as_ptr(entries),
+            _ => panic!("expected set"),
+        };
+
+        let inserted = IntrinsicFn::SetInsert
+            .call(smallvec![original, Value::Int(2)])
+            .expect("set_insert should succeed");
+
+        let Value::Set(inserted_entries) = &inserted else {
+            panic!("result should be a set");
+        };
+
+        assert_eq!(inserted_entries.len(), 2);
+        assert!(inserted_entries.contains(&MapKey::Int(2)));
+        assert!(
+            ptr::eq(before_ptr, Rc::as_ptr(inserted_entries)),
+            "set_insert should mutate in-place when storage is uniquely owned"
+        );
+    }
+
+    #[test]
+    fn set_remove_detaches_when_storage_is_shared() {
+        let mut base = IndexSet::new();
+        base.insert(MapKey::Int(1));
+        base.insert(MapKey::Int(2));
+        let original = Value::set(base);
+        let alias = original.clone();
+
+        let removed = IntrinsicFn::SetRemove
+            .call(smallvec![original, Value::Int(2)])
+            .expect("set_remove should succeed");
+
+        let Value::Set(alias_entries) = &alias else {
+            panic!("alias should remain a set");
+        };
+        let Value::Set(removed_entries) = &removed else {
+            panic!("result should be a set");
+        };
+
+        assert_eq!(alias_entries.len(), 2);
+        assert_eq!(removed_entries.len(), 1);
+        assert!(alias_entries.contains(&MapKey::Int(2)));
+        assert!(!removed_entries.contains(&MapKey::Int(2)));
+        assert!(
+            !Rc::ptr_eq(alias_entries, removed_entries),
+            "mutation through set_remove must detach shared storage"
+        );
+    }
+
+    #[test]
+    fn set_remove_reuses_storage_when_not_shared() {
+        let mut base = IndexSet::new();
+        base.insert(MapKey::Int(1));
+        base.insert(MapKey::Int(2));
+        let original = Value::set(base);
+        let before_ptr = match &original {
+            Value::Set(entries) => Rc::as_ptr(entries),
+            _ => panic!("expected set"),
+        };
+
+        let removed = IntrinsicFn::SetRemove
+            .call(smallvec![original, Value::Int(2)])
+            .expect("set_remove should succeed");
+
+        let Value::Set(removed_entries) = &removed else {
+            panic!("result should be a set");
+        };
+
+        assert_eq!(removed_entries.len(), 1);
+        assert!(!removed_entries.contains(&MapKey::Int(2)));
+        assert!(
+            ptr::eq(before_ptr, Rc::as_ptr(removed_entries)),
+            "set_remove should mutate in-place when storage is uniquely owned"
+        );
+    }
+
+    #[test]
+    fn set_insert_duplicate_keeps_shared_storage() {
+        let mut base = IndexSet::new();
+        base.insert(MapKey::Int(1));
+        let original = Value::set(base);
+        let alias = original.clone();
+
+        let inserted = IntrinsicFn::SetInsert
+            .call(smallvec![original, Value::Int(1)])
+            .expect("set_insert should succeed");
+
+        let Value::Set(alias_entries) = &alias else {
+            panic!("alias should remain a set");
+        };
+        let Value::Set(inserted_entries) = &inserted else {
+            panic!("result should be a set");
+        };
+
+        assert_eq!(inserted_entries.len(), 1);
+        assert!(
+            Rc::ptr_eq(alias_entries, inserted_entries),
+            "set_insert duplicate should not detach shared storage"
+        );
+    }
+
+    #[test]
+    fn set_remove_missing_keeps_shared_storage() {
+        let mut base = IndexSet::new();
+        base.insert(MapKey::Int(1));
+        let original = Value::set(base);
+        let alias = original.clone();
+
+        let removed = IntrinsicFn::SetRemove
+            .call(smallvec![original, Value::Int(99)])
+            .expect("set_remove should succeed");
+
+        let Value::Set(alias_entries) = &alias else {
+            panic!("alias should remain a set");
+        };
+        let Value::Set(removed_entries) = &removed else {
+            panic!("result should be a set");
+        };
+
+        assert_eq!(removed_entries.len(), 1);
+        assert!(
+            Rc::ptr_eq(alias_entries, removed_entries),
+            "set_remove missing value should not detach shared storage"
+        );
+    }
 }

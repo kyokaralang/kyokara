@@ -524,22 +524,28 @@ v0 stdlib is implemented via intrinsic functions in the eval crate, exposed thro
 a canonical API surface: method calls for value-owned behavior, module-qualified calls
 for no-owner utilities and effects, and type-namespaced constructors.
 
-Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `Map<K, V>`, and `ParseError` are
+Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
 injected as synthetic types before type-checking. Synthetic modules (`io`, `math`, `fs`)
 require explicit `import io` / `import math` / `import fs` in all modes.
 Zero intrinsic free functions exist in user scope.
+
+Mental model: `List`/`Map`/`Set` are prelude value types (type/value namespace),
+while `io`/`fs` are module namespaces for no-owner/effectful operations.
 
 **Implemented (v0.1+):**
 * `Option<T>` — builtin ADT (`Some(T) | None`), used as return type for safe lookups ✓
 * `Result<T, E>` — builtin ADT (`Ok(T) | Err(E)`), `?` propagation works ✓
 * `ParseError` — builtin ADT (`InvalidInt(String) | InvalidFloat(String)`), used as error type for `parse_int`/`parse_float` ✓
-* `List<T>` — opaque builtin type backed by `Vec<Value>` ✓
+* `List<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<Vec<Value>>`) ✓
   * Constructor: `List.new()`
   * Methods: `xs.push(v)`, `xs.len()`, `xs.get(i)` → `Option<T>`, `xs.head()` → `Option<T>`, `xs.tail()`, `xs.is_empty()`, `xs.reverse()`, `xs.concat(ys)`
   * Higher-order: `xs.map(f)`, `xs.filter(f)`, `xs.fold(init, f)`, `xs.sort()`, `xs.sort_by(f)`
-* `Map<K, V>` — opaque builtin type backed by `IndexMap<MapKey, Value>` (insertion-order-preserving hash map, O(1) lookup). Keys must be hashable types (Int, String, Char, Bool, Unit); floats and functions are rejected at runtime. ✓
+* `Map<K, V>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<IndexMap<MapKey, Value>>`, insertion-order-preserving hash map, O(1) lookup). Keys must be hashable types (Int, String, Char, Bool, Unit); invalid key types are rejected at compile time for typed map operations (E0024). `m.keys()` and `m.values()` return deterministic insertion order. ✓
   * Constructor: `Map.new()`
   * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()` → `List<K>`, `m.values()` → `List<V>`, `m.is_empty()`
+* `Set<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<IndexSet<MapKey>>`, insertion-order-preserving hash set). Elements must be hashable types (Int, String, Char, Bool, Unit); invalid element types are rejected at compile time for typed set operations (E0026). `s.values()` returns deterministic insertion order. ✓
+  * Constructor: `Set.new()`
+  * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()` → `List<T>`
 * String methods ✓ — `s.len()` (char count), `s.contains(t)`, `s.starts_with(t)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)` → `List<String>`, `s.substring(a, b)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()`, `s.chars()`, `s.parse_int()` → `Result<Int, ParseError>`, `s.parse_float()` → `Result<Float, ParseError>`
 * Char methods ✓ — `c.to_string()`
 * Int methods ✓ — `n.abs()`, `n.to_string()`, `n.to_float()`
@@ -576,7 +582,7 @@ Zero intrinsic free functions exist in user scope.
 * Canonical formatter (`kyokara fmt`, `kyokara-fmt` crate, Wadler-Lindig Doc IR) ✓
 * Stable symbol IDs (`kind::name` / `kind::parent::child` format, unique across symbol kinds) ✓
 * Runtime contract checks (requires/ensures/old) ✓
-* Core stdlib (List, Map, String, Int/Float, io, math, fs — 50 intrinsic functions exposed via canonical method/module API) ✓
+* Core stdlib (List, Map, Set, String, Int/Float, io, math, fs — intrinsic functions exposed via canonical method/module API) ✓
 
 **v0.2 — Refactoring + LSP + Capabilities**
 * Module system: convention-based file layout, `pub` visibility, flat imports ✓

@@ -1233,6 +1233,7 @@ fn legacy_intrinsic_hint(name: &str) -> Option<&'static str> {
         // constructors
         "list_new" => Some("use `List.new()`"),
         "map_new" => Some("use `Map.new()`"),
+        "set_new" => Some("use `Set.new()`"),
         // methods on values
         "abs" | "float_abs" => Some("use `n.abs()` (method on Int or Float)"),
         "list_len" => Some("use `xs.len()` (method on List)"),
@@ -1253,6 +1254,12 @@ fn legacy_intrinsic_hint(name: &str) -> Option<&'static str> {
         "map_keys" => Some("use `m.keys()` (method on Map)"),
         "map_values" => Some("use `m.values()` (method on Map)"),
         "map_len" => Some("use `m.len()` (method on Map)"),
+        "set_insert" => Some("use `s.insert(x)` (method on Set)"),
+        "set_contains" => Some("use `s.contains(x)` (method on Set)"),
+        "set_remove" => Some("use `s.remove(x)` (method on Set)"),
+        "set_values" => Some("use `s.values()` (method on Set)"),
+        "set_len" => Some("use `s.len()` (method on Set)"),
+        "set_is_empty" => Some("use `s.is_empty()` (method on Set)"),
         "string_len" => Some("use `s.len()` (method on String)"),
         "string_concat" => Some("use `s.concat(t)` (method on String)"),
         "string_slice" => Some("use `s.slice(start, end)` (method on String)"),

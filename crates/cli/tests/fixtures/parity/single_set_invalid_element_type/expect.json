@@ -1,0 +1,13 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "check": {
+    "ok": false,
+    "codes_all": ["E0026"],
+    "messages_all": ["cannot be used as a set element"]
+  },
+  "run": {
+    "ok": false,
+    "stderr_contains": ["cannot be used as a set element"]
+  }
+}

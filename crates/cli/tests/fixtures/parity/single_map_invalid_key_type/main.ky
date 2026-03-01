@@ -1,0 +1,4 @@
+fn main() -> Int {
+  let m = Map.new().insert(3.14, 1)
+  m.len()
+}

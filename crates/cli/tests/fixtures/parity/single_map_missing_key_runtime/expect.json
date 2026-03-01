@@ -1,0 +1,12 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "check": {
+    "ok": true,
+    "codes_all": []
+  },
+  "run": {
+    "ok": false,
+    "stderr_contains": ["key not found"]
+  }
+}

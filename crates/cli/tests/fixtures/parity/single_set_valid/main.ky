@@ -1,0 +1,4 @@
+fn main() -> Int {
+  let s = Set.new().insert(1).insert(2).insert(2)
+  s.len()
+}

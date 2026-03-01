@@ -1442,37 +1442,34 @@ impl Interpreter {
                     return Err(RuntimeError::TypeError("list_map expects a List".into()));
                 };
                 let f = args[1].clone();
-                let xs = xs.clone();
                 let mut result = Vec::with_capacity(xs.len());
-                for item in xs {
+                for item in xs.iter().cloned() {
                     let val = self.call_value(f.clone(), smallvec::smallvec![item])?;
                     result.push(val);
                 }
-                Ok(Value::List(result))
+                Ok(Value::list(result))
             }
             IntrinsicFn::ListFilter => {
                 let Value::List(xs) = &args[0] else {
                     return Err(RuntimeError::TypeError("list_filter expects a List".into()));
                 };
                 let f = args[1].clone();
-                let xs = xs.clone();
                 let mut result = Vec::new();
-                for item in xs {
+                for item in xs.iter().cloned() {
                     let keep = self.call_value(f.clone(), smallvec::smallvec![item.clone()])?;
                     if matches!(keep, Value::Bool(true)) {
                         result.push(item);
                     }
                 }
-                Ok(Value::List(result))
+                Ok(Value::list(result))
             }
             IntrinsicFn::ListFold => {
                 let Value::List(xs) = &args[0] else {
                     return Err(RuntimeError::TypeError("list_fold expects a List".into()));
                 };
-                let xs = xs.clone();
                 let mut acc = args[1].clone();
                 let f = args[2].clone();
-                for item in xs {
+                for item in xs.iter().cloned() {
                     acc = self.call_value(f.clone(), smallvec::smallvec![acc, item])?;
                 }
                 Ok(acc)
@@ -1484,7 +1481,7 @@ impl Interpreter {
                     ));
                 };
                 let cmp_fn = args[1].clone();
-                let mut items = xs.clone();
+                let mut items = xs.as_ref().clone();
                 // Insertion sort: stable, simple, avoids &mut self borrow
                 // issues with Rust's sort_by.
                 let len = items.len();
@@ -1509,7 +1506,7 @@ impl Interpreter {
                         }
                     }
                 }
-                Ok(Value::List(items))
+                Ok(Value::list(items))
             }
             IntrinsicFn::ParseInt => {
                 let Value::String(s) = &args[0] else {
@@ -1575,6 +1572,7 @@ impl Interpreter {
             Value::Char(_) => wk.char_,
             Value::List(_) => wk.list,
             Value::Map(_) => wk.map,
+            Value::Set(_) => wk.set,
             Value::Adt { type_idx, .. } => Some(self.item_tree.types[*type_idx].name),
             Value::Record {
                 type_idx: Some(idx),

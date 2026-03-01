@@ -3,7 +3,7 @@
 - Status: Draft
 - Owner: Language Design
 - Tracking issue: [#243](https://github.com/kyokaralang/kyokara/issues/243)
-- Last updated: 2026-02-28
+- Last updated: 2026-03-01
 
 ## Summary
 
@@ -83,7 +83,21 @@ Constructors/factories are namespaced under types.
 
 Examples:
 
-- `List.new()`, `Map.new()`
+- `List.new()`, `Map.new()`, `Set.new()`
+
+### L5.1 Core value types vs capability modules (`MUST`)
+
+Core collections (`List`, `Map`, `Set`) are builtin prelude value types, not
+imported capability modules.
+
+Implications:
+
+- constructors live in the type namespace (`List.new()`, `Map.new()`, `Set.new()`)
+- value-owned behavior is exposed as methods (`xs.push`, `m.insert`, `s.contains`)
+- no free global aliases (e.g. `list_new`, `map_new`, `set_new`) in user-facing API
+
+By contrast, effectful APIs are module-qualified capability surfaces (`io.*`,
+`fs.*`, `net.*`) and require capability enforcement (`L4`).
 
 ### L6. Fallibility semantics are explicit (`MUST`)
 
