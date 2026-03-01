@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 
-use kyokara_pbt::{TestConfig, TestableKind, run_tests};
+use kyokara_pbt::{TestConfig, TestableKind, run_project_tests, run_tests};
 use std::path::PathBuf;
 
 fn fixture(name: &str) -> String {
@@ -19,6 +19,19 @@ fn test_config() -> TestConfig {
         format: "human".to_string(),
         corpus_base: tempfile::tempdir().unwrap().keep(),
     }
+}
+
+fn write_project(files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    for (rel, src) in files {
+        let path = dir.path().join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, src).unwrap();
+    }
+    let main_path = dir.path().join("main.ky");
+    (dir, main_path)
 }
 
 #[test]
@@ -552,6 +565,49 @@ fn property_invalid_gen_method_check() {
         "Gen.unknown() should produce 'invalid generator expression' diagnostic: {:?}",
         result.lowering_diagnostics
     );
+}
+
+#[test]
+fn run_tests_rejects_compile_invalid_property_before_execution() {
+    let config = test_config();
+    let source = "property p(x: Int <- Gen.unknown()) { x > 0 }";
+    let err = run_tests(source, &config).expect_err("compile-invalid source must be rejected");
+    assert!(
+        err.contains("invalid generator expression"),
+        "error should include compile diagnostic, got: {err}"
+    );
+}
+
+#[test]
+fn run_tests_still_executes_compile_valid_property() {
+    let config = test_config();
+    let source = "property p(b: Bool <- Gen.bool()) { b == b }";
+    let report = run_tests(source, &config).expect("compile-valid source should run");
+    assert!(report.all_passed(), "expected passing report");
+    assert_eq!(report.failure_count(), 0);
+}
+
+#[test]
+fn run_project_tests_rejects_compile_invalid_property_before_execution() {
+    let config = test_config();
+    let (_dir, main_path) =
+        write_project(&[("main.ky", "property p(x: Int <- Gen.unknown()) { x > 0 }\n")]);
+    let err = run_project_tests(&main_path, &config)
+        .expect_err("compile-invalid project must be rejected");
+    assert!(
+        err.contains("invalid generator expression"),
+        "error should include compile diagnostic, got: {err}"
+    );
+}
+
+#[test]
+fn run_project_tests_still_executes_compile_valid_property() {
+    let config = test_config();
+    let (_dir, main_path) =
+        write_project(&[("main.ky", "property p(b: Bool <- Gen.bool()) { b == b }\n")]);
+    let report = run_project_tests(&main_path, &config).expect("compile-valid project should run");
+    assert!(report.all_passed(), "expected passing report");
+    assert_eq!(report.failure_count(), 0);
 }
 
 #[test]
