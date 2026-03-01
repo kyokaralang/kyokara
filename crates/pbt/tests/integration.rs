@@ -497,6 +497,58 @@ fn property_type_check_gen_bool() {
 }
 
 #[test]
+fn property_gen_type_match_has_no_mismatch_diagnostic() {
+    let result = kyokara_hir::check_file("property p(x: Int <- Gen.int()) { x > 0 }");
+    let has_mismatch = result
+        .lowering_diagnostics
+        .iter()
+        .any(|d| d.message.contains("generator") && d.message.contains("incompatible"));
+    assert!(
+        !has_mismatch,
+        "matching Gen.int() with Int should not produce mismatch diagnostic: {:?}",
+        result.lowering_diagnostics
+    );
+}
+
+#[test]
+fn property_gen_type_mismatch_produces_diagnostic() {
+    let result = kyokara_hir::check_file("property p(x: Int <- Gen.bool()) { x > 0 }");
+    let has_mismatch = result
+        .lowering_diagnostics
+        .iter()
+        .any(|d| d.message.contains("generator") && d.message.contains("incompatible"));
+    assert!(
+        has_mismatch,
+        "Gen.bool() for Int parameter should produce mismatch diagnostic: {:?}",
+        result.lowering_diagnostics
+    );
+}
+
+#[test]
+fn run_tests_rejects_gen_spec_type_mismatch_before_execution() {
+    let config = test_config();
+    let source = "property p(x: Int <- Gen.bool()) { x > 0 }";
+    let err = run_tests(source, &config).expect_err("gen/type mismatch must be rejected");
+    assert!(
+        err.contains("generator") && err.contains("incompatible"),
+        "error should include generator/type mismatch, got: {err}"
+    );
+}
+
+#[test]
+fn run_project_tests_rejects_gen_spec_type_mismatch_before_execution() {
+    let config = test_config();
+    let (_dir, main_path) =
+        write_project(&[("main.ky", "property p(x: Int <- Gen.bool()) { x > 0 }\n")]);
+    let err =
+        run_project_tests(&main_path, &config).expect_err("project mismatch must be rejected");
+    assert!(
+        err.contains("generator") && err.contains("incompatible"),
+        "error should include generator/type mismatch, got: {err}"
+    );
+}
+
+#[test]
 fn property_type_check_gen_string() {
     let result =
         kyokara_hir::check_file("property p(s: String <- Gen.string()) { string_len(s) >= 0 }");
