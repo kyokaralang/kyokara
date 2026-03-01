@@ -427,6 +427,17 @@ impl ItemTreeCtx<'_> {
                         GenSpec::Auto
                     });
 
+                if !self.is_gen_spec_compatible_with_type(&gen_spec, &ty) {
+                    let span = self.node_span(param.syntax());
+                    self.diagnostics.push(Diagnostic::error(
+                        format!(
+                            "generator spec is incompatible with declared property parameter type: \
+                             generator={gen_spec:?}, type={ty:?}"
+                        ),
+                        span,
+                    ));
+                }
+
                 params.push(PropertyParamSpec {
                     param: FnParam { name: pname, ty },
                     gen_spec,
@@ -550,6 +561,105 @@ impl ItemTreeCtx<'_> {
             }
             _ => None,
         }
+    }
+
+    /// Return true when a generator spec is compatible with the declared type.
+    ///
+    /// This check is conservative for unknown path names (which may be aliases):
+    /// we only report incompatibility when it is definite.
+    fn is_gen_spec_compatible_with_type(&self, spec: &GenSpec, ty: &TypeRef) -> bool {
+        use crate::item_tree::GenSpec;
+
+        match spec {
+            GenSpec::Auto => true,
+            GenSpec::Int | GenSpec::IntRange { .. } => self.primitive_spec_compatible("Int", ty),
+            GenSpec::Float | GenSpec::FloatRange { .. } => {
+                self.primitive_spec_compatible("Float", ty)
+            }
+            GenSpec::Bool => self.primitive_spec_compatible("Bool", ty),
+            GenSpec::String => self.primitive_spec_compatible("String", ty),
+            GenSpec::Char => self.primitive_spec_compatible("Char", ty),
+            GenSpec::List(inner) => match ty {
+                TypeRef::Error => true,
+                TypeRef::Path { path, args } => match self.path_leaf_name(path) {
+                    Some("List") => {
+                        args.len() == 1 && self.is_gen_spec_compatible_with_type(inner, &args[0])
+                    }
+                    Some(name) if Self::is_known_builtin_name(name) => false,
+                    _ => true,
+                },
+                _ => false,
+            },
+            GenSpec::Map(key, val) => match ty {
+                TypeRef::Error => true,
+                TypeRef::Path { path, args } => match self.path_leaf_name(path) {
+                    Some("Map") => {
+                        args.len() == 2
+                            && self.is_gen_spec_compatible_with_type(key, &args[0])
+                            && self.is_gen_spec_compatible_with_type(val, &args[1])
+                    }
+                    Some(name) if Self::is_known_builtin_name(name) => false,
+                    _ => true,
+                },
+                _ => false,
+            },
+            GenSpec::OptionOf(inner) => match ty {
+                TypeRef::Error => true,
+                TypeRef::Path { path, args } => match self.path_leaf_name(path) {
+                    Some("Option") => {
+                        args.len() == 1 && self.is_gen_spec_compatible_with_type(inner, &args[0])
+                    }
+                    Some(name) if Self::is_known_builtin_name(name) => false,
+                    _ => true,
+                },
+                _ => false,
+            },
+            GenSpec::ResultOf(ok, err) => match ty {
+                TypeRef::Error => true,
+                TypeRef::Path { path, args } => match self.path_leaf_name(path) {
+                    Some("Result") => {
+                        args.len() == 2
+                            && self.is_gen_spec_compatible_with_type(ok, &args[0])
+                            && self.is_gen_spec_compatible_with_type(err, &args[1])
+                    }
+                    Some(name) if Self::is_known_builtin_name(name) => false,
+                    _ => true,
+                },
+                _ => false,
+            },
+        }
+    }
+
+    fn primitive_spec_compatible(&self, expected: &str, ty: &TypeRef) -> bool {
+        match ty {
+            TypeRef::Error => true,
+            TypeRef::Path { path, .. } => match self.path_leaf_name(path) {
+                Some(name) if name == expected => true,
+                Some(name) if Self::is_known_builtin_name(name) => false,
+                _ => true,
+            },
+            _ => false,
+        }
+    }
+
+    fn path_leaf_name<'a>(&'a self, path: &'a Path) -> Option<&'a str> {
+        path.last().map(|name| name.resolve(self.interner))
+    }
+
+    fn is_known_builtin_name(name: &str) -> bool {
+        matches!(
+            name,
+            "Int"
+                | "Float"
+                | "Bool"
+                | "String"
+                | "Char"
+                | "Unit"
+                | "List"
+                | "Map"
+                | "Option"
+                | "Result"
+        )
     }
 
     fn extract_int_literal(&self, expr: &kyokara_syntax::ast::nodes::Expr) -> Option<i64> {
