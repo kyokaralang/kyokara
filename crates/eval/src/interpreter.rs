@@ -38,6 +38,10 @@ pub struct Interpreter {
     result_ok: Option<(TypeItemIdx, usize)>,
     /// Cached Result::Err constructor (type_idx, variant_idx).
     result_err: Option<(TypeItemIdx, usize)>,
+    /// Cached ParseError::InvalidInt constructor (type_idx, variant_idx).
+    parse_error_invalid_int: Option<(TypeItemIdx, usize)>,
+    /// Cached ParseError::InvalidFloat constructor (type_idx, variant_idx).
+    parse_error_invalid_float: Option<(TypeItemIdx, usize)>,
     /// Optional capability manifest for deny-by-default enforcement.
     manifest: Option<CapabilityManifest>,
     /// Shared environment used across all function calls to avoid per-call allocation.
@@ -112,6 +116,11 @@ impl Interpreter {
         let result_ok = module_scope.constructors.get(&ok_name).copied();
         let result_err = module_scope.constructors.get(&err_name).copied();
 
+        let invalid_int_name = Name::new(&mut interner, "InvalidInt");
+        let invalid_float_name = Name::new(&mut interner, "InvalidFloat");
+        let parse_error_invalid_int = module_scope.constructors.get(&invalid_int_name).copied();
+        let parse_error_invalid_float = module_scope.constructors.get(&invalid_float_name).copied();
+
         Interpreter {
             item_tree,
             module_scope,
@@ -124,6 +133,8 @@ impl Interpreter {
             option_none,
             result_ok,
             result_err,
+            parse_error_invalid_int,
+            parse_error_invalid_float,
             manifest,
             env: Env::new(),
             current_fn: None,
@@ -1200,6 +1211,28 @@ impl Interpreter {
         }
     }
 
+    fn make_invalid_int(&self, msg: String) -> Value {
+        let (type_idx, variant) = self
+            .parse_error_invalid_int
+            .expect("ParseError::InvalidInt not registered");
+        Value::Adt {
+            type_idx,
+            variant,
+            fields: vec![Value::String(msg)],
+        }
+    }
+
+    fn make_invalid_float(&self, msg: String) -> Value {
+        let (type_idx, variant) = self
+            .parse_error_invalid_float
+            .expect("ParseError::InvalidFloat not registered");
+        Value::Adt {
+            type_idx,
+            variant,
+            fields: vec![Value::String(msg)],
+        }
+    }
+
     fn check_intrinsic_cap(&self, intr: IntrinsicFn) -> Result<(), RuntimeError> {
         if let Some(ref manifest) = self.manifest
             && let Some(cap) = intr.required_capability()
@@ -1339,7 +1372,7 @@ impl Interpreter {
                 };
                 match s.parse::<i64>() {
                     Ok(n) => Ok(self.make_ok(Value::Int(n))),
-                    Err(e) => Ok(self.make_err(Value::String(format!("{e}")))),
+                    Err(e) => Ok(self.make_err(self.make_invalid_int(format!("{e}")))),
                 }
             }
             IntrinsicFn::ParseFloat => {
@@ -1350,7 +1383,7 @@ impl Interpreter {
                 };
                 match s.parse::<f64>() {
                     Ok(n) => Ok(self.make_ok(Value::Float(n))),
-                    Err(e) => Ok(self.make_err(Value::String(format!("{e}")))),
+                    Err(e) => Ok(self.make_err(self.make_invalid_float(format!("{e}")))),
                 }
             }
             _ => Err(RuntimeError::TypeError("unknown complex intrinsic".into())),

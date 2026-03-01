@@ -12,7 +12,8 @@ use crate::resolver::ModuleScope;
 use crate::type_ref::TypeRef;
 use kyokara_intern::Interner;
 
-/// Inject `Option<T>` and `Result<T, E>` into the item tree and module scope.
+/// Inject `Option<T>`, `Result<T, E>`, and `ParseError` into the item tree
+/// and module scope.
 ///
 /// Uses `Vacant` entry checks so that user-defined types with the same
 /// names (registered during item tree collection) take precedence.
@@ -25,6 +26,7 @@ pub fn register_builtin_types(
     register_result(tree, scope, interner);
     register_list(tree, scope, interner);
     register_map(tree, scope, interner);
+    register_parse_error(tree, scope, interner);
 }
 
 /// `type Option<T> = | Some(T) | None`
@@ -158,6 +160,53 @@ fn register_result(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut 
         e.insert((idx, 1));
     }
 }
+/// `type ParseError = | InvalidInt(String) | InvalidFloat(String)`
+fn register_parse_error(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
+    let parse_error_name = Name::new(interner, "ParseError");
+
+    if scope.types.contains_key(&parse_error_name) {
+        return;
+    }
+
+    let invalid_int_name = Name::new(interner, "InvalidInt");
+    let invalid_float_name = Name::new(interner, "InvalidFloat");
+
+    let string_ref = TypeRef::Path {
+        path: Path::single(Name::new(interner, "String")),
+        args: Vec::new(),
+    };
+
+    let idx = tree.types.alloc(TypeItem {
+        name: parse_error_name,
+        is_pub: false,
+        type_params: vec![],
+        kind: TypeDefKind::Adt {
+            variants: vec![
+                VariantDef {
+                    name: invalid_int_name,
+                    fields: vec![string_ref.clone()],
+                },
+                VariantDef {
+                    name: invalid_float_name,
+                    fields: vec![string_ref],
+                },
+            ],
+        },
+    });
+
+    scope.types.insert(parse_error_name, idx);
+
+    if let std::collections::hash_map::Entry::Vacant(e) = scope.constructors.entry(invalid_int_name)
+    {
+        e.insert((idx, 0));
+    }
+    if let std::collections::hash_map::Entry::Vacant(e) =
+        scope.constructors.entry(invalid_float_name)
+    {
+        e.insert((idx, 1));
+    }
+}
+
 /// Allocate all intrinsic FnItem signatures in the item tree and return
 /// a lookup table `name → FnItemIdx`. Does NOT insert into `scope.functions`.
 ///
@@ -931,32 +980,40 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
             int_ty.clone(),
         ),
         // ── Parsing ──────────────────────────────────────────────
-        // parse_int(s: String) -> Result<Int, String>
+        // parse_int(s: String) -> Result<Int, ParseError>
         {
-            let result_int_string = TypeRef::Path {
+            let parse_error_ty = TypeRef::Path {
+                path: Path::single(Name::new(interner, "ParseError")),
+                args: Vec::new(),
+            };
+            let result_int = TypeRef::Path {
                 path: Path::single(Name::new(interner, "Result")),
-                args: vec![int_ty.clone(), string_ty.clone()],
+                args: vec![int_ty.clone(), parse_error_ty],
             };
             mk_intrinsic(
                 interner,
                 "parse_int",
                 vec![],
                 vec![("s", string_ty.clone())],
-                result_int_string,
+                result_int,
             )
         },
-        // parse_float(s: String) -> Result<Float, String>
+        // parse_float(s: String) -> Result<Float, ParseError>
         {
-            let result_float_string = TypeRef::Path {
+            let parse_error_ty = TypeRef::Path {
+                path: Path::single(Name::new(interner, "ParseError")),
+                args: Vec::new(),
+            };
+            let result_float = TypeRef::Path {
                 path: Path::single(Name::new(interner, "Result")),
-                args: vec![float_ty.clone(), string_ty.clone()],
+                args: vec![float_ty.clone(), parse_error_ty],
             };
             mk_intrinsic(
                 interner,
                 "parse_float",
                 vec![],
                 vec![("s", string_ty.clone())],
-                result_float_string,
+                result_float,
             )
         },
         // ── String decomposition ─────────────────────────────────
