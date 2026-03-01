@@ -726,7 +726,7 @@ are maintained in one place.
 | `D4` | Refactor transactions with verify-before-apply behavior | Implemented | `90%` | [#32](https://github.com/kyokaralang/kyokara/issues/32), [#190](https://github.com/kyokaralang/kyokara/issues/190), [#191](https://github.com/kyokaralang/kyokara/issues/191) |
 | `D5` | Compiler-as-API outputs for AI loops (diagnostics/symbol graph/holes) | Implemented with contract drift risk | `75%` | [#36](https://github.com/kyokaralang/kyokara/issues/36), [#38](https://github.com/kyokaralang/kyokara/issues/38), [#241](https://github.com/kyokaralang/kyokara/issues/241) |
 | `D6` | LSP support for interactive coding loops | Implemented baseline, stronger incrementality pending | `70%` | [#33](https://github.com/kyokaralang/kyokara/issues/33), [#239](https://github.com/kyokaralang/kyokara/issues/239) |
-| `D7` | API surface law (canonical placement/order/pipe compatibility for AI generation) | RFC drafted, rollout pending | `35%` | [#243](https://github.com/kyokaralang/kyokara/issues/243), [#236](https://github.com/kyokaralang/kyokara/issues/236), [#238](https://github.com/kyokaralang/kyokara/issues/238) |
+| `D7` | API surface law (canonical placement/order/pipe compatibility for AI generation) | Implemented (core) + hardening follow-ups | `85%` | [#243](https://github.com/kyokaralang/kyokara/issues/243), [#265](https://github.com/kyokaralang/kyokara/issues/265), [#266](https://github.com/kyokaralang/kyokara/issues/266), [#267](https://github.com/kyokaralang/kyokara/issues/267), [#236](https://github.com/kyokaralang/kyokara/issues/236), [#238](https://github.com/kyokaralang/kyokara/issues/238) |
 
 ### 16.4 Active docs-vs-implementation drift
 
