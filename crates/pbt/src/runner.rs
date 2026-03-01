@@ -3,6 +3,7 @@
 use kyokara_eval::error::RuntimeError;
 use kyokara_eval::interpreter::Interpreter;
 use kyokara_eval::intrinsics::Args;
+use kyokara_hir::ModulePath;
 use kyokara_hir::{
     check_module, check_project, collect_item_tree, register_builtin_intrinsics,
     register_builtin_methods, register_builtin_types,
@@ -109,17 +110,13 @@ pub fn run_tests(source: &str, config: &TestConfig) -> Result<TestReport, String
         &mut interner,
     );
 
-    // Reject files with compile errors.
-    if !parse.errors.is_empty() {
-        return Err(format!(
-            "parse errors: {}",
-            parse
-                .errors
-                .iter()
-                .map(|e| format!("{e:?}"))
-                .collect::<Vec<_>>()
-                .join("; ")
-        ));
+    if let Some(err) = collect_compile_errors_single(
+        &parse.errors,
+        &item_result.diagnostics,
+        &type_check.diagnostics,
+        &type_check.body_lowering_diagnostics,
+    ) {
+        return Err(err);
     }
 
     // 7. Discover testable functions and properties.
@@ -145,9 +142,10 @@ pub fn run_project_tests(
     entry_file: &std::path::Path,
     config: &TestConfig,
 ) -> Result<TestReport, String> {
-    use kyokara_hir::ModulePath;
-
     let mut project = check_project(entry_file);
+    if let Some(err) = collect_compile_errors_project(&project.parse_errors, &project) {
+        return Err(err);
+    }
 
     // Find entry module.
     let entry_path = ModulePath::root();
@@ -193,6 +191,100 @@ pub fn run_project_tests(
     );
 
     run_test_loop(&mut interp, &testable, &properties, config)
+}
+
+fn collect_compile_errors_single<T: std::fmt::Debug>(
+    parse_errors: &[T],
+    lowering_diagnostics: &[kyokara_diagnostics::Diagnostic],
+    type_diagnostics: &[kyokara_diagnostics::Diagnostic],
+    body_lowering_diagnostics: &[kyokara_diagnostics::Diagnostic],
+) -> Option<String> {
+    let mut lines = Vec::new();
+
+    if !parse_errors.is_empty() {
+        lines.push(format!(
+            "parse errors: {}",
+            parse_errors
+                .iter()
+                .map(|e| format!("{e:?}"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        ));
+    }
+
+    for d in lowering_diagnostics.iter().filter(is_error) {
+        lines.push(format!("compile error: {}", d.message));
+    }
+    for d in type_diagnostics.iter().filter(is_error) {
+        lines.push(format!("compile error: {}", d.message));
+    }
+    for d in body_lowering_diagnostics.iter().filter(is_error) {
+        lines.push(format!("compile error: {}", d.message));
+    }
+
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("; "))
+    }
+}
+
+fn collect_compile_errors_project<T: std::fmt::Debug>(
+    parse_errors_by_module: &[(ModulePath, Vec<T>)],
+    project: &kyokara_hir::ProjectCheckResult,
+) -> Option<String> {
+    let mut lines = Vec::new();
+
+    for (module_path, parse_errors) in parse_errors_by_module {
+        if parse_errors.is_empty() {
+            continue;
+        }
+        let module = format_module_path(module_path, &project.interner);
+        lines.push(format!(
+            "module {module}: parse errors: {}",
+            parse_errors
+                .iter()
+                .map(|e| format!("{e:?}"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        ));
+    }
+
+    for d in project.lowering_diagnostics.iter().filter(is_error) {
+        lines.push(format!("compile error: {}", d.message));
+    }
+
+    for (module_path, tc) in &project.type_checks {
+        let module = format_module_path(module_path, &project.interner);
+        for d in tc.diagnostics.iter().filter(is_error) {
+            lines.push(format!("module {module}: compile error: {}", d.message));
+        }
+        for d in tc.body_lowering_diagnostics.iter().filter(is_error) {
+            lines.push(format!("module {module}: compile error: {}", d.message));
+        }
+    }
+
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("; "))
+    }
+}
+
+fn is_error(d: &&kyokara_diagnostics::Diagnostic) -> bool {
+    d.severity == kyokara_diagnostics::Severity::Error
+}
+
+fn format_module_path(path: &ModulePath, interner: &Interner) -> String {
+    if path.0.is_empty() {
+        "<root>".to_string()
+    } else {
+        path.0
+            .iter()
+            .map(|seg| seg.resolve(interner).to_string())
+            .collect::<Vec<_>>()
+            .join(".")
+    }
 }
 
 /// Discover functions with contracts that have generatable parameter types.
