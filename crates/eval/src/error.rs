@@ -48,6 +48,13 @@ pub enum RuntimeError {
     #[error("integer overflow")]
     IntegerOverflow,
 
+    #[error("arity mismatch for {callee}: expected {expected}, found {actual}")]
+    ArityMismatch {
+        callee: String,
+        expected: usize,
+        actual: usize,
+    },
+
     #[error("index out of bounds: index {index}, length {len}")]
     IndexOutOfBounds { index: i64, len: i64 },
 

@@ -26,9 +26,12 @@ pub use kyokara_hir_ty::infer::InferenceResult;
 pub use kyokara_hir_ty::ty::{Ty, display_ty, display_ty_with_tree};
 pub use kyokara_hir_ty::{TypeCheckResult, check_module};
 
+use std::collections::HashMap;
+
+use kyokara_diagnostics::{Diagnostic, DiagnosticKind};
 use kyokara_intern::Interner;
 use kyokara_parser::ParseError;
-use kyokara_span::{FileId, FileMap};
+use kyokara_span::{FileId, FileMap, TextRange};
 use kyokara_syntax::SyntaxNode;
 use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::SourceFile;
@@ -47,14 +50,12 @@ pub struct CheckResult {
 
 /// Map lowering/body-lowering diagnostics to stable public diagnostic codes.
 ///
-/// This is intentionally conservative until lowering diagnostics become
-/// structured enums: duplicate-definition style diagnostics map to `E0102`,
-/// and other lowering diagnostics map to `E0101`.
-pub fn lowering_diagnostic_code(message: &str) -> &'static str {
-    if message.contains("duplicate") {
-        "E0102"
-    } else {
-        "E0101"
+/// Duplicate-definition diagnostics map to `E0102`; unresolved-name and
+/// all other lowering diagnostics map to `E0101`.
+pub fn lowering_diagnostic_code(diag: &Diagnostic) -> &'static str {
+    match diag.kind {
+        DiagnosticKind::DuplicateDefinition => "E0102",
+        DiagnosticKind::UnresolvedName | DiagnosticKind::General => "E0101",
     }
 }
 
@@ -288,9 +289,20 @@ fn resolve_project_imports(
         importing_mod: ModulePath,
         import_path: Path,
         file_id: FileId,
+        import_range: TextRange,
     }
 
     let mut to_resolve: Vec<PendingImport> = Vec::new();
+    let mut single_segment_index: HashMap<Name, Vec<ModulePath>> = HashMap::new();
+
+    for (mod_path, _) in graph.iter() {
+        if let Some(last) = mod_path.last() {
+            single_segment_index
+                .entry(last)
+                .or_default()
+                .push(mod_path.clone());
+        }
+    }
 
     for (mod_path, info) in graph.iter() {
         for imp in &info.item_tree.imports {
@@ -302,6 +314,7 @@ fn resolve_project_imports(
                 importing_mod: mod_path.clone(),
                 import_path: imp.path.clone(),
                 file_id: info.file_id,
+                import_range: imp.source_range.unwrap_or_default(),
             });
         }
     }
@@ -312,6 +325,7 @@ fn resolve_project_imports(
             importing_mod,
             import_path,
             file_id,
+            import_range,
         } = pending;
 
         // Collect pub items from the target module.
@@ -331,16 +345,10 @@ fn resolve_project_imports(
                 }
             } else {
                 let resolve_name = import_path.segments[0];
-                graph
-                    .iter()
-                    .filter_map(|(mod_path, _)| {
-                        if mod_path.last() == Some(resolve_name) {
-                            Some(mod_path.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
+                single_segment_index
+                    .get(&resolve_name)
+                    .cloned()
+                    .unwrap_or_default()
             };
 
             if candidates.is_empty() {
@@ -348,7 +356,7 @@ fn resolve_project_imports(
                     format!("unresolved import `{import_name}`"),
                     kyokara_span::Span {
                         file: file_id,
-                        range: kyokara_span::TextRange::default(),
+                        range: import_range,
                     },
                 ));
                 continue;
@@ -357,17 +365,7 @@ fn resolve_project_imports(
             if candidates.len() > 1 {
                 let mut labels: Vec<String> = candidates
                     .iter()
-                    .map(|path| {
-                        if path.0.is_empty() {
-                            "<root>".to_string()
-                        } else {
-                            path.0
-                                .iter()
-                                .map(|seg| seg.resolve(interner).to_owned())
-                                .collect::<Vec<_>>()
-                                .join(".")
-                        }
-                    })
+                    .map(|path| module_path_label(path, interner))
                     .collect();
                 labels.sort();
                 diagnostics.push(kyokara_diagnostics::Diagnostic::error(
@@ -377,7 +375,7 @@ fn resolve_project_imports(
                     ),
                     kyokara_span::Span {
                         file: file_id,
-                        range: kyokara_span::TextRange::default(),
+                        range: import_range,
                     },
                 ));
                 continue;
@@ -406,7 +404,7 @@ fn resolve_project_imports(
                             format!("conflicting import: `{name_str}` is already defined"),
                             kyokara_span::Span {
                                 file: import_file_id,
-                                range: kyokara_span::TextRange::default(),
+                                range: import_range,
                             },
                         ));
                     } else {
@@ -426,7 +424,7 @@ fn resolve_project_imports(
                             format!("conflicting import: `{name_str}` is already defined"),
                             kyokara_span::Span {
                                 file: import_file_id,
-                                range: kyokara_span::TextRange::default(),
+                                range: import_range,
                             },
                         ));
                     } else {
@@ -460,7 +458,7 @@ fn resolve_project_imports(
                             format!("conflicting import: `{name_str}` is already defined"),
                             kyokara_span::Span {
                                 file: import_file_id,
-                                range: kyokara_span::TextRange::default(),
+                                range: import_range,
                             },
                         ));
                     } else {
@@ -478,6 +476,18 @@ enum PubData {
     Fn(FnItem),
     Type(TypeItem),
     Cap(CapItem),
+}
+
+fn module_path_label(path: &ModulePath, interner: &Interner) -> String {
+    if path.0.is_empty() {
+        "<root>".to_string()
+    } else {
+        path.0
+            .iter()
+            .map(|seg| seg.resolve(interner).to_owned())
+            .collect::<Vec<_>>()
+            .join(".")
+    }
 }
 
 /// Collect clones of all pub items from a module's item tree.
@@ -511,15 +521,37 @@ mod tests {
 
     #[test]
     fn lowering_diagnostic_code_maps_duplicate() {
-        assert_eq!(
-            lowering_diagnostic_code("duplicate function `foo`"),
-            "E0102"
+        let diag = kyokara_diagnostics::Diagnostic::error_with_kind(
+            "duplicate function `foo`",
+            kyokara_span::Span {
+                file: FileId(0),
+                range: kyokara_span::TextRange::default(),
+            },
+            DiagnosticKind::DuplicateDefinition,
         );
+        assert_eq!(lowering_diagnostic_code(&diag), "E0102");
     }
 
     #[test]
     fn lowering_diagnostic_code_maps_non_duplicate() {
-        assert_eq!(lowering_diagnostic_code("unresolved name `foo`"), "E0101");
+        let unresolved = kyokara_diagnostics::Diagnostic::error_with_kind(
+            "unresolved name `foo`",
+            kyokara_span::Span {
+                file: FileId(0),
+                range: kyokara_span::TextRange::default(),
+            },
+            DiagnosticKind::UnresolvedName,
+        );
+        assert_eq!(lowering_diagnostic_code(&unresolved), "E0101");
+
+        let fallback = kyokara_diagnostics::Diagnostic::error(
+            "some other lowering diagnostic",
+            kyokara_span::Span {
+                file: FileId(0),
+                range: kyokara_span::TextRange::default(),
+            },
+        );
+        assert_eq!(lowering_diagnostic_code(&fallback), "E0101");
     }
 
     #[test]

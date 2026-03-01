@@ -26,6 +26,10 @@ pub struct FuncCodegen<'a> {
     local_types: Vec<ValType>,
     /// Next available local index.
     next_local: u32,
+    /// Scratch i64 local for checked integer codegen.
+    scratch_i64: u32,
+    /// Scratch i32 local for checked integer codegen.
+    scratch_i32: u32,
 }
 
 impl<'a> FuncCodegen<'a> {
@@ -36,6 +40,8 @@ impl<'a> FuncCodegen<'a> {
             local_map: FxHashMap::default(),
             local_types: Vec::new(),
             next_local: kir_func.params.len() as u32,
+            scratch_i64: 0,
+            scratch_i32: 0,
         }
     }
 
@@ -81,6 +87,15 @@ impl<'a> FuncCodegen<'a> {
             self.local_types.push(wasm_ty);
             self.local_map.insert(vid, local_idx);
         }
+
+        // Scratch locals for checked integer operations.
+        self.scratch_i64 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I64);
+
+        self.scratch_i32 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
 
         Ok(())
     }
@@ -711,6 +726,122 @@ impl<'a> FuncCodegen<'a> {
         }
     }
 
+    fn emit_trap_if_true(&self, func: &mut Function) {
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::Unreachable);
+        func.instruction(&Instruction::End);
+    }
+
+    fn emit_checked_int_add(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        self.emit_get(func, lhs);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+
+        // Overflow iff ((lhs ^ result) & (rhs ^ result)) < 0.
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Xor);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Xor);
+        func.instruction(&Instruction::I64And);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+    }
+
+    fn emit_checked_int_sub(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        self.emit_get(func, lhs);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Sub);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+
+        // Overflow iff ((lhs ^ rhs) & (lhs ^ result)) < 0.
+        self.emit_get(func, lhs);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Xor);
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Xor);
+        func.instruction(&Instruction::I64And);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+    }
+
+    fn emit_checked_int_mul(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        self.emit_get(func, lhs);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Mul);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+
+        // Overflow check:
+        // if lhs != 0 && (result / lhs) != rhs => trap
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::I64Eqz);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::I64DivS);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Ne);
+        self.emit_trap_if_true(func);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+    }
+
+    fn emit_checked_int_mod(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        // Match interpreter semantics: MIN % -1 is overflow.
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::I64Const(i64::MIN));
+        func.instruction(&Instruction::I64Eq);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Const(-1));
+        func.instruction(&Instruction::I64Eq);
+        func.instruction(&Instruction::I32And);
+        self.emit_trap_if_true(func);
+
+        self.emit_get(func, lhs);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64RemS);
+    }
+
+    fn emit_checked_int_shift(
+        &self,
+        func: &mut Function,
+        lhs: ValueId,
+        rhs: ValueId,
+        op: BinaryOp,
+    ) {
+        // Shift amount must be within 0..63 inclusive.
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Const(64));
+        func.instruction(&Instruction::I64GeS);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Or);
+        self.emit_trap_if_true(func);
+
+        self.emit_get(func, lhs);
+        self.emit_get(func, rhs);
+        match op {
+            BinaryOp::Shl => func.instruction(&Instruction::I64Shl),
+            BinaryOp::Shr => func.instruction(&Instruction::I64ShrS),
+            _ => unreachable!("emit_checked_int_shift called with non-shift op"),
+        };
+    }
+
     // ── Binary operations ─────────────────────────────────────────
 
     fn emit_binary(
@@ -743,20 +874,40 @@ impl<'a> FuncCodegen<'a> {
             return Ok(());
         }
 
+        if matches!(lhs_ty, Ty::Int) {
+            match op {
+                BinaryOp::Add => {
+                    self.emit_checked_int_add(func, lhs, rhs);
+                    return Ok(());
+                }
+                BinaryOp::Sub => {
+                    self.emit_checked_int_sub(func, lhs, rhs);
+                    return Ok(());
+                }
+                BinaryOp::Mul => {
+                    self.emit_checked_int_mul(func, lhs, rhs);
+                    return Ok(());
+                }
+                BinaryOp::Mod => {
+                    self.emit_checked_int_mod(func, lhs, rhs);
+                    return Ok(());
+                }
+                BinaryOp::Shl | BinaryOp::Shr => {
+                    self.emit_checked_int_shift(func, lhs, rhs, op);
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+
         self.emit_get(func, lhs);
         self.emit_get(func, rhs);
 
         match (op, lhs_ty) {
-            (BinaryOp::Add, Ty::Int) => func.instruction(&Instruction::I64Add),
-            (BinaryOp::Sub, Ty::Int) => func.instruction(&Instruction::I64Sub),
-            (BinaryOp::Mul, Ty::Int) => func.instruction(&Instruction::I64Mul),
             (BinaryOp::Div, Ty::Int) => func.instruction(&Instruction::I64DivS),
-            (BinaryOp::Mod, Ty::Int) => func.instruction(&Instruction::I64RemS),
             (BinaryOp::BitAnd, Ty::Int) => func.instruction(&Instruction::I64And),
             (BinaryOp::BitOr, Ty::Int) => func.instruction(&Instruction::I64Or),
             (BinaryOp::BitXor, Ty::Int) => func.instruction(&Instruction::I64Xor),
-            (BinaryOp::Shl, Ty::Int) => func.instruction(&Instruction::I64Shl),
-            (BinaryOp::Shr, Ty::Int) => func.instruction(&Instruction::I64ShrS),
 
             (BinaryOp::Add, Ty::Float) => func.instruction(&Instruction::F64Add),
             (BinaryOp::Sub, Ty::Float) => func.instruction(&Instruction::F64Sub),
@@ -808,6 +959,11 @@ impl<'a> FuncCodegen<'a> {
 
         match (op, operand_ty) {
             (UnaryOp::Neg, Ty::Int) => {
+                self.emit_get(func, operand);
+                func.instruction(&Instruction::I64Const(i64::MIN));
+                func.instruction(&Instruction::I64Eq);
+                self.emit_trap_if_true(func);
+
                 func.instruction(&Instruction::I64Const(0));
                 self.emit_get(func, operand);
                 func.instruction(&Instruction::I64Sub);

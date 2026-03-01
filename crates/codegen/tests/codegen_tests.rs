@@ -1435,26 +1435,30 @@ fn test_int_mod_by_zero_traps() {
 }
 
 #[test]
-fn test_int_overflow_add_wraps() {
-    // WASM i64.add wraps: i64::MAX + 1 = i64::MIN.
-    assert_eq!(
-        run_main_i64("fn main() -> Int { 9223372036854775807 + 1 }"),
-        i64::MIN
-    );
+fn test_int_overflow_add_traps() {
+    assert!(run_main_traps(
+        "fn main() -> Int { 9223372036854775807 + 1 }"
+    ));
 }
 
 #[test]
-fn test_int_overflow_sub_wraps() {
-    // i64::MIN - 1 wraps to i64::MAX.
-    assert_eq!(
-        run_main_i64(
-            "fn main() -> Int {\n\
-               let min = -(9223372036854775807) - 1\n\
-               min - 1\n\
-             }"
-        ),
-        i64::MAX
-    );
+fn test_int_overflow_sub_traps() {
+    assert!(run_main_traps(
+        "fn main() -> Int {\n\
+           let min = -(9223372036854775807) - 1\n\
+           min - 1\n\
+         }"
+    ));
+}
+
+#[test]
+fn test_int_overflow_mul_traps() {
+    assert!(run_main_traps(
+        "fn main() -> Int {\n\
+           let a = 4611686018427387904\n\
+           a * 4\n\
+         }"
+    ));
 }
 
 #[test]
@@ -1466,6 +1470,29 @@ fn test_int_min_div_neg_one_traps() {
            min / -1\n\
          }"
     ));
+}
+
+#[test]
+fn test_int_min_mod_neg_one_traps() {
+    assert!(run_main_traps(
+        "fn main() -> Int {\n\
+           let min = -(9223372036854775807) - 1\n\
+           min % -1\n\
+         }"
+    ));
+}
+
+#[test]
+fn test_unary_neg_min_traps() {
+    assert!(run_main_traps(
+        "fn main() -> Int { -(-(9223372036854775807) - 1) }"
+    ));
+}
+
+#[test]
+fn test_shift_amount_out_of_range_traps() {
+    assert!(run_main_traps("fn main() -> Int { 1 << 64 }"));
+    assert!(run_main_traps("fn main() -> Int { 1 >> -1 }"));
 }
 
 #[test]

@@ -40,6 +40,7 @@ pub struct ItemTree {
 pub struct Import {
     pub path: Path,
     pub alias: Option<Name>,
+    pub source_range: Option<TextRange>,
 }
 
 /// A function item (signature only — body lowered in Pass 2).

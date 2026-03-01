@@ -57,6 +57,7 @@ impl std::fmt::Debug for ModuleInfo {
 #[derive(Debug, Default)]
 pub struct ModuleGraph {
     modules: FxHashMap<ModulePath, ModuleInfo>,
+    modules_by_leaf: FxHashMap<Name, Vec<ModulePath>>,
     /// Which module is the entry point (contains `main`).
     pub entry: Option<ModulePath>,
 }
@@ -67,6 +68,12 @@ impl ModuleGraph {
     }
 
     pub fn insert(&mut self, path: ModulePath, info: ModuleInfo) {
+        if let Some(last) = path.last() {
+            self.modules_by_leaf
+                .entry(last)
+                .or_default()
+                .push(path.clone());
+        }
         self.modules.insert(path, info);
     }
 
@@ -81,13 +88,10 @@ impl ModuleGraph {
     /// Resolve an import from a module. Looks up by the single-segment
     /// import name (e.g., `import math` → look for module path `["math"]`).
     pub fn resolve_import(&self, target: &Name) -> Option<&ModuleInfo> {
-        // Try single-segment module path first.
-        for (mod_path, info) in &self.modules {
-            if mod_path.last() == Some(*target) {
-                return Some(info);
-            }
-        }
-        None
+        self.modules_by_leaf
+            .get(target)
+            .and_then(|paths| paths.first())
+            .and_then(|path| self.modules.get(path))
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&ModulePath, &ModuleInfo)> {

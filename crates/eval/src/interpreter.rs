@@ -248,90 +248,84 @@ impl Interpreter {
         let body = self
             .fn_bodies
             .get(&fn_idx)
-            .ok_or_else(|| RuntimeError::UnresolvedName("function body not found".into()))?
-            as *const Body;
-        // SAFETY: we hold &mut self but only mutate interner/env/old_env, not fn_bodies.
-        let body = unsafe { &*body };
+            .cloned()
+            .ok_or_else(|| RuntimeError::UnresolvedName("function body not found".into()))?;
 
-        let fn_item = &self.item_tree.functions[fn_idx];
+        let (params, fn_name) = {
+            let fn_item = &self.item_tree.functions[fn_idx];
+            self.ensure_user_fn_caps_allowed(fn_item)?;
+            (fn_item.params.clone(), fn_item.name)
+        };
 
-        self.ensure_user_fn_caps_allowed(fn_item)?;
+        self.ensure_arity(
+            &format!("function `{}`", fn_name.resolve(&self.interner)),
+            params.len(),
+            args.len(),
+        )?;
 
-        // Use the shared environment with a new scope instead of allocating a fresh Env.
         self.env.push_scope();
 
-        // Bind parameters directly from the item tree (no intermediate Vec allocation).
-        let params = &fn_item.params;
-        for (i, param) in params.iter().enumerate() {
-            if let Some(val) = args.get(i) {
-                self.env.bind(param.name, val.clone());
-            }
+        for (param, val) in params.iter().zip(args.into_iter()) {
+            self.env.bind(param.name, val);
         }
 
-        // Fast path: skip contract checks when no contracts are present.
         let has_requires = body.requires.is_some();
         let has_ensures = body.ensures.is_some();
         let has_invariant = body.invariant.is_some();
 
-        if !has_requires && !has_ensures && !has_invariant {
-            // Hot path: no contracts — just evaluate the body.
-            let result = self.eval_expr_shared(body, body.root);
-            self.env.pop_scope();
-            let return_val = match result? {
-                ControlFlow::Value(v) | ControlFlow::Return(v) => v,
-            };
-            return Ok(return_val);
-        }
+        let mut prev_old_env = None;
+        let mut swapped_old_env = false;
+        let fn_name_str = fn_name.resolve(&self.interner).to_string();
 
-        // Slow path: full contract checking.
-        let fn_name_str = fn_item.name.resolve(&self.interner).to_string();
+        let result = (|| -> Result<Value, RuntimeError> {
+            if !has_requires && !has_ensures && !has_invariant {
+                let return_val = match self.eval_expr_shared(&body, body.root)? {
+                    ControlFlow::Value(v) | ControlFlow::Return(v) => v,
+                };
+                Ok(return_val)
+            } else {
+                if let Some(req_idx) = body.requires {
+                    let val = self.eval_expr_shared(&body, req_idx)?.into_value();
+                    if !matches!(val, Value::Bool(true)) {
+                        Err(RuntimeError::PreconditionFailed(fn_name_str.clone()))?;
+                    }
+                }
 
-        // Check precondition.
-        if let Some(req_idx) = body.requires {
-            let val = self.eval_expr_shared(body, req_idx)?.into_value();
-            if !matches!(val, Value::Bool(true)) {
-                self.env.pop_scope();
-                return Err(RuntimeError::PreconditionFailed(fn_name_str));
+                if has_ensures {
+                    prev_old_env = self.old_env.replace(self.env.clone());
+                    swapped_old_env = true;
+                }
+
+                let return_val = match self.eval_expr_shared(&body, body.root)? {
+                    ControlFlow::Value(v) | ControlFlow::Return(v) => v,
+                };
+
+                if let Some(inv_idx) = body.invariant {
+                    let val = self.eval_expr_shared(&body, inv_idx)?.into_value();
+                    if !matches!(val, Value::Bool(true)) {
+                        Err(RuntimeError::InvariantViolated(fn_name_str.clone()))?;
+                    }
+                }
+
+                if let Some(ens_idx) = body.ensures {
+                    let result_name = Name::new(&mut self.interner, "result");
+                    self.env.bind(result_name, return_val.clone());
+                    let val = self.eval_expr_shared(&body, ens_idx)?.into_value();
+                    if !matches!(val, Value::Bool(true)) {
+                        Err(RuntimeError::PostconditionFailed(fn_name_str.clone()))?;
+                    }
+                }
+
+                Ok(return_val)
             }
-        }
+        })();
 
-        // Snapshot env for old() before evaluating the body.
-        let prev_old_env = self.old_env.take();
-        if has_ensures {
-            self.old_env = Some(self.env.clone());
-        }
-
-        // Evaluate the function body.
-        let return_val = match self.eval_expr_shared(body, body.root)? {
-            ControlFlow::Value(v) | ControlFlow::Return(v) => v,
-        };
-
-        // Check invariant.
-        if let Some(inv_idx) = body.invariant {
-            let val = self.eval_expr_shared(body, inv_idx)?.into_value();
-            if !matches!(val, Value::Bool(true)) {
-                self.env.pop_scope();
-                self.old_env = prev_old_env;
-                return Err(RuntimeError::InvariantViolated(fn_name_str));
-            }
-        }
-
-        // Check postcondition.
-        if let Some(ens_idx) = body.ensures {
-            let result_name = Name::new(&mut self.interner, "result");
-            self.env.bind(result_name, return_val.clone());
-            let val = self.eval_expr_shared(body, ens_idx)?.into_value();
-            self.env.pop_scope();
-            self.old_env = prev_old_env;
-            if !matches!(val, Value::Bool(true)) {
-                return Err(RuntimeError::PostconditionFailed(fn_name_str));
-            }
-        } else {
-            self.env.pop_scope();
+        self.env.pop_scope();
+        if swapped_old_env {
             self.old_env = prev_old_env;
         }
 
-        Ok(return_val)
+        result
     }
 
     fn eval_expr(
@@ -653,62 +647,14 @@ impl Interpreter {
                         .map(ControlFlow::Value);
                 }
 
-                // Note: args borrows body.exprs[idx] immutably, which is compatible
-                // with passing body to eval_expr_shared (also immutable).
-                // The &mut self in eval_expr_shared doesn't conflict because body
-                // is not borrowed from self (it comes from a raw pointer).
                 let callee_val = eval_propagate_shared!(self, body, callee_idx);
 
-                // Fast path: direct user function call — evaluate args directly
-                // into the shared env, avoiding Vec<Value> allocation entirely.
+                // Direct user-function call path.
                 if let Value::Fn(ref fv) = callee_val
                     && let FnValue::User(fn_idx) = **fv
                 {
-                    let fn_body = self.fn_bodies.get(&fn_idx).ok_or_else(|| {
-                        RuntimeError::UnresolvedName("function body not found".into())
-                    })? as *const Body;
-                    let fn_body = unsafe { &*fn_body };
-                    let fn_item = &self.item_tree.functions[fn_idx];
-
-                    self.ensure_user_fn_caps_allowed(fn_item)?;
-
-                    // Reorder args when named args are present so values match
-                    // parameter order instead of call-site order.
-                    let reordered = self.reorder_args_for_fn(args, &fn_item.params);
-
-                    let has_contracts = fn_body.requires.is_some()
-                        || fn_body.ensures.is_some()
-                        || fn_body.invariant.is_some();
-
-                    if !has_contracts {
-                        // Hot path: push scope, bind args directly, evaluate body.
-                        // We use a raw pointer to fn_item.params to avoid holding
-                        // an immutable borrow on self.item_tree across eval calls.
-                        // SAFETY: eval_expr_shared never mutates item_tree.
-                        let params_ptr = &fn_item.params as *const Vec<FnParam>;
-                        let params = unsafe { &*params_ptr };
-                        let prev_fn = self.current_fn.replace(fn_idx);
-                        let fast_result = (|| -> Result<ControlFlow, RuntimeError> {
-                            self.env.push_scope();
-                            for (i, arg_idx) in reordered.iter().enumerate() {
-                                let val = eval_propagate_shared!(self, body, *arg_idx);
-                                if let Some(param) = params.get(i) {
-                                    self.env.bind(param.name, val);
-                                }
-                            }
-
-                            let result = self.eval_expr_shared(fn_body, fn_body.root);
-                            self.env.pop_scope();
-                            let return_val = match result? {
-                                ControlFlow::Value(v) | ControlFlow::Return(v) => v,
-                            };
-                            Ok(ControlFlow::Value(return_val))
-                        })();
-                        self.current_fn = prev_fn;
-                        return fast_result;
-                    }
-
-                    // Slow path: contracts present — collect args into SmallVec.
+                    let params = self.item_tree.functions[fn_idx].params.clone();
+                    let reordered = self.reorder_args_for_fn(args, &params);
                     let mut args_vec = Args::with_capacity(reordered.len());
                     for arg_idx in &reordered {
                         let v = eval_propagate_shared!(self, body, *arg_idx);
@@ -1064,6 +1010,23 @@ impl Interpreter {
         }
     }
 
+    fn ensure_arity(
+        &self,
+        callee: &str,
+        expected: usize,
+        actual: usize,
+    ) -> Result<(), RuntimeError> {
+        if expected == actual {
+            Ok(())
+        } else {
+            Err(RuntimeError::ArityMismatch {
+                callee: callee.to_string(),
+                expected,
+                actual,
+            })
+        }
+    }
+
     fn call_value(&mut self, callee: Value, args: Args) -> Result<Value, RuntimeError> {
         match callee {
             Value::Fn(fv) => match *fv {
@@ -1082,6 +1045,7 @@ impl Interpreter {
                     body,
                     env: captured_env,
                 } => {
+                    self.ensure_arity("lambda", params.len(), args.len())?;
                     let mut env = captured_env;
                     env.push_scope();
                     for (pat_idx, val) in params.iter().zip(args) {
@@ -1093,11 +1057,18 @@ impl Interpreter {
                 FnValue::Constructor {
                     type_idx,
                     variant_idx,
+                    arity,
                     ..
                 } => Ok(Value::Adt {
+                    // Constructor calls must match declared field count.
+                    // Type checking should guarantee this, but runtime calls
+                    // can also happen through values and API entrypoints.
                     type_idx,
                     variant: variant_idx,
-                    fields: args.into_vec(),
+                    fields: {
+                        self.ensure_arity("constructor", arity, args.len())?;
+                        args.into_vec()
+                    },
                 }),
             },
             _ => Err(RuntimeError::TypeError(
@@ -1529,15 +1500,30 @@ impl Interpreter {
         for stmt in stmts {
             match stmt {
                 Stmt::Let { pat, init, .. } => {
-                    let result = self.eval_expr(env, body, *init)?;
+                    let result = match self.eval_expr(env, body, *init) {
+                        Ok(result) => result,
+                        Err(err) => {
+                            env.pop_scope();
+                            return Err(err);
+                        }
+                    };
                     if let ControlFlow::Return(_) = &result {
                         env.pop_scope();
                         return Ok(result);
                     }
-                    self.bind_pat(body, *pat, &result.into_value(), env)?;
+                    if let Err(err) = self.bind_pat(body, *pat, &result.into_value(), env) {
+                        env.pop_scope();
+                        return Err(err);
+                    }
                 }
                 Stmt::Expr(idx) => {
-                    let result = self.eval_expr(env, body, *idx)?;
+                    let result = match self.eval_expr(env, body, *idx) {
+                        Ok(result) => result,
+                        Err(err) => {
+                            env.pop_scope();
+                            return Err(err);
+                        }
+                    };
                     if let ControlFlow::Return(_) = &result {
                         env.pop_scope();
                         return Ok(result);
@@ -1550,10 +1536,8 @@ impl Interpreter {
         } else {
             Ok(ControlFlow::Value(Value::Unit))
         };
-        // If the tail is a Return, we need to propagate it.
-        let r = result?;
         env.pop_scope();
-        Ok(r)
+        result
     }
 
     fn bind_pat(
@@ -1652,15 +1636,30 @@ impl Interpreter {
         for stmt in stmts {
             match stmt {
                 Stmt::Let { pat, init, .. } => {
-                    let result = self.eval_expr_shared(body, *init)?;
+                    let result = match self.eval_expr_shared(body, *init) {
+                        Ok(result) => result,
+                        Err(err) => {
+                            self.env.pop_scope();
+                            return Err(err);
+                        }
+                    };
                     if let ControlFlow::Return(_) = &result {
                         self.env.pop_scope();
                         return Ok(result);
                     }
-                    self.bind_pat_shared(body, *pat, &result.into_value())?;
+                    if let Err(err) = self.bind_pat_shared(body, *pat, &result.into_value()) {
+                        self.env.pop_scope();
+                        return Err(err);
+                    }
                 }
                 Stmt::Expr(idx) => {
-                    let result = self.eval_expr_shared(body, *idx)?;
+                    let result = match self.eval_expr_shared(body, *idx) {
+                        Ok(result) => result,
+                        Err(err) => {
+                            self.env.pop_scope();
+                            return Err(err);
+                        }
+                    };
                     if let ControlFlow::Return(_) = &result {
                         self.env.pop_scope();
                         return Ok(result);
@@ -1673,9 +1672,8 @@ impl Interpreter {
         } else {
             Ok(ControlFlow::Value(Value::Unit))
         };
-        let r = result?;
         self.env.pop_scope();
-        Ok(r)
+        result
     }
 
     fn bind_pat_shared(
@@ -1733,10 +1731,12 @@ impl Interpreter {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use kyokara_hir::check_file;
     use kyokara_hir_def::item_tree::{TypeDefKind, TypeItem, VariantDef};
     use kyokara_hir_def::path::Path;
     use kyokara_hir_def::type_ref::TypeRef;
     use la_arena::{Arena, ArenaMap};
+    use smallvec::smallvec;
 
     use super::*;
 
@@ -1847,5 +1847,210 @@ mod tests {
             matched,
             "single-segment constructor pattern should match corresponding ADT value"
         );
+    }
+
+    fn make_checked_interpreter(source: &str) -> Interpreter {
+        let checked = check_file(source);
+        assert!(
+            checked.parse_errors.is_empty(),
+            "parse errors: {:?}",
+            checked.parse_errors
+        );
+        assert!(
+            checked.lowering_diagnostics.is_empty(),
+            "lowering diagnostics: {:?}",
+            checked.lowering_diagnostics
+        );
+        assert!(
+            checked.type_check.body_lowering_diagnostics.is_empty(),
+            "body lowering diagnostics: {:?}",
+            checked.type_check.body_lowering_diagnostics
+        );
+        assert!(
+            checked.type_check.raw_diagnostics.is_empty(),
+            "type diagnostics: {:?}",
+            checked.type_check.raw_diagnostics
+        );
+
+        Interpreter::new(
+            checked.item_tree,
+            checked.module_scope,
+            checked.type_check.fn_bodies,
+            FxHashMap::default(),
+            checked.interner,
+            None,
+        )
+    }
+
+    fn fn_idx_by_name(interp: &mut Interpreter, name: &str) -> FnItemIdx {
+        let name = Name::new(interp.interner_mut(), name);
+        *interp
+            .module_scope
+            .functions
+            .get(&name)
+            .expect("function should exist")
+    }
+
+    #[test]
+    fn user_function_call_reports_arity_mismatch() {
+        let mut interp = make_checked_interpreter(
+            "fn add(x: Int, y: Int) -> Int { x + y } fn main() -> Int { 0 }",
+        );
+        let add_idx = fn_idx_by_name(&mut interp, "add");
+
+        let err = interp
+            .call_fn_by_idx(add_idx, smallvec![Value::Int(1)])
+            .expect_err("too-few args should fail");
+        assert!(
+            err.to_string().contains("arity mismatch"),
+            "expected arity mismatch error, got: {err}"
+        );
+
+        let err = interp
+            .call_fn_by_idx(
+                add_idx,
+                smallvec![Value::Int(1), Value::Int(2), Value::Int(3)],
+            )
+            .expect_err("too-many args should fail");
+        assert!(
+            err.to_string().contains("arity mismatch"),
+            "expected arity mismatch error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn lambda_call_reports_arity_mismatch() {
+        let (mut interp, mut body, _type_idx, _a_name, _some_name) =
+            make_test_interpreter_and_body();
+
+        let x = Name::new(interp.interner_mut(), "x");
+        let x_pat = body.pats.alloc(Pat::Bind { name: x });
+        let root = body.exprs.alloc(Expr::Literal(Literal::Int(42)));
+        body.root = root;
+
+        let lambda = Value::Fn(Box::new(FnValue::Lambda {
+            params: vec![x_pat],
+            body_expr: root,
+            body: Rc::new(body),
+            env: Env::new(),
+        }));
+
+        let err = interp
+            .call_value(lambda.clone(), Args::new())
+            .expect_err("too-few lambda args should fail");
+        assert!(
+            err.to_string().contains("arity mismatch"),
+            "expected arity mismatch error, got: {err}"
+        );
+
+        let err = interp
+            .call_value(lambda, smallvec![Value::Int(1), Value::Int(2)])
+            .expect_err("too-many lambda args should fail");
+        assert!(
+            err.to_string().contains("arity mismatch"),
+            "expected arity mismatch error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn constructor_call_reports_arity_mismatch() {
+        let (mut interp, _body, type_idx, _a_name, _some_name) = make_test_interpreter_and_body();
+
+        let ctor = Value::Fn(Box::new(FnValue::Constructor {
+            type_idx,
+            variant_idx: 0,
+            arity: 1,
+        }));
+
+        let err = interp
+            .call_value(ctor.clone(), Args::new())
+            .expect_err("too-few constructor args should fail");
+        assert!(
+            err.to_string().contains("arity mismatch"),
+            "expected arity mismatch error, got: {err}"
+        );
+
+        let err = interp
+            .call_value(ctor, smallvec![Value::Int(1), Value::Int(2)])
+            .expect_err("too-many constructor args should fail");
+        assert!(
+            err.to_string().contains("arity mismatch"),
+            "expected arity mismatch error, got: {err}"
+        );
+    }
+
+    fn assert_no_leaked_call_state(interp: &mut Interpreter) {
+        assert!(
+            interp.old_env.is_none(),
+            "old_env should be restored on call failure"
+        );
+        let x_name = Name::new(interp.interner_mut(), "x");
+        let result_name = Name::new(interp.interner_mut(), "result");
+        assert!(
+            interp.env.lookup(x_name).is_none(),
+            "parameter `x` leaked into shared env after call failure: {:?}",
+            interp.env
+        );
+        assert!(
+            interp.env.lookup(result_name).is_none(),
+            "`result` leaked into shared env after call failure: {:?}",
+            interp.env
+        );
+    }
+
+    #[test]
+    fn contract_requires_error_does_not_leak_env_or_old_snapshot() {
+        let mut interp = make_checked_interpreter(
+            "fn bad(x: Int) -> Int requires x / 0 > 0 ensures old(x) == x { x }\n\
+             fn main() -> Int { 0 }",
+        );
+        let bad_idx = fn_idx_by_name(&mut interp, "bad");
+        let err = interp
+            .call_fn_by_idx(bad_idx, smallvec![Value::Int(1)])
+            .expect_err("requires expression should fail at runtime");
+        assert!(matches!(err, RuntimeError::DivisionByZero));
+        assert_no_leaked_call_state(&mut interp);
+    }
+
+    #[test]
+    fn contract_body_error_does_not_leak_env_or_old_snapshot() {
+        let mut interp = make_checked_interpreter(
+            "fn bad(x: Int) -> Int ensures old(x) == x { x / 0 }\n\
+             fn main() -> Int { 0 }",
+        );
+        let bad_idx = fn_idx_by_name(&mut interp, "bad");
+        let err = interp
+            .call_fn_by_idx(bad_idx, smallvec![Value::Int(1)])
+            .expect_err("body should fail at runtime");
+        assert!(matches!(err, RuntimeError::DivisionByZero));
+        assert_no_leaked_call_state(&mut interp);
+    }
+
+    #[test]
+    fn contract_invariant_error_does_not_leak_env_or_old_snapshot() {
+        let mut interp = make_checked_interpreter(
+            "fn bad(x: Int) -> Int ensures old(x) == x invariant x / 0 > 0 { x }\n\
+             fn main() -> Int { 0 }",
+        );
+        let bad_idx = fn_idx_by_name(&mut interp, "bad");
+        let err = interp
+            .call_fn_by_idx(bad_idx, smallvec![Value::Int(1)])
+            .expect_err("invariant expression should fail at runtime");
+        assert!(matches!(err, RuntimeError::DivisionByZero));
+        assert_no_leaked_call_state(&mut interp);
+    }
+
+    #[test]
+    fn contract_ensures_error_does_not_leak_env_or_old_snapshot() {
+        let mut interp = make_checked_interpreter(
+            "fn bad(x: Int) -> Int ensures old(x) / 0 > 0 { x }\n\
+             fn main() -> Int { 0 }",
+        );
+        let bad_idx = fn_idx_by_name(&mut interp, "bad");
+        let err = interp
+            .call_fn_by_idx(bad_idx, smallvec![Value::Int(1)])
+            .expect_err("ensures expression should fail at runtime");
+        assert!(matches!(err, RuntimeError::DivisionByZero));
+        assert_no_leaked_call_state(&mut interp);
     }
 }
