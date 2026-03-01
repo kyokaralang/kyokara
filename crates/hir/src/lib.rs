@@ -241,11 +241,6 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
             &mut item_result.module_scope,
             &mut interner,
         );
-        activate_synthetic_imports(
-            &item_result.tree,
-            &mut item_result.module_scope,
-            &mut interner,
-        );
         register_static_methods(&mut item_result.module_scope, &mut interner);
 
         all_lowering_diagnostics.extend(item_result.diagnostics);
@@ -382,11 +377,14 @@ fn resolve_project_imports(
                 // makes the name available in scope. Nothing else to do.
                 if import_path.segments.len() == 1 {
                     let seg_name = import_path.segments[0];
-                    let importing_info = graph.get(&importing_mod);
-                    let is_synthetic = importing_info
+                    let is_synthetic = graph
+                        .get(&importing_mod)
                         .is_some_and(|info| info.scope.synthetic_modules.contains_key(&seg_name));
                     if is_synthetic {
-                        continue; // synthetic module already registered
+                        if let Some(info) = graph.get_mut(&importing_mod) {
+                            info.scope.imported_modules.insert(seg_name);
+                        }
+                        continue;
                     }
                 }
                 diagnostics.push(kyokara_diagnostics::Diagnostic::error(
