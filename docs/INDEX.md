@@ -7,17 +7,17 @@ If a topic appears in multiple files, this index decides the source of truth.
 
 | Topic | Source of truth | Notes |
 |---|---|---|
-| Project overview, quickstart, CLI examples | `README.md` | Keep concise; link out for deep details. |
-| Language/runtime design and roadmap | `docs/design-v0.md` | Includes AI-first feature tracker and drift register. |
-| Formal grammar and parser contract | `spec/grammar.md` | Parser-facing normative grammar. |
-| API shape and naming law | `docs/rfcs/0001-api-surface-law.md` | Normative API surface constraints. |
-| Token-count workflow | `docs/token-metrics.md` | Evergreen process doc. |
+| Project overview, quickstart, CLI examples | [`README.md`](../README.md) | Keep concise; link out for deep details. |
+| Language/runtime design and roadmap | [`docs/design-v0.md`](design-v0.md) | Includes AI-first feature tracker and drift register. |
+| Formal grammar and parser contract | [`spec/grammar.md`](../spec/grammar.md) | Parser-facing normative grammar. |
+| API shape and naming law | [`docs/rfcs/0001-api-surface-law.md`](rfcs/0001-api-surface-law.md) | Normative API surface constraints. |
+| Token-count workflow | [`docs/token-metrics.md`](token-metrics.md) | Evergreen process doc. |
 
 ## Archived and dated docs
 
 | Type | Location | Policy |
 |---|---|---|
-| Dated reports | `docs/reports/` | Keep immutable snapshots with date-prefixed filenames. |
+| Dated reports | [`docs/reports/`](reports/) | Keep immutable snapshots with date-prefixed filenames. |
 | Historical handover notes | removed (`HANDOVER.md`) | Do not reintroduce as a living doc; use issues/PRs + canonical docs instead. |
 
 ## Maintenance rules
