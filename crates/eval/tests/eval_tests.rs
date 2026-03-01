@@ -4152,6 +4152,74 @@ fn eval_parse_float_error_carries_message() {
     assert_eq!(val, Value::Bool(true));
 }
 
+#[test]
+fn eval_parse_int_user_defined_parse_error_missing_variant_reports_runtime_error_not_panic() {
+    let err = run_err(
+        r#"type ParseError = | Oops
+           fn main() -> Bool {
+             match "abc".parse_int() {
+               Ok(_) => false
+               Err(_) => true
+             }
+           }"#,
+    );
+    assert!(
+        err.contains("parse_int cannot construct ParseError::InvalidInt(String)"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn eval_parse_float_user_defined_parse_error_missing_variant_reports_runtime_error_not_panic() {
+    let err = run_err(
+        r#"type ParseError = | Oops
+           fn main() -> Bool {
+             match "abc".parse_float() {
+               Ok(_) => false
+               Err(_) => true
+             }
+           }"#,
+    );
+    assert!(
+        err.contains("parse_float cannot construct ParseError::InvalidFloat(String)"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn eval_parse_int_user_defined_parse_error_wrong_payload_type_reports_runtime_error() {
+    let err = run_err(
+        r#"type ParseError = | InvalidInt(Int) | InvalidFloat(Int)
+           fn main() -> Bool {
+             match "abc".parse_int() {
+               Ok(_) => false
+               Err(_) => true
+             }
+           }"#,
+    );
+    assert!(
+        err.contains("parse_int cannot construct ParseError::InvalidInt(String)"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn eval_parse_float_user_defined_parse_error_wrong_payload_type_reports_runtime_error() {
+    let err = run_err(
+        r#"type ParseError = | InvalidInt(Int) | InvalidFloat(Int)
+           fn main() -> Bool {
+             match "abc".parse_float() {
+               Ok(_) => false
+               Err(_) => true
+             }
+           }"#,
+    );
+    assert!(
+        err.contains("parse_float cannot construct ParseError::InvalidFloat(String)"),
+        "unexpected error: {err}"
+    );
+}
+
 // ── string_lines tests ─────────────────────────────────────────────
 
 #[test]

@@ -96,6 +96,37 @@ macro_rules! eval_propagate_shared {
 }
 
 impl Interpreter {
+    fn resolve_parse_error_variant(
+        item_tree: &ItemTree,
+        module_scope: &ModuleScope,
+        interner: &mut Interner,
+        variant_name: &str,
+    ) -> Option<(TypeItemIdx, usize)> {
+        let parse_error_name = Name::new(interner, "ParseError");
+        let variant_name = Name::new(interner, variant_name);
+        let string_name = Name::new(interner, "String");
+
+        let &type_idx = module_scope.types.get(&parse_error_name)?;
+        let TypeDefKind::Adt { variants } = &item_tree.types[type_idx].kind else {
+            return None;
+        };
+        let variant_idx = variants.iter().position(|v| v.name == variant_name)?;
+        let variant = &variants[variant_idx];
+
+        if variant.fields.len() != 1 {
+            return None;
+        }
+
+        let TypeRef::Path { path, args } = &variant.fields[0] else {
+            return None;
+        };
+        if !path.is_single() || path.segments[0] != string_name || !args.is_empty() {
+            return None;
+        }
+
+        Some((type_idx, variant_idx))
+    }
+
     pub fn new(
         item_tree: ItemTree,
         module_scope: ModuleScope,
@@ -116,10 +147,20 @@ impl Interpreter {
         let result_ok = module_scope.constructors.get(&ok_name).copied();
         let result_err = module_scope.constructors.get(&err_name).copied();
 
-        let invalid_int_name = Name::new(&mut interner, "InvalidInt");
-        let invalid_float_name = Name::new(&mut interner, "InvalidFloat");
-        let parse_error_invalid_int = module_scope.constructors.get(&invalid_int_name).copied();
-        let parse_error_invalid_float = module_scope.constructors.get(&invalid_float_name).copied();
+        // ParseError variants must be resolved by owning type identity, not by
+        // global constructor-name lookup (constructor names can collide).
+        let parse_error_invalid_int = Self::resolve_parse_error_variant(
+            &item_tree,
+            &module_scope,
+            &mut interner,
+            "InvalidInt",
+        );
+        let parse_error_invalid_float = Self::resolve_parse_error_variant(
+            &item_tree,
+            &module_scope,
+            &mut interner,
+            "InvalidFloat",
+        );
 
         Interpreter {
             item_tree,
@@ -1359,26 +1400,30 @@ impl Interpreter {
         }
     }
 
-    fn make_invalid_int(&self, msg: String) -> Value {
-        let (type_idx, variant) = self
-            .parse_error_invalid_int
-            .expect("ParseError::InvalidInt not registered");
-        Value::Adt {
+    fn make_invalid_int(&self, msg: String) -> Result<Value, RuntimeError> {
+        let Some((type_idx, variant)) = self.parse_error_invalid_int else {
+            return Err(RuntimeError::TypeError(
+                "parse_int cannot construct ParseError::InvalidInt(String)".into(),
+            ));
+        };
+        Ok(Value::Adt {
             type_idx,
             variant,
             fields: vec![Value::String(msg)],
-        }
+        })
     }
 
-    fn make_invalid_float(&self, msg: String) -> Value {
-        let (type_idx, variant) = self
-            .parse_error_invalid_float
-            .expect("ParseError::InvalidFloat not registered");
-        Value::Adt {
+    fn make_invalid_float(&self, msg: String) -> Result<Value, RuntimeError> {
+        let Some((type_idx, variant)) = self.parse_error_invalid_float else {
+            return Err(RuntimeError::TypeError(
+                "parse_float cannot construct ParseError::InvalidFloat(String)".into(),
+            ));
+        };
+        Ok(Value::Adt {
             type_idx,
             variant,
             fields: vec![Value::String(msg)],
-        }
+        })
     }
 
     fn check_intrinsic_cap(&self, intr: IntrinsicFn) -> Result<(), RuntimeError> {
@@ -1516,7 +1561,7 @@ impl Interpreter {
                 };
                 match s.parse::<i64>() {
                     Ok(n) => Ok(self.make_ok(Value::Int(n))),
-                    Err(e) => Ok(self.make_err(self.make_invalid_int(format!("{e}")))),
+                    Err(e) => Ok(self.make_err(self.make_invalid_int(format!("{e}"))?)),
                 }
             }
             IntrinsicFn::ParseFloat => {
@@ -1527,7 +1572,7 @@ impl Interpreter {
                 };
                 match s.parse::<f64>() {
                     Ok(n) => Ok(self.make_ok(Value::Float(n))),
-                    Err(e) => Ok(self.make_err(self.make_invalid_float(format!("{e}")))),
+                    Err(e) => Ok(self.make_err(self.make_invalid_float(format!("{e}"))?)),
                 }
             }
             _ => Err(RuntimeError::TypeError("unknown complex intrinsic".into())),
