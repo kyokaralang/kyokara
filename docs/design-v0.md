@@ -527,6 +527,9 @@ injected as synthetic types before type-checking. Synthetic modules (`io`, `math
 require explicit `import io` / `import math` / `import fs` in all modes.
 Zero intrinsic free functions exist in user scope.
 
+Mental model: `List`/`Map`/`Set` are prelude value types (type/value namespace),
+while `io`/`fs` are module namespaces for no-owner/effectful operations.
+
 **Implemented (v0.1+):**
 * `Option<T>` — builtin ADT (`Some(T) | None`), used as return type for safe lookups ✓
 * `Result<T, E>` — builtin ADT (`Ok(T) | Err(E)`), `?` propagation works ✓
