@@ -1400,6 +1400,36 @@ impl<'a> InferenceCtx<'a> {
         self.record_call_edge_if_top_level(call_target);
         self.check_call_effects_if_function(call_target);
 
+        // Check Map key type: methods that take a key (insert, get, contains, remove)
+        // must have a hashable key type. Re-resolve after unification so type vars
+        // from the receiver are now concrete.
+        let base_after = self.table.resolve_deep(&base_ty);
+        if let Ty::Adt { def, args } = &base_after {
+            let type_name = self.item_tree.types[*def].name.resolve(self.interner);
+            let method_str = method_name.resolve(self.interner);
+
+            if type_name == "Map"
+                && args.len() >= 2
+                && matches!(
+                    method_str,
+                    "map_insert" | "map_get" | "map_contains" | "map_remove"
+                )
+            {
+                let key_ty = self.table.resolve_deep(&args[0]);
+                if !key_ty.is_valid_map_key() {
+                    self.push_diag(TyDiagnosticData::InvalidMapKey { ty: key_ty });
+                }
+            }
+
+            // Check List.sort() element type: only naturally orderable types allowed.
+            if type_name == "List" && !args.is_empty() && method_str == "list_sort" {
+                let elem_ty = self.table.resolve_deep(&args[0]);
+                if !elem_ty.is_sortable() {
+                    self.push_diag(TyDiagnosticData::UnsortableElement { ty: elem_ty });
+                }
+            }
+        }
+
         Some(ret)
     }
 
@@ -1420,7 +1450,11 @@ impl<'a> InferenceCtx<'a> {
                             .first()
                             .cloned()
                             .unwrap_or_else(|| self.table.fresh_var());
-                        self.infer_expr(index, &Expectation::Has(key_ty));
+                        self.infer_expr(index, &Expectation::Has(key_ty.clone()));
+                        let resolved_key = self.table.resolve_deep(&key_ty);
+                        if !resolved_key.is_valid_map_key() {
+                            self.push_diag(TyDiagnosticData::InvalidMapKey { ty: resolved_key });
+                        }
                         args.get(1).cloned().unwrap_or(Ty::Error)
                     }
                     _ => {

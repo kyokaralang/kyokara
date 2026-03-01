@@ -3,7 +3,7 @@
 //! Given a `TypeRef` from a function parameter, generates a random `Value`
 //! by drawing from a `ChoiceSource`.
 
-use kyokara_eval::value::Value;
+use kyokara_eval::value::{MapKey, Value};
 use kyokara_hir_def::item_tree::{ItemTree, TypeDefKind, TypeItemIdx};
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::resolver::ModuleScope;
@@ -352,19 +352,22 @@ fn gen_map(
     let Some(len) = source.draw(MAX_MAP_LEN) else {
         return GenResult::Exhausted;
     };
-    let mut entries = Vec::with_capacity(len as usize);
+    let mut entries = indexmap::IndexMap::with_capacity(len as usize);
     for _ in 0..len {
         let k = match generate_inner(key_ty, source, item_tree, module_scope, interner, depth + 1) {
-            GenResult::Ok(val) => val,
+            GenResult::Ok(val) => match MapKey::from_value(&val) {
+                Ok(key) => key,
+                Err(_) => return GenResult::Unsupported,
+            },
             other => return other,
         };
         let v = match generate_inner(val_ty, source, item_tree, module_scope, interner, depth + 1) {
             GenResult::Ok(val) => val,
             other => return other,
         };
-        entries.push((k, v));
+        entries.insert(k, v);
     }
-    GenResult::Ok(Value::Map(entries))
+    GenResult::Ok(Value::Map(Box::new(entries)))
 }
 
 fn gen_record(
@@ -489,7 +492,7 @@ pub fn generate_from_spec(
             let Some(len) = source.draw(MAX_MAP_LEN) else {
                 return GenResult::Exhausted;
             };
-            let mut entries = Vec::with_capacity(len as usize);
+            let mut entries = indexmap::IndexMap::with_capacity(len as usize);
             for _ in 0..len {
                 let k = match generate_from_spec(
                     key_spec,
@@ -499,7 +502,10 @@ pub fn generate_from_spec(
                     module_scope,
                     interner,
                 ) {
-                    GenResult::Ok(val) => val,
+                    GenResult::Ok(val) => match MapKey::from_value(&val) {
+                        Ok(key) => key,
+                        Err(_) => return GenResult::Unsupported,
+                    },
                     other => return other,
                 };
                 let v = match generate_from_spec(
@@ -513,9 +519,9 @@ pub fn generate_from_spec(
                     GenResult::Ok(val) => val,
                     other => return other,
                 };
-                entries.push((k, v));
+                entries.insert(k, v);
             }
-            GenResult::Ok(Value::Map(entries))
+            GenResult::Ok(Value::Map(Box::new(entries)))
         }
         GenSpec::OptionOf(inner_spec) => {
             let inner_ty = match declared_ty {

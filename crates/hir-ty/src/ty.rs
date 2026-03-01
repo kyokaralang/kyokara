@@ -56,6 +56,28 @@ impl Ty {
         matches!(self, Ty::Error | Ty::Never)
     }
 
+    /// Returns `true` if this type is valid as a `Map` key.
+    ///
+    /// Only hashable types are allowed: Int, String, Char, Bool, Unit.
+    /// Float, Fn, List, Map, Record, ADT, etc. are rejected.
+    pub fn is_valid_map_key(&self) -> bool {
+        matches!(
+            self,
+            Ty::Int | Ty::String | Ty::Char | Ty::Bool | Ty::Unit | Ty::Error | Ty::Var(_)
+        )
+    }
+
+    /// Returns `true` if this type can be sorted with `List.sort()`.
+    ///
+    /// Only naturally orderable types are allowed: Int, Float, String, Char, Bool.
+    /// Fn, List, Map, Record, ADT, Unit, etc. are rejected.
+    pub fn is_sortable(&self) -> bool {
+        matches!(
+            self,
+            Ty::Int | Ty::Float | Ty::String | Ty::Char | Ty::Bool | Ty::Error | Ty::Var(_)
+        )
+    }
+
     /// Returns `true` if this type contains no inference variables.
     pub fn is_fully_resolved(&self) -> bool {
         match self {

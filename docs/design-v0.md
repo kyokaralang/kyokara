@@ -535,7 +535,7 @@ Zero intrinsic free functions exist in user scope.
   * Constructor: `List.new()`
   * Methods: `xs.push(v)`, `xs.len()`, `xs.get(i)` → `Option<T>`, `xs.head()` → `Option<T>`, `xs.tail()`, `xs.is_empty()`, `xs.reverse()`, `xs.concat(ys)`
   * Higher-order: `xs.map(f)`, `xs.filter(f)`, `xs.fold(init, f)`, `xs.sort()`, `xs.sort_by(f)`
-* `Map<K, V>` — opaque builtin type backed by `Vec<(Value, Value)>` (insertion-order) ✓
+* `Map<K, V>` — opaque builtin type backed by `IndexMap<MapKey, Value>` (insertion-order-preserving hash map, O(1) lookup). Keys must be hashable types (Int, String, Char, Bool, Unit); floats and functions are rejected at runtime. ✓
   * Constructor: `Map.new()`
   * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()` → `List<K>`, `m.values()` → `List<V>`, `m.is_empty()`
 * String methods ✓ — `s.len()` (char count), `s.contains(t)`, `s.starts_with(t)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)` → `List<String>`, `s.substring(a, b)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()`, `s.chars()`, `s.parse_int()` → `Result<Int, ParseError>`, `s.parse_float()` → `Result<Float, ParseError>`
