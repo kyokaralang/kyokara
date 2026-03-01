@@ -1,3 +1,5 @@
+import io
+
 fn factorial(n: Int) -> Int {
   if n <= 1 {
     1
@@ -19,6 +21,6 @@ fn fibonacci(n: Int) -> Int {
 }
 
 fn main() -> Unit {
-  println(string_concat("factorial(10) = ", int_to_string(factorial(10))))
-  println(string_concat("fibonacci(10) = ", int_to_string(fibonacci(10))))
+  io.println("factorial(10) = ".concat(factorial(10).to_string()))
+  io.println("fibonacci(10) = ".concat(fibonacci(10).to_string()))
 }

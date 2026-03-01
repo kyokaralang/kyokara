@@ -1,3 +1,5 @@
+import io
+
 fn safe_div(x: Int, y: Int) -> Option<Int> {
   if y == 0 {
     None
@@ -8,13 +10,13 @@ fn safe_div(x: Int, y: Int) -> Option<Int> {
 
 fn show_option(o: Option<Int>) -> String {
   match o {
-    Some(v) => string_concat("Some(", string_concat(int_to_string(v), ")"))
+    Some(v) => "Some(".concat(v.to_string().concat(")"))
     None => "None"
   }
 }
 
 fn main() -> Unit {
-  println(show_option(safe_div(100, 5)))
-  println(show_option(safe_div(100, 0)))
-  println(show_option(safe_div(42, 6)))
+  io.println(show_option(safe_div(100, 5)))
+  io.println(show_option(safe_div(100, 0)))
+  io.println(show_option(safe_div(42, 6)))
 }

@@ -1,3 +1,5 @@
+import io
+
 type Point = { x: Int, y: Int }
 
 fn distance_sq(p: Point) -> Int {
@@ -7,6 +9,6 @@ fn distance_sq(p: Point) -> Int {
 fn main() -> Unit {
   let origin = Point { x: 0, y: 0 }
   let p = Point { x: 3, y: 4 }
-  println(string_concat("origin dist_sq: ", int_to_string(distance_sq(origin))))
-  println(string_concat("p dist_sq: ", int_to_string(distance_sq(p))))
+  io.println("origin dist_sq: ".concat(distance_sq(origin).to_string()))
+  io.println("p dist_sq: ".concat(distance_sq(p).to_string()))
 }

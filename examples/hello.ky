@@ -1,7 +1,9 @@
+import io
+
 fn greet(name: String) -> String {
-  string_concat("Hello, ", name)
+  "Hello, ".concat(name)
 }
 
 fn main() -> Unit {
-  println(greet("world"))
+  io.println(greet("world"))
 }
