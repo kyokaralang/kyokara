@@ -1228,6 +1228,8 @@ fn legacy_intrinsic_hint(name: &str) -> Option<&'static str> {
         // math module
         "min" => Some("use `math.min()` (requires `import math`)"),
         "max" => Some("use `math.max()` (requires `import math`)"),
+        "gcd" => Some("use `math.gcd()` (requires `import math`)"),
+        "lcm" => Some("use `math.lcm()` (requires `import math`)"),
         "float_min" | "fmin" => Some("use `math.fmin()` (requires `import math`)"),
         "float_max" | "fmax" => Some("use `math.fmax()` (requires `import math`)"),
         // constructors
@@ -1247,6 +1249,7 @@ fn legacy_intrinsic_hint(name: &str) -> Option<&'static str> {
         "list_contains" => Some("use `xs.contains(val)` (method on List)"),
         "list_reverse" => Some("use `xs.reverse()` (method on List)"),
         "list_sort" => Some("use `xs.sort()` (method on List)"),
+        "list_binary_search" => Some("use `xs.binary_search(x)` (method on List)"),
         "map_insert" => Some("use `m.insert(k, v)` (method on Map)"),
         "map_get" => Some("use `m.get(k)` (method on Map)"),
         "map_remove" => Some("use `m.remove(k)` (method on Map)"),

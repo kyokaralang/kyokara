@@ -3640,6 +3640,88 @@ fn check_map_valid_key_types_have_no_map_key_diagnostic() {
     );
 }
 
+// ── List binary_search element type diagnostics (E0025) ─────────────
+
+#[test]
+fn check_list_binary_search_unsortable_element_reports_e0025() {
+    let output = check(
+        r#"fn main() -> Int {
+            let needle = List.new().push(1)
+            let xs = List.new().push(needle)
+            xs.binary_search(needle)
+        }"#,
+        "test.ky",
+    );
+
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0025" && d.message.contains("cannot be sorted")),
+        "expected E0025 unsortable element diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_list_binary_search_sortable_elements_have_no_e0025() {
+    let output = check(
+        r#"fn main() -> Int {
+            let xs = List.new().push(1).push(3).push(5)
+            xs.binary_search(3)
+        }"#,
+        "test.ky",
+    );
+
+    assert!(
+        output.diagnostics.iter().all(|d| d.code != "E0025"),
+        "expected no E0025 diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+// ── math.gcd/math.lcm type diagnostics (E0001) ──────────────────────
+
+#[test]
+fn check_math_gcd_invalid_argument_type_reports_e0001() {
+    let output = check(
+        r#"import math
+fn main() -> Int {
+    math.gcd("x", 1)
+}"#,
+        "test.ky",
+    );
+
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0001" && d.message.contains("expected `Int`")),
+        "expected E0001 type mismatch diagnostic for math.gcd, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_math_lcm_invalid_argument_type_reports_e0001() {
+    let output = check(
+        r#"import math
+fn main() -> Int {
+    math.lcm(1, "x")
+}"#,
+        "test.ky",
+    );
+
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0001" && d.message.contains("expected `Int`")),
+        "expected E0001 type mismatch diagnostic for math.lcm, got: {:?}",
+        output.diagnostics
+    );
+}
+
 // ── Modulo, logical AND, logical OR operator type-check tests ───────
 
 #[test]

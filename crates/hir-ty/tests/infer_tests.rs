@@ -641,6 +641,24 @@ fn err_legacy_min_hints_math_module() {
 }
 
 #[test]
+fn err_legacy_gcd_hints_math_module() {
+    check_err("fn main() -> Int { gcd(6, 4) }", "math.gcd()");
+}
+
+#[test]
+fn err_legacy_lcm_hints_math_module() {
+    check_err("fn main() -> Int { lcm(6, 4) }", "math.lcm()");
+}
+
+#[test]
+fn err_legacy_list_binary_search_hints_method() {
+    check_err(
+        "fn main() -> Int { list_binary_search(xs, 1) }",
+        "xs.binary_search(x)",
+    );
+}
+
+#[test]
 fn err_legacy_parse_int_hints_method() {
     check_err("fn main() -> Int { parse_int(\"42\") }", "s.parse_int()");
 }

@@ -300,6 +300,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("list_fold", "List", "fold"),
         ("list_sort", "List", "sort"),
         ("list_sort_by", "List", "sort_by"),
+        ("list_binary_search", "List", "binary_search"),
         // Map methods
         ("map_insert", "Map", "insert"),
         ("map_get", "Map", "get"),
@@ -367,6 +368,8 @@ pub fn register_synthetic_modules(
             &[
                 ("min", "min"),
                 ("max", "max"),
+                ("gcd", "gcd"),
+                ("lcm", "lcm"),
                 ("float_min", "fmin"),
                 ("float_max", "fmax"),
             ],
@@ -1040,6 +1043,22 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
             vec![("a", int_ty.clone()), ("b", int_ty.clone())],
             int_ty.clone(),
         ),
+        // gcd(a: Int, b: Int) -> Int
+        mk_intrinsic(
+            interner,
+            "gcd",
+            vec![],
+            vec![("a", int_ty.clone()), ("b", int_ty.clone())],
+            int_ty.clone(),
+        ),
+        // lcm(a: Int, b: Int) -> Int
+        mk_intrinsic(
+            interner,
+            "lcm",
+            vec![],
+            vec![("a", int_ty.clone()), ("b", int_ty.clone())],
+            int_ty.clone(),
+        ),
         // float_abs(f: Float) -> Float
         mk_intrinsic(
             interner,
@@ -1158,7 +1177,15 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
             "list_sort_by",
             vec![t_name],
             vec![("xs", list_t.clone()), ("cmp", fn_tt_to_int)],
-            list_t,
+            list_t.clone(),
+        ),
+        // list_binary_search<T>(xs: List<T>, x: T) -> Int
+        mk_intrinsic(
+            interner,
+            "list_binary_search",
+            vec![t_name],
+            vec![("xs", list_t.clone()), ("x", t_ref)],
+            int_ty,
         ),
     ]
 }
