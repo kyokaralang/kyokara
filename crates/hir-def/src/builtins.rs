@@ -317,14 +317,13 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
 /// Module-qualified calls like `io.println(s)` resolve through `scope.synthetic_modules`.
 /// Each module's FnItems are allocated in the item tree (via `register_builtin_intrinsics`).
 ///
-/// **Important:** This function registers the modules, but they are NOT injected into scope
-/// automatically. The user must write `import io` to make `io.*` available. In single-file
-/// mode, all synthetic modules are auto-imported for convenience.
+/// **Important:** This function registers the module definitions, but they are NOT available
+/// for name resolution until explicitly imported. Call [`activate_synthetic_imports`] after
+/// processing the item tree's import list to mark which modules are actually imported.
 pub fn register_synthetic_modules(
     tree: &mut ItemTree,
     scope: &mut ModuleScope,
     interner: &mut Interner,
-    auto_import: bool,
 ) {
     // (module_name, intrinsic_fn_name, method_name, requires_capability)
     let module_fns: &[(&str, &[(&str, &str)])] = &[
@@ -372,12 +371,28 @@ pub fn register_synthetic_modules(
 
         scope.synthetic_modules.insert(mod_name, mod_fns);
     }
+}
 
-    if auto_import {
-        // In single-file mode, all synthetic modules are available without explicit import.
-        // (The modules are already in synthetic_modules; this is a no-op since resolve_name
-        // checks synthetic_modules directly.)
+/// Scan an item tree's import list and activate any synthetic module imports.
+///
+/// For each `import io` / `import math` / `import fs` found in the item tree,
+/// adds the module name to `scope.imported_modules` so that the resolver and
+/// type inference allow module-qualified calls through that module.
+pub fn activate_synthetic_imports(
+    tree: &ItemTree,
+    scope: &mut ModuleScope,
+    interner: &mut Interner,
+) {
+    for import in &tree.imports {
+        if import.path.segments.len() == 1 {
+            let seg = import.path.segments[0];
+            if scope.synthetic_modules.contains_key(&seg) {
+                scope.imported_modules.insert(seg);
+            }
+        }
     }
+    // Suppress unused-mut warning when there are no imports.
+    let _ = interner;
 }
 
 /// Create FnItem for a new module intrinsic (e.g., read_line, read_stdin).

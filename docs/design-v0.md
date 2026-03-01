@@ -524,7 +524,7 @@ for no-owner utilities and effects, and type-namespaced constructors.
 
 Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `Map<K, V>`, and `ParseError` are
 injected as synthetic types before type-checking. Synthetic modules (`io`, `math`, `fs`)
-are auto-imported in single-file mode and require explicit `import` in project mode.
+require explicit `import io` / `import math` / `import fs` in all modes.
 Zero intrinsic free functions exist in user scope.
 
 **Implemented (v0.1+):**
