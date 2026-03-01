@@ -118,6 +118,9 @@ fn try_dot_completion(
 
     // Check synthetic modules: io.println, math.min, fs.read_file, etc.
     for (mod_name, mod_fns) in &scope.synthetic_modules {
+        if !scope.imported_modules.contains(mod_name) {
+            continue;
+        }
         if mod_name.resolve(interner) == base_name {
             for (fn_name, fn_idx) in mod_fns {
                 let fn_item = &tree.functions[*fn_idx];
@@ -225,8 +228,11 @@ fn add_module_scope_completions(analysis: &FileAnalysis, items: &mut Vec<Complet
         });
     }
 
-    // Synthetic modules (io, math, fs) — only when imported (present in scope).
-    for mod_name in scope.synthetic_modules.keys() {
+    // Synthetic modules (io, math, fs) — only when explicitly imported.
+    for mod_name in &scope.imported_modules {
+        if !scope.synthetic_modules.contains_key(mod_name) {
+            continue;
+        }
         items.push(CompletionItem {
             label: mod_name.resolve(interner).to_string(),
             kind: Some(CompletionItemKind::MODULE),
@@ -477,23 +483,42 @@ mod tests {
     }
 
     #[test]
-    fn completion_includes_synthetic_modules() {
-        // Synthetic module names are always suggested in completion (for discoverability).
+    fn completion_excludes_unimported_synthetic_modules() {
         let source = "fn main() -> Int { 0 }";
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
         let items = completion_items(&analysis, source, TextSize::from(0));
         assert!(
+            !items.iter().any(|i| i.label == "io"),
+            "did not expect 'io' module in completions without import: {items:?}"
+        );
+        assert!(
+            !items.iter().any(|i| i.label == "math"),
+            "did not expect 'math' module in completions without import: {items:?}"
+        );
+        assert!(
+            !items.iter().any(|i| i.label == "fs"),
+            "did not expect 'fs' module in completions without import: {items:?}"
+        );
+    }
+
+    #[test]
+    fn completion_includes_only_imported_synthetic_modules() {
+        let source = "import io\nimport math\nfn main() -> Unit { io.println(\"hi\") }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let items = completion_items(&analysis, source, TextSize::from(0));
+        assert!(
             items.iter().any(|i| i.label == "io"),
-            "expected 'io' module in completions: {items:?}"
+            "expected imported 'io' module in completions: {items:?}"
         );
         assert!(
             items.iter().any(|i| i.label == "math"),
-            "expected 'math' module in completions: {items:?}"
+            "expected imported 'math' module in completions: {items:?}"
         );
         assert!(
-            items.iter().any(|i| i.label == "fs"),
-            "expected 'fs' module in completions: {items:?}"
+            !items.iter().any(|i| i.label == "fs"),
+            "did not expect unimported 'fs' module in completions: {items:?}"
         );
     }
 
@@ -517,6 +542,23 @@ mod tests {
         assert!(
             !items.iter().any(|i| i.label == "Int"),
             "dot-completion should not include builtins: {items:?}"
+        );
+    }
+
+    #[test]
+    fn completion_dot_after_unimported_module_hides_members() {
+        let source = "fn main() -> Unit { io.println(\"hi\") }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let offset = TextSize::from(source.find("println").expect("println offset") as u32);
+        let items = completion_items(&analysis, source, offset);
+        assert!(
+            !items.iter().any(|i| i.label == "println"),
+            "did not expect 'println' in dot completion for unimported module: {items:?}"
+        );
+        assert!(
+            !items.iter().any(|i| i.label == "print"),
+            "did not expect 'print' in dot completion for unimported module: {items:?}"
         );
     }
 
