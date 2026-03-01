@@ -246,8 +246,8 @@ fn symbol_graph_contains_types() {
     let src = "type Color = | Red | Green | Blue
         fn id(x: Int) -> Int { x }";
     let output = check(src, "test.ky");
-    // 6 types: Color (user-defined) + Option + Result + List + Map + ParseError (builtins)
-    assert_eq!(output.symbol_graph.types.len(), 6);
+    // 7 types: Color (user-defined) + Option + Result + List + Map + Set + ParseError (builtins)
+    assert_eq!(output.symbol_graph.types.len(), 7);
     let color = output
         .symbol_graph
         .types
@@ -3554,6 +3554,48 @@ fn diagnostic_delta_type_mismatch_adds_one_e0001() {
     let original = "fn main() -> Int { 1 }";
     let transformed = r#"fn main() -> Int { "x" }"#;
     assert_diagnostic_code_delta(original, transformed, &[("E0001", 1)]);
+}
+
+// ── Set element type diagnostics (E0026) ───────────────────────────
+
+#[test]
+fn check_set_invalid_element_type_reports_e0026() {
+    let output = check(
+        r#"fn main() -> Int {
+            let s = Set.new().insert(3.14)
+            s.len()
+        }"#,
+        "test.ky",
+    );
+
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0026" && d.message.contains("set element")),
+        "expected E0026 set element diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_set_valid_element_types_have_no_set_diagnostic() {
+    let output = check(
+        r#"fn helper() -> Bool {
+            let i = Set.new().insert(1)
+            let s = Set.new().insert("x")
+            let c = Set.new().insert('z')
+            let b = Set.new().insert(true)
+            i.len() == 1 && s.len() == 1 && c.len() == 1 && b.len() == 1
+        }"#,
+        "test.ky",
+    );
+
+    assert!(
+        output.diagnostics.iter().all(|d| d.code != "E0026"),
+        "expected no E0026 diagnostics, got: {:?}",
+        output.diagnostics
+    );
 }
 
 // ── Modulo, logical AND, logical OR operator type-check tests ───────

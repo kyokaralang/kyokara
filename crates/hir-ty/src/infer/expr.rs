@@ -1416,8 +1416,20 @@ impl<'a> InferenceCtx<'a> {
                 )
             {
                 let key_ty = self.table.resolve_deep(&args[0]);
-                if !key_ty.is_valid_map_key() {
+                if !key_ty.is_hashable_collection_key() {
                     self.push_diag(TyDiagnosticData::InvalidMapKey { ty: key_ty });
+                }
+            }
+
+            // Check Set element type: methods that take an element (insert, contains, remove)
+            // must have a hashable element type.
+            if type_name == "Set"
+                && !args.is_empty()
+                && matches!(method_str, "set_insert" | "set_contains" | "set_remove")
+            {
+                let elem_ty = self.table.resolve_deep(&args[0]);
+                if !elem_ty.is_hashable_collection_key() {
+                    self.push_diag(TyDiagnosticData::InvalidSetElement { ty: elem_ty });
                 }
             }
 
@@ -1452,7 +1464,7 @@ impl<'a> InferenceCtx<'a> {
                             .unwrap_or_else(|| self.table.fresh_var());
                         self.infer_expr(index, &Expectation::Has(key_ty.clone()));
                         let resolved_key = self.table.resolve_deep(&key_ty);
-                        if !resolved_key.is_valid_map_key() {
+                        if !resolved_key.is_hashable_collection_key() {
                             self.push_diag(TyDiagnosticData::InvalidMapKey { ty: resolved_key });
                         }
                         args.get(1).cloned().unwrap_or(Ty::Error)

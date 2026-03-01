@@ -337,7 +337,7 @@ fn gen_list(
             other => return other,
         }
     }
-    GenResult::Ok(Value::List(items))
+    GenResult::Ok(Value::list(items))
 }
 
 fn gen_map(
@@ -367,7 +367,7 @@ fn gen_map(
         };
         entries.insert(k, v);
     }
-    GenResult::Ok(Value::Map(Box::new(entries)))
+    GenResult::Ok(Value::map(entries))
 }
 
 fn gen_record(
@@ -482,7 +482,7 @@ pub fn generate_from_spec(
                     other => return other,
                 }
             }
-            GenResult::Ok(Value::List(items))
+            GenResult::Ok(Value::list(items))
         }
         GenSpec::Map(key_spec, val_spec) => {
             let (key_ty, val_ty) = match declared_ty {
@@ -521,7 +521,7 @@ pub fn generate_from_spec(
                 };
                 entries.insert(k, v);
             }
-            GenResult::Ok(Value::Map(Box::new(entries)))
+            GenResult::Ok(Value::map(entries))
         }
         GenSpec::OptionOf(inner_spec) => {
             let inner_ty = match declared_ty {

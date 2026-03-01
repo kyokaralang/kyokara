@@ -12,7 +12,8 @@ use crate::resolver::ModuleScope;
 use crate::type_ref::TypeRef;
 use kyokara_intern::Interner;
 
-/// Inject `Option<T>`, `Result<T, E>`, and `ParseError` into the item tree
+/// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `Map<K,V>`, `Set<T>`, and
+/// `ParseError` into the item tree
 /// and module scope.
 ///
 /// Uses `Vacant` entry checks so that user-defined types with the same
@@ -26,6 +27,7 @@ pub fn register_builtin_types(
     register_result(tree, scope, interner);
     register_list(tree, scope, interner);
     register_map(tree, scope, interner);
+    register_set(tree, scope, interner);
     register_parse_error(tree, scope, interner);
 }
 
@@ -107,6 +109,22 @@ fn register_map(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Int
         kind: TypeDefKind::Adt { variants: vec![] },
     });
     scope.types.insert(map_name, idx);
+}
+
+/// `Set<T>` — opaque builtin type (no variants, no pattern matching).
+fn register_set(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
+    let set_name = Name::new(interner, "Set");
+    if scope.types.contains_key(&set_name) {
+        return;
+    }
+    let t_name = Name::new(interner, "T");
+    let idx = tree.types.alloc(TypeItem {
+        name: set_name,
+        is_pub: false,
+        type_params: vec![t_name],
+        kind: TypeDefKind::Adt { variants: vec![] },
+    });
+    scope.types.insert(set_name, idx);
 }
 
 /// `type Result<T, E> = | Ok(T) | Err(E)`
@@ -248,6 +266,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         char_: Some(Name::new(interner, "Char")),
         list: Some(Name::new(interner, "List")),
         map: Some(Name::new(interner, "Map")),
+        set: Some(Name::new(interner, "Set")),
     };
 
     // (intrinsic_fn_name, receiver_type_name, method_name)
@@ -290,6 +309,13 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("map_keys", "Map", "keys"),
         ("map_values", "Map", "values"),
         ("map_is_empty", "Map", "is_empty"),
+        // Set methods
+        ("set_insert", "Set", "insert"),
+        ("set_contains", "Set", "contains"),
+        ("set_remove", "Set", "remove"),
+        ("set_len", "Set", "len"),
+        ("set_is_empty", "Set", "is_empty"),
+        ("set_values", "Set", "values"),
         // Int methods
         ("int_to_string", "Int", "to_string"),
         ("int_to_float", "Int", "to_float"),
@@ -482,13 +508,18 @@ fn mk_module_intrinsic(
     }
 }
 
-/// Register static methods (`List.new()`, `Map.new()`) in `scope.static_methods`.
+/// Register static methods (`List.new()`, `Map.new()`, `Set.new()`) in
+/// `scope.static_methods`.
 ///
 /// Static methods are always available (no import needed) since the types they
 /// belong to are always in scope.
 pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner) {
     // (intrinsic_fn_name, type_name, static_method_name)
-    let mappings: &[(&str, &str, &str)] = &[("list_new", "List", "new"), ("map_new", "Map", "new")];
+    let mappings: &[(&str, &str, &str)] = &[
+        ("list_new", "List", "new"),
+        ("map_new", "Map", "new"),
+        ("set_new", "Set", "new"),
+    ];
 
     for &(intrinsic_name, type_name, method_name) in mappings {
         let intr_name = Name::new(interner, intrinsic_name);
@@ -614,6 +645,10 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
     let map_kv = TypeRef::Path {
         path: Path::single(Name::new(interner, "Map")),
         args: vec![k_ref.clone(), v_ref.clone()],
+    };
+    let set_t = TypeRef::Path {
+        path: Path::single(Name::new(interner, "Set")),
+        args: vec![t_ref.clone()],
     };
     let option_t = TypeRef::Path {
         path: Path::single(Name::new(interner, "Option")),
@@ -843,6 +878,57 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
             vec![k_name, v_name],
             vec![("m", map_kv.clone())],
             bool_ty.clone(),
+        ),
+        // ── Set<T> ───────────────────────────────────────────────
+        // set_new<T>() -> Set<T>
+        mk_intrinsic(interner, "set_new", vec![t_name], vec![], set_t.clone()),
+        // set_insert<T>(s: Set<T>, x: T) -> Set<T>
+        mk_intrinsic(
+            interner,
+            "set_insert",
+            vec![t_name],
+            vec![("s", set_t.clone()), ("x", t_ref.clone())],
+            set_t.clone(),
+        ),
+        // set_contains<T>(s: Set<T>, x: T) -> Bool
+        mk_intrinsic(
+            interner,
+            "set_contains",
+            vec![t_name],
+            vec![("s", set_t.clone()), ("x", t_ref.clone())],
+            bool_ty.clone(),
+        ),
+        // set_remove<T>(s: Set<T>, x: T) -> Set<T>
+        mk_intrinsic(
+            interner,
+            "set_remove",
+            vec![t_name],
+            vec![("s", set_t.clone()), ("x", t_ref.clone())],
+            set_t.clone(),
+        ),
+        // set_len<T>(s: Set<T>) -> Int
+        mk_intrinsic(
+            interner,
+            "set_len",
+            vec![t_name],
+            vec![("s", set_t.clone())],
+            int_ty.clone(),
+        ),
+        // set_is_empty<T>(s: Set<T>) -> Bool
+        mk_intrinsic(
+            interner,
+            "set_is_empty",
+            vec![t_name],
+            vec![("s", set_t.clone())],
+            bool_ty.clone(),
+        ),
+        // set_values<T>(s: Set<T>) -> List<T>
+        mk_intrinsic(
+            interner,
+            "set_values",
+            vec![t_name],
+            vec![("s", set_t.clone())],
+            list_t.clone(),
         ),
         // ── String ops ──────────────────────────────────────────
         // string_len(s: String) -> Int

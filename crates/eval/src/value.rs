@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use kyokara_hir_def::body::Body;
 use kyokara_hir_def::expr::{ExprIdx, PatIdx};
 use kyokara_hir_def::item_tree::{FnItemIdx, TypeItemIdx};
@@ -80,8 +80,9 @@ pub enum Value {
         /// Optional type index for named record types (used for method resolution).
         type_idx: Option<TypeItemIdx>,
     },
-    List(Vec<Value>),
-    Map(Box<IndexMap<MapKey, Value>>),
+    List(Rc<Vec<Value>>),
+    Map(Rc<IndexMap<MapKey, Value>>),
+    Set(Rc<IndexSet<MapKey>>),
     Fn(Box<FnValue>),
 }
 
@@ -128,6 +129,7 @@ impl PartialEq for Value {
             (Value::Record { fields: f1, .. }, Value::Record { fields: f2, .. }) => f1 == f2,
             (Value::List(a), Value::List(b)) => a == b,
             (Value::Map(a), Value::Map(b)) => a == b,
+            (Value::Set(a), Value::Set(b)) => a == b,
             // Functions are never equal.
             (Value::Fn(_), Value::Fn(_)) => false,
             _ => false,
@@ -138,6 +140,18 @@ impl PartialEq for Value {
 impl Eq for Value {}
 
 impl Value {
+    pub fn list(items: Vec<Value>) -> Self {
+        Value::List(Rc::new(items))
+    }
+
+    pub fn map(entries: IndexMap<MapKey, Value>) -> Self {
+        Value::Map(Rc::new(entries))
+    }
+
+    pub fn set(entries: IndexSet<MapKey>) -> Self {
+        Value::Set(Rc::new(entries))
+    }
+
     pub fn display(&self, interner: &Interner) -> String {
         match self {
             Value::Int(n) => n.to_string(),
@@ -174,7 +188,59 @@ impl Value {
                     .collect();
                 format!("{{{}}}", fs.join(", "))
             }
+            Value::Set(entries) => {
+                let fs: Vec<String> = entries.iter().map(|k| k.display(interner)).collect();
+                format!("#{{{}}}", fs.join(", "))
+            }
             Value::Fn(_) => "<function>".to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_clone_shares_storage_for_cow() {
+        let original = Value::list(vec![Value::Int(1), Value::Int(2)]);
+        let cloned = original.clone();
+        let (Value::List(a), Value::List(b)) = (&original, &cloned) else {
+            panic!("expected list values");
+        };
+        assert!(
+            Rc::ptr_eq(a, b),
+            "list clone should share storage before mutation in COW model"
+        );
+    }
+
+    #[test]
+    fn map_clone_shares_storage_for_cow() {
+        let mut m = IndexMap::new();
+        m.insert(MapKey::Int(1), Value::Int(10));
+        let original = Value::map(m);
+        let cloned = original.clone();
+        let (Value::Map(a), Value::Map(b)) = (&original, &cloned) else {
+            panic!("expected map values");
+        };
+        assert!(
+            Rc::ptr_eq(a, b),
+            "map clone should share storage before mutation in COW model"
+        );
+    }
+
+    #[test]
+    fn set_clone_shares_storage_for_cow() {
+        let mut s = IndexSet::new();
+        s.insert(MapKey::Int(1));
+        let original = Value::set(s);
+        let cloned = original.clone();
+        let (Value::Set(a), Value::Set(b)) = (&original, &cloned) else {
+            panic!("expected set values");
+        };
+        assert!(
+            Rc::ptr_eq(a, b),
+            "set clone should share storage before mutation in COW model"
+        );
     }
 }

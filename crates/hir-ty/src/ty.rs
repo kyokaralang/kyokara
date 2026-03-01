@@ -56,15 +56,20 @@ impl Ty {
         matches!(self, Ty::Error | Ty::Never)
     }
 
-    /// Returns `true` if this type is valid as a `Map` key.
+    /// Returns `true` if this type is hashable for collection-key-like use.
     ///
     /// Only hashable types are allowed: Int, String, Char, Bool, Unit.
-    /// Float, Fn, List, Map, Record, ADT, etc. are rejected.
-    pub fn is_valid_map_key(&self) -> bool {
+    /// Float, Fn, List, Map, Set, Record, ADT, etc. are rejected.
+    pub fn is_hashable_collection_key(&self) -> bool {
         matches!(
             self,
             Ty::Int | Ty::String | Ty::Char | Ty::Bool | Ty::Unit | Ty::Error | Ty::Var(_)
         )
+    }
+
+    /// Returns `true` if this type is valid as a `Map` key.
+    pub fn is_valid_map_key(&self) -> bool {
+        self.is_hashable_collection_key()
     }
 
     /// Returns `true` if this type can be sorted with `List.sort()`.
