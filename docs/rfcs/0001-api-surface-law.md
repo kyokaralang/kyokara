@@ -121,6 +121,7 @@ Type changes are explicit in API usage.
 2. required args follow, positional
 3. optional/config args are named-only
 4. positional optional args are forbidden
+5. positional arguments must not appear after a named argument (for all call forms)
 
 ### L10. Required positional semantic order (`MUST`)
 
@@ -143,6 +144,7 @@ Require named args or options objects when any are true:
 ### L12. Pipe desugaring (`MUST`)
 
 `x |> f(a, b, k: v)` desugars to `f(x, a, b, k: v)`.
+Argument expressions are always evaluated left-to-right in source order before slot binding.
 
 ### L13. Pipeline direction (`SHOULD`)
 

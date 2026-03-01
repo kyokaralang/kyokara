@@ -462,6 +462,92 @@ impl<'a> InferenceCtx<'a> {
         None
     }
 
+    /// Infer call arguments in source order, while binding each argument to its
+    /// target parameter slot for type expectations.
+    ///
+    /// Returns `true` if named-argument validation errors were emitted.
+    fn infer_call_args_with_binding(
+        &mut self,
+        args: &[CallArg],
+        param_tys: &[Ty],
+        param_names: Option<&[kyokara_hir_def::name::Name]>,
+    ) -> bool {
+        let names = param_names.filter(|names| names.len() == param_tys.len());
+
+        let mut has_errors = false;
+        let mut seen = vec![false; param_tys.len()];
+        let mut next_pos = 0;
+        let mut saw_named = false;
+
+        for arg in args {
+            match arg {
+                CallArg::Positional(arg_idx) => {
+                    if saw_named {
+                        has_errors = true;
+                        self.push_diag(TyDiagnosticData::PositionalAfterNamedArg);
+                    }
+
+                    while next_pos < seen.len() && seen[next_pos] {
+                        next_pos += 1;
+                    }
+
+                    let expectation = if next_pos < param_tys.len() {
+                        seen[next_pos] = true;
+                        Expectation::Has(param_tys[next_pos].clone())
+                    } else {
+                        has_errors = true;
+                        Expectation::None
+                    };
+
+                    self.infer_expr(*arg_idx, &expectation);
+                    next_pos += 1;
+                }
+                CallArg::Named { name, value } => {
+                    saw_named = true;
+                    let expectation = if let Some(names) = names {
+                        if let Some(idx) = names.iter().position(|param_name| param_name == name) {
+                            if seen[idx] {
+                                has_errors = true;
+                                self.push_diag(TyDiagnosticData::DuplicateNamedArg {
+                                    name: name.resolve(self.interner).to_string(),
+                                });
+                            } else {
+                                seen[idx] = true;
+                            }
+                            Expectation::Has(param_tys[idx].clone())
+                        } else {
+                            has_errors = true;
+                            self.push_diag(TyDiagnosticData::UnknownNamedArg {
+                                name: name.resolve(self.interner).to_string(),
+                            });
+                            Expectation::None
+                        }
+                    } else {
+                        has_errors = true;
+                        self.push_diag(TyDiagnosticData::UnknownNamedArg {
+                            name: name.resolve(self.interner).to_string(),
+                        });
+                        Expectation::None
+                    };
+                    self.infer_expr(*value, &expectation);
+                }
+            }
+        }
+
+        if let Some(names) = names {
+            for (idx, provided) in seen.iter().enumerate() {
+                if !provided {
+                    has_errors = true;
+                    self.push_diag(TyDiagnosticData::MissingNamedArg {
+                        name: names[idx].resolve(self.interner).to_string(),
+                    });
+                }
+            }
+        }
+
+        has_errors
+    }
+
     fn infer_call(&mut self, callee: ExprIdx, args: &[CallArg]) -> Ty {
         // ── Module-qualified and static method call resolution ───────
         // Before method call resolution, check if callee is `module.fn()`
@@ -514,72 +600,7 @@ impl<'a> InferenceCtx<'a> {
                 // Resolve callee parameter names so named args can be matched
                 // to the correct parameter type.
                 let param_names = self.callee_param_names(callee);
-
-                let mut seen = vec![false; params.len()];
-                let mut next_pos = 0;
-                let mut has_named_arg_errors = false;
-                for arg in args {
-                    match arg {
-                        CallArg::Positional(arg_idx) => {
-                            while next_pos < seen.len() && seen[next_pos] {
-                                next_pos += 1;
-                            }
-                            if next_pos < params.len() {
-                                seen[next_pos] = true;
-                                self.infer_expr(
-                                    *arg_idx,
-                                    &Expectation::Has(params[next_pos].clone()),
-                                );
-                            } else {
-                                has_named_arg_errors = true;
-                                self.infer_expr(*arg_idx, &Expectation::None);
-                            }
-                            next_pos += 1;
-                        }
-                        CallArg::Named { name, value } => {
-                            // Try to find the parameter index by name.
-                            let expectation = if let Some(ref pnames) = param_names {
-                                if let Some(idx) = pnames.iter().position(|pn| pn == name) {
-                                    if seen[idx] {
-                                        has_named_arg_errors = true;
-                                        self.push_diag(TyDiagnosticData::DuplicateNamedArg {
-                                            name: name.resolve(self.interner).to_string(),
-                                        });
-                                    } else {
-                                        seen[idx] = true;
-                                    }
-                                    Expectation::Has(params[idx].clone())
-                                } else {
-                                    has_named_arg_errors = true;
-                                    self.push_diag(TyDiagnosticData::UnknownNamedArg {
-                                        name: name.resolve(self.interner).to_string(),
-                                    });
-                                    Expectation::None
-                                }
-                            } else {
-                                has_named_arg_errors = true;
-                                self.push_diag(TyDiagnosticData::UnknownNamedArg {
-                                    name: name.resolve(self.interner).to_string(),
-                                });
-                                Expectation::None
-                            };
-                            self.infer_expr(*value, &expectation);
-                        }
-                    }
-                }
-
-                if let Some(ref pnames) = param_names {
-                    for (idx, provided) in seen.iter().enumerate() {
-                        if !provided {
-                            has_named_arg_errors = true;
-                            self.push_diag(TyDiagnosticData::MissingNamedArg {
-                                name: pnames[idx].resolve(self.interner).to_string(),
-                            });
-                        }
-                    }
-                }
-
-                if has_named_arg_errors {
+                if self.infer_call_args_with_binding(args, &params, param_names.as_deref()) {
                     return Ty::Error;
                 }
 
@@ -596,10 +617,17 @@ impl<'a> InferenceCtx<'a> {
                 Ty::Error
             }
             Ty::Var(_) => {
+                let mut saw_named = false;
                 let mut param_tys = Vec::new();
                 for arg in args {
                     match arg {
                         CallArg::Positional(e) | CallArg::Named { value: e, .. } => {
+                            if matches!(arg, CallArg::Positional(_)) && saw_named {
+                                self.push_diag(TyDiagnosticData::PositionalAfterNamedArg);
+                            }
+                            if matches!(arg, CallArg::Named { .. }) {
+                                saw_named = true;
+                            }
                             let ty = self.infer_expr(*e, &Expectation::None);
                             param_tys.push(ty);
                         }
@@ -1255,16 +1283,14 @@ impl<'a> InferenceCtx<'a> {
             return Ty::Error;
         }
 
-        // Type-check args.
-        for (i, arg) in args.iter().enumerate() {
-            match arg {
-                CallArg::Positional(e) => {
-                    self.infer_expr(*e, &Expectation::Has(params[i].clone()));
-                }
-                CallArg::Named { value: e, .. } => {
-                    self.infer_expr(*e, &Expectation::Has(params[i].clone()));
-                }
-            }
+        let param_names: Vec<_> = self.item_tree.functions[fn_idx]
+            .params
+            .iter()
+            .map(|p| p.name)
+            .collect();
+
+        if self.infer_call_args_with_binding(args, &params, Some(&param_names)) {
+            return Ty::Error;
         }
 
         // Effect checking: look up the function's required capabilities.
@@ -1381,17 +1407,15 @@ impl<'a> InferenceCtx<'a> {
             return Some(Ty::Error);
         }
 
-        // Type-check args against params[1..].
-        for (i, arg) in args.iter().enumerate() {
-            match arg {
-                CallArg::Positional(e) => {
-                    self.infer_expr(*e, &Expectation::Has(params[i + 1].clone()));
-                }
-                CallArg::Named { value: e, .. } => {
-                    // Named args in method calls: match against remaining params.
-                    self.infer_expr(*e, &Expectation::Has(params[i + 1].clone()));
-                }
-            }
+        let method_param_tys = &params[1..];
+        let method_param_names: Vec<_> = self.item_tree.functions[fn_idx]
+            .params
+            .iter()
+            .skip(1)
+            .map(|p| p.name)
+            .collect();
+        if self.infer_call_args_with_binding(args, method_param_tys, Some(&method_param_names)) {
+            return Some(Ty::Error);
         }
 
         // Record effect checking for the resolved method.

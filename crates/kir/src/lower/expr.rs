@@ -4,8 +4,10 @@ use rustc_hash::FxHashSet;
 
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, MatchArm, Stmt};
 use kyokara_hir_def::item_tree::TypeDefKind;
+use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::path::Path;
+use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_hir_ty::ty::Ty;
 
 use crate::block::{BranchTarget, SwitchCase, Terminator};
@@ -144,6 +146,121 @@ impl<'a> LoweringCtx<'a> {
         val
     }
 
+    fn param_names_for_fn_idx(&self, fn_idx: kyokara_hir_def::item_tree::FnItemIdx) -> Vec<Name> {
+        self.item_tree.functions[fn_idx]
+            .params
+            .iter()
+            .map(|p| p.name)
+            .collect()
+    }
+
+    fn lower_call_args_source_order(&mut self, args: &[CallArg]) -> Vec<ValueId> {
+        args.iter()
+            .map(|arg| {
+                let idx = match arg {
+                    CallArg::Positional(idx) => *idx,
+                    CallArg::Named { value, .. } => *value,
+                };
+                self.lower_expr(idx)
+            })
+            .collect()
+    }
+
+    /// Reorder lowered argument values from source order into parameter order.
+    ///
+    /// If call arguments are invalid (unknown/duplicate/missing names or
+    /// positional-after-named), this returns the original source order as a
+    /// defensive fallback. Type-checking should already reject such calls.
+    fn reorder_lowered_args_for_names(
+        &self,
+        args: &[CallArg],
+        lowered_source_order: Vec<ValueId>,
+        param_names: &[Name],
+    ) -> Vec<ValueId> {
+        let has_named = args.iter().any(|arg| matches!(arg, CallArg::Named { .. }));
+        if !has_named {
+            return lowered_source_order;
+        }
+
+        let mut slots: Vec<Option<ValueId>> = vec![None; param_names.len()];
+        let mut next_pos = 0usize;
+        let mut saw_named = false;
+
+        for (arg, value) in args.iter().zip(lowered_source_order.iter().copied()) {
+            match arg {
+                CallArg::Positional(_) => {
+                    if saw_named {
+                        return lowered_source_order;
+                    }
+                    while next_pos < slots.len() && slots[next_pos].is_some() {
+                        next_pos += 1;
+                    }
+                    if next_pos >= slots.len() {
+                        return lowered_source_order;
+                    }
+                    slots[next_pos] = Some(value);
+                    next_pos += 1;
+                }
+                CallArg::Named { name, .. } => {
+                    saw_named = true;
+                    let Some(slot_idx) = param_names.iter().position(|param| param == name) else {
+                        return lowered_source_order;
+                    };
+                    if slots[slot_idx].is_some() {
+                        return lowered_source_order;
+                    }
+                    slots[slot_idx] = Some(value);
+                }
+            }
+        }
+
+        if slots.iter().any(|slot| slot.is_none()) {
+            return lowered_source_order;
+        }
+
+        slots.into_iter().flatten().collect()
+    }
+
+    fn lower_call_args_for_param_names(
+        &mut self,
+        args: &[CallArg],
+        param_names: &[Name],
+    ) -> Vec<ValueId> {
+        let lowered = self.lower_call_args_source_order(args);
+        self.reorder_lowered_args_for_names(args, lowered, param_names)
+    }
+
+    fn type_name_for_method_lookup(&self, ty: &Ty) -> Option<Name> {
+        let wk = &self.module_scope.well_known_names;
+        match ty {
+            Ty::String => wk.string,
+            Ty::Int => wk.int,
+            Ty::Float => wk.float,
+            Ty::Bool => wk.bool_,
+            Ty::Char => wk.char_,
+            Ty::Adt { def, .. } => Some(self.item_tree.types[*def].name),
+            _ => None,
+        }
+    }
+
+    fn type_has_field_named(&self, ty: &Ty, field: Name) -> bool {
+        match ty {
+            Ty::Record { fields } => fields.iter().any(|(name, _)| *name == field),
+            Ty::Adt { def, .. } => {
+                let type_item = &self.item_tree.types[*def];
+                let def_fields = match &type_item.kind {
+                    TypeDefKind::Record { fields } => Some(fields.as_slice()),
+                    TypeDefKind::Alias(TypeRef::Record { fields }) => Some(fields.as_slice()),
+                    _ => None,
+                };
+                def_fields
+                    .map(|fields| fields.iter().any(|(name, _)| *name == field))
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+
     // ── Call ─────────────────────────────────────────────────────
 
     fn lower_call(&mut self, callee: ExprIdx, args: Vec<CallArg>, ty: Ty) -> ValueId {
@@ -154,10 +271,10 @@ impl<'a> LoweringCtx<'a> {
             && path.is_single()
         {
             let name = path.segments[0];
-            let arg_vals = self.lower_call_args(&args);
 
             // 1. Local variable (indirect call) — locals shadow everything.
             if let Some(vid) = self.lookup_local(name) {
+                let arg_vals = self.lower_call_args_source_order(&args);
                 return self
                     .builder
                     .push_call(CallTarget::Indirect(vid), arg_vals, ty);
@@ -165,13 +282,16 @@ impl<'a> LoweringCtx<'a> {
 
             // 2. Constructor call → AdtConstruct.
             if let Some(&(type_idx, _)) = self.module_scope.constructors.get(&name) {
+                let arg_vals = self.lower_call_args_source_order(&args);
                 return self
                     .builder
                     .push_adt_construct(type_idx, name, arg_vals, ty);
             }
 
             // 3. Module-level function (direct call — user-defined takes precedence).
-            if self.module_scope.functions.contains_key(&name) {
+            if let Some(&fn_idx) = self.module_scope.functions.get(&name) {
+                let param_names = self.param_names_for_fn_idx(fn_idx);
+                let arg_vals = self.lower_call_args_for_param_names(&args, &param_names);
                 return self
                     .builder
                     .push_call(CallTarget::Direct(name), arg_vals, ty);
@@ -179,6 +299,7 @@ impl<'a> LoweringCtx<'a> {
 
             // 4. Intrinsic (has entry in intrinsic lookup but no body).
             if self.intrinsics.contains(&name) {
+                let arg_vals = self.lower_call_args_source_order(&args);
                 let name_str = name.resolve(self.interner).to_string();
                 return self
                     .builder
@@ -186,12 +307,13 @@ impl<'a> LoweringCtx<'a> {
             }
 
             // Fallback: treat as direct call (might be imported).
+            let arg_vals = self.lower_call_args_source_order(&args);
             return self
                 .builder
                 .push_call(CallTarget::Direct(name), arg_vals, ty);
         }
 
-        // Module-qualified or static method call: io.println(s), List.new()
+        // Module-qualified, static method, or method call.
         if let Expr::Field { base, field } = callee_expr
             && let Expr::Path(ref path) = self.body.exprs[base]
             && path.is_single()
@@ -202,44 +324,66 @@ impl<'a> LoweringCtx<'a> {
             if let Some(mod_fns) = self.module_scope.synthetic_modules.get(&seg)
                 && let Some(&fn_idx) = mod_fns.get(&field)
             {
-                let arg_vals = self.lower_call_args(&args);
+                let param_names = self.param_names_for_fn_idx(fn_idx);
+                let arg_vals = self.lower_call_args_for_param_names(&args, &param_names);
                 let fn_item = &self.item_tree.functions[fn_idx];
-                let name_str = fn_item.name.resolve(self.interner).to_string();
-                return self
-                    .builder
-                    .push_call(CallTarget::Intrinsic(name_str), arg_vals, ty);
+                let target = if self.intrinsics.contains(&fn_item.name) {
+                    CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
+                } else {
+                    CallTarget::Direct(fn_item.name)
+                };
+                return self.builder.push_call(target, arg_vals, ty);
             }
 
             // Static method call: List.new(), Map.new()
             if let Some(&fn_idx) = self.module_scope.static_methods.get(&(seg, field)) {
-                let arg_vals = self.lower_call_args(&args);
+                let param_names = self.param_names_for_fn_idx(fn_idx);
+                let arg_vals = self.lower_call_args_for_param_names(&args, &param_names);
                 let fn_item = &self.item_tree.functions[fn_idx];
-                let name_str = fn_item.name.resolve(self.interner).to_string();
-                return self
-                    .builder
-                    .push_call(CallTarget::Intrinsic(name_str), arg_vals, ty);
+                let target = if self.intrinsics.contains(&fn_item.name) {
+                    CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
+                } else {
+                    CallTarget::Direct(fn_item.name)
+                };
+                return self.builder.push_call(target, arg_vals, ty);
             }
 
             // Method call or field access — fall through to complex callee lowering.
         }
 
+        if let Expr::Field { base, field } = callee_expr {
+            let base_ty = self.expr_ty(base);
+            if !self.type_has_field_named(&base_ty, field)
+                && let Some(type_name) = self.type_name_for_method_lookup(&base_ty)
+                && let Some(&fn_idx) = self.module_scope.methods.get(&(type_name, field))
+            {
+                let base_val = self.lower_expr(base);
+                let full_param_names = self.param_names_for_fn_idx(fn_idx);
+                let method_param_names: Vec<Name> =
+                    full_param_names.iter().skip(1).copied().collect();
+
+                let mut arg_vals =
+                    Vec::with_capacity(1usize.saturating_add(method_param_names.len()));
+                arg_vals.push(base_val);
+                let mut lowered_method_args =
+                    self.lower_call_args_for_param_names(&args, &method_param_names);
+                arg_vals.append(&mut lowered_method_args);
+
+                let fn_item = &self.item_tree.functions[fn_idx];
+                let target = if self.intrinsics.contains(&fn_item.name) {
+                    CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
+                } else {
+                    CallTarget::Direct(fn_item.name)
+                };
+                return self.builder.push_call(target, arg_vals, ty);
+            }
+        }
+
         // Complex callee expression.
         let callee_val = self.lower_expr(callee);
-        let arg_vals = self.lower_call_args(&args);
+        let arg_vals = self.lower_call_args_source_order(&args);
         self.builder
             .push_call(CallTarget::Indirect(callee_val), arg_vals, ty)
-    }
-
-    fn lower_call_args(&mut self, args: &[CallArg]) -> Vec<ValueId> {
-        args.iter()
-            .map(|arg| {
-                let idx = match arg {
-                    CallArg::Positional(idx) => *idx,
-                    CallArg::Named { value, .. } => *value,
-                };
-                self.lower_expr(idx)
-            })
-            .collect()
     }
 
     /// Lower `&&` and `||` with short-circuit semantics using explicit CFG.

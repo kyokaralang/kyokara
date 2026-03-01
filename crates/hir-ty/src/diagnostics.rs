@@ -28,6 +28,8 @@ pub enum TyDiagnosticData {
     UnknownNamedArg { name: String },
     /// Duplicate named argument in function call.
     DuplicateNamedArg { name: String },
+    /// Positional argument appears after a named argument.
+    PositionalAfterNamedArg,
     /// Required parameter not provided by call arguments.
     MissingNamedArg { name: String },
     /// Field access on non-record type.
@@ -76,6 +78,7 @@ impl TyDiagnosticData {
             TyDiagnosticData::UnknownNamedArg { .. } => "E0018",
             TyDiagnosticData::DuplicateNamedArg { .. } => "E0019",
             TyDiagnosticData::MissingNamedArg { .. } => "E0020",
+            TyDiagnosticData::PositionalAfterNamedArg => "E0026",
             TyDiagnosticData::NoSuchField { .. } => "E0008",
             TyDiagnosticData::MissingMatchArms { .. } => "E0009",
             TyDiagnosticData::RedundantMatchArm => "E0010",
@@ -155,6 +158,9 @@ impl TyDiagnosticData {
             }
             TyDiagnosticData::DuplicateNamedArg { name } => {
                 format!("duplicate named argument `{name}`")
+            }
+            TyDiagnosticData::PositionalAfterNamedArg => {
+                "positional argument cannot appear after named argument".into()
             }
             TyDiagnosticData::MissingNamedArg { name } => {
                 format!("missing argument for parameter `{name}`")

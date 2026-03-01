@@ -2213,6 +2213,11 @@ fn run_rejects_compile_invalid_programs_detected_by_check() {
             src: "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { let f = add\n f(z: 1, y: 2) }",
             run_fragment: "unknown named argument",
         },
+        Case {
+            name: "positional argument after named argument",
+            src: "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(x: 1, 2) }",
+            run_fragment: "positional argument cannot appear after named argument",
+        },
     ];
 
     for case in cases {
@@ -2563,6 +2568,236 @@ fn eval_named_args_reordered_local_lambda_value() {
          }",
     );
     assert_eq!(val, Value::Int(-7));
+}
+
+#[test]
+fn eval_named_args_reordered_module_call() {
+    let val = run_ok(
+        "import math
+         fn main() -> Int { math.min(b: 10, a: 3) }",
+    );
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_named_args_reordered_method_call() {
+    let val = run_ok(
+        "fn main() -> String {
+           \"abcd\".substring(end: 3, start: 1)
+         }",
+    );
+    assert_eq!(val, Value::String("bc".to_string()));
+}
+
+#[test]
+fn eval_named_args_preserve_source_order_evaluation() {
+    let val = run_ok(
+        "import io
+         fn tap(n: Int) -> Int {
+           io.println(n.to_string())
+           n
+         }
+         fn sub(x: Int, y: Int) -> Int { x - y }
+         fn main() -> Int {
+           sub(y: tap(10), x: tap(3))
+         }",
+    );
+    assert_eq!(val, Value::Int(-7));
+}
+
+#[test]
+fn eval_named_args_matrix_happy_paths() {
+    struct Case<'a> {
+        name: &'a str,
+        src: &'a str,
+        expected: Value,
+    }
+
+    let cases = [
+        Case {
+            name: "direct function",
+            src: "fn sub(x: Int, y: Int) -> Int { x - y }\nfn main() -> Int { sub(y: 10, x: 3) }",
+            expected: Value::Int(-7),
+        },
+        Case {
+            name: "local function value",
+            src: "fn sub(x: Int, y: Int) -> Int { x - y }\nfn main() -> Int { let f = sub\n f(y: 10, x: 3) }",
+            expected: Value::Int(-7),
+        },
+        Case {
+            name: "direct lambda",
+            src: "fn main() -> Int { (fn(x: Int, y: Int) => x - y)(y: 10, x: 3) }",
+            expected: Value::Int(-7),
+        },
+        Case {
+            name: "local lambda value",
+            src: "fn main() -> Int { let f = fn(x: Int, y: Int) => x - y\n f(y: 10, x: 3) }",
+            expected: Value::Int(-7),
+        },
+        Case {
+            name: "module-qualified call",
+            src: "import math\nfn main() -> Int { math.min(b: 10, a: 3) }",
+            expected: Value::Int(3),
+        },
+        Case {
+            name: "method call",
+            src: "fn main() -> String { \"abcd\".substring(end: 3, start: 1) }",
+            expected: Value::String("bc".to_string()),
+        },
+    ];
+
+    for case in cases {
+        let val = run_ok(case.src);
+        assert_eq!(val, case.expected, "case `{}` failed", case.name);
+    }
+}
+
+#[test]
+fn eval_named_args_matrix_unhappy_paths_compile_errors() {
+    struct Case<'a> {
+        name: &'a str,
+        src: &'a str,
+        run_fragment: &'a str,
+    }
+
+    let cases = [
+        Case {
+            name: "direct unknown",
+            src: "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(z: 1, y: 2) }",
+            run_fragment: "unknown named argument",
+        },
+        Case {
+            name: "direct duplicate",
+            src: "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(x: 1, x: 2) }",
+            run_fragment: "duplicate named argument",
+        },
+        Case {
+            name: "direct missing",
+            src: "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(x: 1, x: 2) }",
+            run_fragment: "missing argument for parameter `y`",
+        },
+        Case {
+            name: "direct positional-after-named",
+            src: "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { add(x: 1, 2) }",
+            run_fragment: "positional argument cannot appear after named argument",
+        },
+        Case {
+            name: "local-fn unknown",
+            src: "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { let f = add\n f(z: 1, y: 2) }",
+            run_fragment: "unknown named argument",
+        },
+        Case {
+            name: "local-fn duplicate",
+            src: "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { let f = add\n f(x: 1, x: 2) }",
+            run_fragment: "duplicate named argument",
+        },
+        Case {
+            name: "local-fn missing",
+            src: "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { let f = add\n f(x: 1, x: 2) }",
+            run_fragment: "missing argument for parameter `y`",
+        },
+        Case {
+            name: "local-fn positional-after-named",
+            src: "fn add(x: Int, y: Int) -> Int { x + y }\nfn main() -> Int { let f = add\n f(x: 1, 2) }",
+            run_fragment: "positional argument cannot appear after named argument",
+        },
+        Case {
+            name: "direct-lambda unknown",
+            src: "fn main() -> Int { (fn(x: Int, y: Int) => x + y)(z: 1, y: 2) }",
+            run_fragment: "unknown named argument",
+        },
+        Case {
+            name: "direct-lambda duplicate",
+            src: "fn main() -> Int { (fn(x: Int, y: Int) => x + y)(x: 1, x: 2) }",
+            run_fragment: "duplicate named argument",
+        },
+        Case {
+            name: "direct-lambda missing",
+            src: "fn main() -> Int { (fn(x: Int, y: Int) => x + y)(x: 1, x: 2) }",
+            run_fragment: "missing argument for parameter `y`",
+        },
+        Case {
+            name: "direct-lambda positional-after-named",
+            src: "fn main() -> Int { (fn(x: Int, y: Int) => x + y)(x: 1, 2) }",
+            run_fragment: "positional argument cannot appear after named argument",
+        },
+        Case {
+            name: "local-lambda unknown",
+            src: "fn main() -> Int { let f = fn(x: Int, y: Int) => x + y\n f(z: 1, y: 2) }",
+            run_fragment: "unknown named argument",
+        },
+        Case {
+            name: "local-lambda duplicate",
+            src: "fn main() -> Int { let f = fn(x: Int, y: Int) => x + y\n f(x: 1, x: 2) }",
+            run_fragment: "duplicate named argument",
+        },
+        Case {
+            name: "local-lambda missing",
+            src: "fn main() -> Int { let f = fn(x: Int, y: Int) => x + y\n f(x: 1, x: 2) }",
+            run_fragment: "missing argument for parameter `y`",
+        },
+        Case {
+            name: "local-lambda positional-after-named",
+            src: "fn main() -> Int { let f = fn(x: Int, y: Int) => x + y\n f(x: 1, 2) }",
+            run_fragment: "positional argument cannot appear after named argument",
+        },
+        Case {
+            name: "module unknown",
+            src: "import math\nfn main() -> Int { math.min(c: 1, b: 2) }",
+            run_fragment: "unknown named argument",
+        },
+        Case {
+            name: "module duplicate",
+            src: "import math\nfn main() -> Int { math.min(a: 1, a: 2) }",
+            run_fragment: "duplicate named argument",
+        },
+        Case {
+            name: "module missing",
+            src: "import math\nfn main() -> Int { math.min(a: 1, a: 2) }",
+            run_fragment: "missing argument for parameter `b`",
+        },
+        Case {
+            name: "module positional-after-named",
+            src: "import math\nfn main() -> Int { math.min(a: 1, 2) }",
+            run_fragment: "positional argument cannot appear after named argument",
+        },
+        Case {
+            name: "method unknown",
+            src: "fn main() -> String { \"abcd\".substring(foo: 1, end: 3) }",
+            run_fragment: "unknown named argument",
+        },
+        Case {
+            name: "method duplicate",
+            src: "fn main() -> String { \"abcd\".substring(start: 1, start: 2) }",
+            run_fragment: "duplicate named argument",
+        },
+        Case {
+            name: "method missing",
+            src: "fn main() -> String { \"abcd\".substring(start: 1, start: 2) }",
+            run_fragment: "missing argument for parameter `end`",
+        },
+        Case {
+            name: "method positional-after-named",
+            src: "fn main() -> String { \"abcd\".substring(start: 1, 3) }",
+            run_fragment: "positional argument cannot appear after named argument",
+        },
+    ];
+
+    for case in cases {
+        assert!(
+            check_has_compile_errors(case.src),
+            "expected compile errors for case `{}`",
+            case.name
+        );
+        let err = run_err(case.src);
+        assert!(
+            err.contains(case.run_fragment),
+            "case `{}` expected fragment `{}`; got: {}",
+            case.name,
+            case.run_fragment,
+            err
+        );
+    }
 }
 
 // ── Issue #68: wrong imported function body when sibling modules export same name ──

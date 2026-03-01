@@ -253,6 +253,29 @@ fn test_nested_call() {
     );
 }
 
+#[test]
+fn test_named_args_reordered_direct_call() {
+    let out = lower_and_display(
+        "fn sub(x: Int, y: Int) -> Int { x - y }\nfn main() -> Int { sub(y: 10, x: 3) }",
+    );
+    assert!(out.contains("call @sub(%1, %0)"), "output:\n{out}");
+}
+
+#[test]
+fn test_named_args_reordered_module_call() {
+    let out = lower_and_display("import math\nfn main() -> Int { math.min(b: 10, a: 3) }");
+    assert!(out.contains("call intrinsic:min(%1, %0)"), "output:\n{out}");
+}
+
+#[test]
+fn test_named_args_reordered_method_call() {
+    let out = lower_and_display("fn main() -> String { \"abcd\".substring(end: 3, start: 1) }");
+    assert!(
+        out.contains("call intrinsic:string_substring(%0, %2, %1)"),
+        "output:\n{out}"
+    );
+}
+
 // ── Field access ─────────────────────────────────────────────────
 
 #[test]

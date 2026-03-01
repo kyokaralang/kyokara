@@ -262,6 +262,8 @@ f(x, a=1, b=2)
 
 Rules:
 * pipeline feeds the first parameter positionally.
+* call arguments are evaluated left-to-right in source order before parameter-slot binding.
+* positional arguments must come before named arguments.
 * optionally, function declarations can mark an explicit pipe parameter:
 
   ```kyokara

@@ -826,6 +826,137 @@ fn named_args_unknown_on_direct_lambda_is_diagnostic() {
     );
 }
 
+#[test]
+fn named_args_duplicate_on_direct_lambda_is_diagnostic() {
+    check_err(
+        "fn main() -> Int {
+           (fn(x: Int, y: Int) => x + y)(x: 1, x: 2)
+         }",
+        "duplicate named argument",
+    );
+}
+
+#[test]
+fn named_args_missing_on_direct_lambda_is_diagnostic() {
+    check_err(
+        "fn main() -> Int {
+           (fn(x: Int, y: Int) => x + y)(x: 1, x: 2)
+         }",
+        "missing argument for parameter `y`",
+    );
+}
+
+#[test]
+fn named_args_positional_after_named_on_direct_lambda_is_diagnostic() {
+    check_err(
+        "fn main() -> Int {
+           (fn(x: Int, y: Int) => x + y)(x: 1, 2)
+         }",
+        "positional argument cannot appear after named argument",
+    );
+}
+
+#[test]
+fn named_args_unknown_on_local_fn_value_is_diagnostic() {
+    check_err(
+        "fn add(x: Int, y: Int) -> Int { x + y }
+         fn main() -> Int {
+           let f = add
+           f(z: 1, y: 2)
+         }",
+        "unknown named argument",
+    );
+}
+
+#[test]
+fn named_args_duplicate_on_local_fn_value_is_diagnostic() {
+    check_err(
+        "fn add(x: Int, y: Int) -> Int { x + y }
+         fn main() -> Int {
+           let f = add
+           f(x: 1, x: 2)
+         }",
+        "duplicate named argument",
+    );
+}
+
+#[test]
+fn named_args_missing_on_local_fn_value_is_diagnostic() {
+    check_err(
+        "fn add(x: Int, y: Int) -> Int { x + y }
+         fn main() -> Int {
+           let f = add
+           f(x: 1, x: 2)
+         }",
+        "missing argument for parameter `y`",
+    );
+}
+
+#[test]
+fn named_args_positional_after_named_on_local_fn_value_is_diagnostic() {
+    check_err(
+        "fn add(x: Int, y: Int) -> Int { x + y }
+         fn main() -> Int {
+           let f = add
+           f(x: 1, 2)
+         }",
+        "positional argument cannot appear after named argument",
+    );
+}
+
+#[test]
+fn named_args_unknown_on_local_lambda_value_is_diagnostic() {
+    check_err(
+        "fn main() -> Int {
+           let f = fn(x: Int, y: Int) => x + y
+           f(z: 1, y: 2)
+         }",
+        "unknown named argument",
+    );
+}
+
+#[test]
+fn named_args_duplicate_on_local_lambda_value_is_diagnostic() {
+    check_err(
+        "fn main() -> Int {
+           let f = fn(x: Int, y: Int) => x + y
+           f(x: 1, x: 2)
+         }",
+        "duplicate named argument",
+    );
+}
+
+#[test]
+fn named_args_missing_on_local_lambda_value_is_diagnostic() {
+    check_err(
+        "fn main() -> Int {
+           let f = fn(x: Int, y: Int) => x + y
+           f(x: 1, x: 2)
+         }",
+        "missing argument for parameter `y`",
+    );
+}
+
+#[test]
+fn named_args_positional_after_named_on_local_lambda_value_is_diagnostic() {
+    check_err(
+        "fn main() -> Int {
+           let f = fn(x: Int, y: Int) => x + y
+           f(x: 1, 2)
+         }",
+        "positional argument cannot appear after named argument",
+    );
+}
+
+#[test]
+fn named_args_positional_after_named_is_diagnostic() {
+    check_err(
+        "fn add(x: Int, y: Int) -> Int { x + y }
+         fn main() -> Int { add(x: 1, 2) }",
+        "positional argument cannot appear after named argument",
+    );
+}
+
 // ── Path-qualified record literal validation (#126) ─────────────────
 
 #[test]
