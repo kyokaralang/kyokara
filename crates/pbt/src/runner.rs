@@ -6,7 +6,8 @@ use kyokara_eval::intrinsics::Args;
 use kyokara_hir::ModulePath;
 use kyokara_hir::{
     check_module, check_project, collect_item_tree, register_builtin_intrinsics,
-    register_builtin_methods, register_builtin_types,
+    register_builtin_methods, register_builtin_types, register_static_methods,
+    register_synthetic_modules,
 };
 use kyokara_hir_def::item_tree::FnItemIdx;
 use kyokara_intern::Interner;
@@ -93,13 +94,20 @@ pub fn run_tests(source: &str, config: &TestConfig) -> Result<TestReport, String
         &mut interner,
     );
 
-    // 5. Register intrinsics.
+    // 5. Register intrinsics and canonical API surface.
     register_builtin_intrinsics(
         &mut item_result.tree,
         &mut item_result.module_scope,
         &mut interner,
     );
     register_builtin_methods(&mut item_result.module_scope, &mut interner);
+    register_synthetic_modules(
+        &mut item_result.tree,
+        &mut item_result.module_scope,
+        &mut interner,
+        true,
+    );
+    register_static_methods(&mut item_result.module_scope, &mut interner);
 
     // 6. Type-check.
     let type_check = check_module(
@@ -160,6 +168,13 @@ pub fn run_project_tests(
         &mut project.interner,
     );
     register_builtin_methods(&mut entry_info.scope, &mut project.interner);
+    register_synthetic_modules(
+        &mut entry_info.item_tree,
+        &mut entry_info.scope,
+        &mut project.interner,
+        false,
+    );
+    register_static_methods(&mut entry_info.scope, &mut project.interner);
 
     let entry_tc = project
         .type_checks

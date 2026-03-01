@@ -158,23 +158,27 @@ fn register_result(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut 
         e.insert((idx, 1));
     }
 }
-/// Inject intrinsic function signatures into the item tree and module scope.
+/// Allocate all intrinsic FnItem signatures in the item tree and return
+/// a lookup table `name → FnItemIdx`. Does NOT insert into `scope.functions`.
 ///
-/// Uses `Vacant` entry checks so user-defined functions with the same name
-/// (collected during item-tree lowering) keep precedence.
+/// The returned lookup table is used by `register_builtin_methods`,
+/// `register_synthetic_modules`, and `register_static_methods` to set up
+/// the canonical API surface.
 pub fn register_builtin_intrinsics(
     tree: &mut ItemTree,
     scope: &mut ModuleScope,
     interner: &mut Interner,
 ) {
     let intrinsic_sigs = intrinsic_signatures(interner);
+    let mut lookup = kyokara_stdx::FxHashMap::default();
 
     for (name, fn_item) in intrinsic_sigs {
-        if let std::collections::hash_map::Entry::Vacant(e) = scope.functions.entry(name) {
-            let idx = tree.functions.alloc(fn_item);
-            e.insert(idx);
-        }
+        let idx = tree.functions.alloc(fn_item);
+        lookup.insert(name, idx);
     }
+
+    // Store the lookup table on the scope for use by downstream registration.
+    scope.intrinsic_fn_lookup = lookup;
 }
 
 /// Register built-in methods that map existing intrinsics to method-call syntax.
@@ -212,6 +216,8 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("string_concat", "String", "concat"),
         ("string_lines", "String", "lines"),
         ("string_chars", "String", "chars"),
+        ("parse_int", "String", "parse_int"),
+        ("parse_float", "String", "parse_float"),
         // List methods
         ("list_push", "List", "push"),
         ("list_len", "List", "len"),
@@ -251,8 +257,182 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         let ty_name = Name::new(interner, type_name);
         let meth_name = Name::new(interner, method_name);
 
-        if let Some(&fn_idx) = scope.functions.get(&intr_name) {
+        if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&intr_name) {
             scope.methods.insert((ty_name, meth_name), fn_idx);
+        }
+    }
+}
+
+/// Register synthetic modules (`io`, `math`, `fs`) that hold module-qualified intrinsics.
+///
+/// Module-qualified calls like `io.println(s)` resolve through `scope.synthetic_modules`.
+/// Each module's FnItems are allocated in the item tree (via `register_builtin_intrinsics`).
+///
+/// **Important:** This function registers the modules, but they are NOT injected into scope
+/// automatically. The user must write `import io` to make `io.*` available. In single-file
+/// mode, all synthetic modules are auto-imported for convenience.
+pub fn register_synthetic_modules(
+    tree: &mut ItemTree,
+    scope: &mut ModuleScope,
+    interner: &mut Interner,
+    auto_import: bool,
+) {
+    // (module_name, intrinsic_fn_name, method_name, requires_capability)
+    let module_fns: &[(&str, &[(&str, &str)])] = &[
+        (
+            "io",
+            &[
+                ("print", "print"),
+                ("println", "println"),
+                ("read_line", "read_line"),
+                ("read_stdin", "read_stdin"),
+            ],
+        ),
+        (
+            "math",
+            &[
+                ("min", "min"),
+                ("max", "max"),
+                ("float_min", "fmin"),
+                ("float_max", "fmax"),
+            ],
+        ),
+        ("fs", &[("read_file", "read_file")]),
+    ];
+
+    for &(mod_name_str, fns) in module_fns {
+        let mod_name = Name::new(interner, mod_name_str);
+        let mut mod_fns = kyokara_stdx::FxHashMap::default();
+
+        for &(intrinsic_name, pub_name) in fns {
+            let intr_name = Name::new(interner, intrinsic_name);
+            let pub_fn_name = Name::new(interner, pub_name);
+
+            if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&intr_name) {
+                mod_fns.insert(pub_fn_name, fn_idx);
+            } else {
+                // Intrinsic not yet allocated (e.g., read_line, read_stdin are new).
+                // Allocate a stub FnItem for it.
+                let fn_item =
+                    mk_module_intrinsic(interner, tree, intrinsic_name, pub_name, mod_name_str);
+                let idx = tree.functions.alloc(fn_item);
+                scope.intrinsic_fn_lookup.insert(intr_name, idx);
+                mod_fns.insert(pub_fn_name, idx);
+            }
+        }
+
+        scope.synthetic_modules.insert(mod_name, mod_fns);
+    }
+
+    if auto_import {
+        // In single-file mode, all synthetic modules are available without explicit import.
+        // (The modules are already in synthetic_modules; this is a no-op since resolve_name
+        // checks synthetic_modules directly.)
+    }
+}
+
+/// Create FnItem for a new module intrinsic (e.g., read_line, read_stdin).
+fn mk_module_intrinsic(
+    interner: &mut Interner,
+    _tree: &mut ItemTree,
+    intrinsic_name: &str,
+    _pub_name: &str,
+    mod_name: &str,
+) -> FnItem {
+    let name = Name::new(interner, intrinsic_name);
+    let string_ty = TypeRef::Path {
+        path: Path::single(Name::new(interner, "String")),
+        args: Vec::new(),
+    };
+    let unit_ty = TypeRef::Path {
+        path: Path::single(Name::new(interner, "Unit")),
+        args: Vec::new(),
+    };
+
+    // Build capability refs for io/fs modules.
+    let cap_refs = match mod_name {
+        "io" => vec![TypeRef::Path {
+            path: Path::single(Name::new(interner, "io")),
+            args: Vec::new(),
+        }],
+        "fs" => vec![TypeRef::Path {
+            path: Path::single(Name::new(interner, "fs")),
+            args: Vec::new(),
+        }],
+        _ => Vec::new(),
+    };
+
+    match intrinsic_name {
+        "read_line" => FnItem {
+            name,
+            is_pub: false,
+            type_params: Vec::new(),
+            params: Vec::new(),
+            ret_type: Some(string_ty),
+            with_caps: cap_refs,
+            pipe_caps: Vec::new(),
+            has_body: false,
+            source_range: None,
+            receiver_type: None,
+        },
+        "read_stdin" => FnItem {
+            name,
+            is_pub: false,
+            type_params: Vec::new(),
+            params: Vec::new(),
+            ret_type: Some(string_ty),
+            with_caps: cap_refs,
+            pipe_caps: Vec::new(),
+            has_body: false,
+            source_range: None,
+            receiver_type: None,
+        },
+        // print/println already allocated, but just in case:
+        "print" | "println" => FnItem {
+            name,
+            is_pub: false,
+            type_params: Vec::new(),
+            params: vec![FnParam {
+                name: Name::new(interner, "s"),
+                ty: string_ty,
+            }],
+            ret_type: Some(unit_ty),
+            with_caps: cap_refs,
+            pipe_caps: Vec::new(),
+            has_body: false,
+            source_range: None,
+            receiver_type: None,
+        },
+        _ => FnItem {
+            name,
+            is_pub: false,
+            type_params: Vec::new(),
+            params: Vec::new(),
+            ret_type: Some(unit_ty),
+            with_caps: cap_refs,
+            pipe_caps: Vec::new(),
+            has_body: false,
+            source_range: None,
+            receiver_type: None,
+        },
+    }
+}
+
+/// Register static methods (`List.new()`, `Map.new()`) in `scope.static_methods`.
+///
+/// Static methods are always available (no import needed) since the types they
+/// belong to are always in scope.
+pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner) {
+    // (intrinsic_fn_name, type_name, static_method_name)
+    let mappings: &[(&str, &str, &str)] = &[("list_new", "List", "new"), ("map_new", "Map", "new")];
+
+    for &(intrinsic_name, type_name, method_name) in mappings {
+        let intr_name = Name::new(interner, intrinsic_name);
+        let ty_name = Name::new(interner, type_name);
+        let meth_name = Name::new(interner, method_name);
+
+        if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&intr_name) {
+            scope.static_methods.insert((ty_name, meth_name), fn_idx);
         }
     }
 }
@@ -751,22 +931,34 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
             int_ty.clone(),
         ),
         // ── Parsing ──────────────────────────────────────────────
-        // parse_int(s: String) -> Int
-        mk_intrinsic(
-            interner,
-            "parse_int",
-            vec![],
-            vec![("s", string_ty.clone())],
-            int_ty.clone(),
-        ),
-        // parse_float(s: String) -> Float
-        mk_intrinsic(
-            interner,
-            "parse_float",
-            vec![],
-            vec![("s", string_ty.clone())],
-            float_ty.clone(),
-        ),
+        // parse_int(s: String) -> Result<Int, String>
+        {
+            let result_int_string = TypeRef::Path {
+                path: Path::single(Name::new(interner, "Result")),
+                args: vec![int_ty.clone(), string_ty.clone()],
+            };
+            mk_intrinsic(
+                interner,
+                "parse_int",
+                vec![],
+                vec![("s", string_ty.clone())],
+                result_int_string,
+            )
+        },
+        // parse_float(s: String) -> Result<Float, String>
+        {
+            let result_float_string = TypeRef::Path {
+                path: Path::single(Name::new(interner, "Result")),
+                args: vec![float_ty.clone(), string_ty.clone()],
+            };
+            mk_intrinsic(
+                interner,
+                "parse_float",
+                vec![],
+                vec![("s", string_ty.clone())],
+                result_float_string,
+            )
+        },
         // ── String decomposition ─────────────────────────────────
         // string_lines(s: String) -> List<String>
         mk_intrinsic(

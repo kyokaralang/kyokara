@@ -550,8 +550,7 @@ fn run_project_tests_rejects_gen_spec_type_mismatch_before_execution() {
 
 #[test]
 fn property_type_check_gen_string() {
-    let result =
-        kyokara_hir::check_file("property p(s: String <- Gen.string()) { string_len(s) >= 0 }");
+    let result = kyokara_hir::check_file("property p(s: String <- Gen.string()) { s.len() >= 0 }");
     let all_diags: Vec<_> = result
         .type_check
         .raw_diagnostics

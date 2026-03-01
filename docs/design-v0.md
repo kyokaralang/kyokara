@@ -518,25 +518,32 @@ Effectful functions return `Result`. Capability violations produce `CapabilityDe
 
 ## 10. Standard library (v0 minimum)
 
-v0 stdlib is implemented as intrinsic functions in the eval crate.
-Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, and `Map<K, V>` are
-injected as synthetic types before type-checking.
+v0 stdlib is implemented via intrinsic functions in the eval crate, exposed through
+a canonical API surface: method calls for value-owned behavior, module-qualified calls
+for no-owner utilities and effects, and type-namespaced constructors.
 
-**Implemented (v0.1):**
+Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, and `Map<K, V>` are
+injected as synthetic types before type-checking. Synthetic modules (`io`, `math`, `fs`)
+are auto-imported in single-file mode and require explicit `import` in project mode.
+Zero intrinsic free functions exist in user scope.
+
+**Implemented (v0.1+):**
 * `Option<T>` — builtin ADT (`Some(T) | None`), used as return type for safe lookups ✓
 * `Result<T, E>` — builtin ADT (`Ok(T) | Err(E)`), `?` propagation works ✓
 * `List<T>` — opaque builtin type backed by `Vec<Value>` ✓
-  * `list_new`, `list_push`, `list_len`, `list_get` → `Option<T>`, `list_head` → `Option<T>`, `list_tail`, `list_is_empty`, `list_reverse`, `list_concat`
-  * Higher-order: `list_map`, `list_filter`, `list_fold`
+  * Constructor: `List.new()`
+  * Methods: `xs.push(v)`, `xs.len()`, `xs.get(i)` → `Option<T>`, `xs.head()` → `Option<T>`, `xs.tail()`, `xs.is_empty()`, `xs.reverse()`, `xs.concat(ys)`
+  * Higher-order: `xs.map(f)`, `xs.filter(f)`, `xs.fold(init, f)`, `xs.sort()`, `xs.sort_by(f)`
 * `Map<K, V>` — opaque builtin type backed by `Vec<(Value, Value)>` (insertion-order) ✓
-  * `map_new`, `map_insert`, `map_get` → `Option<V>`, `map_contains`, `map_remove`, `map_len`, `map_keys` → `List<K>`, `map_values` → `List<V>`, `map_is_empty`
-* String operations ✓ — `string_len` (char count), `string_contains`, `string_starts_with`, `string_ends_with`, `string_trim`, `string_split` → `List<String>`, `string_substring`, `string_to_upper`, `string_to_lower`, `char_to_string`
-* Int/Float math ✓ — `abs`, `min`, `max`, `float_abs`, `float_min`, `float_max`, `int_to_float`, `float_to_int`
-* I/O ✓ — `print`, `println`, `int_to_string`, `string_concat`
-
-**Planned (v0.2+):**
-* `std.io` — richer text I/O (requires `IO` cap)
-* `std.test` — property test generators and assertions
+  * Constructor: `Map.new()`
+  * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()` → `List<K>`, `m.values()` → `List<V>`, `m.is_empty()`
+* String methods ✓ — `s.len()` (char count), `s.contains(t)`, `s.starts_with(t)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)` → `List<String>`, `s.substring(a, b)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()`, `s.chars()`, `s.parse_int()` → `Result<Int, String>`, `s.parse_float()` → `Result<Float, String>`
+* Char methods ✓ — `c.to_string()`
+* Int methods ✓ — `n.abs()`, `n.to_string()`, `n.to_float()`
+* Float methods ✓ — `f.abs()`, `f.to_int()`
+* Module-qualified math ✓ — `math.min(a, b)`, `math.max(a, b)`, `math.fmin(a, b)`, `math.fmax(a, b)`
+* Module-qualified I/O ✓ — `io.print(s)`, `io.println(s)`, `io.read_line()`, `io.read_stdin()` (require `io` capability)
+* Module-qualified filesystem ✓ — `fs.read_file(path)` (requires `fs` capability)
 
 ---
 
@@ -561,12 +568,12 @@ injected as synthetic types before type-checking.
 
 **v0.1 — Tooling Foundation + Interpreter**
 * Tree-walking interpreter (`kyokara run <file>`, `kyokara-eval` crate) ✓
-* Intrinsic functions (print, println, int_to_string, string_concat) ✓
+* Intrinsic functions via canonical API: module-qualified (`io.println`, `io.print`), methods (`n.to_string()`, `s.concat(t)`) ✓
 * Builtin `Option<T>` and `Result<T, E>` types (injected as synthetic ADTs; `?` works out of the box) ✓
 * Canonical formatter (`kyokara fmt`, `kyokara-fmt` crate, Wadler-Lindig Doc IR) ✓
 * Stable symbol IDs (`kind::name` / `kind::parent::child` format, unique across symbol kinds) ✓
 * Runtime contract checks (requires/ensures/old) ✓
-* Core stdlib (List, Map, String, Int/Float — 43 intrinsic functions total) ✓
+* Core stdlib (List, Map, String, Int/Float, io, math, fs — 50 intrinsic functions exposed via canonical method/module API) ✓
 
 **v0.2 — Refactoring + LSP + Capabilities**
 * Module system: convention-based file layout, `pub` visibility, flat imports ✓

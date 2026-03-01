@@ -1,4 +1,4 @@
 pub fn size() -> Int {
-  let xs = list_new()
-  list_len(xs)
+  let xs = List.new()
+  xs.len()
 }

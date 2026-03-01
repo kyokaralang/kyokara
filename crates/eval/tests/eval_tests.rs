@@ -483,7 +483,7 @@ fn eval_lambda_capture() {
 
 #[test]
 fn eval_int_to_string() {
-    let val = run_ok("fn main() -> String { int_to_string(42) }");
+    let val = run_ok("fn main() -> String { 42.to_string() }");
     match val {
         Value::String(s) => assert_eq!(s, "42"),
         other => panic!("expected String, got {other:?}"),
@@ -492,7 +492,7 @@ fn eval_int_to_string() {
 
 #[test]
 fn eval_string_concat() {
-    let val = run_ok(r#"fn main() -> String { string_concat("foo", "bar") }"#);
+    let val = run_ok(r#"fn main() -> String { "foo".concat("bar") }"#);
     match val {
         Value::String(s) => assert_eq!(s, "foobar"),
         other => panic!("expected String, got {other:?}"),
@@ -1193,10 +1193,10 @@ fn eval_user_option_overrides_builtin() {
 fn eval_list_new_and_push() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = list_new()
-           let xs = list_push(xs, 1)
-           let xs = list_push(xs, 2)
-           list_len(xs)
+           let xs = List.new()
+           let xs = xs.push(1)
+           let xs = xs.push(2)
+           xs.len()
          }",
     );
     assert!(matches!(val, Value::Int(2)));
@@ -1206,7 +1206,7 @@ fn eval_list_new_and_push() {
 fn eval_list_len_empty() {
     let val = run_ok(
         "fn main() -> Int {
-           list_len(list_new())
+           List.new().len()
          }",
     );
     assert!(matches!(val, Value::Int(0)));
@@ -1216,8 +1216,8 @@ fn eval_list_len_empty() {
 fn eval_list_get_some() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = list_push(list_push(list_new(), 10), 20)
-           match list_get(xs, 1) {
+           let xs = List.new().push(10).push(20)
+           match xs.get(1) {
              Some(x) => x
              None => 0
            }
@@ -1230,8 +1230,8 @@ fn eval_list_get_some() {
 fn eval_list_get_none() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = list_push(list_new(), 10)
-           match list_get(xs, 5) {
+           let xs = List.new().push(10)
+           match xs.get(5) {
              Some(x) => x
              None => -1
            }
@@ -1244,8 +1244,8 @@ fn eval_list_get_none() {
 fn eval_list_head_some() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = list_push(list_push(list_new(), 10), 20)
-           match list_head(xs) {
+           let xs = List.new().push(10).push(20)
+           match xs.head() {
              Some(x) => x
              None => 0
            }
@@ -1258,7 +1258,7 @@ fn eval_list_head_some() {
 fn eval_list_head_none() {
     let val = run_ok(
         "fn main() -> Int {
-           match list_head(list_new()) {
+           match List.new().head() {
              Some(x) => x
              None => -1
            }
@@ -1271,8 +1271,8 @@ fn eval_list_head_none() {
 fn eval_list_tail() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
-           list_len(list_tail(xs))
+           let xs = List.new().push(1).push(2).push(3)
+           xs.tail().len()
          }",
     );
     assert!(matches!(val, Value::Int(2)));
@@ -1282,7 +1282,7 @@ fn eval_list_tail() {
 fn eval_list_tail_empty() {
     let val = run_ok(
         "fn main() -> Int {
-           list_len(list_tail(list_new()))
+           List.new().tail().len()
          }",
     );
     assert!(matches!(val, Value::Int(0)));
@@ -1292,7 +1292,7 @@ fn eval_list_tail_empty() {
 fn eval_list_is_empty() {
     let val = run_ok(
         "fn main() -> Bool {
-           list_is_empty(list_new())
+           List.new().is_empty()
          }",
     );
     assert!(matches!(val, Value::Bool(true)));
@@ -1302,7 +1302,7 @@ fn eval_list_is_empty() {
 fn eval_list_is_empty_false() {
     let val = run_ok(
         "fn main() -> Bool {
-           list_is_empty(list_push(list_new(), 1))
+           List.new().push(1).is_empty()
          }",
     );
     assert!(matches!(val, Value::Bool(false)));
@@ -1312,9 +1312,9 @@ fn eval_list_is_empty_false() {
 fn eval_list_reverse() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
-           let rev = list_reverse(xs)
-           match list_head(rev) {
+           let xs = List.new().push(1).push(2).push(3)
+           let rev = xs.reverse()
+           match rev.head() {
              Some(x) => x
              None => 0
            }
@@ -1327,9 +1327,9 @@ fn eval_list_reverse() {
 fn eval_list_concat() {
     let val = run_ok(
         "fn main() -> Int {
-           let a = list_push(list_push(list_new(), 1), 2)
-           let b = list_push(list_push(list_new(), 3), 4)
-           list_len(list_concat(a, b))
+           let a = List.new().push(1).push(2)
+           let b = List.new().push(3).push(4)
+           a.concat(b).len()
          }",
     );
     assert!(matches!(val, Value::Int(4)));
@@ -1339,9 +1339,9 @@ fn eval_list_concat() {
 fn eval_list_map_lambda() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
-           let ys = list_map(xs, fn(x: Int) => x * 2)
-           match list_get(ys, 2) {
+           let xs = List.new().push(1).push(2).push(3)
+           let ys = xs.map(fn(x: Int) => x * 2)
+           match ys.get(2) {
              Some(x) => x
              None => 0
            }
@@ -1355,9 +1355,9 @@ fn eval_list_map_named_fn() {
     let val = run_ok(
         "fn double(x: Int) -> Int { x * 2 }
          fn main() -> Int {
-           let xs = list_push(list_push(list_new(), 5), 10)
-           let ys = list_map(xs, double)
-           match list_head(ys) {
+           let xs = List.new().push(5).push(10)
+           let ys = xs.map(double)
+           match ys.head() {
              Some(x) => x
              None => 0
            }
@@ -1370,9 +1370,9 @@ fn eval_list_map_named_fn() {
 fn eval_list_filter() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = list_push(list_push(list_push(list_push(list_new(), 1), 2), 3), 4)
-           let evens = list_filter(xs, fn(x: Int) => x > 2)
-           list_len(evens)
+           let xs = List.new().push(1).push(2).push(3).push(4)
+           let evens = xs.filter(fn(x: Int) => x > 2)
+           evens.len()
          }",
     );
     assert!(matches!(val, Value::Int(2)));
@@ -1382,8 +1382,8 @@ fn eval_list_filter() {
 fn eval_list_fold_sum() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
-           list_fold(xs, 0, fn(acc: Int, x: Int) => acc + x)
+           let xs = List.new().push(1).push(2).push(3)
+           xs.fold(0, fn(acc: Int, x: Int) => acc + x)
          }",
     );
     assert!(matches!(val, Value::Int(6)));
@@ -1395,8 +1395,8 @@ fn eval_list_fold_sum() {
 fn eval_map_insert_and_get() {
     let val = run_ok(
         r#"fn main() -> Int {
-           let m = map_insert(map_new(), "a", 1)
-           match map_get(m, "a") {
+           let m = Map.new().insert("a", 1)
+           match m.get("a") {
              Some(x) => x
              None => 0
            }
@@ -1409,8 +1409,8 @@ fn eval_map_insert_and_get() {
 fn eval_map_get_missing() {
     let val = run_ok(
         r#"fn main() -> Int {
-           let m = map_insert(map_new(), "a", 1)
-           match map_get(m, "b") {
+           let m = Map.new().insert("a", 1)
+           match m.get("b") {
              Some(x) => x
              None => -1
            }
@@ -1423,8 +1423,8 @@ fn eval_map_get_missing() {
 fn eval_map_contains() {
     let val = run_ok(
         r#"fn main() -> Bool {
-           let m = map_insert(map_new(), "key", 42)
-           map_contains(m, "key")
+           let m = Map.new().insert("key", 42)
+           m.contains("key")
          }"#,
     );
     assert!(matches!(val, Value::Bool(true)));
@@ -1434,9 +1434,9 @@ fn eval_map_contains() {
 fn eval_map_remove() {
     let val = run_ok(
         r#"fn main() -> Int {
-           let m = map_insert(map_insert(map_new(), "a", 1), "b", 2)
-           let m2 = map_remove(m, "a")
-           map_len(m2)
+           let m = Map.new().insert("a", 1).insert("b", 2)
+           let m2 = m.remove("a")
+           m2.len()
          }"#,
     );
     assert!(matches!(val, Value::Int(1)));
@@ -1446,8 +1446,8 @@ fn eval_map_remove() {
 fn eval_map_len() {
     let val = run_ok(
         r#"fn main() -> Int {
-           let m = map_insert(map_insert(map_new(), "a", 1), "b", 2)
-           map_len(m)
+           let m = Map.new().insert("a", 1).insert("b", 2)
+           m.len()
          }"#,
     );
     assert!(matches!(val, Value::Int(2)));
@@ -1457,8 +1457,8 @@ fn eval_map_len() {
 fn eval_map_keys() {
     let val = run_ok(
         r#"fn main() -> Int {
-           let m = map_insert(map_insert(map_new(), "a", 1), "b", 2)
-           list_len(map_keys(m))
+           let m = Map.new().insert("a", 1).insert("b", 2)
+           m.keys().len()
          }"#,
     );
     assert!(matches!(val, Value::Int(2)));
@@ -1468,9 +1468,9 @@ fn eval_map_keys() {
 fn eval_map_values() {
     let val = run_ok(
         r#"fn main() -> Int {
-           let m = map_insert(map_insert(map_new(), "a", 10), "b", 20)
-           let vals = map_values(m)
-           list_fold(vals, 0, fn(acc: Int, x: Int) => acc + x)
+           let m = Map.new().insert("a", 10).insert("b", 20)
+           let vals = m.values()
+           vals.fold(0, fn(acc: Int, x: Int) => acc + x)
          }"#,
     );
     assert!(matches!(val, Value::Int(30)));
@@ -1480,7 +1480,7 @@ fn eval_map_values() {
 fn eval_map_is_empty() {
     let val = run_ok(
         "fn main() -> Bool {
-           map_is_empty(map_new())
+           Map.new().is_empty()
          }",
     );
     assert!(matches!(val, Value::Bool(true)));
@@ -1490,9 +1490,9 @@ fn eval_map_is_empty() {
 fn eval_map_insert_overwrite() {
     let val = run_ok(
         r#"fn main() -> Int {
-           let m = map_insert(map_new(), "a", 1)
-           let m = map_insert(m, "a", 99)
-           match map_get(m, "a") {
+           let m = Map.new().insert("a", 1)
+           let m = m.insert("a", 99)
+           match m.get("a") {
              Some(x) => x
              None => 0
            }
@@ -1505,31 +1505,31 @@ fn eval_map_insert_overwrite() {
 
 #[test]
 fn eval_string_len() {
-    let val = run_ok(r#"fn main() -> Int { string_len("hello") }"#);
+    let val = run_ok(r#"fn main() -> Int { "hello".len() }"#);
     assert!(matches!(val, Value::Int(5)));
 }
 
 #[test]
 fn eval_string_contains() {
-    let val = run_ok(r#"fn main() -> Bool { string_contains("hello world", "world") }"#);
+    let val = run_ok(r#"fn main() -> Bool { "hello world".contains("world") }"#);
     assert!(matches!(val, Value::Bool(true)));
 }
 
 #[test]
 fn eval_string_starts_with() {
-    let val = run_ok(r#"fn main() -> Bool { string_starts_with("hello", "hel") }"#);
+    let val = run_ok(r#"fn main() -> Bool { "hello".starts_with("hel") }"#);
     assert!(matches!(val, Value::Bool(true)));
 }
 
 #[test]
 fn eval_string_ends_with() {
-    let val = run_ok(r#"fn main() -> Bool { string_ends_with("hello", "llo") }"#);
+    let val = run_ok(r#"fn main() -> Bool { "hello".ends_with("llo") }"#);
     assert!(matches!(val, Value::Bool(true)));
 }
 
 #[test]
 fn eval_string_trim() {
-    let val = run_ok(r#"fn main() -> Int { string_len(string_trim("  hi  ")) }"#);
+    let val = run_ok(r#"fn main() -> Int { "  hi  ".trim().len() }"#);
     assert!(matches!(val, Value::Int(2)));
 }
 
@@ -1537,8 +1537,8 @@ fn eval_string_trim() {
 fn eval_string_split() {
     let val = run_ok(
         r#"fn main() -> Int {
-           let parts = string_split("a,b,c", ",")
-           list_len(parts)
+           let parts = "a,b,c".split(",")
+           parts.len()
          }"#,
     );
     assert!(matches!(val, Value::Int(3)));
@@ -1546,7 +1546,7 @@ fn eval_string_split() {
 
 #[test]
 fn eval_string_substring() {
-    let val = run_ok(r#"fn main() -> String { string_substring("hello world", 0, 5) }"#);
+    let val = run_ok(r#"fn main() -> String { "hello world".substring(0, 5) }"#);
     match val {
         Value::String(s) => assert_eq!(s, "hello"),
         other => panic!("expected String, got {other:?}"),
@@ -1555,7 +1555,7 @@ fn eval_string_substring() {
 
 #[test]
 fn eval_string_to_upper() {
-    let val = run_ok(r#"fn main() -> String { string_to_upper("hello") }"#);
+    let val = run_ok(r#"fn main() -> String { "hello".to_upper() }"#);
     match val {
         Value::String(s) => assert_eq!(s, "HELLO"),
         other => panic!("expected String, got {other:?}"),
@@ -1564,7 +1564,7 @@ fn eval_string_to_upper() {
 
 #[test]
 fn eval_string_to_lower() {
-    let val = run_ok(r#"fn main() -> String { string_to_lower("HELLO") }"#);
+    let val = run_ok(r#"fn main() -> String { "HELLO".to_lower() }"#);
     match val {
         Value::String(s) => assert_eq!(s, "hello"),
         other => panic!("expected String, got {other:?}"),
@@ -1573,7 +1573,7 @@ fn eval_string_to_lower() {
 
 #[test]
 fn eval_char_to_string() {
-    let val = run_ok("fn main() -> String { char_to_string('A') }");
+    let val = run_ok("fn main() -> String { 'A'.to_string() }");
     match val {
         Value::String(s) => assert_eq!(s, "A"),
         other => panic!("expected String, got {other:?}"),
@@ -1584,25 +1584,25 @@ fn eval_char_to_string() {
 
 #[test]
 fn eval_abs() {
-    let val = run_ok("fn main() -> Int { abs(-5) }");
+    let val = run_ok("fn main() -> Int { (-5).abs() }");
     assert!(matches!(val, Value::Int(5)));
 }
 
 #[test]
 fn eval_min() {
-    let val = run_ok("fn main() -> Int { min(3, 7) }");
+    let val = run_ok("fn main() -> Int { math.min(3, 7) }");
     assert!(matches!(val, Value::Int(3)));
 }
 
 #[test]
 fn eval_max() {
-    let val = run_ok("fn main() -> Int { max(3, 7) }");
+    let val = run_ok("fn main() -> Int { math.max(3, 7) }");
     assert!(matches!(val, Value::Int(7)));
 }
 
 #[test]
 fn eval_int_to_float() {
-    let val = run_ok("fn main() -> Float { int_to_float(42) }");
+    let val = run_ok("fn main() -> Float { 42.to_float() }");
     match val {
         Value::Float(f) => assert!((f - 42.0).abs() < f64::EPSILON),
         other => panic!("expected Float, got {other:?}"),
@@ -1611,13 +1611,13 @@ fn eval_int_to_float() {
 
 #[test]
 fn eval_float_to_int() {
-    let val = run_ok("fn main() -> Int { float_to_int(3.7) }");
+    let val = run_ok("fn main() -> Int { 3.7.to_int() }");
     assert!(matches!(val, Value::Int(3)));
 }
 
 #[test]
 fn eval_float_abs() {
-    let val = run_ok("fn main() -> Float { float_abs(-2.5) }");
+    let val = run_ok("fn main() -> Float { (0.0 - 2.5).abs() }");
     match val {
         Value::Float(f) => assert!((f - 2.5).abs() < f64::EPSILON),
         other => panic!("expected Float, got {other:?}"),
@@ -1630,9 +1630,9 @@ fn eval_float_abs() {
 fn eval_list_map_fold_composition() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
-           let doubled = list_map(xs, fn(x: Int) => x * 2)
-           list_fold(doubled, 0, fn(acc: Int, x: Int) => acc + x)
+           let xs = List.new().push(1).push(2).push(3)
+           let doubled = xs.map(fn(x: Int) => x * 2)
+           doubled.fold(0, fn(acc: Int, x: Int) => acc + x)
          }",
     );
     assert!(matches!(val, Value::Int(12)));
@@ -1642,10 +1642,10 @@ fn eval_list_map_fold_composition() {
 fn eval_map_list_interop() {
     let val = run_ok(
         r#"fn main() -> Int {
-           let m = map_insert(map_insert(map_new(), "x", 10), "y", 20)
-           let keys = map_keys(m)
-           let vals = map_values(m)
-           list_len(keys) + list_fold(vals, 0, fn(acc: Int, x: Int) => acc + x)
+           let m = Map.new().insert("x", 10).insert("y", 20)
+           let keys = m.keys()
+           let vals = m.values()
+           keys.len() + vals.fold(0, fn(acc: Int, x: Int) => acc + x)
          }"#,
     );
     assert!(matches!(val, Value::Int(32)));
@@ -1658,7 +1658,7 @@ fn no_manifest_print_works() {
     // No manifest = allow all (backward compat).
     let val = run_with_manifest_ok(
         r#"fn main() -> Unit {
-            println("hello")
+            io.println("hello")
         }"#,
         None,
     );
@@ -1670,7 +1670,7 @@ fn manifest_with_io_print_works() {
     let manifest = manifest_from_json(r#"{"caps": {"io": {}}}"#);
     let val = run_with_manifest_ok(
         r#"fn main() -> Unit {
-            println("hello")
+            io.println("hello")
         }"#,
         Some(manifest),
     );
@@ -1682,7 +1682,7 @@ fn manifest_without_io_print_denied() {
     let manifest = manifest_from_json(r#"{"caps": {"Net": {}}}"#);
     let err = run_with_manifest_err(
         r#"fn main() -> Unit {
-            print("hello")
+            io.print("hello")
         }"#,
         Some(manifest),
     );
@@ -1695,7 +1695,7 @@ fn manifest_without_io_println_denied() {
     let manifest = manifest_from_json(r#"{"caps": {"Net": {}}}"#);
     let err = run_with_manifest_err(
         r#"fn main() -> Unit {
-            println("hello")
+            io.println("hello")
         }"#,
         Some(manifest),
     );
@@ -1708,7 +1708,7 @@ fn manifest_with_io_pure_intrinsics_work() {
     let manifest = manifest_from_json(r#"{"caps": {"io": {}}}"#);
     let val = run_with_manifest_ok(
         r#"fn main() -> String {
-            int_to_string(42)
+            42.to_string()
         }"#,
         Some(manifest),
     );
@@ -1720,7 +1720,7 @@ fn empty_manifest_denies_io() {
     let manifest = manifest_from_json(r#"{"caps": {}}"#);
     let err = run_with_manifest_err(
         r#"fn main() -> Unit {
-            println("hello")
+            io.println("hello")
         }"#,
         Some(manifest),
     );
@@ -1758,7 +1758,7 @@ fn manifest_grants_user_cap() {
         r#"
         cap Console { fn log(msg: String) -> Unit }
         fn greet(name: String) -> String with Console {
-            string_concat("hi ", name)
+            "hi ".concat(name)
         }
         fn main() -> String with Console {
             greet("world")
@@ -1777,7 +1777,7 @@ fn manifest_denies_user_cap() {
         r#"
         cap Console { fn log(msg: String) -> Unit }
         fn greet(name: String) -> String with Console {
-            string_concat("hi ", name)
+            "hi ".concat(name)
         }
         fn main() -> String with Console {
             greet("world")
@@ -1847,7 +1847,7 @@ fn manifest_grants_unused_cap() {
     let manifest = manifest_from_json(r#"{"caps": {"Net": {}, "io": {}}}"#);
     let val = run_with_manifest_ok(
         r#"fn main() -> Unit {
-            println("hello")
+            io.println("hello")
         }"#,
         Some(manifest),
     );
@@ -1857,7 +1857,7 @@ fn manifest_grants_unused_cap() {
 #[test]
 fn capability_denied_error_message_format() {
     let manifest = manifest_from_json(r#"{"caps": {}}"#);
-    let err = run_with_manifest_err(r#"fn main() -> Unit { println("x") }"#, Some(manifest));
+    let err = run_with_manifest_err(r#"fn main() -> Unit { io.println("x") }"#, Some(manifest));
     // Should contain both the capability name and the function name.
     assert!(err.contains("io"));
     assert!(err.contains("Println"));
@@ -1865,7 +1865,7 @@ fn capability_denied_error_message_format() {
 
 #[test]
 fn run_with_manifest_none_allows_all() {
-    let val = run_with_manifest_ok(r#"fn main() -> Unit { println("ok") }"#, None);
+    let val = run_with_manifest_ok(r#"fn main() -> Unit { io.println("ok") }"#, None);
     assert!(matches!(val, Value::Unit));
 }
 
@@ -2417,7 +2417,7 @@ fn overflow_unary_neg_of_min() {
 #[test]
 fn overflow_abs_of_min() {
     // abs(i64::MIN) overflows for the same reason as unary neg.
-    let err = run_err("fn main() -> Int { abs(-9223372036854775807 - 1) }");
+    let err = run_err("fn main() -> Int { (-9223372036854775807 - 1).abs() }");
     assert!(
         err.contains("integer overflow"),
         "expected overflow error, got: {err}"
@@ -2444,7 +2444,7 @@ fn normal_arithmetic_still_works() {
     assert_eq!(val, Value::Int(20000));
     let val = run_ok("fn main() -> Int { -42 }");
     assert_eq!(val, Value::Int(-42));
-    let val = run_ok("fn main() -> Int { abs(-42) }");
+    let val = run_ok("fn main() -> Int { (-42).abs() }");
     assert_eq!(val, Value::Int(42));
 }
 
@@ -2831,7 +2831,7 @@ fn eval_char_escape_backslash() {
 #[test]
 fn eval_char_newline_neq_backslash() {
     // The repro from issue #74
-    let val = run_ok(r"fn main() -> Bool { char_to_string('\n') == char_to_string('\\') }");
+    let val = run_ok(r"fn main() -> Bool { '\n'.to_string() == '\\'.to_string() }");
     assert_eq!(val, Value::Bool(false));
 }
 
@@ -3518,120 +3518,255 @@ fn eval_tilde_and_logical_not_distinct() {
 }
 
 // ── parse_int tests ─────────────────────────────────────────────────
+// parse_int now returns Result<Int, String>.
 
 #[test]
 fn eval_parse_int_basic() {
-    let val = run_ok(r#"fn main() -> Int { parse_int("42") }"#);
+    let val = run_ok(
+        r#"fn main() -> Int {
+            match "42".parse_int() {
+                Ok(n) => n
+                Err(_) => -1
+            }
+        }"#,
+    );
     assert_eq!(val, Value::Int(42));
 }
 
 #[test]
 fn eval_parse_int_negative() {
-    let val = run_ok(r#"fn main() -> Int { parse_int("-7") }"#);
+    let val = run_ok(
+        r#"fn main() -> Int {
+            match "-7".parse_int() {
+                Ok(n) => n
+                Err(_) => 0
+            }
+        }"#,
+    );
     assert_eq!(val, Value::Int(-7));
 }
 
 #[test]
 fn eval_parse_int_zero() {
-    let val = run_ok(r#"fn main() -> Int { parse_int("0") }"#);
+    let val = run_ok(
+        r#"fn main() -> Int {
+            match "0".parse_int() {
+                Ok(n) => n
+                Err(_) => -1
+            }
+        }"#,
+    );
     assert_eq!(val, Value::Int(0));
 }
 
 #[test]
 fn eval_parse_int_with_plus() {
-    let val = run_ok(r#"fn main() -> Int { parse_int("+42") }"#);
+    let val = run_ok(
+        r#"fn main() -> Int {
+            match "+42".parse_int() {
+                Ok(n) => n
+                Err(_) => -1
+            }
+        }"#,
+    );
     assert_eq!(val, Value::Int(42));
 }
 
 #[test]
 fn eval_parse_int_max() {
-    let val = run_ok(r#"fn main() -> Int { parse_int("9223372036854775807") }"#);
+    let val = run_ok(
+        r#"fn main() -> Int {
+            match "9223372036854775807".parse_int() {
+                Ok(n) => n
+                Err(_) => 0
+            }
+        }"#,
+    );
     assert_eq!(val, Value::Int(i64::MAX));
 }
 
 #[test]
 fn eval_parse_int_min() {
-    let val = run_ok(r#"fn main() -> Int { parse_int("-9223372036854775808") }"#);
+    let val = run_ok(
+        r#"fn main() -> Int {
+            match "-9223372036854775808".parse_int() {
+                Ok(n) => n
+                Err(_) => 0
+            }
+        }"#,
+    );
     assert_eq!(val, Value::Int(i64::MIN));
 }
 
 #[test]
 fn eval_parse_int_empty_fails() {
-    let err = run_err(r#"fn main() -> Int { parse_int("") }"#);
-    assert!(err.contains("parse_int"), "got: {err}");
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            match "".parse_int() {
+                Ok(_) => false
+                Err(_) => true
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_parse_int_non_numeric_fails() {
-    let err = run_err(r#"fn main() -> Int { parse_int("abc") }"#);
-    assert!(err.contains("parse_int"), "got: {err}");
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            match "abc".parse_int() {
+                Ok(_) => false
+                Err(_) => true
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_parse_int_float_string_fails() {
-    let err = run_err(r#"fn main() -> Int { parse_int("3.14") }"#);
-    assert!(err.contains("parse_int"), "got: {err}");
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            match "3.14".parse_int() {
+                Ok(_) => false
+                Err(_) => true
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_parse_int_whitespace_fails() {
-    let err = run_err(r#"fn main() -> Int { parse_int(" 42") }"#);
-    assert!(err.contains("parse_int"), "got: {err}");
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            match " 42".parse_int() {
+                Ok(_) => false
+                Err(_) => true
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_parse_int_overflow_fails() {
-    let err = run_err(r#"fn main() -> Int { parse_int("9223372036854775808") }"#);
-    assert!(err.contains("parse_int"), "got: {err}");
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            match "9223372036854775808".parse_int() {
+                Ok(_) => false
+                Err(_) => true
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Bool(true));
 }
 
 // ── parse_float tests ───────────────────────────────────────────────
+// parse_float now returns Result<Float, String>.
 
 #[test]
 fn eval_parse_float_basic() {
-    let val = run_ok(r#"fn main() -> Float { parse_float("3.14") }"#);
+    let val = run_ok(
+        r#"fn main() -> Float {
+            match "3.14".parse_float() {
+                Ok(f) => f
+                Err(_) => 0.0
+            }
+        }"#,
+    );
     assert_eq!(val, Value::Float(314.0 / 100.0));
 }
 
 #[test]
 fn eval_parse_float_integer_string() {
-    let val = run_ok(r#"fn main() -> Float { parse_float("42") }"#);
+    let val = run_ok(
+        r#"fn main() -> Float {
+            match "42".parse_float() {
+                Ok(f) => f
+                Err(_) => 0.0
+            }
+        }"#,
+    );
     assert_eq!(val, Value::Float(42.0));
 }
 
 #[test]
 fn eval_parse_float_negative() {
-    let val = run_ok(r#"fn main() -> Float { parse_float("-2.5") }"#);
+    let val = run_ok(
+        r#"fn main() -> Float {
+            match "-2.5".parse_float() {
+                Ok(f) => f
+                Err(_) => 0.0
+            }
+        }"#,
+    );
     assert_eq!(val, Value::Float(-2.5));
 }
 
 #[test]
 fn eval_parse_float_zero() {
-    let val = run_ok(r#"fn main() -> Float { parse_float("0.0") }"#);
+    let val = run_ok(
+        r#"fn main() -> Float {
+            match "0.0".parse_float() {
+                Ok(f) => f
+                Err(_) => 1.0
+            }
+        }"#,
+    );
     assert_eq!(val, Value::Float(0.0));
 }
 
 #[test]
 fn eval_parse_float_scientific() {
-    let val = run_ok(r#"fn main() -> Float { parse_float("1.5e10") }"#);
+    let val = run_ok(
+        r#"fn main() -> Float {
+            match "1.5e10".parse_float() {
+                Ok(f) => f
+                Err(_) => 0.0
+            }
+        }"#,
+    );
     assert_eq!(val, Value::Float(1.5e10));
 }
 
 #[test]
 fn eval_parse_float_infinity() {
-    let val = run_ok(r#"fn main() -> Float { parse_float("inf") }"#);
+    let val = run_ok(
+        r#"fn main() -> Float {
+            match "inf".parse_float() {
+                Ok(f) => f
+                Err(_) => 0.0
+            }
+        }"#,
+    );
     assert_eq!(val, Value::Float(f64::INFINITY));
 }
 
 #[test]
 fn eval_parse_float_neg_infinity() {
-    let val = run_ok(r#"fn main() -> Float { parse_float("-inf") }"#);
+    let val = run_ok(
+        r#"fn main() -> Float {
+            match "-inf".parse_float() {
+                Ok(f) => f
+                Err(_) => 0.0
+            }
+        }"#,
+    );
     assert_eq!(val, Value::Float(f64::NEG_INFINITY));
 }
 
 #[test]
 fn eval_parse_float_nan() {
-    let val = run_ok(r#"fn main() -> Float { parse_float("NaN") }"#);
+    let val = run_ok(
+        r#"fn main() -> Float {
+            match "NaN".parse_float() {
+                Ok(f) => f
+                Err(_) => 0.0
+            }
+        }"#,
+    );
     match val {
         Value::Float(f) => assert!(f.is_nan(), "expected NaN, got {f}"),
         other => panic!("expected Float, got {other:?}"),
@@ -3640,33 +3775,47 @@ fn eval_parse_float_nan() {
 
 #[test]
 fn eval_parse_float_empty_fails() {
-    let err = run_err(r#"fn main() -> Float { parse_float("") }"#);
-    assert!(err.contains("parse_float"), "got: {err}");
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            match "".parse_float() {
+                Ok(_) => false
+                Err(_) => true
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_parse_float_non_numeric_fails() {
-    let err = run_err(r#"fn main() -> Float { parse_float("abc") }"#);
-    assert!(err.contains("parse_float"), "got: {err}");
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            match "abc".parse_float() {
+                Ok(_) => false
+                Err(_) => true
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Bool(true));
 }
 
 // ── string_lines tests ─────────────────────────────────────────────
 
 #[test]
 fn eval_string_lines_basic() {
-    let val = run_ok(r#"fn main() -> Int { list_len(string_lines("a\nb\nc")) }"#);
+    let val = run_ok(r#"fn main() -> Int { "a\nb\nc".lines().len() }"#);
     assert_eq!(val, Value::Int(3));
 }
 
 #[test]
 fn eval_string_lines_trailing_newline() {
-    let val = run_ok(r#"fn main() -> Int { list_len(string_lines("a\nb\n")) }"#);
+    let val = run_ok(r#"fn main() -> Int { "a\nb\n".lines().len() }"#);
     assert_eq!(val, Value::Int(2));
 }
 
 #[test]
 fn eval_string_lines_empty() {
-    let val = run_ok(r#"fn main() -> Int { list_len(string_lines("")) }"#);
+    let val = run_ok(r#"fn main() -> Int { "".lines().len() }"#);
     assert_eq!(val, Value::Int(0));
 }
 
@@ -3674,7 +3823,7 @@ fn eval_string_lines_empty() {
 fn eval_string_lines_single() {
     let val = run_ok(
         r#"fn main() -> String {
-            match list_head(string_lines("hello")) {
+            match "hello".lines().head() {
                 Some(s) => s
                 None => "fail"
             }
@@ -3685,14 +3834,14 @@ fn eval_string_lines_single() {
 
 #[test]
 fn eval_string_lines_crlf() {
-    let val = run_ok(r#"fn main() -> Int { list_len(string_lines("a\r\nb\r\nc")) }"#);
+    let val = run_ok(r#"fn main() -> Int { "a\r\nb\r\nc".lines().len() }"#);
     assert_eq!(val, Value::Int(3));
 }
 
 #[test]
 fn eval_string_lines_blank_lines() {
     // Two newlines = two empty lines (lines() strips trailing but keeps interior)
-    let val = run_ok(r#"fn main() -> Int { list_len(string_lines("\n\n")) }"#);
+    let val = run_ok(r#"fn main() -> Int { "\n\n".lines().len() }"#);
     assert_eq!(val, Value::Int(2));
 }
 
@@ -3700,8 +3849,8 @@ fn eval_string_lines_blank_lines() {
 fn eval_string_lines_content_check() {
     let val = run_ok(
         r#"fn main() -> String {
-            let lines = string_lines("first\nsecond\nthird")
-            match list_get(lines, 1) {
+            let lines = "first\nsecond\nthird".lines()
+            match lines.get(1) {
                 Some(s) => s
                 None => "fail"
             }
@@ -3714,26 +3863,26 @@ fn eval_string_lines_content_check() {
 
 #[test]
 fn eval_string_chars_basic() {
-    let val = run_ok(r#"fn main() -> Int { list_len(string_chars("hello")) }"#);
+    let val = run_ok(r#"fn main() -> Int { "hello".chars().len() }"#);
     assert_eq!(val, Value::Int(5));
 }
 
 #[test]
 fn eval_string_chars_empty() {
-    let val = run_ok(r#"fn main() -> Int { list_len(string_chars("")) }"#);
+    let val = run_ok(r#"fn main() -> Int { "".chars().len() }"#);
     assert_eq!(val, Value::Int(0));
 }
 
 #[test]
 fn eval_string_chars_single() {
-    let val = run_ok(r#"fn main() -> Int { list_len(string_chars("x")) }"#);
+    let val = run_ok(r#"fn main() -> Int { "x".chars().len() }"#);
     assert_eq!(val, Value::Int(1));
 }
 
 #[test]
 fn eval_string_chars_unicode() {
     // "café" has 4 chars (é is a single codepoint U+00E9)
-    let val = run_ok(r#"fn main() -> Int { list_len(string_chars("café")) }"#);
+    let val = run_ok(r#"fn main() -> Int { "café".chars().len() }"#);
     assert_eq!(val, Value::Int(4));
 }
 
@@ -3742,9 +3891,9 @@ fn eval_string_chars_roundtrip() {
     // Convert string to chars, map each char back to string, concat them
     let val = run_ok(
         r#"fn main() -> String {
-            let chars = string_chars("abc")
-            let strings = list_map(chars, fn(c: Char) => char_to_string(c))
-            list_fold(strings, "", fn(acc: String, s: String) => string_concat(acc, s))
+            let chars = "abc".chars()
+            let strings = chars.map(fn(c: Char) => c.to_string())
+            strings.fold("", fn(acc: String, s: String) => acc.concat(s))
         }"#,
     );
     assert_eq!(val, Value::String("abc".to_string()));
@@ -3753,7 +3902,7 @@ fn eval_string_chars_roundtrip() {
 #[test]
 fn eval_string_chars_with_newlines() {
     // "a\nb" has 3 chars: 'a', '\n', 'b'
-    let val = run_ok(r#"fn main() -> Int { list_len(string_chars("a\nb")) }"#);
+    let val = run_ok(r#"fn main() -> Int { "a\nb".chars().len() }"#);
     assert_eq!(val, Value::Int(3));
 }
 
@@ -3765,7 +3914,7 @@ fn eval_read_file_basic() {
     let file_path = dir.path().join("test.txt");
     std::fs::write(&file_path, "hello world").unwrap();
     let path_str = file_path.to_str().unwrap();
-    let source = format!(r#"fn main() -> String {{ read_file("{path_str}") }}"#);
+    let source = format!(r#"fn main() -> String {{ fs.read_file("{path_str}") }}"#);
     let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
     let val = run_with_manifest_ok(&source, Some(manifest));
     assert_eq!(val, Value::String("hello world".to_string()));
@@ -3777,8 +3926,7 @@ fn eval_read_file_multiline() {
     let file_path = dir.path().join("multi.txt");
     std::fs::write(&file_path, "line1\nline2\nline3\n").unwrap();
     let path_str = file_path.to_str().unwrap();
-    let source =
-        format!(r#"fn main() -> Int {{ list_len(string_lines(read_file("{path_str}"))) }}"#);
+    let source = format!(r#"fn main() -> Int {{ fs.read_file("{path_str}").lines().len() }}"#);
     let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
     let val = run_with_manifest_ok(&source, Some(manifest));
     assert_eq!(val, Value::Int(3));
@@ -3790,7 +3938,7 @@ fn eval_read_file_empty() {
     let file_path = dir.path().join("empty.txt");
     std::fs::write(&file_path, "").unwrap();
     let path_str = file_path.to_str().unwrap();
-    let source = format!(r#"fn main() -> String {{ read_file("{path_str}") }}"#);
+    let source = format!(r#"fn main() -> String {{ fs.read_file("{path_str}") }}"#);
     let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
     let val = run_with_manifest_ok(&source, Some(manifest));
     assert_eq!(val, Value::String(String::new()));
@@ -3802,14 +3950,14 @@ fn eval_read_file_no_manifest() {
     let file_path = dir.path().join("test.txt");
     std::fs::write(&file_path, "allowed").unwrap();
     let path_str = file_path.to_str().unwrap();
-    let source = format!(r#"fn main() -> String {{ read_file("{path_str}") }}"#);
+    let source = format!(r#"fn main() -> String {{ fs.read_file("{path_str}") }}"#);
     let val = run_with_manifest_ok(&source, None);
     assert_eq!(val, Value::String("allowed".to_string()));
 }
 
 #[test]
 fn eval_read_file_not_found() {
-    let source = r#"fn main() -> String { read_file("/nonexistent/path/to/file.txt") }"#;
+    let source = r#"fn main() -> String { fs.read_file("/nonexistent/path/to/file.txt") }"#;
     let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
     let err = run_with_manifest_err(source, Some(manifest));
     assert!(err.contains("read_file"), "got: {err}");
@@ -3821,7 +3969,7 @@ fn eval_read_file_denied_no_cap() {
     let file_path = dir.path().join("test.txt");
     std::fs::write(&file_path, "secret").unwrap();
     let path_str = file_path.to_str().unwrap();
-    let source = format!(r#"fn main() -> String {{ read_file("{path_str}") }}"#);
+    let source = format!(r#"fn main() -> String {{ fs.read_file("{path_str}") }}"#);
     let manifest = manifest_from_json(r#"{"caps": {}}"#);
     let err = run_with_manifest_err(&source, Some(manifest));
     assert!(err.contains("capability denied"), "got: {err}");
@@ -3834,7 +3982,7 @@ fn eval_read_file_denied_wrong_cap() {
     let file_path = dir.path().join("test.txt");
     std::fs::write(&file_path, "secret").unwrap();
     let path_str = file_path.to_str().unwrap();
-    let source = format!(r#"fn main() -> String {{ read_file("{path_str}") }}"#);
+    let source = format!(r#"fn main() -> String {{ fs.read_file("{path_str}") }}"#);
     let manifest = manifest_from_json(r#"{"caps": {"io": {}}}"#);
     let err = run_with_manifest_err(&source, Some(manifest));
     assert!(err.contains("capability denied"), "got: {err}");
@@ -3846,7 +3994,7 @@ fn eval_read_file_with_both_caps() {
     let file_path = dir.path().join("test.txt");
     std::fs::write(&file_path, "both caps").unwrap();
     let path_str = file_path.to_str().unwrap();
-    let source = format!(r#"fn main() -> String {{ read_file("{path_str}") }}"#);
+    let source = format!(r#"fn main() -> String {{ fs.read_file("{path_str}") }}"#);
     let manifest = manifest_from_json(r#"{"caps": {"io": {}, "fs": {}}}"#);
     let val = run_with_manifest_ok(&source, Some(manifest));
     assert_eq!(val, Value::String("both caps".to_string()));
@@ -3858,9 +4006,9 @@ fn eval_read_file_with_both_caps() {
 fn eval_list_sort_ints() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_push(list_new(), 3), 1), 2)
-            let sorted = list_sort(xs)
-            match list_get(sorted, 0) {
+            let xs = List.new().push(3).push(1).push(2)
+            let sorted = xs.sort()
+            match sorted.get(0) {
                 Some(x) => x
                 None => -1
             }
@@ -3873,9 +4021,9 @@ fn eval_list_sort_ints() {
 fn eval_list_sort_ints_reverse() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_push(list_push(list_push(list_new(), 5), 4), 3), 2), 1)
-            let sorted = list_sort(xs)
-            match list_get(sorted, 4) {
+            let xs = List.new().push(5).push(4).push(3).push(2).push(1)
+            let sorted = xs.sort()
+            match sorted.get(4) {
                 Some(x) => x
                 None => -1
             }
@@ -3888,9 +4036,9 @@ fn eval_list_sort_ints_reverse() {
 fn eval_list_sort_ints_already_sorted() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
-            let sorted = list_sort(xs)
-            match list_get(sorted, 2) {
+            let xs = List.new().push(1).push(2).push(3)
+            let sorted = xs.sort()
+            match sorted.get(2) {
                 Some(x) => x
                 None => -1
             }
@@ -3903,10 +4051,10 @@ fn eval_list_sort_ints_already_sorted() {
 fn eval_list_sort_ints_duplicates() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_push(list_push(list_new(), 3), 1), 3), 2)
-            let sorted = list_sort(xs)
+            let xs = List.new().push(3).push(1).push(3).push(2)
+            let sorted = xs.sort()
             // sorted should be [1, 2, 3, 3], check index 2
-            match list_get(sorted, 2) {
+            match sorted.get(2) {
                 Some(x) => x
                 None => -1
             }
@@ -3919,9 +4067,9 @@ fn eval_list_sort_ints_duplicates() {
 fn eval_list_sort_ints_negative() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_push(list_push(list_new(), 3), -1), 0), -5)
-            let sorted = list_sort(xs)
-            match list_get(sorted, 0) {
+            let xs = List.new().push(3).push(-1).push(0).push(-5)
+            let sorted = xs.sort()
+            match sorted.get(0) {
                 Some(x) => x
                 None => 0
             }
@@ -3934,9 +4082,9 @@ fn eval_list_sort_ints_negative() {
 fn eval_list_sort_ints_single() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_new(), 42)
-            let sorted = list_sort(xs)
-            match list_get(sorted, 0) {
+            let xs = List.new().push(42)
+            let sorted = xs.sort()
+            match sorted.get(0) {
                 Some(x) => x
                 None => -1
             }
@@ -3949,9 +4097,9 @@ fn eval_list_sort_ints_single() {
 fn eval_list_sort_empty() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs: List<Int> = list_new()
-            let sorted = list_sort(xs)
-            list_len(sorted)
+            let xs: List<Int> = List.new()
+            let sorted = xs.sort()
+            sorted.len()
         }",
     );
     assert_eq!(val, Value::Int(0));
@@ -3961,9 +4109,9 @@ fn eval_list_sort_empty() {
 fn eval_list_sort_strings() {
     let val = run_ok(
         r#"fn main() -> String {
-            let xs = list_push(list_push(list_push(list_new(), "banana"), "apple"), "cherry")
-            let sorted = list_sort(xs)
-            match list_get(sorted, 0) {
+            let xs = List.new().push("banana").push("apple").push("cherry")
+            let sorted = xs.sort()
+            match sorted.get(0) {
                 Some(s) => s
                 None => "fail"
             }
@@ -3976,9 +4124,9 @@ fn eval_list_sort_strings() {
 fn eval_list_sort_bools() {
     let val = run_ok(
         "fn main() -> Bool {
-            let xs = list_push(list_push(list_push(list_new(), true), false), true)
-            let sorted = list_sort(xs)
-            match list_get(sorted, 0) {
+            let xs = List.new().push(true).push(false).push(true)
+            let sorted = xs.sort()
+            match sorted.get(0) {
                 Some(b) => b
                 None => true
             }
@@ -3991,9 +4139,9 @@ fn eval_list_sort_bools() {
 fn eval_list_sort_floats() {
     let val = run_ok(
         "fn main() -> Float {
-            let xs = list_push(list_push(list_push(list_new(), 3.0), 1.0), 2.0)
-            let sorted = list_sort(xs)
-            match list_get(sorted, 0) {
+            let xs = List.new().push(3.0).push(1.0).push(2.0)
+            let sorted = xs.sort()
+            match sorted.get(0) {
                 Some(x) => x
                 None => -1.0
             }
@@ -4007,10 +4155,13 @@ fn eval_list_sort_floats_with_nan() {
     // NaN sorts to end via f64::total_cmp
     let val = run_ok(
         r#"fn main() -> Float {
-            let nan = parse_float("NaN")
-            let xs = list_push(list_push(list_push(list_new(), nan), 1.0), 2.0)
-            let sorted = list_sort(xs)
-            match list_get(sorted, 0) {
+            let nan = match "NaN".parse_float() {
+                Ok(f) => f
+                Err(_) => 0.0
+            }
+            let xs = List.new().push(nan).push(1.0).push(2.0)
+            let sorted = xs.sort()
+            match sorted.get(0) {
                 Some(x) => x
                 None => -1.0
             }
@@ -4023,9 +4174,9 @@ fn eval_list_sort_floats_with_nan() {
 fn eval_list_sort_chars() {
     let val = run_ok(
         "fn main() -> Char {
-            let xs = list_push(list_push(list_push(list_new(), 'c'), 'a'), 'b')
-            let sorted = list_sort(xs)
-            match list_get(sorted, 0) {
+            let xs = List.new().push('c').push('a').push('b')
+            let sorted = xs.sort()
+            match sorted.get(0) {
                 Some(c) => c
                 None => 'z'
             }
@@ -4038,10 +4189,10 @@ fn eval_list_sort_chars() {
 fn eval_list_sort_unsortable() {
     let err = run_err(
         "fn main() -> Int {
-            let inner = list_push(list_new(), 1)
-            let xs = list_push(list_new(), inner)
-            let sorted = list_sort(xs)
-            list_len(sorted)
+            let inner = List.new().push(1)
+            let xs = List.new().push(inner)
+            let sorted = xs.sort()
+            sorted.len()
         }",
     );
     assert!(
@@ -4056,9 +4207,9 @@ fn eval_list_sort_unsortable() {
 fn eval_list_sort_by_ascending() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_push(list_new(), 3), 1), 2)
-            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => a - b)
-            match list_get(sorted, 0) {
+            let xs = List.new().push(3).push(1).push(2)
+            let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
+            match sorted.get(0) {
                 Some(x) => x
                 None => -1
             }
@@ -4071,9 +4222,9 @@ fn eval_list_sort_by_ascending() {
 fn eval_list_sort_by_descending() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_push(list_new(), 3), 1), 2)
-            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => b - a)
-            match list_get(sorted, 0) {
+            let xs = List.new().push(3).push(1).push(2)
+            let sorted = xs.sort_by(fn(a: Int, b: Int) => b - a)
+            match sorted.get(0) {
                 Some(x) => x
                 None => -1
             }
@@ -4087,9 +4238,9 @@ fn eval_list_sort_by_named_fn() {
     let val = run_ok(
         "fn cmp(a: Int, b: Int) -> Int { a - b }
         fn main() -> Int {
-            let xs = list_push(list_push(list_push(list_new(), 3), 1), 2)
-            let sorted = list_sort_by(xs, cmp)
-            match list_get(sorted, 0) {
+            let xs = List.new().push(3).push(1).push(2)
+            let sorted = xs.sort_by(cmp)
+            match sorted.get(0) {
                 Some(x) => x
                 None => -1
             }
@@ -4102,9 +4253,9 @@ fn eval_list_sort_by_named_fn() {
 fn eval_list_sort_by_empty() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs: List<Int> = list_new()
-            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => a - b)
-            list_len(sorted)
+            let xs: List<Int> = List.new()
+            let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
+            sorted.len()
         }",
     );
     assert_eq!(val, Value::Int(0));
@@ -4114,9 +4265,9 @@ fn eval_list_sort_by_empty() {
 fn eval_list_sort_by_single() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_new(), 42)
-            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => a - b)
-            match list_get(sorted, 0) {
+            let xs = List.new().push(42)
+            let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
+            match sorted.get(0) {
                 Some(x) => x
                 None => -1
             }
@@ -4129,9 +4280,9 @@ fn eval_list_sort_by_single() {
 fn eval_list_sort_by_strings_by_len() {
     let val = run_ok(
         r#"fn main() -> String {
-            let xs = list_push(list_push(list_push(list_new(), "bb"), "a"), "ccc")
-            let sorted = list_sort_by(xs, fn(a: String, b: String) => string_len(a) - string_len(b))
-            match list_get(sorted, 0) {
+            let xs = List.new().push("bb").push("a").push("ccc")
+            let sorted = xs.sort_by(fn(a: String, b: String) => a.len() - b.len())
+            match sorted.get(0) {
                 Some(s) => s
                 None => "fail"
             }
@@ -4147,9 +4298,9 @@ fn eval_list_sort_by_stable() {
     // 12 before 11 (both have tens=1, original order: 12 at index 1, 11 at index 2)
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_push(list_push(list_new(), 21), 12), 11), 22)
-            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => a / 10 - b / 10)
-            match list_get(sorted, 0) {
+            let xs = List.new().push(21).push(12).push(11).push(22)
+            let sorted = xs.sort_by(fn(a: Int, b: Int) => a / 10 - b / 10)
+            match sorted.get(0) {
                 Some(x) => x
                 None => -1
             }
@@ -4163,9 +4314,9 @@ fn eval_list_sort_by_stable() {
 fn eval_list_sort_by_already_sorted() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
-            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => a - b)
-            match list_get(sorted, 1) {
+            let xs = List.new().push(1).push(2).push(3)
+            let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
+            match sorted.get(1) {
                 Some(x) => x
                 None => -1
             }
@@ -4178,9 +4329,9 @@ fn eval_list_sort_by_already_sorted() {
 fn eval_list_sort_by_all_equal() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_push(list_new(), 5), 5), 5)
-            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => a - b)
-            list_len(sorted)
+            let xs = List.new().push(5).push(5).push(5)
+            let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
+            sorted.len()
         }",
     );
     assert_eq!(val, Value::Int(3));
@@ -4191,9 +4342,9 @@ fn eval_list_sort_by_comparator_error() {
     // Comparator returns Bool instead of Int
     let err = run_err(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_new(), 2), 1)
-            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => a < b)
-            list_len(sorted)
+            let xs = List.new().push(2).push(1)
+            let sorted = xs.sort_by(fn(a: Int, b: Int) => a < b)
+            sorted.len()
         }",
     );
     assert!(
@@ -4207,9 +4358,9 @@ fn eval_list_sort_by_runtime_error() {
     // Comparator divides by zero — error should propagate
     let err = run_err(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_new(), 2), 1)
-            let sorted = list_sort_by(xs, fn(a: Int, b: Int) => a / 0)
-            list_len(sorted)
+            let xs = List.new().push(2).push(1)
+            let sorted = xs.sort_by(fn(a: Int, b: Int) => a / 0)
+            sorted.len()
         }",
     );
     assert!(err.contains("division by zero"), "got: {err}");
@@ -4221,7 +4372,7 @@ fn eval_list_sort_by_runtime_error() {
 fn eval_index_list_basic() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_new(), 10), 20)
+            let xs = List.new().push(10).push(20)
             xs[0]
         }",
     );
@@ -4232,7 +4383,7 @@ fn eval_index_list_basic() {
 fn eval_index_list_last() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_new(), 10), 20)
+            let xs = List.new().push(10).push(20)
             xs[1]
         }",
     );
@@ -4243,7 +4394,7 @@ fn eval_index_list_last() {
 fn eval_index_list_out_of_bounds() {
     let err = run_err(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_new(), 10), 20)
+            let xs = List.new().push(10).push(20)
             xs[5]
         }",
     );
@@ -4254,7 +4405,7 @@ fn eval_index_list_out_of_bounds() {
 fn eval_index_list_negative() {
     let err = run_err(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_new(), 10), 20)
+            let xs = List.new().push(10).push(20)
             xs[0 - 1]
         }",
     );
@@ -4265,7 +4416,7 @@ fn eval_index_list_negative() {
 fn eval_index_list_empty() {
     let err = run_err(
         "fn main() -> Int {
-            let xs: List<Int> = list_new()
+            let xs: List<Int> = List.new()
             xs[0]
         }",
     );
@@ -4326,7 +4477,7 @@ fn eval_index_string_empty() {
 fn eval_index_map_basic() {
     let val = run_ok(
         "fn main() -> Int {
-            let m = map_insert(map_new(), \"a\", 42)
+            let m = Map.new().insert(\"a\", 42)
             m[\"a\"]
         }",
     );
@@ -4337,7 +4488,7 @@ fn eval_index_map_basic() {
 fn eval_index_map_missing_key() {
     let err = run_err(
         "fn main() -> Int {
-            let m = map_insert(map_new(), \"a\", 42)
+            let m = Map.new().insert(\"a\", 42)
             m[\"b\"]
         }",
     );
@@ -4349,8 +4500,8 @@ fn eval_index_chained_list() {
     // Nested list indexing: list of lists
     let val = run_ok(
         "fn main() -> Int {
-            let inner = list_push(list_push(list_new(), 10), 20)
-            let outer = list_push(list_new(), inner)
+            let inner = List.new().push(10).push(20)
+            let outer = List.new().push(inner)
             outer[0][1]
         }",
     );
@@ -4361,7 +4512,7 @@ fn eval_index_chained_list() {
 fn eval_index_with_expression() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_push(list_new(), 10), 20), 30)
+            let xs = List.new().push(10).push(20).push(30)
             xs[1 + 1]
         }",
     );
@@ -4390,7 +4541,7 @@ fn eval_index_list_then_field() {
         "type Point = { x: Int, y: Int }
         fn main() -> Int {
             let p = Point { x: 3, y: 4 }
-            let xs = list_push(list_new(), p)
+            let xs = List.new().push(p)
             xs[0].x
         }",
     );
@@ -4462,7 +4613,7 @@ fn eval_method_string_split() {
     let val = run_ok(
         r#"fn main() -> Int {
             let parts = "a,b,c".split(",")
-            list_len(parts)
+            parts.len()
         }"#,
     );
     assert!(matches!(val, Value::Int(3)));
@@ -4473,7 +4624,7 @@ fn eval_method_string_lines() {
     let val = run_ok(
         r#"fn main() -> Int {
             let ls = "a\nb\nc".lines()
-            list_len(ls)
+            ls.len()
         }"#,
     );
     assert!(matches!(val, Value::Int(3)));
@@ -4484,7 +4635,7 @@ fn eval_method_string_chars() {
     let val = run_ok(
         r#"fn main() -> Int {
             let cs = "hello".chars()
-            list_len(cs)
+            cs.len()
         }"#,
     );
     assert!(matches!(val, Value::Int(5)));
@@ -4495,7 +4646,7 @@ fn eval_method_string_chars() {
 fn eval_method_list_len() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_new(), 1), 2)
+            let xs = List.new().push(1).push(2)
             xs.len()
         }",
     );
@@ -4506,7 +4657,7 @@ fn eval_method_list_len() {
 fn eval_method_list_push() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_new(), 1)
+            let xs = List.new().push(1)
             let ys = xs.push(2)
             ys.len()
         }",
@@ -4518,7 +4669,7 @@ fn eval_method_list_push() {
 fn eval_method_list_get() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_new(), 10), 20)
+            let xs = List.new().push(10).push(20)
             match xs.get(1) {
                 Some(v) => v
                 None => 0
@@ -4532,7 +4683,7 @@ fn eval_method_list_get() {
 fn eval_method_list_is_empty() {
     let val = run_ok(
         "fn main() -> Bool {
-            let xs: List<Int> = list_new()
+            let xs: List<Int> = List.new()
             xs.is_empty()
         }",
     );
@@ -4543,7 +4694,7 @@ fn eval_method_list_is_empty() {
 fn eval_method_list_reverse() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_new(), 1), 2)
+            let xs = List.new().push(1).push(2)
             let ys = xs.reverse()
             ys[0]
         }",
@@ -4555,7 +4706,7 @@ fn eval_method_list_reverse() {
 fn eval_method_list_map() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_new(), 1), 2)
+            let xs = List.new().push(1).push(2)
             let ys = xs.map(fn(x: Int) => x * 10)
             ys[0]
         }",
@@ -4567,7 +4718,7 @@ fn eval_method_list_map() {
 fn eval_method_list_filter() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
+            let xs = List.new().push(1).push(2).push(3)
             let ys = xs.filter(fn(x: Int) => x > 1)
             ys.len()
         }",
@@ -4579,7 +4730,7 @@ fn eval_method_list_filter() {
 fn eval_method_list_fold() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_push(list_new(), 1), 2), 3)
+            let xs = List.new().push(1).push(2).push(3)
             xs.fold(0, fn(acc: Int, x: Int) => acc + x)
         }",
     );
@@ -4590,7 +4741,7 @@ fn eval_method_list_fold() {
 fn eval_method_list_sort() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_push(list_new(), 3), 1), 2)
+            let xs = List.new().push(3).push(1).push(2)
             let sorted = xs.sort()
             sorted[0]
         }",
@@ -4602,7 +4753,7 @@ fn eval_method_list_sort() {
 fn eval_method_list_sort_by() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = list_push(list_push(list_push(list_new(), 3), 1), 2)
+            let xs = List.new().push(3).push(1).push(2)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
             sorted[2]
         }",
@@ -4615,7 +4766,7 @@ fn eval_method_list_sort_by() {
 fn eval_method_map_insert_and_get() {
     let val = run_ok(
         r#"fn main() -> Int {
-            let m = map_new()
+            let m = Map.new()
             let m2 = m.insert("a", 42)
             match m2.get("a") {
                 Some(v) => v
@@ -4630,7 +4781,7 @@ fn eval_method_map_insert_and_get() {
 fn eval_method_map_contains() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            let m = map_insert(map_new(), "key", 1)
+            let m = Map.new().insert("key", 1)
             m.contains("key")
         }"#,
     );
@@ -4641,7 +4792,7 @@ fn eval_method_map_contains() {
 fn eval_method_map_len() {
     let val = run_ok(
         r#"fn main() -> Int {
-            let m = map_insert(map_insert(map_new(), "a", 1), "b", 2)
+            let m = Map.new().insert("a", 1).insert("b", 2)
             m.len()
         }"#,
     );
@@ -4652,9 +4803,9 @@ fn eval_method_map_len() {
 fn eval_method_map_keys() {
     let val = run_ok(
         r#"fn main() -> Int {
-            let m = map_insert(map_new(), "a", 1)
+            let m = Map.new().insert("a", 1)
             let ks = m.keys()
-            list_len(ks)
+            ks.len()
         }"#,
     );
     assert!(matches!(val, Value::Int(1)));
@@ -4711,7 +4862,7 @@ fn eval_method_chaining_trim_len() {
 fn eval_method_chaining_push_push_len() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs: List<Int> = list_new()
+            let xs: List<Int> = List.new()
             xs.push(1).push(2).push(3).len()
         }",
     );
@@ -4731,7 +4882,7 @@ fn eval_method_chaining_split_len() {
 // Flat function still works alongside method syntax
 #[test]
 fn eval_method_flat_function_still_works() {
-    let val = run_ok(r#"fn main() -> Int { string_len("hello") }"#);
+    let val = run_ok(r#"fn main() -> Int { "hello".len() }"#);
     assert!(matches!(val, Value::Int(5)));
 }
 
@@ -4740,7 +4891,7 @@ fn eval_method_flat_function_still_works() {
 fn eval_method_index_then_method() {
     let val = run_ok(
         r#"fn main() -> Int {
-            let xs = list_push(list_new(), "hello")
+            let xs = List.new().push("hello")
             xs[0].len()
         }"#,
     );
@@ -5010,7 +5161,7 @@ fn eval_index_then_method() {
     let val = run_ok(
         r#"
         fn main() -> Int {
-            let xs = list_push(list_push(list_new(), "hello"), "world")
+            let xs = List.new().push("hello").push("world")
             xs[0].len()
         }
         "#,
@@ -5051,7 +5202,7 @@ fn eval_index_then_field() {
         r#"
         type Point = { x: Int, y: Int }
         fn main() -> Int {
-            let xs = list_push(list_new(), Point { x: 42, y: 7 })
+            let xs = List.new().push(Point { x: 42, y: 7 })
             xs[0].x
         }
         "#,
@@ -5093,11 +5244,11 @@ fn eval_no_method_on_string() {
 
 #[test]
 fn eval_flat_fn_and_method_both_work() {
-    // string_len("hello") and "hello".len() both return 5
+    // "hello".len() and "hello".len() both return 5
     let val = run_ok(
         r#"
         fn main() -> Int {
-            let a = string_len("hello")
+            let a = "hello".len()
             let b = "hello".len()
             a + b
         }

@@ -170,7 +170,14 @@ impl<'a> LoweringCtx<'a> {
                     .push_adt_construct(type_idx, name, arg_vals, ty);
             }
 
-            // 3. Intrinsic (has entry in functions but no body).
+            // 3. Module-level function (direct call — user-defined takes precedence).
+            if self.module_scope.functions.contains_key(&name) {
+                return self
+                    .builder
+                    .push_call(CallTarget::Direct(name), arg_vals, ty);
+            }
+
+            // 4. Intrinsic (has entry in intrinsic lookup but no body).
             if self.intrinsics.contains(&name) {
                 let name_str = name.resolve(self.interner).to_string();
                 return self
@@ -178,17 +185,42 @@ impl<'a> LoweringCtx<'a> {
                     .push_call(CallTarget::Intrinsic(name_str), arg_vals, ty);
             }
 
-            // 4. Module-level function (direct call).
-            if self.module_scope.functions.contains_key(&name) {
-                return self
-                    .builder
-                    .push_call(CallTarget::Direct(name), arg_vals, ty);
-            }
-
             // Fallback: treat as direct call (might be imported).
             return self
                 .builder
                 .push_call(CallTarget::Direct(name), arg_vals, ty);
+        }
+
+        // Module-qualified or static method call: io.println(s), List.new()
+        if let Expr::Field { base, field } = callee_expr
+            && let Expr::Path(ref path) = self.body.exprs[base]
+            && path.is_single()
+        {
+            let seg = path.segments[0];
+
+            // Module-qualified call: io.println(s), math.min(a, b)
+            if let Some(mod_fns) = self.module_scope.synthetic_modules.get(&seg)
+                && let Some(&fn_idx) = mod_fns.get(&field)
+            {
+                let arg_vals = self.lower_call_args(&args);
+                let fn_item = &self.item_tree.functions[fn_idx];
+                let name_str = fn_item.name.resolve(self.interner).to_string();
+                return self
+                    .builder
+                    .push_call(CallTarget::Intrinsic(name_str), arg_vals, ty);
+            }
+
+            // Static method call: List.new(), Map.new()
+            if let Some(&fn_idx) = self.module_scope.static_methods.get(&(seg, field)) {
+                let arg_vals = self.lower_call_args(&args);
+                let fn_item = &self.item_tree.functions[fn_idx];
+                let name_str = fn_item.name.resolve(self.interner).to_string();
+                return self
+                    .builder
+                    .push_call(CallTarget::Intrinsic(name_str), arg_vals, ty);
+            }
+
+            // Method call or field access — fall through to complex callee lowering.
         }
 
         // Complex callee expression.

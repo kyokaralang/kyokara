@@ -77,6 +77,8 @@ pub enum IntrinsicFn {
 
     // File I/O
     ReadFile,
+    ReadLine,
+    ReadStdin,
 
     // Sorting
     ListSort,
@@ -90,7 +92,10 @@ impl IntrinsicFn {
     /// All other intrinsics are pure and require no capability.
     pub fn required_capability(self) -> Option<&'static str> {
         match self {
-            IntrinsicFn::Print | IntrinsicFn::Println => Some("io"),
+            IntrinsicFn::Print
+            | IntrinsicFn::Println
+            | IntrinsicFn::ReadLine
+            | IntrinsicFn::ReadStdin => Some("io"),
             IntrinsicFn::ReadFile => Some("fs"),
             _ => None,
         }
@@ -108,6 +113,8 @@ impl IntrinsicFn {
                 | IntrinsicFn::ListFold
                 | IntrinsicFn::MapGet
                 | IntrinsicFn::ListSortBy
+                | IntrinsicFn::ParseInt
+                | IntrinsicFn::ParseFloat
         )
     }
 
@@ -483,27 +490,10 @@ impl IntrinsicFn {
                 Ok(Value::Int(*f as i64))
             }
 
-            // ── Parsing ────────────────────────────────────────────
-            IntrinsicFn::ParseInt => {
-                let Value::String(s) = &args[0] else {
-                    return Err(RuntimeError::TypeError(
-                        "parse_int expects a String argument".into(),
-                    ));
-                };
-                s.parse::<i64>()
-                    .map(Value::Int)
-                    .map_err(|e| RuntimeError::TypeError(format!("parse_int: {e}")))
-            }
-            IntrinsicFn::ParseFloat => {
-                let Value::String(s) = &args[0] else {
-                    return Err(RuntimeError::TypeError(
-                        "parse_float expects a String argument".into(),
-                    ));
-                };
-                s.parse::<f64>()
-                    .map(Value::Float)
-                    .map_err(|e| RuntimeError::TypeError(format!("parse_float: {e}")))
-            }
+            // ── Parsing (now complex — needs interpreter for Result construction) ──
+            IntrinsicFn::ParseInt | IntrinsicFn::ParseFloat => Err(RuntimeError::TypeError(
+                "parse intrinsics need interpreter context for Result construction".into(),
+            )),
 
             // ── String decomposition ──────────────────────────────
             IntrinsicFn::StringLines => {
@@ -535,6 +525,28 @@ impl IntrinsicFn {
                 std::fs::read_to_string(path)
                     .map(Value::String)
                     .map_err(|e| RuntimeError::TypeError(format!("read_file: {e}")))
+            }
+            IntrinsicFn::ReadLine => {
+                let mut line = String::new();
+                std::io::stdin()
+                    .read_line(&mut line)
+                    .map_err(|e| RuntimeError::TypeError(format!("read_line: {e}")))?;
+                // Trim trailing newline.
+                if line.ends_with('\n') {
+                    line.pop();
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                }
+                Ok(Value::String(line))
+            }
+            IntrinsicFn::ReadStdin => {
+                use std::io::Read;
+                let mut buf = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut buf)
+                    .map_err(|e| RuntimeError::TypeError(format!("read_stdin: {e}")))?;
+                Ok(Value::String(buf))
             }
 
             // ── Sorting (natural order) ───────────────────────────
@@ -629,6 +641,7 @@ impl IntrinsicFn {
             | IntrinsicFn::ListSortBy => Err(RuntimeError::TypeError(
                 "complex intrinsic called without interpreter context".into(),
             )),
+            // ReadLine and ReadStdin are handled above (they don't need interpreter context).
         }
     }
 }
@@ -737,6 +750,8 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         ),
         // File I/O
         (Name::new(interner, "read_file"), IntrinsicFn::ReadFile),
+        (Name::new(interner, "read_line"), IntrinsicFn::ReadLine),
+        (Name::new(interner, "read_stdin"), IntrinsicFn::ReadStdin),
         // Sorting
         (Name::new(interner, "list_sort"), IntrinsicFn::ListSort),
         (Name::new(interner, "list_sort_by"), IntrinsicFn::ListSortBy),
