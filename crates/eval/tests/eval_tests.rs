@@ -2902,6 +2902,55 @@ fn run_project_rejects_ambiguous_import_last_segment() {
 }
 
 #[test]
+fn run_project_import_math_module_does_not_activate_synthetic_math() {
+    // If project import resolution picks a real `math` module, synthetic `math`
+    // must not be activated from the same token.
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let math_path = dir.path().join("math.ky");
+    let mut math_file = std::fs::File::create(&math_path).unwrap();
+    writeln!(math_file, "pub fn add(a: Int, b: Int) -> Int {{ a + b }}").unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import math").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ math.min(1, 2) }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path);
+    match result {
+        Ok(_) => panic!(
+            "expected unresolved name: synthetic math should not activate when project module `math` resolves"
+        ),
+        Err(e) => {
+            let err = e.to_string();
+            assert!(
+                err.contains("import name `math` used as value") || err.contains("unresolved name"),
+                "expected import-value or unresolved-name diagnostic, got: {err}"
+            );
+        }
+    }
+}
+
+#[test]
+fn run_project_import_math_activates_synthetic_when_no_project_module_exists() {
+    // Regression guard: when no project module named `math` exists, `import math`
+    // should still activate the synthetic math module.
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import math").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ math.min(1, 2) }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path).expect("synthetic math import should work");
+    assert_eq!(result.value, Value::Int(1));
+}
+
+#[test]
 fn run_project_qualified_import_resolves_duplicate_leaf_modules() {
     // import a.math should resolve to a/math.ky even when b/math.ky exists.
     use std::io::Write;
