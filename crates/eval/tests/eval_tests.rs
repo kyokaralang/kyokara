@@ -3518,7 +3518,7 @@ fn eval_tilde_and_logical_not_distinct() {
 }
 
 // ── parse_int tests ─────────────────────────────────────────────────
-// parse_int now returns Result<Int, String>.
+// parse_int returns Result<Int, ParseError>.
 
 #[test]
 fn eval_parse_int_basic() {
@@ -3664,7 +3664,7 @@ fn eval_parse_int_overflow_fails() {
 }
 
 // ── parse_float tests ───────────────────────────────────────────────
-// parse_float now returns Result<Float, String>.
+// parse_float returns Result<Float, ParseError>.
 
 #[test]
 fn eval_parse_float_basic() {
@@ -3793,6 +3793,72 @@ fn eval_parse_float_non_numeric_fails() {
             match "abc".parse_float() {
                 Ok(_) => false
                 Err(_) => true
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Bool(true));
+}
+
+// ── ParseError variant matching tests ────────────────────────────────
+
+#[test]
+fn eval_parse_int_error_is_invalid_int() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            match "abc".parse_int() {
+                Ok(_) => false
+                Err(e) => match e {
+                    InvalidInt(_) => true
+                    InvalidFloat(_) => false
+                }
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_parse_float_error_is_invalid_float() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            match "xyz".parse_float() {
+                Ok(_) => false
+                Err(e) => match e {
+                    InvalidInt(_) => false
+                    InvalidFloat(_) => true
+                }
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_parse_int_error_carries_message() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            match "not_a_number".parse_int() {
+                Ok(_) => false
+                Err(e) => match e {
+                    InvalidInt(msg) => msg.len() > 0
+                    InvalidFloat(_) => false
+                }
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_parse_float_error_carries_message() {
+    let val = run_ok(
+        r#"fn main() -> Bool {
+            match "not_a_float".parse_float() {
+                Ok(_) => false
+                Err(e) => match e {
+                    InvalidInt(_) => false
+                    InvalidFloat(msg) => msg.len() > 0
+                }
             }
         }"#,
     );
