@@ -3,7 +3,7 @@
 //! `ModuleScope` holds module-level names (items, constructors, imports).
 //! `Resolver` combines module scope with local scope chains for full lookup.
 
-use kyokara_stdx::FxHashMap;
+use kyokara_stdx::{FxHashMap, FxHashSet};
 
 use crate::item_tree::{CapItemIdx, FnItemIdx, TypeItemIdx};
 use crate::name::Name;
@@ -51,6 +51,9 @@ pub struct ModuleScope {
     pub intrinsic_fn_lookup: FxHashMap<Name, FnItemIdx>,
     /// Cached primitive type names for method resolution.
     pub well_known_names: WellKnownNames,
+    /// Synthetic modules that have been explicitly imported (e.g., `import io`).
+    /// Module-qualified calls only resolve if the module name is in this set.
+    pub imported_modules: FxHashSet<Name>,
 }
 
 /// The full resolver used during body lowering.
@@ -119,16 +122,11 @@ impl<'a> Resolver<'a> {
             return Some(ResolvedName::Cap(idx));
         }
 
-        // 2b. Synthetic modules (io, math, fs) — available after `import io`.
-        if self.module.synthetic_modules.contains_key(&name) {
+        // 2b. Synthetic modules (io, math, fs) — only if explicitly imported.
+        if self.module.imported_modules.contains(&name)
+            && self.module.synthetic_modules.contains_key(&name)
+        {
             return Some(ResolvedName::Module(name));
-        }
-
-        // 2c. Static method types — types with static methods (List, Map)
-        // are already resolved as Type above; this is a fallback for
-        // the case where the type name needs to resolve for `.new()` calls.
-        if self.module.static_methods.keys().any(|(tn, _)| *tn == name) {
-            // Already covered by Type resolution above for builtin types.
         }
 
         // 3. Constructors
@@ -175,8 +173,10 @@ impl<'a> Resolver<'a> {
             return Some(ResolvedName::Cap(idx));
         }
 
-        // 2b. Synthetic modules.
-        if self.module.synthetic_modules.contains_key(&name) {
+        // 2b. Synthetic modules — only if explicitly imported.
+        if self.module.imported_modules.contains(&name)
+            && self.module.synthetic_modules.contains_key(&name)
+        {
             return Some(ResolvedName::Module(name));
         }
 

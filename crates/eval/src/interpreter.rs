@@ -1440,6 +1440,9 @@ impl Interpreter {
     /// Try to resolve a module-qualified call: `io.println(s)`, `math.min(a, b)`.
     /// Returns the function as a `Value::Fn` if found, `None` otherwise.
     fn resolve_module_fn(&self, module_name: Name, fn_name: Name) -> Option<Value> {
+        if !self.module_scope.imported_modules.contains(&module_name) {
+            return None;
+        }
         let mod_fns = self.module_scope.synthetic_modules.get(&module_name)?;
         let &fn_idx = mod_fns.get(&fn_name)?;
         let fn_item = &self.item_tree.functions[fn_idx];

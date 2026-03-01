@@ -7,6 +7,7 @@
 //! When salsa lands (v0.3), the incremental database will live here.
 
 pub use kyokara_hir_def::body::Body;
+pub use kyokara_hir_def::builtins::activate_synthetic_imports;
 pub use kyokara_hir_def::builtins::register_builtin_intrinsics;
 pub use kyokara_hir_def::builtins::register_builtin_methods;
 pub use kyokara_hir_def::builtins::register_builtin_types;
@@ -137,12 +138,15 @@ pub fn check_file(source: &str) -> CheckResult {
         &mut interner,
     );
     register_builtin_methods(&mut item_result.module_scope, &mut interner);
-    // In single-file mode, auto-import all synthetic modules.
     register_synthetic_modules(
         &mut item_result.tree,
         &mut item_result.module_scope,
         &mut interner,
-        true, // auto_import
+    );
+    activate_synthetic_imports(
+        &item_result.tree,
+        &mut item_result.module_scope,
+        &mut interner,
     );
     register_static_methods(&mut item_result.module_scope, &mut interner);
 
@@ -232,13 +236,15 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
             &mut interner,
         );
         register_builtin_methods(&mut item_result.module_scope, &mut interner);
-        // In project mode, synthetic modules require explicit `import io` etc.
-        // Register them but don't auto-import.
         register_synthetic_modules(
             &mut item_result.tree,
             &mut item_result.module_scope,
             &mut interner,
-            false, // not auto_import in project mode
+        );
+        activate_synthetic_imports(
+            &item_result.tree,
+            &mut item_result.module_scope,
+            &mut interner,
         );
         register_static_methods(&mut item_result.module_scope, &mut interner);
 
