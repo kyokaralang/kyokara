@@ -229,6 +229,37 @@ fn lower_if_expr() {
 }
 
 #[test]
+fn lower_else_if_expr_preserves_nested_else_branch() {
+    let src = "fn foo() -> Int { if (true) { 1 } else if (false) { 2 } else { 3 } }";
+    let (body, diags, _) = lower_fn_body(src);
+    assert!(
+        diags.is_empty(),
+        "unexpected lowering diagnostics: {diags:?}"
+    );
+
+    let inner_if_idx = match &body.exprs[body.root] {
+        Expr::Block {
+            tail: Some(tail), ..
+        } => match &body.exprs[*tail] {
+            Expr::If {
+                else_branch: Some(inner_if),
+                ..
+            } => *inner_if,
+            other => panic!("expected outer If with else branch, got {other:?}"),
+        },
+        other => panic!("expected Block, got {other:?}"),
+    };
+
+    match &body.exprs[inner_if_idx] {
+        Expr::If {
+            else_branch: Some(_),
+            ..
+        } => {}
+        other => panic!("expected nested else-if node with else branch, got {other:?}"),
+    }
+}
+
+#[test]
 fn lower_match_expr() {
     let src = r#"
 type Bool = True | False
