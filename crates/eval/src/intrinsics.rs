@@ -8,7 +8,7 @@ use kyokara_intern::Interner;
 use smallvec::SmallVec;
 
 use crate::error::RuntimeError;
-use crate::value::{MapKey, Value};
+use crate::value::{MapKey, SeqSource, Value};
 
 /// Stack-allocated argument vector for function calls.
 pub type Args = SmallVec<[Value; 4]>;
@@ -32,14 +32,17 @@ pub enum IntrinsicFn {
     ListIsEmpty,
     ListReverse,
     ListConcat,
-    ListMap,
-    ListFilter,
-    ListFold,
-    ListRange,
-    ListEnumerate,
-    ListZip,
-    ListChunks,
-    ListWindows,
+    ListSeq,
+    SeqRange,
+    SeqMap,
+    SeqFilter,
+    SeqFold,
+    SeqEnumerate,
+    SeqZip,
+    SeqChunks,
+    SeqWindows,
+    SeqCount,
+    SeqToList,
 
     // Map<K,V>
     MapNew,
@@ -137,11 +140,15 @@ impl IntrinsicFn {
             self,
             IntrinsicFn::ListGet
                 | IntrinsicFn::ListHead
-                | IntrinsicFn::ListMap
-                | IntrinsicFn::ListFilter
-                | IntrinsicFn::ListFold
-                | IntrinsicFn::ListEnumerate
-                | IntrinsicFn::ListZip
+                | IntrinsicFn::SeqMap
+                | IntrinsicFn::SeqFilter
+                | IntrinsicFn::SeqFold
+                | IntrinsicFn::SeqEnumerate
+                | IntrinsicFn::SeqZip
+                | IntrinsicFn::SeqChunks
+                | IntrinsicFn::SeqWindows
+                | IntrinsicFn::SeqCount
+                | IntrinsicFn::SeqToList
                 | IntrinsicFn::MapGet
                 | IntrinsicFn::ListSortBy
                 | IntrinsicFn::OptionUnwrapOr
@@ -270,74 +277,27 @@ impl IntrinsicFn {
                 result.extend(b.iter().cloned());
                 Ok(Value::list(result))
             }
-            IntrinsicFn::ListRange => {
+            IntrinsicFn::ListSeq => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError("list_seq expects a List".into()));
+                };
+                Ok(Value::seq_source(SeqSource::FromList(xs.clone())))
+            }
+            IntrinsicFn::SeqRange => {
                 let Value::Int(start) = &args[0] else {
                     return Err(RuntimeError::TypeError(
-                        "list_range expects Int arguments".into(),
+                        "seq_range expects Int arguments".into(),
                     ));
                 };
                 let Value::Int(end) = &args[1] else {
                     return Err(RuntimeError::TypeError(
-                        "list_range expects Int arguments".into(),
+                        "seq_range expects Int arguments".into(),
                     ));
                 };
-                if start >= end {
-                    return Ok(Value::list(Vec::new()));
-                }
-                let range_len = usize::try_from(i128::from(*end) - i128::from(*start)).unwrap_or(0);
-                let mut values = Vec::with_capacity(range_len);
-                for value in *start..*end {
-                    values.push(Value::Int(value));
-                }
-                Ok(Value::list(values))
-            }
-            IntrinsicFn::ListChunks => {
-                let Value::List(xs) = &args[0] else {
-                    return Err(RuntimeError::TypeError("list_chunks expects a List".into()));
-                };
-                let Value::Int(n) = &args[1] else {
-                    return Err(RuntimeError::TypeError(
-                        "list_chunks expects an Int chunk size".into(),
-                    ));
-                };
-                if *n <= 0 {
-                    return Err(RuntimeError::TypeError(
-                        "list_chunks: chunk size must be > 0".into(),
-                    ));
-                }
-                let chunk_size = *n as usize;
-                let chunk_count = xs.len().div_ceil(chunk_size);
-                let mut chunks = Vec::with_capacity(chunk_count);
-                for chunk in xs.chunks(chunk_size) {
-                    chunks.push(Value::list(chunk.to_vec()));
-                }
-                Ok(Value::list(chunks))
-            }
-            IntrinsicFn::ListWindows => {
-                let Value::List(xs) = &args[0] else {
-                    return Err(RuntimeError::TypeError(
-                        "list_windows expects a List".into(),
-                    ));
-                };
-                let Value::Int(n) = &args[1] else {
-                    return Err(RuntimeError::TypeError(
-                        "list_windows expects an Int window size".into(),
-                    ));
-                };
-                if *n <= 0 {
-                    return Err(RuntimeError::TypeError(
-                        "list_windows: window size must be > 0".into(),
-                    ));
-                }
-                let window_size = *n as usize;
-                if window_size > xs.len() {
-                    return Ok(Value::list(Vec::new()));
-                }
-                let mut windows = Vec::with_capacity(xs.len() - window_size + 1);
-                for window in xs.windows(window_size) {
-                    windows.push(Value::list(window.to_vec()));
-                }
-                Ok(Value::list(windows))
+                Ok(Value::seq_source(SeqSource::Range {
+                    start: *start,
+                    end: *end,
+                }))
             }
 
             // ── Map (simple) ─────────────────────────────────────
@@ -398,13 +358,13 @@ impl IntrinsicFn {
                 let Value::Map(entries) = &args[0] else {
                     return Err(RuntimeError::TypeError("map_keys expects a Map".into()));
                 };
-                Ok(Value::list(entries.keys().map(MapKey::to_value).collect()))
+                Ok(Value::seq_source(SeqSource::MapKeys(entries.clone())))
             }
             IntrinsicFn::MapValues => {
                 let Value::Map(entries) = &args[0] else {
                     return Err(RuntimeError::TypeError("map_values expects a Map".into()));
                 };
-                Ok(Value::list(entries.values().cloned().collect()))
+                Ok(Value::seq_source(SeqSource::MapValues(entries.clone())))
             }
             IntrinsicFn::MapIsEmpty => {
                 let Value::Map(entries) = &args[0] else {
@@ -473,7 +433,7 @@ impl IntrinsicFn {
                 let Value::Set(entries) = &args[0] else {
                     return Err(RuntimeError::TypeError("set_values expects a Set".into()));
                 };
-                Ok(Value::list(entries.iter().map(MapKey::to_value).collect()))
+                Ok(Value::seq_source(SeqSource::SetValues(entries.clone())))
             }
 
             // ── String ops ───────────────────────────────────────
@@ -543,11 +503,10 @@ impl IntrinsicFn {
                         "string_split expects String arguments".into(),
                     ));
                 };
-                let parts: Vec<Value> = s
-                    .split(delim.as_str())
-                    .map(|p| Value::String(p.to_string()))
-                    .collect();
-                Ok(Value::list(parts))
+                Ok(Value::seq_source(SeqSource::StringSplit {
+                    s: s.clone(),
+                    delim: delim.clone(),
+                }))
             }
             IntrinsicFn::StringSubstring => {
                 let Value::String(s) = &args[0] else {
@@ -732,8 +691,7 @@ impl IntrinsicFn {
                         "string_lines expects a String argument".into(),
                     ));
                 };
-                let lines: Vec<Value> = s.lines().map(|l| Value::String(l.to_string())).collect();
-                Ok(Value::list(lines))
+                Ok(Value::seq_source(SeqSource::StringLines { s: s.clone() }))
             }
             IntrinsicFn::StringChars => {
                 let Value::String(s) = &args[0] else {
@@ -741,8 +699,7 @@ impl IntrinsicFn {
                         "string_chars expects a String argument".into(),
                     ));
                 };
-                let chars: Vec<Value> = s.chars().map(Value::Char).collect();
-                Ok(Value::list(chars))
+                Ok(Value::seq_source(SeqSource::StringChars { s: s.clone() }))
             }
 
             // ── File I/O ──────────────────────────────────────────
@@ -965,11 +922,15 @@ impl IntrinsicFn {
             // ── Complex (intercepted by interpreter) ─────────────
             IntrinsicFn::ListGet
             | IntrinsicFn::ListHead
-            | IntrinsicFn::ListMap
-            | IntrinsicFn::ListFilter
-            | IntrinsicFn::ListFold
-            | IntrinsicFn::ListEnumerate
-            | IntrinsicFn::ListZip
+            | IntrinsicFn::SeqMap
+            | IntrinsicFn::SeqFilter
+            | IntrinsicFn::SeqFold
+            | IntrinsicFn::SeqEnumerate
+            | IntrinsicFn::SeqZip
+            | IntrinsicFn::SeqChunks
+            | IntrinsicFn::SeqWindows
+            | IntrinsicFn::SeqCount
+            | IntrinsicFn::SeqToList
             | IntrinsicFn::MapGet
             | IntrinsicFn::ListSortBy => Err(RuntimeError::TypeError(
                 "complex intrinsic called without interpreter context".into(),
@@ -1009,20 +970,21 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
             IntrinsicFn::ListReverse,
         ),
         (Name::new(interner, "list_concat"), IntrinsicFn::ListConcat),
-        (Name::new(interner, "list_map"), IntrinsicFn::ListMap),
-        (Name::new(interner, "list_filter"), IntrinsicFn::ListFilter),
-        (Name::new(interner, "list_fold"), IntrinsicFn::ListFold),
-        (Name::new(interner, "list_range"), IntrinsicFn::ListRange),
+        (Name::new(interner, "list_seq"), IntrinsicFn::ListSeq),
+        // Seq
+        (Name::new(interner, "seq_range"), IntrinsicFn::SeqRange),
+        (Name::new(interner, "seq_map"), IntrinsicFn::SeqMap),
+        (Name::new(interner, "seq_filter"), IntrinsicFn::SeqFilter),
+        (Name::new(interner, "seq_fold"), IntrinsicFn::SeqFold),
         (
-            Name::new(interner, "list_enumerate"),
-            IntrinsicFn::ListEnumerate,
+            Name::new(interner, "seq_enumerate"),
+            IntrinsicFn::SeqEnumerate,
         ),
-        (Name::new(interner, "list_zip"), IntrinsicFn::ListZip),
-        (Name::new(interner, "list_chunks"), IntrinsicFn::ListChunks),
-        (
-            Name::new(interner, "list_windows"),
-            IntrinsicFn::ListWindows,
-        ),
+        (Name::new(interner, "seq_zip"), IntrinsicFn::SeqZip),
+        (Name::new(interner, "seq_chunks"), IntrinsicFn::SeqChunks),
+        (Name::new(interner, "seq_windows"), IntrinsicFn::SeqWindows),
+        (Name::new(interner, "seq_count"), IntrinsicFn::SeqCount),
+        (Name::new(interner, "seq_to_list"), IntrinsicFn::SeqToList),
         // Map
         (Name::new(interner, "map_new"), IntrinsicFn::MapNew),
         (Name::new(interner, "map_insert"), IntrinsicFn::MapInsert),
@@ -1185,6 +1147,7 @@ mod tests {
     use smallvec::smallvec;
 
     use super::*;
+    use crate::value::SeqPlan;
 
     #[test]
     fn list_push_detaches_when_storage_is_shared() {
@@ -1557,52 +1520,43 @@ mod tests {
     }
 
     #[test]
-    fn list_chunks_preallocates_outer_capacity() {
-        let input = Value::list((0..5).map(Value::Int).collect());
-        let chunks = IntrinsicFn::ListChunks
-            .call(smallvec![input, Value::Int(2)])
-            .expect("list_chunks should succeed");
-
-        let Value::List(chunk_values) = chunks else {
-            panic!("expected outer list");
+    fn seq_range_returns_lazy_source_plan() {
+        let range = IntrinsicFn::SeqRange
+            .call(smallvec![Value::Int(0), Value::Int(8_192)])
+            .expect("seq_range should succeed");
+        let Value::Seq(plan) = range else {
+            panic!("expected seq value");
         };
-        assert_eq!(chunk_values.len(), 3);
-        assert_eq!(
-            chunk_values.capacity(),
-            3,
-            "list_chunks should reserve exactly the derived chunk count"
-        );
+        match plan.as_ref() {
+            SeqPlan::Source(SeqSource::Range { start, end }) => {
+                assert_eq!((*start, *end), (0, 8_192));
+            }
+            other => panic!("expected range source, got {other:?}"),
+        }
     }
 
     #[test]
-    fn list_builders_handle_large_inputs() {
-        let range = IntrinsicFn::ListRange
-            .call(smallvec![Value::Int(0), Value::Int(8_192)])
-            .expect("list_range should succeed");
-        let Value::List(range_values) = range else {
-            panic!("expected range list");
+    fn list_seq_reuses_list_storage() {
+        let input = Value::list((0..5).map(Value::Int).collect());
+        let input_ptr = match &input {
+            Value::List(xs) => xs.clone(),
+            _ => panic!("expected list input"),
         };
-        assert_eq!(range_values.len(), 8_192);
-        assert_eq!(range_values.first(), Some(&Value::Int(0)));
-        assert_eq!(range_values.last(), Some(&Value::Int(8_191)));
 
-        let chunks = IntrinsicFn::ListChunks
-            .call(smallvec![
-                Value::List(range_values.clone()),
-                Value::Int(128)
-            ])
-            .expect("list_chunks should succeed");
-        let Value::List(chunk_values) = chunks else {
-            panic!("expected chunk list");
+        let seq = IntrinsicFn::ListSeq
+            .call(smallvec![input])
+            .expect("list_seq should succeed");
+        let Value::Seq(plan) = seq else {
+            panic!("expected seq value");
         };
-        assert_eq!(chunk_values.len(), 64);
-
-        let windows = IntrinsicFn::ListWindows
-            .call(smallvec![Value::List(range_values), Value::Int(64)])
-            .expect("list_windows should succeed");
-        let Value::List(window_values) = windows else {
-            panic!("expected window list");
-        };
-        assert_eq!(window_values.len(), 8_129);
+        match plan.as_ref() {
+            SeqPlan::Source(SeqSource::FromList(xs)) => {
+                assert!(
+                    Rc::ptr_eq(xs, &input_ptr),
+                    "list_seq should reference original list storage"
+                );
+            }
+            other => panic!("expected from-list source, got {other:?}"),
+        }
     }
 }

@@ -81,6 +81,7 @@ pub enum Value {
         type_idx: Option<TypeItemIdx>,
     },
     List(Rc<Vec<Value>>),
+    Seq(Rc<SeqPlan>),
     Map(Rc<IndexMap<MapKey, Value>>),
     Set(Rc<IndexSet<MapKey>>),
     Fn(Box<FnValue>),
@@ -102,6 +103,48 @@ pub enum FnValue {
         type_idx: TypeItemIdx,
         variant_idx: usize,
         arity: usize,
+    },
+}
+
+/// Source generator for a lazy sequence.
+#[derive(Debug, Clone)]
+pub enum SeqSource {
+    Range { start: i64, end: i64 },
+    FromList(Rc<Vec<Value>>),
+    StringSplit { s: String, delim: String },
+    StringLines { s: String },
+    StringChars { s: String },
+    MapKeys(Rc<IndexMap<MapKey, Value>>),
+    MapValues(Rc<IndexMap<MapKey, Value>>),
+    SetValues(Rc<IndexSet<MapKey>>),
+}
+
+/// Lazy, re-iterable sequence plan.
+#[derive(Debug, Clone)]
+pub enum SeqPlan {
+    Source(SeqSource),
+    Map {
+        input: Rc<SeqPlan>,
+        f: Value,
+    },
+    Filter {
+        input: Rc<SeqPlan>,
+        f: Value,
+    },
+    Enumerate {
+        input: Rc<SeqPlan>,
+    },
+    Zip {
+        left: Rc<SeqPlan>,
+        right: Rc<SeqPlan>,
+    },
+    Chunks {
+        input: Rc<SeqPlan>,
+        n: i64,
+    },
+    Windows {
+        input: Rc<SeqPlan>,
+        n: i64,
     },
 }
 
@@ -128,6 +171,8 @@ impl PartialEq for Value {
             ) => t1 == t2 && v1 == v2 && f1 == f2,
             (Value::Record { fields: f1, .. }, Value::Record { fields: f2, .. }) => f1 == f2,
             (Value::List(a), Value::List(b)) => a == b,
+            // Sequences are lazy plans; do not force-evaluate for equality.
+            (Value::Seq(_), Value::Seq(_)) => false,
             (Value::Map(a), Value::Map(b)) => a == b,
             (Value::Set(a), Value::Set(b)) => a == b,
             // Functions are never equal.
@@ -142,6 +187,14 @@ impl Eq for Value {}
 impl Value {
     pub fn list(items: Vec<Value>) -> Self {
         Value::List(Rc::new(items))
+    }
+
+    pub fn seq_source(source: SeqSource) -> Self {
+        Value::Seq(Rc::new(SeqPlan::Source(source)))
+    }
+
+    pub fn seq_plan(plan: SeqPlan) -> Self {
+        Value::Seq(Rc::new(plan))
     }
 
     pub fn map(entries: IndexMap<MapKey, Value>) -> Self {
@@ -181,6 +234,7 @@ impl Value {
                 let fs: Vec<String> = items.iter().map(|v| v.display(interner)).collect();
                 format!("[{}]", fs.join(", "))
             }
+            Value::Seq(_) => "<seq>".to_string(),
             Value::Map(entries) => {
                 let fs: Vec<String> = entries
                     .iter()

@@ -544,12 +544,12 @@ a canonical API surface: method calls for value-owned behavior, module-qualified
 for no-owner utilities and effects, and type-namespaced constructors.
 
 Canonical visibility matrix:
-* Prelude builtin value types (no import): `List.new()`, `Map.new()`, `Set.new()`, value methods.
+* Prelude builtin value types (no import): `List.new()`, `Seq.range()`, `Map.new()`, `Set.new()`, value methods.
 * Pure no-owner utilities (imported module): `math.*`
 * Effectful utilities (imported capability modules): `io.*`, `fs.*`
 * Internal intrinsic IDs (`list_new`, `map_insert`, etc.) are implementation detail only.
 
-Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
+Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `Seq<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
 injected as synthetic types before type-checking. Synthetic modules (`io`, `math`, `fs`)
 require explicit `import io` / `import math` / `import fs` in all modes.
 Zero intrinsic free functions exist in user scope.
@@ -572,21 +572,23 @@ while `io`/`fs` are module namespaces for no-owner/effectful operations.
 * `ParseError` — builtin ADT (`InvalidInt(String) | InvalidFloat(String)`), used as error type for `parse_int`/`parse_float` ✓
 * `List<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<Vec<Value>>`) ✓
   * Constructor: `List.new()`
-  * Static helpers: `List.range(start, end)` returns half-open ascending range `[start, end)` (empty when `start >= end`)
-  * Methods: `xs.push(v)`, `xs.len()`, `xs.get(i)` → `Option<T>`, `xs.head()` → `Option<T>`, `xs.tail()`, `xs.is_empty()`, `xs.reverse()`, `xs.concat(ys)`
-  * Higher-order: `xs.map(f)`, `xs.filter(f)`, `xs.fold(init, f)`, `xs.sort()`, `xs.sort_by(f)`
-  * Iteration ergonomics: `xs.enumerate()` → `List<{ index: Int, value: T }>`, `xs.zip(ys)` → `List<{ left: T, right: U }>`, `xs.chunks(n)` → `List<List<T>>`, `xs.windows(n)` → `List<List<T>>` (`chunks/windows` require `n > 0`)
+  * Methods (storage/random-access): `xs.push(v)`, `xs.len()`, `xs.get(i)` → `Option<T>`, `xs.head()` → `Option<T>`, `xs.tail()`, `xs.is_empty()`, `xs.reverse()`, `xs.concat(ys)`, `xs.sort()`, `xs.sort_by(f)`, `xs.binary_search(x)`, `xs.seq()` → `Seq<T>`
   * Search helper: `xs.binary_search(x)` → `Int` with Rust/Java-style insertion contract:
     found index returns `>= 0`; missing element returns `-(insertion_point + 1)`.
     `insertion_point` is where `x` would be inserted to keep sorted order.
     Only naturally orderable element types are allowed (same as `xs.sort()`).
+* `Seq<T>` — opaque builtin traversal type (lazy, re-iterable) ✓
+  * Static helper: `Seq.range(start, end)` returns half-open ascending range `[start, end)` (empty when `start >= end`)
+  * Transforms: `s.map(f)`, `s.filter(f)`, `s.enumerate()` → `Seq<{ index: Int, value: T }>`, `s.zip(other)` → `Seq<{ left: T, right: U }>`, `s.chunks(n)` → `Seq<List<T>>`, `s.windows(n)` → `Seq<List<T>>` (`chunks/windows` require `n > 0`)
+  * Terminals: `s.fold(init, f)`, `s.count()`, `s.to_list()`
+  * Evaluation model: each terminal re-runs the pipeline from source (no single-use consumption state)
 * `Map<K, V>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<IndexMap<MapKey, Value>>`, insertion-order-preserving hash map, O(1) lookup). Keys must be hashable types (Int, String, Char, Bool, Unit); invalid key types are rejected at compile time for typed map operations (E0024). `m.keys()` and `m.values()` return deterministic insertion order. ✓
   * Constructor: `Map.new()`
-  * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()` → `List<K>`, `m.values()` → `List<V>`, `m.is_empty()`
+  * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()` → `Seq<K>`, `m.values()` → `Seq<V>`, `m.is_empty()`
 * `Set<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<IndexSet<MapKey>>`, insertion-order-preserving hash set). Elements must be hashable types (Int, String, Char, Bool, Unit); invalid element types are rejected at compile time for typed set operations (E0026). `s.values()` returns deterministic insertion order. ✓
   * Constructor: `Set.new()`
-  * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()` → `List<T>`
-* String methods ✓ — `s.len()` (char count), `s.contains(t)`, `s.starts_with(t)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)` → `List<String>`, `s.substring(a, b)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()`, `s.chars()`, `s.parse_int()` → `Result<Int, ParseError>`, `s.parse_float()` → `Result<Float, ParseError>`
+  * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()` → `Seq<T>`
+* String methods ✓ — `s.len()` (char count), `s.contains(t)`, `s.starts_with(t)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)` → `Seq<String>`, `s.substring(a, b)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()` → `Seq<String>`, `s.chars()` → `Seq<Char>`, `s.parse_int()` → `Result<Int, ParseError>`, `s.parse_float()` → `Result<Float, ParseError>`
 * Char methods ✓ — `c.to_string()`
 * Int methods ✓ — `n.abs()`, `n.to_string()`, `n.to_float()`
 * Float methods ✓ — `f.abs()`, `f.to_int()`

@@ -29,6 +29,7 @@ fn core_hidden_type_name(interner: &mut Interner, core: CoreType) -> Name {
         CoreType::Option => "$core_Option",
         CoreType::Result => "$core_Result",
         CoreType::List => "$core_List",
+        CoreType::Seq => "$core_Seq",
         CoreType::Map => "$core_Map",
         CoreType::Set => "$core_Set",
         CoreType::ParseError => "$core_ParseError",
@@ -41,6 +42,7 @@ fn core_public_type_name(interner: &mut Interner, core: CoreType) -> Name {
         CoreType::Option => "Option",
         CoreType::Result => "Result",
         CoreType::List => "List",
+        CoreType::Seq => "Seq",
         CoreType::Map => "Map",
         CoreType::Set => "Set",
         CoreType::ParseError => "ParseError",
@@ -82,7 +84,7 @@ fn register_core_type_item(
     (idx, type_name)
 }
 
-/// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `Map<K,V>`, `Set<T>`, and
+/// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `Seq<T>`, `Map<K,V>`, `Set<T>`, and
 /// `ParseError` into the item tree
 /// and module scope.
 ///
@@ -97,6 +99,7 @@ pub fn register_builtin_types(
     register_option(tree, scope, interner);
     register_result(tree, scope, interner);
     register_list(tree, scope, interner);
+    register_seq(tree, scope, interner);
     register_map(tree, scope, interner);
     register_set(tree, scope, interner);
     register_parse_error(tree, scope, interner);
@@ -145,6 +148,19 @@ fn register_list(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut In
         scope,
         interner,
         CoreType::List,
+        vec![t_name],
+        TypeDefKind::Adt { variants: vec![] },
+    );
+}
+
+/// `Seq<T>` — opaque builtin type (no variants, no pattern matching).
+fn register_seq(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
+    let t_name = Name::new(interner, "T");
+    let _ = register_core_type_item(
+        tree,
+        scope,
+        interner,
+        CoreType::Seq,
         vec![t_name],
         TypeDefKind::Adt { variants: vec![] },
     );
@@ -288,6 +304,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         bool_: Some(Name::new(interner, "Bool")),
         char_: Some(Name::new(interner, "Char")),
         list: scope.core_types.get(CoreType::List).map(|t| t.type_name),
+        seq: scope.core_types.get(CoreType::Seq).map(|t| t.type_name),
         map: scope.core_types.get(CoreType::Map).map(|t| t.type_name),
         set: scope.core_types.get(CoreType::Set).map(|t| t.type_name),
     };
@@ -378,17 +395,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ),
         ("list_reverse", ReceiverKey::Core(CoreType::List), "reverse"),
         ("list_concat", ReceiverKey::Core(CoreType::List), "concat"),
-        ("list_map", ReceiverKey::Core(CoreType::List), "map"),
-        ("list_filter", ReceiverKey::Core(CoreType::List), "filter"),
-        ("list_fold", ReceiverKey::Core(CoreType::List), "fold"),
-        (
-            "list_enumerate",
-            ReceiverKey::Core(CoreType::List),
-            "enumerate",
-        ),
-        ("list_zip", ReceiverKey::Core(CoreType::List), "zip"),
-        ("list_chunks", ReceiverKey::Core(CoreType::List), "chunks"),
-        ("list_windows", ReceiverKey::Core(CoreType::List), "windows"),
+        ("list_seq", ReceiverKey::Core(CoreType::List), "seq"),
         ("list_sort", ReceiverKey::Core(CoreType::List), "sort"),
         ("list_sort_by", ReceiverKey::Core(CoreType::List), "sort_by"),
         (
@@ -396,6 +403,20 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             ReceiverKey::Core(CoreType::List),
             "binary_search",
         ),
+        // Seq methods
+        ("seq_map", ReceiverKey::Core(CoreType::Seq), "map"),
+        ("seq_filter", ReceiverKey::Core(CoreType::Seq), "filter"),
+        ("seq_fold", ReceiverKey::Core(CoreType::Seq), "fold"),
+        (
+            "seq_enumerate",
+            ReceiverKey::Core(CoreType::Seq),
+            "enumerate",
+        ),
+        ("seq_zip", ReceiverKey::Core(CoreType::Seq), "zip"),
+        ("seq_chunks", ReceiverKey::Core(CoreType::Seq), "chunks"),
+        ("seq_windows", ReceiverKey::Core(CoreType::Seq), "windows"),
+        ("seq_count", ReceiverKey::Core(CoreType::Seq), "count"),
+        ("seq_to_list", ReceiverKey::Core(CoreType::Seq), "to_list"),
         // Map methods
         ("map_insert", ReceiverKey::Core(CoreType::Map), "insert"),
         ("map_get", ReceiverKey::Core(CoreType::Map), "get"),
@@ -673,7 +694,7 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     // (intrinsic_fn_name, owner_key, static_method_name)
     let mappings: &[(&str, StaticOwnerKey, &str)] = &[
         ("list_new", StaticOwnerKey::Core(CoreType::List), "new"),
-        ("list_range", StaticOwnerKey::Core(CoreType::List), "range"),
+        ("seq_range", StaticOwnerKey::Core(CoreType::Seq), "range"),
         ("map_new", StaticOwnerKey::Core(CoreType::Map), "new"),
         ("set_new", StaticOwnerKey::Core(CoreType::Set), "new"),
     ];
@@ -754,6 +775,11 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         .get(CoreType::List)
         .map(|info| info.type_name)
         .unwrap_or_else(|| Name::new(interner, "List"));
+    let seq_core_name = scope
+        .core_types
+        .get(CoreType::Seq)
+        .map(|info| info.type_name)
+        .unwrap_or_else(|| Name::new(interner, "Seq"));
     let map_core_name = scope
         .core_types
         .get(CoreType::Map)
@@ -814,32 +840,36 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         path: Path::single(list_core_name),
         args: vec![t_ref.clone()],
     };
-    let list_u = TypeRef::Path {
-        path: Path::single(list_core_name),
+    let seq_t = TypeRef::Path {
+        path: Path::single(seq_core_name),
+        args: vec![t_ref.clone()],
+    };
+    let seq_u = TypeRef::Path {
+        path: Path::single(seq_core_name),
         args: vec![u_ref.clone()],
     };
-    let list_list_t = TypeRef::Path {
-        path: Path::single(list_core_name),
+    let seq_list_t = TypeRef::Path {
+        path: Path::single(seq_core_name),
         args: vec![list_t.clone()],
     };
-    let list_k = TypeRef::Path {
-        path: Path::single(list_core_name),
+    let seq_k = TypeRef::Path {
+        path: Path::single(seq_core_name),
         args: vec![k_ref.clone()],
     };
-    let list_v = TypeRef::Path {
-        path: Path::single(list_core_name),
+    let seq_v = TypeRef::Path {
+        path: Path::single(seq_core_name),
         args: vec![v_ref.clone()],
     };
-    let list_string = TypeRef::Path {
-        path: Path::single(list_core_name),
+    let seq_string = TypeRef::Path {
+        path: Path::single(seq_core_name),
         args: vec![string_ty.clone()],
     };
-    let list_char = TypeRef::Path {
-        path: Path::single(list_core_name),
+    let seq_char = TypeRef::Path {
+        path: Path::single(seq_core_name),
         args: vec![char_ty.clone()],
     };
-    let list_int = TypeRef::Path {
-        path: Path::single(list_core_name),
+    let seq_int = TypeRef::Path {
+        path: Path::single(seq_core_name),
         args: vec![int_ty.clone()],
     };
     let indexed_t = TypeRef::Record {
@@ -848,8 +878,8 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             (Name::new(interner, "value"), t_ref.clone()),
         ],
     };
-    let list_indexed_t = TypeRef::Path {
-        path: Path::single(list_core_name),
+    let seq_indexed_t = TypeRef::Path {
+        path: Path::single(seq_core_name),
         args: vec![indexed_t],
     };
     let pair_tu = TypeRef::Record {
@@ -858,8 +888,8 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             (Name::new(interner, "right"), u_ref.clone()),
         ],
     };
-    let list_pair_tu = TypeRef::Path {
-        path: Path::single(list_core_name),
+    let seq_pair_tu = TypeRef::Path {
+        path: Path::single(seq_core_name),
         args: vec![pair_tu],
     };
     let map_kv = TypeRef::Path {
@@ -1022,73 +1052,97 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![("a", list_t.clone()), ("b", list_t.clone())],
             list_t.clone(),
         ),
-        // list_map<T, U>(xs: List<T>, f: fn(T) -> U) -> List<U>
+        // list_seq<T>(xs: List<T>) -> Seq<T>
         mk_intrinsic(
             interner,
-            "list_map",
-            vec![t_name, u_name],
-            vec![("xs", list_t.clone()), ("f", fn_t_to_u.clone())],
-            list_u.clone(),
-        ),
-        // list_filter<T>(xs: List<T>, f: fn(T) -> Bool) -> List<T>
-        mk_intrinsic(
-            interner,
-            "list_filter",
+            "list_seq",
             vec![t_name],
-            vec![("xs", list_t.clone()), ("f", fn_t_to_bool.clone())],
-            list_t.clone(),
+            vec![("xs", list_t.clone())],
+            seq_t.clone(),
         ),
-        // list_fold<T, U>(xs: List<T>, init: U, f: fn(U, T) -> U) -> U
+        // seq_map<T, U>(s: Seq<T>, f: fn(T) -> U) -> Seq<U>
         mk_intrinsic(
             interner,
-            "list_fold",
+            "seq_map",
+            vec![t_name, u_name],
+            vec![("s", seq_t.clone()), ("f", fn_t_to_u.clone())],
+            seq_u.clone(),
+        ),
+        // seq_filter<T>(s: Seq<T>, f: fn(T) -> Bool) -> Seq<T>
+        mk_intrinsic(
+            interner,
+            "seq_filter",
+            vec![t_name],
+            vec![("s", seq_t.clone()), ("f", fn_t_to_bool.clone())],
+            seq_t.clone(),
+        ),
+        // seq_fold<T, U>(s: Seq<T>, init: U, f: fn(U, T) -> U) -> U
+        mk_intrinsic(
+            interner,
+            "seq_fold",
             vec![t_name, u_name],
             vec![
-                ("xs", list_t.clone()),
+                ("s", seq_t.clone()),
                 ("init", u_ref.clone()),
                 ("f", fn_ut_to_u.clone()),
             ],
             u_ref.clone(),
         ),
-        // list_range(start: Int, end: Int) -> List<Int>
+        // seq_range(start: Int, end: Int) -> Seq<Int>
         mk_intrinsic(
             interner,
-            "list_range",
+            "seq_range",
             vec![],
             vec![("start", int_ty.clone()), ("end", int_ty.clone())],
-            list_int,
+            seq_int,
         ),
-        // list_enumerate<T>(xs: List<T>) -> List<{ index: Int, value: T }>
+        // seq_enumerate<T>(s: Seq<T>) -> Seq<{ index: Int, value: T }>
         mk_intrinsic(
             interner,
-            "list_enumerate",
+            "seq_enumerate",
             vec![t_name],
-            vec![("xs", list_t.clone())],
-            list_indexed_t,
+            vec![("s", seq_t.clone())],
+            seq_indexed_t,
         ),
-        // list_zip<T, U>(xs: List<T>, ys: List<U>) -> List<{ left: T, right: U }>
+        // seq_zip<T, U>(s: Seq<T>, other: Seq<U>) -> Seq<{ left: T, right: U }>
         mk_intrinsic(
             interner,
-            "list_zip",
+            "seq_zip",
             vec![t_name, u_name],
-            vec![("xs", list_t.clone()), ("ys", list_u.clone())],
-            list_pair_tu,
+            vec![("s", seq_t.clone()), ("other", seq_u.clone())],
+            seq_pair_tu,
         ),
-        // list_chunks<T>(xs: List<T>, n: Int) -> List<List<T>>
+        // seq_chunks<T>(s: Seq<T>, n: Int) -> Seq<List<T>>
         mk_intrinsic(
             interner,
-            "list_chunks",
+            "seq_chunks",
             vec![t_name],
-            vec![("xs", list_t.clone()), ("n", int_ty.clone())],
-            list_list_t.clone(),
+            vec![("s", seq_t.clone()), ("n", int_ty.clone())],
+            seq_list_t.clone(),
         ),
-        // list_windows<T>(xs: List<T>, n: Int) -> List<List<T>>
+        // seq_windows<T>(s: Seq<T>, n: Int) -> Seq<List<T>>
         mk_intrinsic(
             interner,
-            "list_windows",
+            "seq_windows",
             vec![t_name],
-            vec![("xs", list_t.clone()), ("n", int_ty.clone())],
-            list_list_t,
+            vec![("s", seq_t.clone()), ("n", int_ty.clone())],
+            seq_list_t.clone(),
+        ),
+        // seq_count<T>(s: Seq<T>) -> Int
+        mk_intrinsic(
+            interner,
+            "seq_count",
+            vec![t_name],
+            vec![("s", seq_t.clone())],
+            int_ty.clone(),
+        ),
+        // seq_to_list<T>(s: Seq<T>) -> List<T>
+        mk_intrinsic(
+            interner,
+            "seq_to_list",
+            vec![t_name],
+            vec![("s", seq_t.clone())],
+            list_t.clone(),
         ),
         // ── Map<K, V> ───────────────────────────────────────────
         // map_new<K, V>() -> Map<K, V>
@@ -1143,21 +1197,21 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![("m", map_kv.clone())],
             int_ty.clone(),
         ),
-        // map_keys<K, V>(m: Map<K,V>) -> List<K>
+        // map_keys<K, V>(m: Map<K,V>) -> Seq<K>
         mk_intrinsic(
             interner,
             "map_keys",
             vec![k_name, v_name],
             vec![("m", map_kv.clone())],
-            list_k.clone(),
+            seq_k.clone(),
         ),
-        // map_values<K, V>(m: Map<K,V>) -> List<V>
+        // map_values<K, V>(m: Map<K,V>) -> Seq<V>
         mk_intrinsic(
             interner,
             "map_values",
             vec![k_name, v_name],
             vec![("m", map_kv.clone())],
-            list_v.clone(),
+            seq_v.clone(),
         ),
         // map_is_empty<K, V>(m: Map<K,V>) -> Bool
         mk_intrinsic(
@@ -1210,13 +1264,13 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![("s", set_t.clone())],
             bool_ty.clone(),
         ),
-        // set_values<T>(s: Set<T>) -> List<T>
+        // set_values<T>(s: Set<T>) -> Seq<T>
         mk_intrinsic(
             interner,
             "set_values",
             vec![t_name],
             vec![("s", set_t.clone())],
-            list_t.clone(),
+            seq_t.clone(),
         ),
         // result_unwrap_or<T, E>(r: Result<T, E>, fallback: T) -> T
         mk_intrinsic(
@@ -1339,13 +1393,13 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![("s", string_ty.clone())],
             string_ty.clone(),
         ),
-        // string_split(s: String, delim: String) -> List<String>
+        // string_split(s: String, delim: String) -> Seq<String>
         mk_intrinsic(
             interner,
             "string_split",
             vec![],
             vec![("s", string_ty.clone()), ("delim", string_ty.clone())],
-            list_string.clone(),
+            seq_string.clone(),
         ),
         // string_substring(s: String, start: Int, end: Int) -> String
         mk_intrinsic(
@@ -1502,21 +1556,21 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             )
         },
         // ── String decomposition ─────────────────────────────────
-        // string_lines(s: String) -> List<String>
+        // string_lines(s: String) -> Seq<String>
         mk_intrinsic(
             interner,
             "string_lines",
             vec![],
             vec![("s", string_ty.clone())],
-            list_string.clone(),
+            seq_string.clone(),
         ),
-        // string_chars(s: String) -> List<Char>
+        // string_chars(s: String) -> Seq<Char>
         mk_intrinsic(
             interner,
             "string_chars",
             vec![],
             vec![("s", string_ty.clone())],
-            list_char,
+            seq_char,
         ),
         // ── File I/O ─────────────────────────────────────────────
         // read_file(path: String) -> String

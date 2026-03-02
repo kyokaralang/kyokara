@@ -18,7 +18,7 @@ use crate::env::Env;
 use crate::error::RuntimeError;
 use crate::intrinsics::{self, Args, IntrinsicFn};
 use crate::manifest::CapabilityManifest;
-use crate::value::{FnValue, MapKey, Value};
+use crate::value::{FnValue, MapKey, SeqPlan, SeqSource, Value};
 
 /// Tree-walking interpreter state.
 pub struct Interpreter {
@@ -1654,6 +1654,172 @@ impl Interpreter {
         })
     }
 
+    fn require_seq_plan(
+        &self,
+        value: &Value,
+        intrinsic_name: &str,
+    ) -> Result<Rc<SeqPlan>, RuntimeError> {
+        let Value::Seq(plan) = value else {
+            return Err(RuntimeError::TypeError(format!(
+                "{intrinsic_name} expects a Seq"
+            )));
+        };
+        Ok(plan.clone())
+    }
+
+    fn seq_for_each(
+        &mut self,
+        plan: &SeqPlan,
+        emit: &mut dyn FnMut(&mut Self, Value) -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        match plan {
+            SeqPlan::Source(source) => match source {
+                SeqSource::Range { start, end } => {
+                    if start >= end {
+                        return Ok(());
+                    }
+                    for n in *start..*end {
+                        emit(self, Value::Int(n))?;
+                    }
+                    Ok(())
+                }
+                SeqSource::FromList(xs) => {
+                    for item in xs.iter().cloned() {
+                        emit(self, item)?;
+                    }
+                    Ok(())
+                }
+                SeqSource::StringSplit { s, delim } => {
+                    for part in s.split(delim.as_str()) {
+                        emit(self, Value::String(part.to_string()))?;
+                    }
+                    Ok(())
+                }
+                SeqSource::StringLines { s } => {
+                    for line in s.lines() {
+                        emit(self, Value::String(line.to_string()))?;
+                    }
+                    Ok(())
+                }
+                SeqSource::StringChars { s } => {
+                    for ch in s.chars() {
+                        emit(self, Value::Char(ch))?;
+                    }
+                    Ok(())
+                }
+                SeqSource::MapKeys(entries) => {
+                    for key in entries.keys() {
+                        emit(self, key.to_value())?;
+                    }
+                    Ok(())
+                }
+                SeqSource::MapValues(entries) => {
+                    for value in entries.values().cloned() {
+                        emit(self, value)?;
+                    }
+                    Ok(())
+                }
+                SeqSource::SetValues(entries) => {
+                    for key in entries.iter() {
+                        emit(self, key.to_value())?;
+                    }
+                    Ok(())
+                }
+            },
+            SeqPlan::Map { input, f } => {
+                let mapper = f.clone();
+                self.seq_for_each(input, &mut |interp, item| {
+                    let mapped = interp.call_value(mapper.clone(), smallvec::smallvec![item])?;
+                    emit(interp, mapped)
+                })
+            }
+            SeqPlan::Filter { input, f } => {
+                let predicate = f.clone();
+                self.seq_for_each(input, &mut |interp, item| {
+                    let keep =
+                        interp.call_value(predicate.clone(), smallvec::smallvec![item.clone()])?;
+                    match keep {
+                        Value::Bool(true) => emit(interp, item),
+                        Value::Bool(false) => Ok(()),
+                        _ => Err(RuntimeError::TypeError(
+                            "seq_filter: predicate must return Bool".into(),
+                        )),
+                    }
+                })
+            }
+            SeqPlan::Enumerate { input } => {
+                let index_name = Name::new(&mut self.interner, "index");
+                let value_name = Name::new(&mut self.interner, "value");
+                let mut idx: i64 = 0;
+                self.seq_for_each(input, &mut |interp, item| {
+                    let current = idx;
+                    idx = idx.checked_add(1).ok_or(RuntimeError::IntegerOverflow)?;
+                    emit(
+                        interp,
+                        Value::Record {
+                            fields: vec![(index_name, Value::Int(current)), (value_name, item)],
+                            type_idx: None,
+                        },
+                    )
+                })
+            }
+            SeqPlan::Zip { left, right } => {
+                let left_items = self.eval_seq_to_vec(left)?;
+                let right_items = self.eval_seq_to_vec(right)?;
+                let left_name = Name::new(&mut self.interner, "left");
+                let right_name = Name::new(&mut self.interner, "right");
+                for (l, r) in left_items.into_iter().zip(right_items.into_iter()) {
+                    emit(
+                        self,
+                        Value::Record {
+                            fields: vec![(left_name, l), (right_name, r)],
+                            type_idx: None,
+                        },
+                    )?;
+                }
+                Ok(())
+            }
+            SeqPlan::Chunks { input, n } => {
+                if *n <= 0 {
+                    return Err(RuntimeError::TypeError(
+                        "seq_chunks: chunk size must be > 0".into(),
+                    ));
+                }
+                let items = self.eval_seq_to_vec(input)?;
+                let chunk_size = *n as usize;
+                for chunk in items.chunks(chunk_size) {
+                    emit(self, Value::list(chunk.to_vec()))?;
+                }
+                Ok(())
+            }
+            SeqPlan::Windows { input, n } => {
+                if *n <= 0 {
+                    return Err(RuntimeError::TypeError(
+                        "seq_windows: window size must be > 0".into(),
+                    ));
+                }
+                let items = self.eval_seq_to_vec(input)?;
+                let window_size = *n as usize;
+                if window_size > items.len() {
+                    return Ok(());
+                }
+                for window in items.windows(window_size) {
+                    emit(self, Value::list(window.to_vec()))?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn eval_seq_to_vec(&mut self, plan: &SeqPlan) -> Result<Vec<Value>, RuntimeError> {
+        let mut out = Vec::new();
+        self.seq_for_each(plan, &mut |_interp, item| {
+            out.push(item);
+            Ok(())
+        })?;
+        Ok(out)
+    }
+
     fn check_intrinsic_cap(&self, intr: IntrinsicFn) -> Result<(), RuntimeError> {
         if let Some(ref manifest) = self.manifest
             && let Some(cap) = intr.required_capability()
@@ -1710,82 +1876,80 @@ impl Interpreter {
                     self.make_none()
                 }
             }
-            IntrinsicFn::ListMap => {
-                let Value::List(xs) = &args[0] else {
-                    return Err(RuntimeError::TypeError("list_map expects a List".into()));
-                };
-                let f = args[1].clone();
-                let mut result = Vec::with_capacity(xs.len());
-                for item in xs.iter().cloned() {
-                    let val = self.call_value(f.clone(), smallvec::smallvec![item])?;
-                    result.push(val);
-                }
-                Ok(Value::list(result))
+            IntrinsicFn::SeqMap => {
+                let plan = self.require_seq_plan(&args[0], "seq_map")?;
+                Ok(Value::seq_plan(SeqPlan::Map {
+                    input: plan,
+                    f: args[1].clone(),
+                }))
             }
-            IntrinsicFn::ListFilter => {
-                let Value::List(xs) = &args[0] else {
-                    return Err(RuntimeError::TypeError("list_filter expects a List".into()));
-                };
-                let f = args[1].clone();
-                let mut result = Vec::new();
-                for item in xs.iter().cloned() {
-                    let keep = self.call_value(f.clone(), smallvec::smallvec![item.clone()])?;
-                    if matches!(keep, Value::Bool(true)) {
-                        result.push(item);
-                    }
-                }
-                Ok(Value::list(result))
+            IntrinsicFn::SeqFilter => {
+                let plan = self.require_seq_plan(&args[0], "seq_filter")?;
+                Ok(Value::seq_plan(SeqPlan::Filter {
+                    input: plan,
+                    f: args[1].clone(),
+                }))
             }
-            IntrinsicFn::ListFold => {
-                let Value::List(xs) = &args[0] else {
-                    return Err(RuntimeError::TypeError("list_fold expects a List".into()));
-                };
+            IntrinsicFn::SeqFold => {
+                let plan = self.require_seq_plan(&args[0], "seq_fold")?;
                 let mut acc = args[1].clone();
-                let f = args[2].clone();
-                for item in xs.iter().cloned() {
-                    acc = self.call_value(f.clone(), smallvec::smallvec![acc, item])?;
-                }
+                let folder = args[2].clone();
+                self.seq_for_each(&plan, &mut |interp, item| {
+                    acc = interp
+                        .call_value(folder.clone(), smallvec::smallvec![acc.clone(), item])?;
+                    Ok(())
+                })?;
                 Ok(acc)
             }
-            IntrinsicFn::ListEnumerate => {
-                let Value::List(xs) = &args[0] else {
-                    return Err(RuntimeError::TypeError(
-                        "list_enumerate expects a List".into(),
-                    ));
-                };
-                let index_name = Name::new(&mut self.interner, "index");
-                let value_name = Name::new(&mut self.interner, "value");
-                let mut result = Vec::with_capacity(xs.len());
-                for (idx, value) in xs.iter().cloned().enumerate() {
-                    let idx = i64::try_from(idx).map_err(|_| RuntimeError::IntegerOverflow)?;
-                    result.push(Value::Record {
-                        fields: vec![(index_name, Value::Int(idx)), (value_name, value)],
-                        type_idx: None,
-                    });
-                }
-                Ok(Value::list(result))
+            IntrinsicFn::SeqEnumerate => {
+                let plan = self.require_seq_plan(&args[0], "seq_enumerate")?;
+                Ok(Value::seq_plan(SeqPlan::Enumerate { input: plan }))
             }
-            IntrinsicFn::ListZip => {
-                let Value::List(xs) = &args[0] else {
+            IntrinsicFn::SeqZip => {
+                let left = self.require_seq_plan(&args[0], "seq_zip")?;
+                let right = self.require_seq_plan(&args[1], "seq_zip")?;
+                Ok(Value::seq_plan(SeqPlan::Zip { left, right }))
+            }
+            IntrinsicFn::SeqChunks => {
+                let input = self.require_seq_plan(&args[0], "seq_chunks")?;
+                let Value::Int(n) = &args[1] else {
                     return Err(RuntimeError::TypeError(
-                        "list_zip expects List arguments".into(),
+                        "seq_chunks expects an Int chunk size".into(),
                     ));
                 };
-                let Value::List(ys) = &args[1] else {
+                if *n <= 0 {
                     return Err(RuntimeError::TypeError(
-                        "list_zip expects List arguments".into(),
+                        "seq_chunks: chunk size must be > 0".into(),
                     ));
-                };
-                let left_name = Name::new(&mut self.interner, "left");
-                let right_name = Name::new(&mut self.interner, "right");
-                let mut result = Vec::with_capacity(usize::min(xs.len(), ys.len()));
-                for (left, right) in xs.iter().cloned().zip(ys.iter().cloned()) {
-                    result.push(Value::Record {
-                        fields: vec![(left_name, left), (right_name, right)],
-                        type_idx: None,
-                    });
                 }
-                Ok(Value::list(result))
+                Ok(Value::seq_plan(SeqPlan::Chunks { input, n: *n }))
+            }
+            IntrinsicFn::SeqWindows => {
+                let input = self.require_seq_plan(&args[0], "seq_windows")?;
+                let Value::Int(n) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "seq_windows expects an Int window size".into(),
+                    ));
+                };
+                if *n <= 0 {
+                    return Err(RuntimeError::TypeError(
+                        "seq_windows: window size must be > 0".into(),
+                    ));
+                }
+                Ok(Value::seq_plan(SeqPlan::Windows { input, n: *n }))
+            }
+            IntrinsicFn::SeqCount => {
+                let plan = self.require_seq_plan(&args[0], "seq_count")?;
+                let mut count: i64 = 0;
+                self.seq_for_each(&plan, &mut |_interp, _| {
+                    count = count.checked_add(1).ok_or(RuntimeError::IntegerOverflow)?;
+                    Ok(())
+                })?;
+                Ok(Value::Int(count))
+            }
+            IntrinsicFn::SeqToList => {
+                let plan = self.require_seq_plan(&args[0], "seq_to_list")?;
+                Ok(Value::list(self.eval_seq_to_vec(&plan)?))
             }
             IntrinsicFn::ListSortBy => {
                 let Value::List(xs) = &args[0] else {
@@ -1982,6 +2146,11 @@ impl Interpreter {
                 .core_types
                 .get(CoreType::List)
                 .map(|_| ReceiverKey::Core(CoreType::List)),
+            Value::Seq(_) => self
+                .module_scope
+                .core_types
+                .get(CoreType::Seq)
+                .map(|_| ReceiverKey::Core(CoreType::Seq)),
             Value::Map(_) => self
                 .module_scope
                 .core_types

@@ -648,11 +648,11 @@ fn comparison_returns_bool() {
 #[test]
 fn infer_iteration_ergonomics_happy_paths() {
     let cases = ["fn main() -> Bool {
-            let xs = List.range(0, 5)
-            let e = xs.enumerate()
-            let z = xs.zip(List.new().push(10).push(20))
-            let c = xs.chunks(2)
-            let w = xs.windows(3)
+            let xs = Seq.range(0, 5)
+            let e = xs.enumerate().to_list()
+            let z = xs.zip(List.new().push(10).push(20).seq()).to_list()
+            let c = xs.chunks(2).to_list()
+            let w = xs.windows(3).to_list()
             e.len() > 0 && z.len() == 2 && c.len() == 3 && w.len() == 3
         }"];
 
@@ -824,27 +824,27 @@ fn err_iteration_ergonomics_wrong_arity_or_type() {
 
     let cases = [
         Case {
-            src: "fn main() -> Int { List.range(0) }",
+            src: "fn main() -> Int { Seq.range(0) }",
             expected_fragment: "expected 2 argument(s)",
         },
         Case {
-            src: "fn main() -> Int { List.range(0, 3, 5).len() }",
+            src: "fn main() -> Int { Seq.range(0, 3, 5).count() }",
             expected_fragment: "expected 2 argument(s)",
         },
         Case {
-            src: "fn main() -> Int { List.range(true, 3).len() }",
+            src: "fn main() -> Int { Seq.range(true, 3).count() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { List.new().push(1).zip(1).len() }",
+            src: "fn main() -> Int { List.new().push(1).seq().zip(1).count() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { List.new().push(1).chunks(true).len() }",
+            src: "fn main() -> Int { List.new().push(1).seq().chunks(true).count() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { List.new().push(1).windows(false).len() }",
+            src: "fn main() -> Int { List.new().push(1).seq().windows(false).count() }",
             expected_fragment: "type mismatch",
         },
     ];
@@ -888,6 +888,64 @@ fn err_unresolved_name_in_expr() {
 #[test]
 fn err_non_canonical_free_range_function_is_unresolved() {
     check_err("fn main() -> Int { range(0, 3).len() }", "unresolved name");
+}
+
+#[test]
+fn infer_seq_surface_happy_paths() {
+    let cases = [
+        r#"fn main() -> Int {
+            let xs = Seq.range(0, 5)
+            xs.map(fn(n: Int) => n + 1)
+                .filter(fn(n: Int) => n > 2)
+                .count()
+        }"#,
+        r#"fn main() -> Int {
+            let xs = List.new().push(1).push(2).push(3)
+            xs.seq().map(fn(n: Int) => n * 2).to_list().len()
+        }"#,
+        r#"fn main() -> Int {
+            let keys = Map.new().insert("a", 1).insert("b", 2).keys()
+            keys.count()
+        }"#,
+        r#"fn main() -> Int {
+            "a,b,c".split(",").count()
+        }"#,
+    ];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected no diagnostics, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn err_list_traversal_surface_is_removed() {
+    let cases = [
+        "fn main() -> Int { List.range(0, 5).len() }",
+        "fn main() -> Int { List.new().push(1).map(fn(n: Int) => n + 1).len() }",
+        "fn main() -> Int { List.new().push(1).filter(fn(n: Int) => n > 0).len() }",
+        "fn main() -> Int { List.new().push(1).fold(0, fn(acc: Int, n: Int) => acc + n) }",
+        "fn main() -> Int { List.new().push(1).enumerate().len() }",
+        "fn main() -> Int { List.new().push(1).zip(List.new()).len() }",
+        "fn main() -> Int { List.new().push(1).chunks(1).len() }",
+        "fn main() -> Int { List.new().push(1).windows(1).len() }",
+    ];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("no method") || d.message.contains("unresolved")),
+            "expected removed-surface diagnostic, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
 }
 
 // ── Unresolved-name diagnostics ─────────────────────────────────────

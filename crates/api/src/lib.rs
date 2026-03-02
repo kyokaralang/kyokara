@@ -224,8 +224,17 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
     let mut all_types = Vec::new();
     let mut all_capabilities = Vec::new();
 
-    let builtin_names: std::collections::HashSet<&str> =
-        ["Option", "Result", "List", "Map"].into_iter().collect();
+    let builtin_names: std::collections::HashSet<&str> = [
+        "Option",
+        "Result",
+        "List",
+        "Seq",
+        "Map",
+        "Set",
+        "ParseError",
+    ]
+    .into_iter()
+    .collect();
     let mut seen_builtins: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for (mod_path, tc) in &result.type_checks {
