@@ -613,59 +613,10 @@ fn err_unresolved_name_in_expr() {
     check_err("fn main() -> Int { foo + 1 }", "unresolved name");
 }
 
-// ── Legacy intrinsic name hints ─────────────────────────────────────
+// ── Unresolved-name diagnostics ─────────────────────────────────────
 
 #[test]
-fn err_legacy_println_hints_io_module() {
-    check_err("fn main() -> Unit { println(\"hi\") }", "io.println()");
-}
-
-#[test]
-fn err_legacy_list_len_hints_method() {
-    check_err("fn main() -> Int { list_len(xs) }", "xs.len()");
-}
-
-#[test]
-fn err_legacy_abs_hints_method() {
-    check_err("fn main() -> Int { abs(-5) }", "n.abs()");
-}
-
-#[test]
-fn err_legacy_list_new_hints_static() {
-    check_err("fn main() -> Int { list_new() }", "List.new()");
-}
-
-#[test]
-fn err_legacy_min_hints_math_module() {
-    check_err("fn main() -> Int { min(1, 2) }", "math.min()");
-}
-
-#[test]
-fn err_legacy_gcd_hints_math_module() {
-    check_err("fn main() -> Int { gcd(6, 4) }", "math.gcd()");
-}
-
-#[test]
-fn err_legacy_lcm_hints_math_module() {
-    check_err("fn main() -> Int { lcm(6, 4) }", "math.lcm()");
-}
-
-#[test]
-fn err_legacy_list_binary_search_hints_method() {
-    check_err(
-        "fn main() -> Int { list_binary_search(xs, 1) }",
-        "xs.binary_search(x)",
-    );
-}
-
-#[test]
-fn err_legacy_parse_int_hints_method() {
-    check_err("fn main() -> Int { parse_int(\"42\") }", "s.parse_int()");
-}
-
-#[test]
-fn err_unknown_name_no_hint() {
-    // Non-legacy names should NOT get a hint.
+fn err_unresolved_name_has_no_suggestion_suffix_for_unknown_name() {
     let (result, _) = check("fn main() -> Int { totally_unknown() }");
     let diag = result
         .diagnostics
@@ -674,7 +625,22 @@ fn err_unknown_name_no_hint() {
         .expect("expected unresolved name diagnostic");
     assert!(
         !diag.message.contains(';'),
-        "non-legacy name should not have a hint: {:?}",
+        "unresolved-name diagnostic should not append suggestion suffix: {:?}",
+        diag.message
+    );
+}
+
+#[test]
+fn err_unresolved_name_has_no_suggestion_suffix_for_non_canonical_guess() {
+    let (result, _) = check("fn main() -> Int { binary_search(1, 2) }");
+    let diag = result
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains("unresolved name"))
+        .expect("expected unresolved name diagnostic");
+    assert!(
+        !diag.message.contains(';'),
+        "unresolved-name diagnostic should not append suggestion suffix: {:?}",
         diag.message
     );
 }
