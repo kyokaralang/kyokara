@@ -448,8 +448,21 @@ fn fn_def_direct_ensures_outside_contract_is_rejected() {
 fn fn_def_direct_invariant_outside_contract_is_rejected() {
     // fn f() -> Int invariant (x > 0) { 1 }
     let (_events, errors) = parse_tokens(&[
-        FnKw, Ident, LParen, RParen, Arrow, Ident, InvariantKw, LParen, Ident, Gt, IntLiteral,
-        RParen, LBrace, IntLiteral, RBrace,
+        FnKw,
+        Ident,
+        LParen,
+        RParen,
+        Arrow,
+        Ident,
+        InvariantKw,
+        LParen,
+        Ident,
+        Gt,
+        IntLiteral,
+        RParen,
+        LBrace,
+        IntLiteral,
+        RBrace,
     ]);
     assert_eq!(
         errors.len(),

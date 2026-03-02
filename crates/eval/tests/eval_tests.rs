@@ -358,8 +358,8 @@ fn eval_adt_nullary_constructor() {
 #[test]
 fn eval_adt_constructor_call() {
     let val = run_ok(
-        "type Option<T> = Some(T) | None
-         fn main() -> Option<Int> { Some(42) }",
+        "type Maybe<T> = Just(T) | Nothing
+         fn main() -> Maybe<Int> { Just(42) }",
     );
     match val {
         Value::Adt {
@@ -393,14 +393,14 @@ fn eval_pattern_match_nullary() {
 #[test]
 fn eval_pattern_match_with_bind() {
     let val = run_ok(
-        "type Option<T> = Some(T) | None
-         fn unwrap(x: Option<Int>) -> Int {
+        "type Maybe<T> = Just(T) | Nothing
+         fn unwrap(x: Maybe<Int>) -> Int {
            match (x) {
-             Some(v) => v
-             None => 0
+             Just(v) => v
+             Nothing => 0
            }
          }
-         fn main() -> Int { unwrap(Some(42)) }",
+         fn main() -> Int { unwrap(Just(42)) }",
     );
     assert!(matches!(val, Value::Int(42)));
 }
@@ -553,18 +553,18 @@ fn eval_hole_error() {
 #[test]
 fn eval_adt_option_program() {
     let val = run_ok(
-        "type Option<T> = Some(T) | None
+        "type Maybe<T> = Just(T) | Nothing
 
-         fn unwrap_or(opt: Option<Int>, default: Int) -> Int {
+         fn unwrap_or(opt: Maybe<Int>, default: Int) -> Int {
            match (opt) {
-             Some(x) => x
-             None => default
+             Just(x) => x
+             Nothing => default
            }
          }
 
          fn main() -> Int {
-           let x = Some(42)
-           let y = None
+           let x = Just(42)
+           let y = Nothing
            unwrap_or(x, 0) + unwrap_or(y, 7)
          }",
     );
@@ -1230,11 +1230,11 @@ fn eval_invariant_error_names_function() {
     assert!(err.contains("inv_fn"));
 }
 
-// ── User-defined Option still works (takes precedence over builtin) ─
+// ── Reserved core constructor names ──────────────────────────────────
 
 #[test]
-fn eval_user_option_overrides_builtin() {
-    let val = run_ok(
+fn eval_user_option_with_reserved_constructors_is_compile_error() {
+    let err = run_err(
         "type Option<T> = Some(T) | None
          fn main() -> Int {
            match (Some(7)) {
@@ -1243,7 +1243,10 @@ fn eval_user_option_overrides_builtin() {
            }
          }",
     );
-    assert!(matches!(val, Value::Int(7)));
+    assert!(
+        err.contains("constructor `Some` is reserved for core stdlib"),
+        "unexpected error: {err}"
+    );
 }
 
 // ── List tests ──────────────────────────────────────────────────────
@@ -4364,8 +4367,8 @@ fn eval_parse_float_error_carries_message() {
 }
 
 #[test]
-fn eval_parse_int_user_defined_parse_error_missing_variant_reports_runtime_error_not_panic() {
-    let err = run_err(
+fn eval_parse_int_user_defined_parse_error_does_not_override_core_behavior() {
+    let val = run_ok(
         r#"type ParseError = Oops
            fn main() -> Bool {
              match ("abc".parse_int()) {
@@ -4374,15 +4377,12 @@ fn eval_parse_int_user_defined_parse_error_missing_variant_reports_runtime_error
              }
            }"#,
     );
-    assert!(
-        err.contains("parse_int cannot construct ParseError::InvalidInt(String)"),
-        "unexpected error: {err}"
-    );
+    assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
-fn eval_parse_float_user_defined_parse_error_missing_variant_reports_runtime_error_not_panic() {
-    let err = run_err(
+fn eval_parse_float_user_defined_parse_error_does_not_override_core_behavior() {
+    let val = run_ok(
         r#"type ParseError = Oops
            fn main() -> Bool {
              match ("abc".parse_float()) {
@@ -4391,14 +4391,11 @@ fn eval_parse_float_user_defined_parse_error_missing_variant_reports_runtime_err
              }
            }"#,
     );
-    assert!(
-        err.contains("parse_float cannot construct ParseError::InvalidFloat(String)"),
-        "unexpected error: {err}"
-    );
+    assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
-fn eval_parse_int_user_defined_parse_error_wrong_payload_type_reports_runtime_error() {
+fn eval_parse_int_user_defined_parse_error_reserved_variants_are_compile_error() {
     let err = run_err(
         r#"type ParseError = InvalidInt(Int) | InvalidFloat(Int)
            fn main() -> Bool {
@@ -4409,13 +4406,13 @@ fn eval_parse_int_user_defined_parse_error_wrong_payload_type_reports_runtime_er
            }"#,
     );
     assert!(
-        err.contains("parse_int cannot construct ParseError::InvalidInt(String)"),
+        err.contains("constructor `InvalidInt` is reserved for core stdlib"),
         "unexpected error: {err}"
     );
 }
 
 #[test]
-fn eval_parse_float_user_defined_parse_error_wrong_payload_type_reports_runtime_error() {
+fn eval_parse_float_user_defined_parse_error_reserved_variants_are_compile_error() {
     let err = run_err(
         r#"type ParseError = InvalidInt(Int) | InvalidFloat(Int)
            fn main() -> Bool {
@@ -4426,7 +4423,7 @@ fn eval_parse_float_user_defined_parse_error_wrong_payload_type_reports_runtime_
            }"#,
     );
     assert!(
-        err.contains("parse_float cannot construct ParseError::InvalidFloat(String)"),
+        err.contains("constructor `InvalidInt` is reserved for core stdlib"),
         "unexpected error: {err}"
     );
 }

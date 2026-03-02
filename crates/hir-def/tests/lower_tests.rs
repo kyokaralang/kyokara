@@ -58,20 +58,20 @@ fn collect_type_alias() {
 
 #[test]
 fn collect_adt_with_constructors() {
-    let root = parse_source("type Option<T> = Some(T) | None");
+    let root = parse_source("type Maybe<T> = Just(T) | Nothing");
     let sf = SourceFile::cast(root).unwrap();
     let mut interner = Interner::new();
     let result = collect_item_tree(&sf, file_id(), &mut interner);
 
     assert_eq!(result.tree.types.len(), 1);
     let t = &result.tree.types[result.tree.types.iter().next().unwrap().0];
-    assert_eq!(t.name.resolve(&interner), "Option");
+    assert_eq!(t.name.resolve(&interner), "Maybe");
     assert_eq!(t.type_params.len(), 1);
     if let TypeDefKind::Adt { variants } = &t.kind {
         assert_eq!(variants.len(), 2);
-        assert_eq!(variants[0].name.resolve(&interner), "Some");
+        assert_eq!(variants[0].name.resolve(&interner), "Just");
         assert_eq!(variants[0].fields.len(), 1);
-        assert_eq!(variants[1].name.resolve(&interner), "None");
+        assert_eq!(variants[1].name.resolve(&interner), "Nothing");
         assert_eq!(variants[1].fields.len(), 0);
     } else {
         panic!("expected ADT");

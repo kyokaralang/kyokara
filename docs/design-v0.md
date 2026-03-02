@@ -554,6 +554,13 @@ injected as synthetic types before type-checking. Synthetic modules (`io`, `math
 require explicit `import io` / `import math` / `import fs` in all modes.
 Zero intrinsic free functions exist in user scope.
 
+Runtime soundness invariants for core APIs:
+* Core method/static dispatch is identity-based, not string-name-based. Core behavior binds to internal core type identity even when user types shadow names like `Result` or `List`.
+* User type-name shadowing remains allowed (`type Result<...> = ...`, `type List<T> = ...`), but core APIs do not silently retarget.
+* Constructor/pattern resolution prefers the expected owner ADT when type context is available, then falls back to global constructor lookup.
+* Temporary safety rule: unqualified user ADT variants named `Some`, `None`, `Ok`, `Err`, `InvalidInt`, and `InvalidFloat` are rejected until qualified constructors are implemented.
+* Follow-up: add qualified constructors/patterns (`Type.Variant`) and remove the temporary reservation ([#293](https://github.com/kyokaralang/kyokara/issues/293)).
+
 Mental model: `List`/`Map`/`Set` are prelude value types (type/value namespace),
 while `io`/`fs` are module namespaces for no-owner/effectful operations.
 
@@ -758,7 +765,7 @@ are maintained in one place.
 | `D4` | Refactor transactions with verify-before-apply behavior | Implemented | `90%` | [#32](https://github.com/kyokaralang/kyokara/issues/32), [#190](https://github.com/kyokaralang/kyokara/issues/190), [#191](https://github.com/kyokaralang/kyokara/issues/191) |
 | `D5` | Compiler-as-API outputs for AI loops (diagnostics/symbol graph/holes) | Implemented with contract drift risk | `75%` | [#36](https://github.com/kyokaralang/kyokara/issues/36), [#38](https://github.com/kyokaralang/kyokara/issues/38), [#241](https://github.com/kyokaralang/kyokara/issues/241) |
 | `D6` | LSP support for interactive coding loops | Implemented baseline, stronger incrementality pending | `70%` | [#33](https://github.com/kyokaralang/kyokara/issues/33), [#239](https://github.com/kyokaralang/kyokara/issues/239) |
-| `D7` | API surface law (canonical placement/order/pipe compatibility for AI generation) | Implemented (core) + hardening follow-ups | `85%` | [#243](https://github.com/kyokaralang/kyokara/issues/243), [#265](https://github.com/kyokaralang/kyokara/issues/265), [#266](https://github.com/kyokaralang/kyokara/issues/266), [#267](https://github.com/kyokaralang/kyokara/issues/267), [#236](https://github.com/kyokaralang/kyokara/issues/236), [#238](https://github.com/kyokaralang/kyokara/issues/238) |
+| `D7` | API surface law (canonical placement/order/pipe compatibility for AI generation) | Implemented (core) + hardening follow-ups | `90%` | [#243](https://github.com/kyokaralang/kyokara/issues/243), [#265](https://github.com/kyokaralang/kyokara/issues/265), [#266](https://github.com/kyokaralang/kyokara/issues/266), [#267](https://github.com/kyokaralang/kyokara/issues/267), [#293](https://github.com/kyokaralang/kyokara/issues/293), [#236](https://github.com/kyokaralang/kyokara/issues/236), [#238](https://github.com/kyokaralang/kyokara/issues/238) |
 
 ### 16.4 Active docs-vs-implementation drift
 

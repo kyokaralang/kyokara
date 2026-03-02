@@ -7,7 +7,9 @@ use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, MatchArm,
 use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree, TypeDefKind, TypeItemIdx};
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
-use kyokara_hir_def::resolver::ModuleScope;
+use kyokara_hir_def::resolver::{
+    CoreType, ModuleScope, PrimitiveType, ReceiverKey, StaticOwnerKey,
+};
 use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_intern::Interner;
 use kyokara_stdx::FxHashMap;
@@ -96,21 +98,39 @@ macro_rules! eval_propagate_shared {
 }
 
 impl Interpreter {
+    fn resolve_core_variant(
+        item_tree: &ItemTree,
+        module_scope: &ModuleScope,
+        interner: &mut Interner,
+        core: CoreType,
+        variant_name: &str,
+    ) -> Option<(TypeItemIdx, usize)> {
+        let type_idx = module_scope.core_types.get(core)?.type_idx;
+        let variant_name = Name::new(interner, variant_name);
+        let TypeDefKind::Adt { variants } = &item_tree.types[type_idx].kind else {
+            return None;
+        };
+        let variant_idx = variants.iter().position(|v| v.name == variant_name)?;
+        Some((type_idx, variant_idx))
+    }
+
     fn resolve_parse_error_variant(
         item_tree: &ItemTree,
         module_scope: &ModuleScope,
         interner: &mut Interner,
         variant_name: &str,
     ) -> Option<(TypeItemIdx, usize)> {
-        let parse_error_name = Name::new(interner, "ParseError");
-        let variant_name = Name::new(interner, variant_name);
+        let (type_idx, variant_idx) = Self::resolve_core_variant(
+            item_tree,
+            module_scope,
+            interner,
+            CoreType::ParseError,
+            variant_name,
+        )?;
         let string_name = Name::new(interner, "String");
-
-        let &type_idx = module_scope.types.get(&parse_error_name)?;
         let TypeDefKind::Adt { variants } = &item_tree.types[type_idx].kind else {
             return None;
         };
-        let variant_idx = variants.iter().position(|v| v.name == variant_name)?;
         let variant = &variants[variant_idx];
 
         if variant.fields.len() != 1 {
@@ -138,14 +158,34 @@ impl Interpreter {
         let intrinsic_list = intrinsics::all_intrinsics(&mut interner);
         let intrinsics = intrinsic_list.into_iter().collect();
 
-        let some_name = Name::new(&mut interner, "Some");
-        let none_name = Name::new(&mut interner, "None");
-        let ok_name = Name::new(&mut interner, "Ok");
-        let err_name = Name::new(&mut interner, "Err");
-        let option_some = module_scope.constructors.get(&some_name).copied();
-        let option_none = module_scope.constructors.get(&none_name).copied();
-        let result_ok = module_scope.constructors.get(&ok_name).copied();
-        let result_err = module_scope.constructors.get(&err_name).copied();
+        let option_some = Self::resolve_core_variant(
+            &item_tree,
+            &module_scope,
+            &mut interner,
+            CoreType::Option,
+            "Some",
+        );
+        let option_none = Self::resolve_core_variant(
+            &item_tree,
+            &module_scope,
+            &mut interner,
+            CoreType::Option,
+            "None",
+        );
+        let result_ok = Self::resolve_core_variant(
+            &item_tree,
+            &module_scope,
+            &mut interner,
+            CoreType::Result,
+            "Ok",
+        );
+        let result_err = Self::resolve_core_variant(
+            &item_tree,
+            &module_scope,
+            &mut interner,
+            CoreType::Result,
+            "Err",
+        );
 
         // ParseError variants must be resolved by owning type identity, not by
         // global constructor-name lookup (constructor names can collide).
@@ -556,8 +596,11 @@ impl Interpreter {
                         }
 
                         // Static method call: List.new(), Map.new()
-                        if let Some(&fn_idx) =
-                            self.module_scope.static_methods.get(&(seg, field_name))
+                        if let Some(owner_key) = self.static_owner_key_for_name(seg)
+                            && let Some(&fn_idx) = self
+                                .module_scope
+                                .static_methods
+                                .get(&(owner_key, field_name))
                         {
                             let source_order = self.args_in_source_order(&args);
                             let mut arg_values = Vec::with_capacity(source_order.len());
@@ -586,9 +629,9 @@ impl Interpreter {
                     // Method call: value.method(args)
                     let base_val = eval_propagate!(self, env, body, base_idx);
 
-                    if let Some(type_name) = self.value_type_name(&base_val)
+                    if let Some(receiver_key) = self.receiver_key_for_value(&base_val)
                         && let Some(&fn_idx) =
-                            self.module_scope.methods.get(&(type_name, field_name))
+                            self.module_scope.methods.get(&(receiver_key, field_name))
                     {
                         let source_order = self.args_in_source_order(&args);
                         let mut arg_values = Vec::with_capacity(source_order.len());
@@ -863,8 +906,11 @@ impl Interpreter {
                         }
 
                         // Static method call: List.new()
-                        if let Some(&fn_idx) =
-                            self.module_scope.static_methods.get(&(seg, field_name))
+                        if let Some(owner_key) = self.static_owner_key_for_name(seg)
+                            && let Some(&fn_idx) = self
+                                .module_scope
+                                .static_methods
+                                .get(&(owner_key, field_name))
                         {
                             let source_order = self.args_in_source_order(args);
                             let mut arg_values = Vec::with_capacity(source_order.len());
@@ -892,9 +938,9 @@ impl Interpreter {
 
                     let base_val = eval_propagate_shared!(self, body, base_idx);
 
-                    if let Some(type_name) = self.value_type_name(&base_val)
+                    if let Some(receiver_key) = self.receiver_key_for_value(&base_val)
                         && let Some(&fn_idx) =
-                            self.module_scope.methods.get(&(type_name, field_name))
+                            self.module_scope.methods.get(&(receiver_key, field_name))
                     {
                         let source_order = self.args_in_source_order(args);
                         let mut arg_values = Vec::with_capacity(source_order.len());
@@ -1366,48 +1412,63 @@ impl Interpreter {
         Ok(())
     }
 
-    fn make_some(&self, val: Value) -> Value {
-        let (type_idx, variant) = self.option_some.expect("Option::Some not registered");
-        Value::Adt {
+    fn make_some(&self, val: Value) -> Result<Value, RuntimeError> {
+        let Some((type_idx, variant)) = self.option_some else {
+            return Err(RuntimeError::TypeError(
+                "core constructor Option::Some is unavailable".into(),
+            ));
+        };
+        Ok(Value::Adt {
             type_idx,
             variant,
             fields: vec![val],
-        }
+        })
     }
 
-    fn make_none(&self) -> Value {
-        let (type_idx, variant) = self.option_none.expect("Option::None not registered");
-        Value::Adt {
+    fn make_none(&self) -> Result<Value, RuntimeError> {
+        let Some((type_idx, variant)) = self.option_none else {
+            return Err(RuntimeError::TypeError(
+                "core constructor Option::None is unavailable".into(),
+            ));
+        };
+        Ok(Value::Adt {
             type_idx,
             variant,
             fields: vec![],
-        }
+        })
     }
 
-    fn make_ok(&self, val: Value) -> Value {
-        let (type_idx, variant) = self.result_ok.expect("Result::Ok not registered");
-        Value::Adt {
+    fn make_ok(&self, val: Value) -> Result<Value, RuntimeError> {
+        let Some((type_idx, variant)) = self.result_ok else {
+            return Err(RuntimeError::TypeError(
+                "core constructor Result::Ok is unavailable".into(),
+            ));
+        };
+        Ok(Value::Adt {
             type_idx,
             variant,
             fields: vec![val],
-        }
+        })
     }
 
-    fn make_err(&self, val: Value) -> Value {
-        let (type_idx, variant) = self.result_err.expect("Result::Err not registered");
-        Value::Adt {
+    fn make_err(&self, val: Value) -> Result<Value, RuntimeError> {
+        let Some((type_idx, variant)) = self.result_err else {
+            return Err(RuntimeError::TypeError(
+                "core constructor Result::Err is unavailable".into(),
+            ));
+        };
+        Ok(Value::Adt {
             type_idx,
             variant,
             fields: vec![val],
-        }
+        })
     }
 
     /// Decode a `Result` value into `Some(ok_payload)` for `Ok`, `None` for `Err`.
     ///
-    /// We resolve by type/variant names (`Result`, `Ok`, `Err`) so user shadowing
-    /// cannot silently reinterpret non-result ADTs.
+    /// Resolve by core type identity so user shadowing cannot reinterpret ADTs.
     fn decode_result_ok_payload(
-        &mut self,
+        &self,
         value: &Value,
         intrinsic_name: &str,
     ) -> Result<Option<Value>, RuntimeError> {
@@ -1422,8 +1483,17 @@ impl Interpreter {
             )));
         };
 
-        let result_name = Name::new(&mut self.interner, "Result");
-        if self.item_tree.types[*type_idx].name != result_name {
+        let Some(result_type_idx) = self
+            .module_scope
+            .core_types
+            .get(CoreType::Result)
+            .map(|i| i.type_idx)
+        else {
+            return Err(RuntimeError::TypeError(
+                "core type Result is unavailable".into(),
+            ));
+        };
+        if *type_idx != result_type_idx {
             return Err(RuntimeError::TypeError(format!(
                 "{intrinsic_name} expects a Result value"
             )));
@@ -1434,22 +1504,31 @@ impl Interpreter {
                 "{intrinsic_name} expects a Result ADT"
             )));
         };
-        let Some(variant_def) = variants.get(*variant) else {
+        if variants.get(*variant).is_none() {
             return Err(RuntimeError::TypeError(format!(
                 "{intrinsic_name} received invalid Result variant index"
             )));
+        }
+
+        let Some((_, ok_variant)) = self.result_ok else {
+            return Err(RuntimeError::TypeError(
+                "core constructor Result::Ok is unavailable".into(),
+            ));
+        };
+        let Some((_, err_variant)) = self.result_err else {
+            return Err(RuntimeError::TypeError(
+                "core constructor Result::Err is unavailable".into(),
+            ));
         };
 
-        let ok_name = Name::new(&mut self.interner, "Ok");
-        let err_name = Name::new(&mut self.interner, "Err");
-        if variant_def.name == ok_name {
+        if *variant == ok_variant {
             if fields.len() != 1 {
                 return Err(RuntimeError::TypeError(format!(
                     "{intrinsic_name} expects Result::Ok to carry one value"
                 )));
             }
             Ok(Some(fields[0].clone()))
-        } else if variant_def.name == err_name {
+        } else if *variant == err_variant {
             Ok(None)
         } else {
             Err(RuntimeError::TypeError(format!(
@@ -1514,9 +1593,9 @@ impl Interpreter {
                 };
                 let idx = *i as usize;
                 if let Some(val) = xs.get(idx) {
-                    Ok(self.make_some(val.clone()))
+                    self.make_some(val.clone())
                 } else {
-                    Ok(self.make_none())
+                    self.make_none()
                 }
             }
             IntrinsicFn::ListHead => {
@@ -1524,9 +1603,9 @@ impl Interpreter {
                     return Err(RuntimeError::TypeError("list_head expects a List".into()));
                 };
                 if let Some(val) = xs.first() {
-                    Ok(self.make_some(val.clone()))
+                    self.make_some(val.clone())
                 } else {
-                    Ok(self.make_none())
+                    self.make_none()
                 }
             }
             IntrinsicFn::MapGet => {
@@ -1535,9 +1614,9 @@ impl Interpreter {
                 };
                 let key = MapKey::from_value(&args[1])?;
                 if let Some(v) = entries.get(&key) {
-                    Ok(self.make_some(v.clone()))
+                    self.make_some(v.clone())
                 } else {
-                    Ok(self.make_none())
+                    self.make_none()
                 }
             }
             IntrinsicFn::ListMap => {
@@ -1673,8 +1752,8 @@ impl Interpreter {
                     ));
                 };
                 match s.parse::<i64>() {
-                    Ok(n) => Ok(self.make_ok(Value::Int(n))),
-                    Err(e) => Ok(self.make_err(self.make_invalid_int(format!("{e}"))?)),
+                    Ok(n) => self.make_ok(Value::Int(n)),
+                    Err(e) => self.make_err(self.make_invalid_int(format!("{e}"))?),
                 }
             }
             IntrinsicFn::ParseFloat => {
@@ -1684,8 +1763,8 @@ impl Interpreter {
                     ));
                 };
                 match s.parse::<f64>() {
-                    Ok(n) => Ok(self.make_ok(Value::Float(n))),
-                    Err(e) => Ok(self.make_err(self.make_invalid_float(format!("{e}"))?)),
+                    Ok(n) => self.make_ok(Value::Float(n)),
+                    Err(e) => self.make_err(self.make_invalid_float(format!("{e}"))?),
                 }
             }
             _ => Err(RuntimeError::TypeError("unknown complex intrinsic".into())),
@@ -1719,23 +1798,57 @@ impl Interpreter {
         }
     }
 
-    /// Map a runtime value to its well-known type name for method lookup.
-    fn value_type_name(&self, val: &Value) -> Option<Name> {
-        let wk = &self.module_scope.well_known_names;
+    fn static_owner_key_for_name(&self, name: Name) -> Option<StaticOwnerKey> {
+        let type_idx = *self.module_scope.types.get(&name)?;
+        Some(
+            self.module_scope
+                .core_types
+                .kind_for_idx(type_idx)
+                .map(StaticOwnerKey::Core)
+                .unwrap_or(StaticOwnerKey::User(type_idx)),
+        )
+    }
+
+    /// Map a runtime value to its dispatch identity for method lookup.
+    fn receiver_key_for_value(&self, val: &Value) -> Option<ReceiverKey> {
         match val {
-            Value::String(_) => wk.string,
-            Value::Int(_) => wk.int,
-            Value::Float(_) => wk.float,
-            Value::Bool(_) => wk.bool_,
-            Value::Char(_) => wk.char_,
-            Value::List(_) => wk.list,
-            Value::Map(_) => wk.map,
-            Value::Set(_) => wk.set,
-            Value::Adt { type_idx, .. } => Some(self.item_tree.types[*type_idx].name),
+            Value::String(_) => Some(ReceiverKey::Primitive(PrimitiveType::String)),
+            Value::Int(_) => Some(ReceiverKey::Primitive(PrimitiveType::Int)),
+            Value::Float(_) => Some(ReceiverKey::Primitive(PrimitiveType::Float)),
+            Value::Bool(_) => Some(ReceiverKey::Primitive(PrimitiveType::Bool)),
+            Value::Char(_) => Some(ReceiverKey::Primitive(PrimitiveType::Char)),
+            Value::List(_) => self
+                .module_scope
+                .core_types
+                .get(CoreType::List)
+                .map(|_| ReceiverKey::Core(CoreType::List)),
+            Value::Map(_) => self
+                .module_scope
+                .core_types
+                .get(CoreType::Map)
+                .map(|_| ReceiverKey::Core(CoreType::Map)),
+            Value::Set(_) => self
+                .module_scope
+                .core_types
+                .get(CoreType::Set)
+                .map(|_| ReceiverKey::Core(CoreType::Set)),
+            Value::Adt { type_idx, .. } => Some(
+                self.module_scope
+                    .core_types
+                    .kind_for_idx(*type_idx)
+                    .map(ReceiverKey::Core)
+                    .unwrap_or(ReceiverKey::User(*type_idx)),
+            ),
             Value::Record {
                 type_idx: Some(idx),
                 ..
-            } => Some(self.item_tree.types[*idx].name),
+            } => Some(
+                self.module_scope
+                    .core_types
+                    .kind_for_idx(*idx)
+                    .map(ReceiverKey::Core)
+                    .unwrap_or(ReceiverKey::User(*idx)),
+            ),
             _ => None,
         }
     }

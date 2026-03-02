@@ -207,6 +207,7 @@ crates/
 
 AI-special-feature status tracking (with completeness scores + issue links) lives in [docs/design-v0.md#16-ai-first-feature-tracker](docs/design-v0.md#16-ai-first-feature-tracker).
 API surface design rules live in [docs/rfcs/0001-api-surface-law.md](docs/rfcs/0001-api-surface-law.md).
+Core dispatch shadow-safety and temporary constructor reservation are documented in [docs/design-v0.md#10-standard-library-v0-minimum](docs/design-v0.md#10-standard-library-v0-minimum) (qualified-constructor follow-up: [#293](https://github.com/kyokaralang/kyokara/issues/293)).
 Canonical documentation map lives in [docs/INDEX.md](docs/INDEX.md).
 
 ## FAQ

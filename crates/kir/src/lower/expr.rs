@@ -7,6 +7,7 @@ use kyokara_hir_def::item_tree::TypeDefKind;
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::path::Path;
+use kyokara_hir_def::resolver::{PrimitiveType, ReceiverKey, StaticOwnerKey};
 use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_hir_ty::ty::Ty;
 
@@ -230,17 +231,33 @@ impl<'a> LoweringCtx<'a> {
         self.reorder_lowered_args_for_names(args, lowered, param_names)
     }
 
-    fn type_name_for_method_lookup(&self, ty: &Ty) -> Option<Name> {
-        let wk = &self.module_scope.well_known_names;
+    fn receiver_key_for_ty(&self, ty: &Ty) -> Option<ReceiverKey> {
         match ty {
-            Ty::String => wk.string,
-            Ty::Int => wk.int,
-            Ty::Float => wk.float,
-            Ty::Bool => wk.bool_,
-            Ty::Char => wk.char_,
-            Ty::Adt { def, .. } => Some(self.item_tree.types[*def].name),
+            Ty::String => Some(ReceiverKey::Primitive(PrimitiveType::String)),
+            Ty::Int => Some(ReceiverKey::Primitive(PrimitiveType::Int)),
+            Ty::Float => Some(ReceiverKey::Primitive(PrimitiveType::Float)),
+            Ty::Bool => Some(ReceiverKey::Primitive(PrimitiveType::Bool)),
+            Ty::Char => Some(ReceiverKey::Primitive(PrimitiveType::Char)),
+            Ty::Adt { def, .. } => Some(
+                self.module_scope
+                    .core_types
+                    .kind_for_idx(*def)
+                    .map(ReceiverKey::Core)
+                    .unwrap_or(ReceiverKey::User(*def)),
+            ),
             _ => None,
         }
+    }
+
+    fn static_owner_key_for_type_idx(
+        &self,
+        type_idx: kyokara_hir_def::item_tree::TypeItemIdx,
+    ) -> StaticOwnerKey {
+        self.module_scope
+            .core_types
+            .kind_for_idx(type_idx)
+            .map(StaticOwnerKey::Core)
+            .unwrap_or(StaticOwnerKey::User(type_idx))
     }
 
     fn type_has_field_named(&self, ty: &Ty, field: Name) -> bool {
@@ -336,16 +353,19 @@ impl<'a> LoweringCtx<'a> {
             }
 
             // Static method call: List.new(), Map.new()
-            if let Some(&fn_idx) = self.module_scope.static_methods.get(&(seg, field)) {
-                let param_names = self.param_names_for_fn_idx(fn_idx);
-                let arg_vals = self.lower_call_args_for_param_names(&args, &param_names);
-                let fn_item = &self.item_tree.functions[fn_idx];
-                let target = if self.intrinsics.contains(&fn_item.name) {
-                    CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
-                } else {
-                    CallTarget::Direct(fn_item.name)
-                };
-                return self.builder.push_call(target, arg_vals, ty);
+            if let Some(&type_idx) = self.module_scope.types.get(&seg) {
+                let owner_key = self.static_owner_key_for_type_idx(type_idx);
+                if let Some(&fn_idx) = self.module_scope.static_methods.get(&(owner_key, field)) {
+                    let param_names = self.param_names_for_fn_idx(fn_idx);
+                    let arg_vals = self.lower_call_args_for_param_names(&args, &param_names);
+                    let fn_item = &self.item_tree.functions[fn_idx];
+                    let target = if self.intrinsics.contains(&fn_item.name) {
+                        CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
+                    } else {
+                        CallTarget::Direct(fn_item.name)
+                    };
+                    return self.builder.push_call(target, arg_vals, ty);
+                }
             }
 
             // Method call or field access — fall through to complex callee lowering.
@@ -354,8 +374,8 @@ impl<'a> LoweringCtx<'a> {
         if let Expr::Field { base, field } = callee_expr {
             let base_ty = self.expr_ty(base);
             if !self.type_has_field_named(&base_ty, field)
-                && let Some(type_name) = self.type_name_for_method_lookup(&base_ty)
-                && let Some(&fn_idx) = self.module_scope.methods.get(&(type_name, field))
+                && let Some(receiver_key) = self.receiver_key_for_ty(&base_ty)
+                && let Some(&fn_idx) = self.module_scope.methods.get(&(receiver_key, field))
             {
                 let base_val = self.lower_expr(base);
                 let full_param_names = self.param_names_for_fn_idx(fn_idx);

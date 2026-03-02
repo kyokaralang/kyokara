@@ -5,19 +5,90 @@
 //! hir `check_file` pipeline call [`register_builtin_types`] after
 //! item tree collection but before type-checking.
 
-use crate::item_tree::{FnItem, FnParam, ItemTree, TypeDefKind, TypeItem, VariantDef};
+use crate::item_tree::{FnItem, FnParam, ItemTree, TypeDefKind, TypeItem, TypeItemIdx, VariantDef};
 use crate::name::Name;
 use crate::path::Path;
-use crate::resolver::ModuleScope;
+use crate::resolver::{
+    CoreType, CoreTypeInfo, ModuleScope, PrimitiveType, ReceiverKey, StaticOwnerKey, WellKnownNames,
+};
 use crate::type_ref::TypeRef;
 use kyokara_intern::Interner;
+
+/// Temporary reservation until qualified constructors are implemented.
+pub const RESERVED_CORE_CONSTRUCTORS: [&str; 6] =
+    ["Some", "None", "Ok", "Err", "InvalidInt", "InvalidFloat"];
+
+pub fn is_reserved_core_constructor_name(name: Name, interner: &Interner) -> bool {
+    RESERVED_CORE_CONSTRUCTORS
+        .iter()
+        .any(|reserved| name.resolve(interner) == *reserved)
+}
+
+fn core_hidden_type_name(interner: &mut Interner, core: CoreType) -> Name {
+    let hidden = match core {
+        CoreType::Option => "$core_Option",
+        CoreType::Result => "$core_Result",
+        CoreType::List => "$core_List",
+        CoreType::Map => "$core_Map",
+        CoreType::Set => "$core_Set",
+        CoreType::ParseError => "$core_ParseError",
+    };
+    Name::new(interner, hidden)
+}
+
+fn core_public_type_name(interner: &mut Interner, core: CoreType) -> Name {
+    let public = match core {
+        CoreType::Option => "Option",
+        CoreType::Result => "Result",
+        CoreType::List => "List",
+        CoreType::Map => "Map",
+        CoreType::Set => "Set",
+        CoreType::ParseError => "ParseError",
+    };
+    Name::new(interner, public)
+}
+
+fn register_core_type_item(
+    tree: &mut ItemTree,
+    scope: &mut ModuleScope,
+    interner: &mut Interner,
+    core: CoreType,
+    type_params: Vec<Name>,
+    kind: TypeDefKind,
+) -> (TypeItemIdx, Name) {
+    let public_name = core_public_type_name(interner, core);
+    let type_name = if scope.types.contains_key(&public_name) {
+        core_hidden_type_name(interner, core)
+    } else {
+        public_name
+    };
+
+    let idx = tree.types.alloc(TypeItem {
+        name: type_name,
+        is_pub: false,
+        type_params,
+        kind,
+    });
+
+    scope.types.insert(type_name, idx);
+    scope.core_types.set(
+        core,
+        CoreTypeInfo {
+            type_idx: idx,
+            type_name,
+        },
+    );
+
+    (idx, type_name)
+}
 
 /// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `Map<K,V>`, `Set<T>`, and
 /// `ParseError` into the item tree
 /// and module scope.
 ///
-/// Uses `Vacant` entry checks so that user-defined types with the same
-/// names (registered during item tree collection) take precedence.
+/// Core types are always registered with stable identities. If a user type
+/// shadows a public name (e.g. `type Result = ...`), the core type is
+/// allocated under a hidden internal name.
 pub fn register_builtin_types(
     tree: &mut ItemTree,
     scope: &mut ModuleScope,
@@ -33,13 +104,6 @@ pub fn register_builtin_types(
 
 /// `type Option<T> = Some(T) | None`
 fn register_option(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
-    let option_name = Name::new(interner, "Option");
-
-    // Skip if the user already defined Option.
-    if scope.types.contains_key(&option_name) {
-        return;
-    }
-
     let t_name = Name::new(interner, "T");
     let some_name = Name::new(interner, "Some");
     let none_name = Name::new(interner, "None");
@@ -49,11 +113,13 @@ fn register_option(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut 
         args: Vec::new(),
     };
 
-    let idx = tree.types.alloc(TypeItem {
-        name: option_name,
-        is_pub: false,
-        type_params: vec![t_name],
-        kind: TypeDefKind::Adt {
+    let (idx, _) = register_core_type_item(
+        tree,
+        scope,
+        interner,
+        CoreType::Option,
+        vec![t_name],
+        TypeDefKind::Adt {
             variants: vec![
                 VariantDef {
                     name: some_name,
@@ -65,77 +131,54 @@ fn register_option(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut 
                 },
             ],
         },
-    });
+    );
 
-    scope.types.insert(option_name, idx);
-
-    // Register constructors (only if not already present).
-    if let std::collections::hash_map::Entry::Vacant(e) = scope.constructors.entry(some_name) {
-        e.insert((idx, 0));
-    }
-    if let std::collections::hash_map::Entry::Vacant(e) = scope.constructors.entry(none_name) {
-        e.insert((idx, 1));
-    }
+    scope.constructors.insert(some_name, (idx, 0));
+    scope.constructors.insert(none_name, (idx, 1));
 }
 
 /// `List<T>` — opaque builtin type (no variants, no pattern matching).
 fn register_list(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
-    let list_name = Name::new(interner, "List");
-    if scope.types.contains_key(&list_name) {
-        return;
-    }
     let t_name = Name::new(interner, "T");
-    let idx = tree.types.alloc(TypeItem {
-        name: list_name,
-        is_pub: false,
-        type_params: vec![t_name],
-        kind: TypeDefKind::Adt { variants: vec![] },
-    });
-    scope.types.insert(list_name, idx);
+    let _ = register_core_type_item(
+        tree,
+        scope,
+        interner,
+        CoreType::List,
+        vec![t_name],
+        TypeDefKind::Adt { variants: vec![] },
+    );
 }
 
 /// `Map<K, V>` — opaque builtin type (no variants, no pattern matching).
 fn register_map(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
-    let map_name = Name::new(interner, "Map");
-    if scope.types.contains_key(&map_name) {
-        return;
-    }
     let k_name = Name::new(interner, "K");
     let v_name = Name::new(interner, "V");
-    let idx = tree.types.alloc(TypeItem {
-        name: map_name,
-        is_pub: false,
-        type_params: vec![k_name, v_name],
-        kind: TypeDefKind::Adt { variants: vec![] },
-    });
-    scope.types.insert(map_name, idx);
+    let _ = register_core_type_item(
+        tree,
+        scope,
+        interner,
+        CoreType::Map,
+        vec![k_name, v_name],
+        TypeDefKind::Adt { variants: vec![] },
+    );
 }
 
 /// `Set<T>` — opaque builtin type (no variants, no pattern matching).
 fn register_set(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
-    let set_name = Name::new(interner, "Set");
-    if scope.types.contains_key(&set_name) {
-        return;
-    }
     let t_name = Name::new(interner, "T");
-    let idx = tree.types.alloc(TypeItem {
-        name: set_name,
-        is_pub: false,
-        type_params: vec![t_name],
-        kind: TypeDefKind::Adt { variants: vec![] },
-    });
-    scope.types.insert(set_name, idx);
+    let _ = register_core_type_item(
+        tree,
+        scope,
+        interner,
+        CoreType::Set,
+        vec![t_name],
+        TypeDefKind::Adt { variants: vec![] },
+    );
 }
 
 /// `type Result<T, E> = Ok(T) | Err(E)`
 fn register_result(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
-    let result_name = Name::new(interner, "Result");
-
-    // Skip if the user already defined Result.
-    if scope.types.contains_key(&result_name) {
-        return;
-    }
-
     let t_name = Name::new(interner, "T");
     let e_name = Name::new(interner, "E");
     let ok_name = Name::new(interner, "Ok");
@@ -150,11 +193,13 @@ fn register_result(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut 
         args: Vec::new(),
     };
 
-    let idx = tree.types.alloc(TypeItem {
-        name: result_name,
-        is_pub: false,
-        type_params: vec![t_name, e_name],
-        kind: TypeDefKind::Adt {
+    let (idx, _) = register_core_type_item(
+        tree,
+        scope,
+        interner,
+        CoreType::Result,
+        vec![t_name, e_name],
+        TypeDefKind::Adt {
             variants: vec![
                 VariantDef {
                     name: ok_name,
@@ -166,26 +211,13 @@ fn register_result(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut 
                 },
             ],
         },
-    });
+    );
 
-    scope.types.insert(result_name, idx);
-
-    // Register constructors (only if not already present).
-    if let std::collections::hash_map::Entry::Vacant(e) = scope.constructors.entry(ok_name) {
-        e.insert((idx, 0));
-    }
-    if let std::collections::hash_map::Entry::Vacant(e) = scope.constructors.entry(err_name) {
-        e.insert((idx, 1));
-    }
+    scope.constructors.insert(ok_name, (idx, 0));
+    scope.constructors.insert(err_name, (idx, 1));
 }
 /// `type ParseError = InvalidInt(String) | InvalidFloat(String)`
 fn register_parse_error(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
-    let parse_error_name = Name::new(interner, "ParseError");
-
-    if scope.types.contains_key(&parse_error_name) {
-        return;
-    }
-
     let invalid_int_name = Name::new(interner, "InvalidInt");
     let invalid_float_name = Name::new(interner, "InvalidFloat");
 
@@ -194,11 +226,13 @@ fn register_parse_error(tree: &mut ItemTree, scope: &mut ModuleScope, interner: 
         args: Vec::new(),
     };
 
-    let idx = tree.types.alloc(TypeItem {
-        name: parse_error_name,
-        is_pub: false,
-        type_params: vec![],
-        kind: TypeDefKind::Adt {
+    let (idx, _) = register_core_type_item(
+        tree,
+        scope,
+        interner,
+        CoreType::ParseError,
+        vec![],
+        TypeDefKind::Adt {
             variants: vec![
                 VariantDef {
                     name: invalid_int_name,
@@ -210,19 +244,10 @@ fn register_parse_error(tree: &mut ItemTree, scope: &mut ModuleScope, interner: 
                 },
             ],
         },
-    });
+    );
 
-    scope.types.insert(parse_error_name, idx);
-
-    if let std::collections::hash_map::Entry::Vacant(e) = scope.constructors.entry(invalid_int_name)
-    {
-        e.insert((idx, 0));
-    }
-    if let std::collections::hash_map::Entry::Vacant(e) =
-        scope.constructors.entry(invalid_float_name)
-    {
-        e.insert((idx, 1));
-    }
+    scope.constructors.insert(invalid_int_name, (idx, 0));
+    scope.constructors.insert(invalid_float_name, (idx, 1));
 }
 
 /// Allocate all intrinsic FnItem signatures in the item tree and return
@@ -236,7 +261,7 @@ pub fn register_builtin_intrinsics(
     scope: &mut ModuleScope,
     interner: &mut Interner,
 ) {
-    let intrinsic_sigs = intrinsic_signatures(interner);
+    let intrinsic_sigs = intrinsic_signatures(scope, interner);
     let mut lookup = kyokara_stdx::FxHashMap::default();
 
     for (name, fn_item) in intrinsic_sigs {
@@ -251,12 +276,10 @@ pub fn register_builtin_intrinsics(
 /// Register built-in methods that map existing intrinsics to method-call syntax.
 ///
 /// For example, `string_len` becomes callable as `s.len()` by registering
-/// `("String", "len") → FnItemIdx` in `scope.methods`.
+/// `(ReceiverKey, "len") → FnItemIdx` in `scope.methods`.
 ///
 /// Also populates `scope.well_known_names` with cached primitive type names.
 pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner) {
-    use crate::resolver::WellKnownNames;
-
     // Cache well-known type names for method resolution in type inference.
     scope.well_known_names = WellKnownNames {
         string: Some(Name::new(interner, "String")),
@@ -264,84 +287,179 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         float: Some(Name::new(interner, "Float")),
         bool_: Some(Name::new(interner, "Bool")),
         char_: Some(Name::new(interner, "Char")),
-        list: Some(Name::new(interner, "List")),
-        map: Some(Name::new(interner, "Map")),
-        set: Some(Name::new(interner, "Set")),
+        list: scope.core_types.get(CoreType::List).map(|t| t.type_name),
+        map: scope.core_types.get(CoreType::Map).map(|t| t.type_name),
+        set: scope.core_types.get(CoreType::Set).map(|t| t.type_name),
     };
 
-    // (intrinsic_fn_name, receiver_type_name, method_name)
-    let mappings: &[(&str, &str, &str)] = &[
+    // (intrinsic_fn_name, receiver_key, method_name)
+    let mappings: &[(&str, ReceiverKey, &str)] = &[
         // String methods
-        ("string_len", "String", "len"),
-        ("string_contains", "String", "contains"),
-        ("string_starts_with", "String", "starts_with"),
-        ("string_ends_with", "String", "ends_with"),
-        ("string_trim", "String", "trim"),
-        ("string_split", "String", "split"),
-        ("string_substring", "String", "substring"),
-        ("string_to_upper", "String", "to_upper"),
-        ("string_to_lower", "String", "to_lower"),
-        ("string_concat", "String", "concat"),
-        ("string_lines", "String", "lines"),
-        ("string_chars", "String", "chars"),
-        ("parse_int", "String", "parse_int"),
-        ("parse_float", "String", "parse_float"),
+        (
+            "string_len",
+            ReceiverKey::Primitive(PrimitiveType::String),
+            "len",
+        ),
+        (
+            "string_contains",
+            ReceiverKey::Primitive(PrimitiveType::String),
+            "contains",
+        ),
+        (
+            "string_starts_with",
+            ReceiverKey::Primitive(PrimitiveType::String),
+            "starts_with",
+        ),
+        (
+            "string_ends_with",
+            ReceiverKey::Primitive(PrimitiveType::String),
+            "ends_with",
+        ),
+        (
+            "string_trim",
+            ReceiverKey::Primitive(PrimitiveType::String),
+            "trim",
+        ),
+        (
+            "string_split",
+            ReceiverKey::Primitive(PrimitiveType::String),
+            "split",
+        ),
+        (
+            "string_substring",
+            ReceiverKey::Primitive(PrimitiveType::String),
+            "substring",
+        ),
+        (
+            "string_to_upper",
+            ReceiverKey::Primitive(PrimitiveType::String),
+            "to_upper",
+        ),
+        (
+            "string_to_lower",
+            ReceiverKey::Primitive(PrimitiveType::String),
+            "to_lower",
+        ),
+        (
+            "string_concat",
+            ReceiverKey::Primitive(PrimitiveType::String),
+            "concat",
+        ),
+        (
+            "string_lines",
+            ReceiverKey::Primitive(PrimitiveType::String),
+            "lines",
+        ),
+        (
+            "string_chars",
+            ReceiverKey::Primitive(PrimitiveType::String),
+            "chars",
+        ),
+        (
+            "parse_int",
+            ReceiverKey::Primitive(PrimitiveType::String),
+            "parse_int",
+        ),
+        (
+            "parse_float",
+            ReceiverKey::Primitive(PrimitiveType::String),
+            "parse_float",
+        ),
         // List methods
-        ("list_push", "List", "push"),
-        ("list_len", "List", "len"),
-        ("list_get", "List", "get"),
-        ("list_head", "List", "head"),
-        ("list_tail", "List", "tail"),
-        ("list_is_empty", "List", "is_empty"),
-        ("list_reverse", "List", "reverse"),
-        ("list_concat", "List", "concat"),
-        ("list_map", "List", "map"),
-        ("list_filter", "List", "filter"),
-        ("list_fold", "List", "fold"),
-        ("list_enumerate", "List", "enumerate"),
-        ("list_zip", "List", "zip"),
-        ("list_chunks", "List", "chunks"),
-        ("list_windows", "List", "windows"),
-        ("list_sort", "List", "sort"),
-        ("list_sort_by", "List", "sort_by"),
-        ("list_binary_search", "List", "binary_search"),
+        ("list_push", ReceiverKey::Core(CoreType::List), "push"),
+        ("list_len", ReceiverKey::Core(CoreType::List), "len"),
+        ("list_get", ReceiverKey::Core(CoreType::List), "get"),
+        ("list_head", ReceiverKey::Core(CoreType::List), "head"),
+        ("list_tail", ReceiverKey::Core(CoreType::List), "tail"),
+        (
+            "list_is_empty",
+            ReceiverKey::Core(CoreType::List),
+            "is_empty",
+        ),
+        ("list_reverse", ReceiverKey::Core(CoreType::List), "reverse"),
+        ("list_concat", ReceiverKey::Core(CoreType::List), "concat"),
+        ("list_map", ReceiverKey::Core(CoreType::List), "map"),
+        ("list_filter", ReceiverKey::Core(CoreType::List), "filter"),
+        ("list_fold", ReceiverKey::Core(CoreType::List), "fold"),
+        (
+            "list_enumerate",
+            ReceiverKey::Core(CoreType::List),
+            "enumerate",
+        ),
+        ("list_zip", ReceiverKey::Core(CoreType::List), "zip"),
+        ("list_chunks", ReceiverKey::Core(CoreType::List), "chunks"),
+        ("list_windows", ReceiverKey::Core(CoreType::List), "windows"),
+        ("list_sort", ReceiverKey::Core(CoreType::List), "sort"),
+        ("list_sort_by", ReceiverKey::Core(CoreType::List), "sort_by"),
+        (
+            "list_binary_search",
+            ReceiverKey::Core(CoreType::List),
+            "binary_search",
+        ),
         // Map methods
-        ("map_insert", "Map", "insert"),
-        ("map_get", "Map", "get"),
-        ("map_contains", "Map", "contains"),
-        ("map_remove", "Map", "remove"),
-        ("map_len", "Map", "len"),
-        ("map_keys", "Map", "keys"),
-        ("map_values", "Map", "values"),
-        ("map_is_empty", "Map", "is_empty"),
+        ("map_insert", ReceiverKey::Core(CoreType::Map), "insert"),
+        ("map_get", ReceiverKey::Core(CoreType::Map), "get"),
+        ("map_contains", ReceiverKey::Core(CoreType::Map), "contains"),
+        ("map_remove", ReceiverKey::Core(CoreType::Map), "remove"),
+        ("map_len", ReceiverKey::Core(CoreType::Map), "len"),
+        ("map_keys", ReceiverKey::Core(CoreType::Map), "keys"),
+        ("map_values", ReceiverKey::Core(CoreType::Map), "values"),
+        ("map_is_empty", ReceiverKey::Core(CoreType::Map), "is_empty"),
         // Set methods
-        ("set_insert", "Set", "insert"),
-        ("set_contains", "Set", "contains"),
-        ("set_remove", "Set", "remove"),
-        ("set_len", "Set", "len"),
-        ("set_is_empty", "Set", "is_empty"),
-        ("set_values", "Set", "values"),
+        ("set_insert", ReceiverKey::Core(CoreType::Set), "insert"),
+        ("set_contains", ReceiverKey::Core(CoreType::Set), "contains"),
+        ("set_remove", ReceiverKey::Core(CoreType::Set), "remove"),
+        ("set_len", ReceiverKey::Core(CoreType::Set), "len"),
+        ("set_is_empty", ReceiverKey::Core(CoreType::Set), "is_empty"),
+        ("set_values", ReceiverKey::Core(CoreType::Set), "values"),
         // Result methods
-        ("result_unwrap_or", "Result", "unwrap_or"),
-        ("result_map_or", "Result", "map_or"),
+        (
+            "result_unwrap_or",
+            ReceiverKey::Core(CoreType::Result),
+            "unwrap_or",
+        ),
+        (
+            "result_map_or",
+            ReceiverKey::Core(CoreType::Result),
+            "map_or",
+        ),
         // Int methods
-        ("int_to_string", "Int", "to_string"),
-        ("int_to_float", "Int", "to_float"),
-        ("abs", "Int", "abs"),
+        (
+            "int_to_string",
+            ReceiverKey::Primitive(PrimitiveType::Int),
+            "to_string",
+        ),
+        (
+            "int_to_float",
+            ReceiverKey::Primitive(PrimitiveType::Int),
+            "to_float",
+        ),
+        ("abs", ReceiverKey::Primitive(PrimitiveType::Int), "abs"),
         // Float methods
-        ("float_to_int", "Float", "to_int"),
-        ("float_abs", "Float", "abs"),
+        (
+            "float_to_int",
+            ReceiverKey::Primitive(PrimitiveType::Float),
+            "to_int",
+        ),
+        (
+            "float_abs",
+            ReceiverKey::Primitive(PrimitiveType::Float),
+            "abs",
+        ),
         // Char methods
-        ("char_to_string", "Char", "to_string"),
+        (
+            "char_to_string",
+            ReceiverKey::Primitive(PrimitiveType::Char),
+            "to_string",
+        ),
     ];
 
-    for &(intrinsic_name, type_name, method_name) in mappings {
+    for &(intrinsic_name, receiver_key, method_name) in mappings {
         let intr_name = Name::new(interner, intrinsic_name);
-        let ty_name = Name::new(interner, type_name);
         let meth_name = Name::new(interner, method_name);
 
         if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&intr_name) {
-            scope.methods.insert((ty_name, meth_name), fn_idx);
+            scope.methods.insert((receiver_key, meth_name), fn_idx);
         }
     }
 }
@@ -524,21 +642,20 @@ fn mk_module_intrinsic(
 /// Static methods are always available (no import needed) since the types they
 /// belong to are always in scope.
 pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner) {
-    // (intrinsic_fn_name, type_name, static_method_name)
-    let mappings: &[(&str, &str, &str)] = &[
-        ("list_new", "List", "new"),
-        ("list_range", "List", "range"),
-        ("map_new", "Map", "new"),
-        ("set_new", "Set", "new"),
+    // (intrinsic_fn_name, owner_key, static_method_name)
+    let mappings: &[(&str, StaticOwnerKey, &str)] = &[
+        ("list_new", StaticOwnerKey::Core(CoreType::List), "new"),
+        ("list_range", StaticOwnerKey::Core(CoreType::List), "range"),
+        ("map_new", StaticOwnerKey::Core(CoreType::Map), "new"),
+        ("set_new", StaticOwnerKey::Core(CoreType::Set), "new"),
     ];
 
-    for &(intrinsic_name, type_name, method_name) in mappings {
+    for &(intrinsic_name, owner_key, method_name) in mappings {
         let intr_name = Name::new(interner, intrinsic_name);
-        let ty_name = Name::new(interner, type_name);
         let meth_name = Name::new(interner, method_name);
 
         if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&intr_name) {
-            scope.static_methods.insert((ty_name, meth_name), fn_idx);
+            scope.static_methods.insert((owner_key, meth_name), fn_idx);
         }
     }
 }
@@ -577,7 +694,7 @@ fn mk_intrinsic(
 }
 
 /// Build FnItem signatures for each intrinsic.
-fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
+fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Name, FnItem)> {
     // ── Shared type refs ──────────────────────────────────────────
     let string_ty = TypeRef::Path {
         path: Path::single(Name::new(interner, "String")),
@@ -603,6 +720,37 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
         path: Path::single(Name::new(interner, "Unit")),
         args: Vec::new(),
     };
+
+    let list_core_name = scope
+        .core_types
+        .get(CoreType::List)
+        .map(|info| info.type_name)
+        .unwrap_or_else(|| Name::new(interner, "List"));
+    let map_core_name = scope
+        .core_types
+        .get(CoreType::Map)
+        .map(|info| info.type_name)
+        .unwrap_or_else(|| Name::new(interner, "Map"));
+    let set_core_name = scope
+        .core_types
+        .get(CoreType::Set)
+        .map(|info| info.type_name)
+        .unwrap_or_else(|| Name::new(interner, "Set"));
+    let option_core_name = scope
+        .core_types
+        .get(CoreType::Option)
+        .map(|info| info.type_name)
+        .unwrap_or_else(|| Name::new(interner, "Option"));
+    let result_core_name = scope
+        .core_types
+        .get(CoreType::Result)
+        .map(|info| info.type_name)
+        .unwrap_or_else(|| Name::new(interner, "Result"));
+    let parse_error_core_name = scope
+        .core_types
+        .get(CoreType::ParseError)
+        .map(|info| info.type_name)
+        .unwrap_or_else(|| Name::new(interner, "ParseError"));
 
     // Type parameter names.
     let t_name = Name::new(interner, "T");
@@ -635,35 +783,35 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
 
     // Composite type refs.
     let list_t = TypeRef::Path {
-        path: Path::single(Name::new(interner, "List")),
+        path: Path::single(list_core_name),
         args: vec![t_ref.clone()],
     };
     let list_u = TypeRef::Path {
-        path: Path::single(Name::new(interner, "List")),
+        path: Path::single(list_core_name),
         args: vec![u_ref.clone()],
     };
     let list_list_t = TypeRef::Path {
-        path: Path::single(Name::new(interner, "List")),
+        path: Path::single(list_core_name),
         args: vec![list_t.clone()],
     };
     let list_k = TypeRef::Path {
-        path: Path::single(Name::new(interner, "List")),
+        path: Path::single(list_core_name),
         args: vec![k_ref.clone()],
     };
     let list_v = TypeRef::Path {
-        path: Path::single(Name::new(interner, "List")),
+        path: Path::single(list_core_name),
         args: vec![v_ref.clone()],
     };
     let list_string = TypeRef::Path {
-        path: Path::single(Name::new(interner, "List")),
+        path: Path::single(list_core_name),
         args: vec![string_ty.clone()],
     };
     let list_char = TypeRef::Path {
-        path: Path::single(Name::new(interner, "List")),
+        path: Path::single(list_core_name),
         args: vec![char_ty.clone()],
     };
     let list_int = TypeRef::Path {
-        path: Path::single(Name::new(interner, "List")),
+        path: Path::single(list_core_name),
         args: vec![int_ty.clone()],
     };
     let indexed_t = TypeRef::Record {
@@ -673,7 +821,7 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
         ],
     };
     let list_indexed_t = TypeRef::Path {
-        path: Path::single(Name::new(interner, "List")),
+        path: Path::single(list_core_name),
         args: vec![indexed_t],
     };
     let pair_tu = TypeRef::Record {
@@ -683,27 +831,27 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
         ],
     };
     let list_pair_tu = TypeRef::Path {
-        path: Path::single(Name::new(interner, "List")),
+        path: Path::single(list_core_name),
         args: vec![pair_tu],
     };
     let map_kv = TypeRef::Path {
-        path: Path::single(Name::new(interner, "Map")),
+        path: Path::single(map_core_name),
         args: vec![k_ref.clone(), v_ref.clone()],
     };
     let set_t = TypeRef::Path {
-        path: Path::single(Name::new(interner, "Set")),
+        path: Path::single(set_core_name),
         args: vec![t_ref.clone()],
     };
     let option_t = TypeRef::Path {
-        path: Path::single(Name::new(interner, "Option")),
+        path: Path::single(option_core_name),
         args: vec![t_ref.clone()],
     };
     let result_te = TypeRef::Path {
-        path: Path::single(Name::new(interner, "Result")),
+        path: Path::single(result_core_name),
         args: vec![t_ref.clone(), e_ref.clone()],
     };
     let option_v = TypeRef::Path {
-        path: Path::single(Name::new(interner, "Option")),
+        path: Path::single(option_core_name),
         args: vec![v_ref.clone()],
     };
 
@@ -1208,11 +1356,11 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
         // parse_int(s: String) -> Result<Int, ParseError>
         {
             let parse_error_ty = TypeRef::Path {
-                path: Path::single(Name::new(interner, "ParseError")),
+                path: Path::single(parse_error_core_name),
                 args: Vec::new(),
             };
             let result_int = TypeRef::Path {
-                path: Path::single(Name::new(interner, "Result")),
+                path: Path::single(result_core_name),
                 args: vec![int_ty.clone(), parse_error_ty],
             };
             mk_intrinsic(
@@ -1226,11 +1374,11 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
         // parse_float(s: String) -> Result<Float, ParseError>
         {
             let parse_error_ty = TypeRef::Path {
-                path: Path::single(Name::new(interner, "ParseError")),
+                path: Path::single(parse_error_core_name),
                 args: Vec::new(),
             };
             let result_float = TypeRef::Path {
-                path: Path::single(Name::new(interner, "Result")),
+                path: Path::single(result_core_name),
                 args: vec![float_ty.clone(), parse_error_ty],
             };
             mk_intrinsic(

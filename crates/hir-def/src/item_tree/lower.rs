@@ -9,10 +9,11 @@ use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::*;
 use kyokara_syntax::ast::traits::{HasName, HasTypeParams, HasVisibility};
 
+use crate::builtins::is_reserved_core_constructor_name;
 use crate::item_tree::*;
 use crate::name::Name;
 use crate::path::Path;
-use crate::resolver::ModuleScope;
+use crate::resolver::{ModuleScope, PrimitiveType, ReceiverKey, core_type_from_public_name};
 use crate::type_ref::TypeRef;
 
 /// Result of item tree collection.
@@ -31,6 +32,7 @@ pub fn collect_item_tree(
     let mut ctx = ItemTreeCtx {
         tree: ItemTree::default(),
         module_scope: ModuleScope::default(),
+        pending_methods: Vec::new(),
         diagnostics: Vec::new(),
         file_id,
         interner,
@@ -52,6 +54,7 @@ pub fn collect_item_tree(
     for item in file.items() {
         ctx.lower_item(item);
     }
+    ctx.finalize_method_bindings();
 
     ItemTreeResult {
         tree: ctx.tree,
@@ -63,6 +66,7 @@ pub fn collect_item_tree(
 struct ItemTreeCtx<'a> {
     tree: ItemTree,
     module_scope: ModuleScope,
+    pending_methods: Vec<(Name, Name, FnItemIdx, Span)>,
     diagnostics: Vec<Diagnostic>,
     file_id: FileId,
     interner: &'a mut Interner,
@@ -221,8 +225,10 @@ impl ItemTreeCtx<'_> {
         });
 
         if let Some(recv) = receiver_type {
-            // Register as a method, not a free function.
-            self.module_scope.methods.insert((recv, name), idx);
+            // Resolve receiver identity after all items are collected so forward
+            // references (`fn Foo.m` before `type Foo = ...`) still work.
+            self.pending_methods
+                .push((recv, name, idx, self.node_span(f.syntax())));
         } else if !inside_cap {
             self.register_fn(name, idx, f.syntax());
         }
@@ -311,6 +317,17 @@ impl ItemTreeCtx<'_> {
         // Register constructors for ADTs
         if let TypeDefKind::Adt { ref variants } = kind {
             for (vi, variant) in variants.iter().enumerate() {
+                if is_reserved_core_constructor_name(variant.name, self.interner) {
+                    let span = self.node_span(t.syntax());
+                    self.diagnostics.push(Diagnostic::error(
+                        format!(
+                            "constructor `{}` is reserved for core stdlib",
+                            variant.name.resolve(self.interner)
+                        ),
+                        span,
+                    ));
+                    continue;
+                }
                 if let std::collections::hash_map::Entry::Vacant(e) =
                     self.module_scope.constructors.entry(variant.name)
                 {
@@ -329,6 +346,51 @@ impl ItemTreeCtx<'_> {
                     );
                 }
             }
+        }
+    }
+
+    fn receiver_key_for_name(&self, recv_name: Name) -> Option<ReceiverKey> {
+        let recv_text = recv_name.resolve(self.interner);
+        let primitive = match recv_text {
+            "String" => Some(PrimitiveType::String),
+            "Int" => Some(PrimitiveType::Int),
+            "Float" => Some(PrimitiveType::Float),
+            "Bool" => Some(PrimitiveType::Bool),
+            "Char" => Some(PrimitiveType::Char),
+            _ => None,
+        };
+        if let Some(p) = primitive {
+            return Some(ReceiverKey::Primitive(p));
+        }
+
+        if let Some(&type_idx) = self.module_scope.types.get(&recv_name) {
+            return Some(ReceiverKey::User(type_idx));
+        }
+
+        if let Some(core) = core_type_from_public_name(recv_name, self.interner) {
+            return Some(ReceiverKey::Core(core));
+        }
+
+        None
+    }
+
+    fn finalize_method_bindings(&mut self) {
+        for (recv_name, method_name, fn_idx, span) in self.pending_methods.clone() {
+            let Some(receiver_key) = self.receiver_key_for_name(recv_name) else {
+                self.diagnostics.push(Diagnostic::error(
+                    format!(
+                        "unknown receiver type `{}` for method `{}`",
+                        recv_name.resolve(self.interner),
+                        method_name.resolve(self.interner)
+                    ),
+                    span,
+                ));
+                continue;
+            };
+
+            self.module_scope
+                .methods
+                .insert((receiver_key, method_name), fn_idx);
         }
     }
 
