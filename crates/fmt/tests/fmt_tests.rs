@@ -380,6 +380,19 @@ fn fmt_effect_def() {
     assert_fmt("effect  IO", "effect IO\n");
 }
 
+#[test]
+fn fmt_effect_with_body_is_non_lossy() {
+    assert_fmt(
+        "effect IO { fn read() -> String }",
+        "effect IO { fn read() -> String }\n",
+    );
+}
+
+#[test]
+fn fmt_effect_with_type_params_is_non_lossy() {
+    assert_fmt("effect IO<T>", "effect IO<T>\n");
+}
+
 // ── Let binding with compound expressions ───────────────────────────
 
 #[test]

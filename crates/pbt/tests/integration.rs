@@ -526,10 +526,35 @@ fn property_gen_type_mismatch_produces_diagnostic() {
 }
 
 #[test]
+fn property_gen_set_type_mismatch_produces_diagnostic() {
+    let result = kyokara_hir::check_file("property p(s: Set<Int> <- Gen.int()) { true }");
+    let has_mismatch = result
+        .lowering_diagnostics
+        .iter()
+        .any(|d| d.message.contains("generator") && d.message.contains("incompatible"));
+    assert!(
+        has_mismatch,
+        "Gen.int() for Set<Int> parameter should produce mismatch diagnostic: {:?}",
+        result.lowering_diagnostics
+    );
+}
+
+#[test]
 fn run_tests_rejects_gen_spec_type_mismatch_before_execution() {
     let config = test_config();
     let source = "property p(x: Int <- Gen.bool()) { x > 0 }";
     let err = run_tests(source, &config).expect_err("gen/type mismatch must be rejected");
+    assert!(
+        err.contains("generator") && err.contains("incompatible"),
+        "error should include generator/type mismatch, got: {err}"
+    );
+}
+
+#[test]
+fn run_tests_rejects_set_gen_spec_type_mismatch_before_execution() {
+    let config = test_config();
+    let source = "property p(s: Set<Int> <- Gen.int()) { true }";
+    let err = run_tests(source, &config).expect_err("set gen/type mismatch must be rejected");
     assert!(
         err.contains("generator") && err.contains("incompatible"),
         "error should include generator/type mismatch, got: {err}"
@@ -543,6 +568,19 @@ fn run_project_tests_rejects_gen_spec_type_mismatch_before_execution() {
         write_project(&[("main.ky", "property p(x: Int <- Gen.bool()) { x > 0 }\n")]);
     let err =
         run_project_tests(&main_path, &config).expect_err("project mismatch must be rejected");
+    assert!(
+        err.contains("generator") && err.contains("incompatible"),
+        "error should include generator/type mismatch, got: {err}"
+    );
+}
+
+#[test]
+fn run_project_tests_rejects_set_gen_spec_type_mismatch_before_execution() {
+    let config = test_config();
+    let (_dir, main_path) =
+        write_project(&[("main.ky", "property p(s: Set<Int> <- Gen.int()) { true }\n")]);
+    let err =
+        run_project_tests(&main_path, &config).expect_err("project set mismatch must be rejected");
     assert!(
         err.contains("generator") && err.contains("incompatible"),
         "error should include generator/type mismatch, got: {err}"
