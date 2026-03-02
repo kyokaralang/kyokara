@@ -636,6 +636,7 @@ impl ItemTreeCtx<'_> {
                 | "Unit"
                 | "List"
                 | "Map"
+                | "Set"
                 | "Option"
                 | "Result"
         )

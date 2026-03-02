@@ -596,6 +596,12 @@ fn format_invariant_clause(node: &SyntaxNode) -> Doc {
 // ── Cap / Property ──────────────────────────────────────────────────
 
 fn format_cap_def(node: &SyntaxNode) -> Doc {
+    // Keep invalid/extra syntax verbatim to avoid destructive formatting on
+    // parse-damaged effect declarations (e.g. effect bodies/type params).
+    if node.children().next().is_some() {
+        return verbatim(node);
+    }
+
     let mut parts = vec![Doc::text("effect"), Doc::text(" ")];
 
     if let Some(name) = find_ident(node) {
