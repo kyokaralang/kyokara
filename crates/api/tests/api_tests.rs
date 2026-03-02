@@ -77,7 +77,7 @@ fn check_hole_inputs_no_duplicate_names() {
 fn check_hole_inputs_exclude_out_of_scope_inner_binding_issue_132() {
     let src = r#"
 fn main(x: Int) -> Int {
-  if true {
+  if (true) {
     let z = 1
     0
   } else {
@@ -105,7 +105,7 @@ fn main(x: Int) -> Int {
 fn check_hole_inputs_include_in_scope_branch_binding_issue_132_guard() {
     let src = r#"
 fn main() -> Int {
-  if true {
+  if (true) {
     let z = 1
     _
   } else {
@@ -159,6 +159,62 @@ fn check_parse_error_code() {
             .iter()
             .map(|d| &d.code)
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn check_parse_damaged_function_reports_parse_only_diagnostics() {
+    let src = "fn main() -> Int { match value { _ => 0 } }";
+    let output = check(src, "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0100" && d.message.contains("match scrutinee must be parenthesized")),
+        "expected targeted match parse diagnostic, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        output.diagnostics.iter().all(|d| d.code == "E0100"),
+        "parse-damaged function should report parse-only diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_mixed_file_keeps_unaffected_function_semantic_diagnostics() {
+    let src = r#"
+fn broken() -> Int {
+  match value {
+    _ => 0
+  }
+}
+
+fn typed_bad() -> Int {
+  "oops"
+}
+"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0100" && d.message.contains("match scrutinee must be parenthesized")),
+        "expected parse diagnostic for broken fn, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        output.diagnostics.iter().any(|d| d.code == "E0001"),
+        "expected unaffected function type mismatch diagnostic, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|d| d.code != "E0009" && d.code != "E0101"),
+        "did not expect cascade diagnostics from parse-damaged function, got: {:?}",
+        output.diagnostics
     );
 }
 
@@ -2882,7 +2938,7 @@ fn rename_function_param_shadows_entire_body() {
 #[test]
 fn if_condition_rejects_non_bool() {
     // `if 1 {}` — the condition should require Bool, not accept Int silently.
-    let output = check("fn f() -> Unit { if 1 { } }", "test.ky");
+    let output = check("fn f() -> Unit { if (1) { } }", "test.ky");
     assert!(
         !output.diagnostics.is_empty(),
         "expected a type mismatch diagnostic for `if 1`, got none"
@@ -2913,7 +2969,7 @@ fn fallback_unification_catches_literal_type_mismatch() {
 #[test]
 fn symbol_graph_local_lambda_not_in_function_calls() {
     // A local lambda `f` should not produce a dangling fn::f call edge.
-    let src = "fn main() -> Int {\n  let f = fn(x: Int, y: Int) -> Int => x\n  f(1, 2)\n}";
+    let src = "fn main() -> Int {\n  let f = fn(x: Int, y: Int) => x\n  f(1, 2)\n}";
     let output = check(src, "test.ky");
     let main_fn = output
         .symbol_graph
@@ -2978,7 +3034,7 @@ fn symbol_graph_pre_shadow_call_edge_preserved() {
 fn foo() -> Int { 1 }
 fn main() -> Int {
   foo()
-  let foo = fn() -> Int => 2
+  let foo = fn() => 2
   foo()
 }
 "#;
@@ -3003,7 +3059,7 @@ fn symbol_graph_post_shadow_call_not_in_edges() {
     let src = r#"
 fn foo() -> Int { 1 }
 fn main() -> Int {
-  let foo = fn() -> Int => 2
+  let foo = fn() => 2
   foo()
 }
 "#;
@@ -3052,7 +3108,7 @@ fn symbol_graph_lambda_param_shadow_no_call_edge() {
 fn foo() -> Int { 1 }
 fn main() -> Int {
   let g = fn(foo) => foo()
-  g(fn() -> Int => 2)
+  g(fn() => 2)
 }
 "#;
     let output = check(src, "test.ky");
@@ -3102,7 +3158,7 @@ fn foo() -> Int { 1 }
 fn main() -> Int {
   foo()
   let g = fn(foo) => foo()
-  g(fn() -> Int => 2)
+  g(fn() => 2)
 }
 "#;
     let output = check(src, "test.ky");
@@ -3132,7 +3188,7 @@ fn symbol_graph_nested_block_shadow_respects_lexical_scope() {
 fn foo() -> Int { 1 }
 fn main() -> Int {
   {
-    let foo = fn() -> Int => 2
+    let foo = fn() => 2
     foo()
   }
   foo()
@@ -3164,7 +3220,7 @@ fn project_symbol_graph_pre_post_shadow_with_imported_function() {
     let output = check_project_from_files(&[
         (
             "main.ky",
-            "import math\nfn caller() -> Int {\n  add(1, 2)\n  let add = fn(x: Int, y: Int) -> Int => x\n  add(1, 2)\n}\n",
+            "import math\nfn caller() -> Int {\n  add(1, 2)\n  let add = fn(x: Int, y: Int) => x\n  add(1, 2)\n}\n",
         ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
     ]);

@@ -29,6 +29,7 @@ fn check(src: &str) -> (TypeCheckResult, Interner) {
         &root,
         &item_result.tree,
         &item_result.module_scope,
+        &[],
         file_id(),
         &mut interner,
     );

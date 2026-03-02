@@ -384,11 +384,16 @@ fn roundtrip_property_with_where() {
 fn parse_if_without_parenthesized_condition_reports_targeted_error() {
     let src = "let x = if true { 1 } else { 2 }";
     let result = parse(src);
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one targeted if parse error, got: {:?}",
+        result.errors
+    );
     assert!(
-        result
-            .errors
-            .iter()
-            .any(|e| e.message.contains("if condition must be parenthesized")),
+        result.errors[0]
+            .message
+            .contains("if condition must be parenthesized"),
         "expected parenthesized-if diagnostic, got: {:?}",
         result.errors
     );
@@ -399,11 +404,16 @@ fn parse_if_without_parenthesized_condition_reports_targeted_error() {
 fn parse_match_without_parenthesized_scrutinee_reports_targeted_error() {
     let src = "let x = match y { 1 => 2, _ => 3 }";
     let result = parse(src);
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one targeted match parse error, got: {:?}",
+        result.errors
+    );
     assert!(
-        result
-            .errors
-            .iter()
-            .any(|e| e.message.contains("match scrutinee must be parenthesized")),
+        result.errors[0]
+            .message
+            .contains("match scrutinee must be parenthesized"),
         "expected parenthesized-match diagnostic, got: {:?}",
         result.errors
     );
@@ -414,10 +424,16 @@ fn parse_match_without_parenthesized_scrutinee_reports_targeted_error() {
 fn parse_requires_without_parenthesized_expr_reports_targeted_error() {
     let src = "fn f(x: Int) -> Int requires x > 0 { x }";
     let result = parse(src);
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one targeted requires parse error, got: {:?}",
+        result.errors
+    );
     assert!(
-        result.errors.iter().any(|e| e
+        result.errors[0]
             .message
-            .contains("requires clause expression must be parenthesized")),
+            .contains("requires clause expression must be parenthesized"),
         "expected parenthesized-requires diagnostic, got: {:?}",
         result.errors
     );
@@ -428,10 +444,16 @@ fn parse_requires_without_parenthesized_expr_reports_targeted_error() {
 fn parse_where_without_parenthesized_expr_reports_targeted_error() {
     let src = "property p(x: Int <- Gen.auto()) where x > 0 { x > 0 }";
     let result = parse(src);
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one targeted where parse error, got: {:?}",
+        result.errors
+    );
     assert!(
-        result.errors.iter().any(|e| e
+        result.errors[0]
             .message
-            .contains("where clause expression must be parenthesized")),
+            .contains("where clause expression must be parenthesized"),
         "expected parenthesized-where diagnostic, got: {:?}",
         result.errors
     );
