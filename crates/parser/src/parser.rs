@@ -178,6 +178,12 @@ impl<'i> Parser<'i> {
     /// at the first `{`.
     pub fn error_recover_parenthesized_head(&mut self, message: &str, recovery: TokenSet) {
         self.error(message);
+        self.recover_parenthesized_head_content(recovery);
+    }
+
+    /// Consume tokens for missing-parenthesis head recovery without emitting
+    /// a new diagnostic.
+    pub fn recover_parenthesized_head_content(&mut self, recovery: TokenSet) {
         if self.at_eof() {
             return;
         }

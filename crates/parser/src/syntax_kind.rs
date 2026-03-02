@@ -68,6 +68,8 @@ pub enum SyntaxKind {
     EnsuresKw,
     /// `invariant`
     InvariantKw,
+    /// `contract`
+    ContractKw,
     /// `property`
     PropertyKw,
     /// `for`
@@ -202,7 +204,7 @@ pub enum SyntaxKind {
     RecordFieldList,
     /// `field: Type`
     RecordField,
-    /// `| Variant(…) | …`
+    /// `Variant(…) | …`
     VariantList,
     /// `Variant(Type, …)`
     Variant,
@@ -222,6 +224,8 @@ pub enum SyntaxKind {
     WithClause,
     /// `pipe …`
     PipeClause,
+    /// `contract` section grouping contract clauses.
+    ContractSection,
     /// `requires …`
     RequiresClause,
     /// `ensures …`
@@ -358,6 +362,7 @@ impl SyntaxKind {
                 | Self::RequiresKw
                 | Self::EnsuresKw
                 | Self::InvariantKw
+                | Self::ContractKw
                 | Self::PropertyKw
                 | Self::ForKw
                 | Self::AllKw
@@ -451,6 +456,7 @@ impl SyntaxKind {
             "requires" => Some(Self::RequiresKw),
             "ensures" => Some(Self::EnsuresKw),
             "invariant" => Some(Self::InvariantKw),
+            "contract" => Some(Self::ContractKw),
             "property" => Some(Self::PropertyKw),
             "for" => Some(Self::ForKw),
             "all" => Some(Self::AllKw),

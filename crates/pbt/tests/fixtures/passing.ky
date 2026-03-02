@@ -1,4 +1,5 @@
 fn is_positive(x: Int) -> Bool
+  contract
   ensures (result == (x > 0)){
   x > 0
 }

@@ -59,8 +59,8 @@ pub(crate) struct LoweringCtx<'a> {
     pub(crate) intrinsics: FxHashSet<Name>,
     pub(crate) hole_counter: u32,
     pub(crate) labels: Labels,
-    /// Ensures expression to emit before every return point.
-    pub(crate) ensures_expr: Option<ExprIdx>,
+    /// Ensures expressions to emit before every return point.
+    pub(crate) ensures_exprs: Vec<ExprIdx>,
     /// Pre-interned "result" name for binding the return value in ensures.
     pub(crate) result_name: Option<Name>,
     /// Collected ensures assertion ValueIds from all return points.
@@ -185,11 +185,11 @@ pub fn lower_function(
     let param_types = resolve_param_types(fn_item, body, infer);
 
     // Pre-intern "result" name if there's an ensures clause.
-    let (ensures_expr, result_name) = if body.ensures.is_some() {
+    let (ensures_exprs, result_name) = if !body.ensures.is_empty() {
         let rn = Name::new(interner, "result");
-        (body.ensures, Some(rn))
+        (body.ensures.clone(), Some(rn))
     } else {
-        (None, None)
+        (Vec::new(), None)
     };
 
     let mut ctx = LoweringCtx {
@@ -203,7 +203,7 @@ pub fn lower_function(
         intrinsics,
         hole_counter: 0,
         labels,
-        ensures_expr,
+        ensures_exprs,
         result_name,
         ensures_vids: Vec::new(),
         old_scope: FxHashMap::default(),
@@ -226,7 +226,7 @@ pub fn lower_function(
 
     // Lower requires clause → Assert.
     let mut requires_vids = Vec::new();
-    if let Some(req_expr) = body.requires {
+    for req_expr in body.requires.iter().copied() {
         let cond = ctx.lower_expr(req_expr);
         let vid = ctx
             .builder
@@ -239,15 +239,18 @@ pub fn lower_function(
 
     // Emit ensures + return for implicit return (not already terminated by `return`).
     if !ctx.block_has_terminator() {
-        if let (Some(ens_expr), Some(rn)) = (ctx.ensures_expr, ctx.result_name) {
-            // Temporarily clear ensures_expr to avoid re-entrant emission.
-            ctx.ensures_expr = None;
+        if !ctx.ensures_exprs.is_empty()
+            && let Some(rn) = ctx.result_name
+        {
             ctx.define_local(rn, root_val);
-            let cond = ctx.lower_expr(ens_expr);
-            let vid = ctx
-                .builder
-                .push_assert(cond, "ensures".to_string(), Ty::Unit);
-            ctx.ensures_vids.push(vid);
+            let ensures_exprs = ctx.ensures_exprs.clone();
+            for ens_expr in ensures_exprs {
+                let cond = ctx.lower_expr(ens_expr);
+                let vid = ctx
+                    .builder
+                    .push_assert(cond, "ensures".to_string(), Ty::Unit);
+                ctx.ensures_vids.push(vid);
+            }
         }
         ctx.builder.set_return(root_val);
     }

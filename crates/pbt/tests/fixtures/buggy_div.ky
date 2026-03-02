@@ -1,4 +1,5 @@
 fn divide(a: Int, b: Int) -> Int
+  contract
   requires (b != 0)
   ensures (result * b == a){
   a / b

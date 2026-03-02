@@ -167,16 +167,41 @@ impl FnDef {
         support::child(&self.syntax)
     }
 
-    pub fn requires_clause(&self) -> Option<RequiresClause> {
+    pub fn contract_section(&self) -> Option<ContractSection> {
         support::child(&self.syntax)
+    }
+
+    pub fn requires_clauses(&self) -> impl Iterator<Item = RequiresClause> + '_ {
+        self.contract_section()
+            .map(|c| c.requires_clauses().collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+    }
+
+    pub fn ensures_clauses(&self) -> impl Iterator<Item = EnsuresClause> + '_ {
+        self.contract_section()
+            .map(|c| c.ensures_clauses().collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+    }
+
+    pub fn invariant_clauses(&self) -> impl Iterator<Item = InvariantClause> + '_ {
+        self.contract_section()
+            .map(|c| c.invariant_clauses().collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+    }
+
+    pub fn requires_clause(&self) -> Option<RequiresClause> {
+        self.requires_clauses().next()
     }
 
     pub fn ensures_clause(&self) -> Option<EnsuresClause> {
-        support::child(&self.syntax)
+        self.ensures_clauses().next()
     }
 
     pub fn invariant_clause(&self) -> Option<InvariantClause> {
-        support::child(&self.syntax)
+        self.invariant_clauses().next()
     }
 
     /// For method definitions (`fn Type.method(...)`), returns the receiver
@@ -354,6 +379,22 @@ define_ast_node!(PipeClause, PipeClause);
 impl PipeClause {
     pub fn types(&self) -> impl Iterator<Item = TypeExpr> + '_ {
         self.syntax.children().filter_map(TypeExpr::cast)
+    }
+}
+
+define_ast_node!(ContractSection, ContractSection);
+
+impl ContractSection {
+    pub fn requires_clauses(&self) -> impl Iterator<Item = RequiresClause> + '_ {
+        support::children(&self.syntax)
+    }
+
+    pub fn ensures_clauses(&self) -> impl Iterator<Item = EnsuresClause> + '_ {
+        support::children(&self.syntax)
+    }
+
+    pub fn invariant_clauses(&self) -> impl Iterator<Item = InvariantClause> + '_ {
+        support::children(&self.syntax)
     }
 }
 

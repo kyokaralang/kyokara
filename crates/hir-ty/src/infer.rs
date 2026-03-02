@@ -275,10 +275,10 @@ pub fn infer_body(
     // Infer contract clause expressions so all sub-expressions get types.
     // Without this, literals and intermediates inside requires/ensures
     // would have no type entries, causing codegen to fail.
-    if let Some(req_expr) = body.requires {
+    for req_expr in body.requires.iter().copied() {
         ctx.infer_expr(req_expr, &Expectation::Has(Ty::Bool));
     }
-    if let Some(ens_expr) = body.ensures {
+    if !body.ensures.is_empty() {
         // Bind the `result` pattern to the return type so name resolution
         // finds it with the correct type (not Ty::Error).
         for (pat_idx, meta) in body.local_binding_meta.iter() {
@@ -287,7 +287,12 @@ pub fn infer_body(
                 ctx.local_types.insert(pat_idx, ctx.ret_ty.clone());
             }
         }
-        ctx.infer_expr(ens_expr, &Expectation::Has(Ty::Bool));
+        for ens_expr in body.ensures.iter().copied() {
+            ctx.infer_expr(ens_expr, &Expectation::Has(Ty::Bool));
+        }
+    }
+    for inv_expr in body.invariant.iter().copied() {
+        ctx.infer_expr(inv_expr, &Expectation::Has(Ty::Bool));
     }
 
     // Resolve all types deeply.

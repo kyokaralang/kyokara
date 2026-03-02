@@ -18,12 +18,12 @@ pub struct Body {
     pub pats: Arena<Pat>,
     /// The root expression of the body.
     pub root: ExprIdx,
-    /// Optional `requires` clause expression.
-    pub requires: Option<ExprIdx>,
-    /// Optional `ensures` clause expression.
-    pub ensures: Option<ExprIdx>,
-    /// Optional `invariant` clause expression.
-    pub invariant: Option<ExprIdx>,
+    /// `requires` clause expressions in source order.
+    pub requires: Vec<ExprIdx>,
+    /// `ensures` clause expressions in source order.
+    pub ensures: Vec<ExprIdx>,
+    /// `invariant` clause expressions in source order.
+    pub invariant: Vec<ExprIdx>,
     /// Scope tree for this body.
     pub scopes: ScopeTree,
     /// Map from pattern index to the scope it was introduced in.

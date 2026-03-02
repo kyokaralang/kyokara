@@ -97,6 +97,22 @@ fn fmt_fn_multiple() {
     );
 }
 
+#[test]
+fn fmt_fn_with_contract_section() {
+    assert_fmt(
+        "fn inc(x: Int) -> Int contract requires (x > 0) ensures (result > x) { x + 1 }",
+        "fn inc(x: Int) -> Int\ncontract\n  requires (x > 0)\n  ensures (result > x)\n{\n  x + 1\n}\n",
+    );
+}
+
+#[test]
+fn fmt_fn_with_with_pipe_and_contract_section() {
+    assert_fmt(
+        "fn run() -> Int with IO pipe Text contract requires (true) invariant (true) { 1 }",
+        "fn run() -> Int\nwith IO\npipe Text\ncontract\n  requires (true)\n  invariant (true)\n{\n  1\n}\n",
+    );
+}
+
 // ── Type definitions ────────────────────────────────────────────────
 
 #[test]

@@ -524,14 +524,14 @@ fn test_typed_hole() {
 
 #[test]
 fn test_requires_clause() {
-    let out = lower_and_display("fn f(x: Int) -> Int requires (x > 0) { x }");
+    let out = lower_and_display("fn f(x: Int) -> Int contract requires (x > 0) { x }");
     assert!(out.contains("assert"), "output:\n{out}");
     assert!(out.contains("requires"), "output:\n{out}");
 }
 
 #[test]
 fn test_ensures_clause() {
-    let out = lower_and_display("fn f(x: Int) -> Int ensures (x > 0) { x }");
+    let out = lower_and_display("fn f(x: Int) -> Int contract ensures (x > 0) { x }");
     assert!(out.contains("assert"), "output:\n{out}");
     assert!(out.contains("ensures"), "output:\n{out}");
 }
@@ -663,7 +663,7 @@ fn test_recursive_call() {
 
 #[test]
 fn test_ensures_binds_result_variable() {
-    let out = lower_and_display("fn f(x: Int) -> Int ensures (result > 0) { x }");
+    let out = lower_and_display("fn f(x: Int) -> Int contract ensures (result > 0) { x }");
     // The ensures clause should reference the return value, not produce a hole.
     // Before fix: `result` lowered to a hole because it wasn't defined as a local.
     assert!(
@@ -679,7 +679,7 @@ fn test_ensures_binds_result_variable() {
 #[test]
 fn test_ensures_with_early_return() {
     let out = lower_and_display(
-        "fn f(x: Int) -> Int ensures (result > 0) {
+        "fn f(x: Int) -> Int contract ensures (result > 0) {
            return x
          }",
     );
@@ -749,7 +749,7 @@ fn test_ensures_early_return_recorded_in_contracts() {
     // postcondition assert recorded in KirContracts.ensures, not just
     // emitted silently.
     let result = check_file(
-        "fn f(x: Int) -> Int ensures (result > 0) {
+        "fn f(x: Int) -> Int contract ensures (result > 0) {
            return x
          }",
     );
@@ -777,7 +777,7 @@ fn test_ensures_early_return_recorded_in_contracts() {
 #[test]
 fn test_ensures_implicit_return_recorded_in_contracts() {
     // Baseline: implicit return path should also record ensures in contracts.
-    let result = check_file("fn f(x: Int) -> Int ensures (result > 0) { x }");
+    let result = check_file("fn f(x: Int) -> Int contract ensures (result > 0) { x }");
     assert!(
         result.type_check.raw_diagnostics.is_empty(),
         "type errors: {:?}",
@@ -825,7 +825,7 @@ fn test_old_in_ensures_with_explicit_return() {
     // ensures is emitted at the return site while the rebinding is still in
     // scope — so old(x) incorrectly references the rebound value.
     let out = lower_and_display(
-        "fn f(x: Int) -> Int ensures (old(x) > 0) {
+        "fn f(x: Int) -> Int contract ensures (old(x) > 0) {
            let x = x + 1
            return x
          }",
@@ -855,7 +855,7 @@ fn test_old_in_ensures_with_explicit_return() {
 #[test]
 fn test_ensures_without_old_still_works() {
     // Guard: ensures clause without old() should continue to work.
-    let out = lower_and_display("fn f(x: Int) -> Int ensures (result > 0) { x }");
+    let out = lower_and_display("fn f(x: Int) -> Int contract ensures (result > 0) { x }");
     assert!(out.contains("assert"), "output:\n{out}");
     assert!(out.contains("ensures"), "output:\n{out}");
     assert!(!out.contains("hole"), "output:\n{out}");
@@ -865,7 +865,7 @@ fn test_ensures_without_old_still_works() {
 fn test_old_without_rebinding_references_param() {
     // Guard: old(x) where x is NOT rebound — should reference the original
     // param regardless (trivially correct, verifies old() doesn't break).
-    let out = lower_and_display("fn f(x: Int) -> Int ensures (old(x) > 0) { x }");
+    let out = lower_and_display("fn f(x: Int) -> Int contract ensures (old(x) > 0) { x }");
     assert!(out.contains("assert"), "output:\n{out}");
     assert!(out.contains("ensures"), "output:\n{out}");
     let lines: Vec<&str> = out.lines().collect();

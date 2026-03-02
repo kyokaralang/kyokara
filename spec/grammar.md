@@ -42,11 +42,11 @@ CharLiteral   <- "'" ('\\' . / [^'\\]) "'"
 
 Ident         <- [a-zA-Z_] [a-zA-Z0-9_]*  # not a keyword
 
-Keyword       <- 'import' / 'as' / 'type' / 'fn' / 'let' / 'pub'
-               / 'match' / 'cap' / 'with' / 'requires' / 'ensures'
-               / 'invariant' / 'property' / 'for' / 'all' / 'where'
-               / 'pipe' / 'old' / 'true' / 'false' / 'if' / 'else'
-               / 'return'
+Keyword       <- 'module' / 'import' / 'as' / 'type' / 'fn' / 'let' / 'pub'
+               / 'match' / 'cap' / 'effect' / 'with' / 'pipe' / 'contract'
+               / 'requires' / 'ensures' / 'invariant'
+               / 'property' / 'for' / 'all' / 'where'
+               / 'old' / 'true' / 'false' / 'if' / 'else' / 'return'
 
 # ── Operators & Delimiters ───────────────────────────────────────────
 
@@ -67,12 +67,13 @@ LtEq          <- '<='
 ### Source File
 
 ```peg
-SourceFile     <- ImportDecl* Item* EOF
+SourceFile     <- ModuleDecl? ImportDecl* Item* EOF
 ```
 
 ### Module & Imports
 
 ```peg
+ModuleDecl     <- 'module' Path
 ImportDecl     <- 'import' Path ImportAlias?
 ImportAlias    <- 'as' Ident
 Path           <- Ident ('.' Ident)*
@@ -83,7 +84,7 @@ Path           <- Ident ('.' Ident)*
 ```peg
 Item           <- 'pub'? (TypeDef
                /  FnDef
-               /  CapDef
+               /  EffectDef
                /  PropertyDef
                /  LetBinding)
 ```
@@ -95,7 +96,7 @@ TypeDef        <- 'type' Ident TypeParamList? '=' TypeBody
 
 TypeBody       <- VariantList / TypeExpr
 
-VariantList    <- ('|' Variant)+
+VariantList    <- Variant ('|' Variant)*
 Variant        <- Ident VariantFieldList?
 VariantFieldList <- '(' TypeExpr (',' TypeExpr)* ','? ')'
 
@@ -108,33 +109,35 @@ RecordField    <- Ident ':' TypeExpr
 
 ```peg
 FnDef          <- 'fn' Ident TypeParamList? ParamList ReturnType?
-                  FnContract? BlockExpr
+                  WithClause? PipeClause? ContractSection? BlockExpr
 
 ParamList      <- '(' (Param (',' Param)* ','?)? ')'
 Param          <- Ident ':' TypeExpr
 ReturnType     <- '->' TypeExpr
 
-FnContract     <- WithClause? PipeClause?
-                  RequiresClause? EnsuresClause? InvariantClause?
-
 WithClause     <- 'with' TypeExpr (',' TypeExpr)*
 PipeClause     <- 'pipe' TypeExpr (',' TypeExpr)*
+ContractSection <- 'contract' ContractClause+
+ContractClause <- RequiresClause / EnsuresClause / InvariantClause
 RequiresClause <- 'requires' '(' Expr ')'
 EnsuresClause  <- 'ensures' '(' Expr ')'
 InvariantClause <- 'invariant' '(' Expr ')'
+
+# Contract clause order is strict: requires* ensures* invariant*
 ```
 
-### Capability Definitions
+### Effect Definitions
 
 ```peg
-CapDef         <- 'cap' Ident TypeParamList? '{' CapMember* '}'
-CapMember      <- FnDef
+EffectDef      <- 'effect' Ident
 ```
 
 ### Property Definitions
 
 ```peg
-PropertyDef    <- 'property' Ident ParamList WhereClause? BlockExpr?
+PropertyDef    <- 'property' Ident PropertyParamList WhereClause? BlockExpr?
+PropertyParamList <- '(' (PropertyParam (',' PropertyParam)* ','?)? ')'
+PropertyParam  <- Ident ':' TypeExpr '<-' Expr
 WhereClause    <- 'where' '(' Expr ')'
 ForAllBinder   <- 'for' 'all' Ident ':' TypeExpr '.'
 ```
@@ -258,8 +261,8 @@ RecordPat      <- Path? '{' (Ident (',' Ident)* ','?)? '}'
 All keywords listed above are reserved and cannot be used as identifiers.
 
 ```
-all     as      cap     else    ensures   false    fn
-for     if      import  invariant  let   match    old
-pipe    property  pub   requires  return  true   type
-where   with
+all      as       cap      contract  effect   else     ensures
+false    fn       for      if        import   invariant let
+match    module   old      pipe      property pub      requires
+return   true     type     where     with
 ```

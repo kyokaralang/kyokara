@@ -1,4 +1,5 @@
 fn my_abs(x: Int) -> Int
+  contract
   ensures (result >= 0){
   x
 }

@@ -17,6 +17,7 @@ const CLAUSE_EXPR_RECOVERY: TokenSet = TokenSet::new(&[
     RBrace,
     Semicolon,
     Comma,
+    ContractKw,
     WithKw,
     PipeKw,
     RequiresKw,
@@ -245,65 +246,129 @@ fn return_type(p: &mut Parser<'_>) {
     m.complete(p, ReturnType);
 }
 
-/// Parse optional contract clauses in strict canonical order:
-/// with, pipe, requires, ensures, invariant.
+/// Parse optional function-level clauses in canonical order:
+/// `with`, `pipe`, then an optional `contract` section.
 ///
-/// Out-of-order clauses produce a targeted diagnostic and are still parsed so
-/// the parser can recover without cascading item-level errors.
+/// Legacy direct `requires`/`ensures`/`invariant` clauses are rejected and
+/// consumed for recovery.
 fn fn_contract(p: &mut Parser<'_>) {
-    let mut max_seen_rank: Option<u8> = None;
-    let mut seen_mask: u8 = 0;
+    let mut seen_with = false;
+    let mut seen_pipe = false;
 
-    while let Some((rank, name)) = contract_clause_rank_and_name(p.current()) {
-        let bit = 1u8 << rank;
-        if (seen_mask & bit) != 0 {
-            p.error(&format!("duplicate `{name}` clause"));
-        } else {
-            seen_mask |= bit;
+    while matches!(p.current(), WithKw | PipeKw) {
+        match p.current() {
+            WithKw => {
+                if seen_with {
+                    p.error("duplicate `with` clause");
+                }
+                if seen_pipe {
+                    p.error("with cannot appear after pipe (function clause order: with, pipe)");
+                }
+                with_clause(p);
+                seen_with = true;
+            }
+            PipeKw => {
+                if seen_pipe {
+                    p.error("duplicate `pipe` clause");
+                }
+                pipe_clause(p);
+                seen_pipe = true;
+            }
+            _ => unreachable!("with/pipe clause dispatch mismatch"),
         }
+    }
 
+    if p.at(ContractKw) {
+        contract_section(p);
+    }
+
+    while matches!(p.current(), RequiresKw | EnsuresKw | InvariantKw) {
+        misplaced_contract_clause(p);
+    }
+}
+
+fn contract_section(p: &mut Parser<'_>) {
+    let m = p.open();
+    p.bump(); // contract
+
+    if !matches!(p.current(), RequiresKw | EnsuresKw | InvariantKw) {
+        p.error("contract section must contain at least one clause");
+        m.complete(p, ContractSection);
+        return;
+    }
+
+    let mut max_seen_rank: Option<u8> = None;
+    while let Some((rank, name)) = contract_clause_rank_and_name(p.current()) {
         if let Some(prev_rank) = max_seen_rank
             && rank < prev_rank
             && let Some(prev_name) = contract_clause_name_by_rank(prev_rank)
         {
             p.error(&format!(
-                "{name} cannot appear after {prev_name} (contract clause order: with, pipe, requires, ensures, invariant)"
+                "{name} cannot appear after {prev_name} (contract clause order: requires, ensures, invariant)"
             ));
         }
 
         max_seen_rank = Some(max_seen_rank.map_or(rank, |r| r.max(rank)));
 
         match p.current() {
-            WithKw => with_clause(p),
-            PipeKw => pipe_clause(p),
             RequiresKw => requires_clause(p),
             EnsuresKw => ensures_clause(p),
             InvariantKw => invariant_clause(p),
-            _ => unreachable!("contract clause dispatch mismatch"),
+            _ => unreachable!("contract section clause dispatch mismatch"),
         }
     }
+
+    m.complete(p, ContractSection);
 }
 
 fn contract_clause_rank_and_name(kind: crate::SyntaxKind) -> Option<(u8, &'static str)> {
     match kind {
-        WithKw => Some((0, "with")),
-        PipeKw => Some((1, "pipe")),
-        RequiresKw => Some((2, "requires")),
-        EnsuresKw => Some((3, "ensures")),
-        InvariantKw => Some((4, "invariant")),
+        RequiresKw => Some((0, "requires")),
+        EnsuresKw => Some((1, "ensures")),
+        InvariantKw => Some((2, "invariant")),
         _ => None,
     }
 }
 
 fn contract_clause_name_by_rank(rank: u8) -> Option<&'static str> {
     match rank {
-        0 => Some("with"),
-        1 => Some("pipe"),
-        2 => Some("requires"),
-        3 => Some("ensures"),
-        4 => Some("invariant"),
+        0 => Some("requires"),
+        1 => Some("ensures"),
+        2 => Some("invariant"),
         _ => None,
     }
+}
+
+fn misplaced_contract_clause(p: &mut Parser<'_>) {
+    match p.current() {
+        RequiresKw => misplaced_contract_clause_with_name(p, "requires", RequiresClause),
+        EnsuresKw => misplaced_contract_clause_with_name(p, "ensures", EnsuresClause),
+        InvariantKw => misplaced_contract_clause_with_name(p, "invariant", InvariantClause),
+        _ => unreachable!("misplaced contract clause dispatch mismatch"),
+    }
+}
+
+fn misplaced_contract_clause_with_name(
+    p: &mut Parser<'_>,
+    name: &str,
+    node_kind: crate::SyntaxKind,
+) {
+    let m = p.open();
+    p.error(&format!(
+        "`{name}` clause must appear inside `contract` section"
+    ));
+    p.bump(); // clause keyword
+    consume_misplaced_clause_expr(p);
+    m.complete(p, node_kind);
+}
+
+fn consume_misplaced_clause_expr(p: &mut Parser<'_>) {
+    if p.eat(LParen) {
+        super::expressions::expr(p);
+        p.expect(RParen);
+        return;
+    }
+    p.recover_parenthesized_head_content(CLAUSE_EXPR_RECOVERY);
 }
 
 fn with_clause(p: &mut Parser<'_>) {
@@ -311,7 +376,12 @@ fn with_clause(p: &mut Parser<'_>) {
     p.bump(); // with
     super::types::type_expr(p);
     while p.eat(Comma) {
-        if p.at(LBrace) || p.at(RequiresKw) || p.at(EnsuresKw) || p.at(InvariantKw) || p.at(PipeKw)
+        if p.at(LBrace)
+            || p.at(ContractKw)
+            || p.at(RequiresKw)
+            || p.at(EnsuresKw)
+            || p.at(InvariantKw)
+            || p.at(PipeKw)
         {
             break;
         }
@@ -325,7 +395,12 @@ fn pipe_clause(p: &mut Parser<'_>) {
     p.bump(); // pipe
     super::types::type_expr(p);
     while p.eat(Comma) {
-        if p.at(LBrace) || p.at(RequiresKw) || p.at(EnsuresKw) || p.at(InvariantKw) {
+        if p.at(LBrace)
+            || p.at(ContractKw)
+            || p.at(RequiresKw)
+            || p.at(EnsuresKw)
+            || p.at(InvariantKw)
+        {
             break;
         }
         super::types::type_expr(p);

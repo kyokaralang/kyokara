@@ -64,16 +64,16 @@ type Currency =
   | IDR
   | EUR
 
-type Result[T, E] =
-  | Ok(value: T)
-  | Err(error: E)
+type Result<T, E> =
+  Ok(T)
+  | Err(E)
 
-type Option[T] =
-  | Some(value: T)
+type Option<T> =
+  Some(T)
   | None
 ```
 
-No `null` in the language — use `Option[T]`.
+No `null` in the language — use `Option<T>`.
 
 ### Functions
 
@@ -99,8 +99,11 @@ cap Secrets
 Annotate effect requirements:
 
 ```kyokara
-fn fetch_rate(base: Currency, quote: Currency) -> Result[Float, HttpError] with Net =
-  Http.get(url = "...") |> parse_rate(base=base, quote=quote)
+fn fetch_rate(base: Currency, quote: Currency) -> Result<Float, HttpError>
+with Net
+{
+  Http.get(url: "...") |> parse_rate(base: base, quote: quote)
+}
 ```
 
 A function without `with ...` is pure and cannot invoke effectful operations. Callers must inherit required capabilities.
@@ -108,11 +111,13 @@ A function without `with ...` is pure and cannot invoke effectful operations. Ca
 ### Pattern Matching
 
 ```kyokara
-fn currency_symbol(c: Currency) -> String =
-  match c:
-    | USD -> "$"
-    | IDR -> "Rp"
-    | EUR -> "€"
+fn currency_symbol(c: Currency) -> String {
+  match (c) {
+    USD => "$",
+    IDR => "Rp",
+    EUR => "€",
+  }
+}
 ```
 
 Compiler enforces exhaustiveness.
@@ -120,22 +125,26 @@ Compiler enforces exhaustiveness.
 ### Contracts
 
 ```kyokara
-fn withdraw(acct: Account, amt: Money) -> Result[Account, WithdrawError]
-  requires amt.amount > 0
-  requires amt.currency == acct.balance.currency
-  ensures  match result:
-             | Ok(a2) -> a2.balance.amount == old(acct.balance.amount) - amt.amount
-             | Err(_) -> true
-=
+fn withdraw(acct: Account, amt: Money) -> Result<Account, WithdrawError>
+contract
+  requires (amt.amount > 0)
+  requires (amt.currency == acct.balance.currency)
+  ensures (match (result) {
+    Ok(a2) => a2.balance.amount == old(acct.balance.amount) - amt.amount,
+    Err(_) => true,
+  })
+{
   ...
+}
 ```
 
 `old(expr)` refers to pre-state. Contracts are runtime-checked by default. `--verify` flag attempts best-effort SMT proofs for a restricted fragment (linear arithmetic + uninterpreted functions); compilation is never blocked on verification results.
+Legacy direct-clause form (without `contract`) is invalid in v0.
 
 ### Property-Based Tests
 
 ```kyokara
-property sort_idempotent(xs: List[Int] <- Gen.auto()) {
+property sort_idempotent(xs: List<Int> <- Gen.auto()) {
   List.sort(List.sort(xs)) == List.sort(xs)
 }
 ```
@@ -146,8 +155,7 @@ Optional `where` clauses constrain generated inputs:
 
 ```kyokara
 property positive_is_positive(x: Int <- Gen.auto())
-where
-  x > 0
+where (x > 0)
 {
   x > 0
 }
@@ -158,10 +166,11 @@ The `where` expression is lowered as a precondition. Candidates violating the co
 ### Typed Holes and Partial Compilation
 
 ```kyokara
-fn normalize_email(s: String) -> String =
+fn normalize_email(s: String) -> String {
   let trimmed = String.trim(s)
-  let lowered = ?lowercase(trimmed)   // expression hole
+  let lowered = lowercase(trimmed)
   lowered
+}
 ```
 
 Holes carry an expected type from context. The compiler emits machine-readable hole specs including: expected type, purity/effect constraints, input variables with types, and contract obligations. Programs with holes compile to partial artifacts (typed AST + partial Intermediate Representation) but are not runnable.
@@ -175,7 +184,7 @@ x |> f(a=1, b=2)
 Desugars to `f(x, a=1, b=2)`. Pipeline feeds the first parameter positionally. Argument expressions are evaluated left-to-right in source order before slot binding, and positional arguments must come before named arguments. Functions can declare an explicit pipe parameter:
 
 ```kyokara
-fn split(text: String, sep: String) -> List[String] pipe text = ...
+fn split(text: String, sep: String) -> List<String> pipe text = ...
 ```
 
 ### Error Propagation
@@ -188,7 +197,7 @@ let body = Http.get(url=...)?
 
 ### Error Model
 
-`Result[T, E]` is the sole error channel. No exceptions. Panics exist only for unrecoverable programmer errors (contract violations in strict mode, integer overflow in debug). Panics are not catchable. Capability violations produce structured `CapabilityDenied` errors that propagate through the normal `Result` channel.
+`Result<T, E>` is the sole error channel. No exceptions. Panics exist only for unrecoverable programmer errors (contract violations in strict mode, integer overflow in debug). Panics are not catchable. Capability violations produce structured `CapabilityDenied` errors that propagate through the normal `Result` channel.
 
 ## Type System
 
@@ -331,7 +340,7 @@ refactor        (depends: span, intern, diagnostics, parser, syntax, hir-def, hi
 lsp             (depends: stdx, span, intern, diagnostics, parser, syntax, hir-def, hir-ty, hir, fmt, refactor, rowan, text-size, tower-lsp, salsa, tokio)
  ↑              LSP server with salsa incrementality. Modules: db.rs (salsa database — SourceFile input, check_file_query tracked fn, FileAnalysis bundle), server.rs (tower-lsp Backend impl, text sync via FULL document, did_open/did_change/did_save lifecycle), diagnostics.rs (kyokara→LSP diagnostic conversion for parse errors, lowering diagnostics, and type-checker errors), hover.rs (function signatures, type definitions, local variable types via InferenceResult), goto_def.rs (CST walk to find definition sites for functions, types, capabilities, variants, locals), references.rs (find all usages via CST ident classification), completion.rs (module scope + local scope + builtin types + typed hole completion), code_action.rs (quickfix integration with refactor crate for E0009 MissingMatchArms and E0011 EffectViolation), format.rs (kyokara_fmt integration), position.rs (LSP Position↔TextSize conversion, symbol_at_offset classifier). Entry point: run_lsp() starts stdin/stdout server.
 pbt             (depends: stdx, span, intern, diagnostics, syntax, hir-def, hir, eval, la-arena, rustc-hash, serde, serde_json, smallvec)
- ↑              Property-based testing. Contract-for-free: any function with requires/ensures/invariant is automatically testable. Explicit properties: `property name(x: T) { expr }` declarations are lowered as synthetic functions (ret_type = Bool), type-checked, and tested alongside contracted functions. Architecture follows Hypothesis's choice-sequence model: generators record choices (integers-in-ranges), shrinking operates on the choice sequence (not values), replay is deterministic. Modules: choice.rs (SplitMix64 RNG, ChoiceSequence, ChoiceRecorder, ChoiceReplayer, ChoiceSource trait), generate.rs (TypeRef→Value generators for Int, Float, Bool, String, Char, Unit, Option, Result, List, Map, ADTs, Records — biased interesting values for Int, depth-limited), shrink.rs (4-pass choice-sequence shrinking: zero-suffix truncation, block deletion 8/4/2/1, individual binary-search minimize, pair swap; max 1000 attempts), runner.rs (function + property discovery via item_tree contracts and property fn_idx links, generation loop with precondition filtering for functions and Bool-return classification for properties, shrinking integration, compile pipeline matching eval crate), report.rs (TestReport, FnTestResult with TestableKind, human+JSON formatting), corpus.rs (save/load .kyokara/test-corpus/<fn_name>/NNNN.json failure cases). Entry points: run_tests(source, config), run_project_tests(entry_file, config). Two modes: kyokara test <file> (corpus-only, CI-safe) and kyokara test <file> --explore (random generation + corpus replay).
+ ↑              Property-based testing. Contract-for-free: any function with contract clauses (`requires`/`ensures`/`invariant`) is automatically testable. Explicit properties: `property name(x: T) { expr }` declarations are lowered as synthetic functions (ret_type = Bool), type-checked, and tested alongside contracted functions. Architecture follows Hypothesis's choice-sequence model: generators record choices (integers-in-ranges), shrinking operates on the choice sequence (not values), replay is deterministic. Modules: choice.rs (SplitMix64 RNG, ChoiceSequence, ChoiceRecorder, ChoiceReplayer, ChoiceSource trait), generate.rs (TypeRef→Value generators for Int, Float, Bool, String, Char, Unit, Option, Result, List, Map, ADTs, Records — biased interesting values for Int, depth-limited), shrink.rs (4-pass choice-sequence shrinking: zero-suffix truncation, block deletion 8/4/2/1, individual binary-search minimize, pair swap; max 1000 attempts), runner.rs (function + property discovery via item_tree contracts and property fn_idx links, generation loop with precondition filtering for functions and Bool-return classification for properties, shrinking integration, compile pipeline matching eval crate), report.rs (TestReport, FnTestResult with TestableKind, human+JSON formatting), corpus.rs (save/load .kyokara/test-corpus/<fn_name>/NNNN.json failure cases). Entry points: run_tests(source, config), run_project_tests(entry_file, config). Two modes: kyokara test <file> (corpus-only, CI-safe) and kyokara test <file> --explore (random generation + corpus replay).
 api             (depends: stdx, span, intern, diagnostics, hir-def, hir-ty, hir, syntax, refactor, serde)
  ↑              Compiler-as-API: check(source, file_name) → CheckOutput. DTO types (DiagnosticDto, HoleSpecDto, SymbolGraphDto, SpanDto, FixDto) with serde. Structured JSON with error codes (E0001–E0012 type, E0100 parse, E0101–E0102 lowering), expected/actual types, hole specs with available variables and effect constraints, symbol graph (function/type/capability nodes with stable namespaced IDs — fn::name, type::Name, type::Name::Variant, cap::Name, cap::Name::method — call edges and effect annotations), and machine-applicable patch suggestions for E0009 (MissingMatchArms) and E0011 (EffectViolation).
 cli             (depends: api, refactor, eval, pbt, fmt, hir, lsp, syntax, diagnostics, clap, tokio, serde_json)
@@ -362,9 +371,9 @@ cli             (depends: api, refactor, eval, pbt, fmt, hir, lsp, syntax, diagn
 
 ## Standard Library (Planned)
 
-- `std.option` — `Option[T]` and combinators
-- `std.result` — `Result[T, E]` and combinators
-- `std.list` — `List[T]` (immutable linked list)
+- `std.option` — `Option<T>` and combinators
+- `std.result` — `Result<T, E>` and combinators
+- `std.list` — `List<T>` (immutable linked list)
 - `std.map` — `Map[K, V]` (immutable ordered map)
 - `std.string` — string operations
 - `std.int` / `std.float` — numeric operations

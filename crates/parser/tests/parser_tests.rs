@@ -178,18 +178,19 @@ fn fn_def_with_params_and_return() {
 
 #[test]
 fn fn_def_with_contract() {
-    // fn foo(x: Int) -> Int requires (x) { x }
+    // fn foo(x: Int) -> Int contract requires (x) { x }
     let (events, errors) = parse_tokens(&[
-        FnKw, Ident, LParen, Ident, Colon, Ident, RParen, Arrow, Ident, RequiresKw, LParen, Ident,
-        RParen, LBrace, Ident, RBrace,
+        FnKw, Ident, LParen, Ident, Colon, Ident, RParen, Arrow, Ident, ContractKw, RequiresKw,
+        LParen, Ident, RParen, LBrace, Ident, RBrace,
     ]);
     assert!(has_no_errors(&errors));
+    assert!(has_node(&events, ContractSection));
     assert!(has_node(&events, RequiresClause));
 }
 
 #[test]
 fn fn_def_contract_requires_then_invariant_is_allowed() {
-    // fn f() -> Int requires (x) invariant (y) { 1 }
+    // fn f() -> Int contract requires (x) invariant (y) { 1 }
     let (events, errors) = parse_tokens(&[
         FnKw,
         Ident,
@@ -197,6 +198,7 @@ fn fn_def_contract_requires_then_invariant_is_allowed() {
         RParen,
         Arrow,
         Ident,
+        ContractKw,
         RequiresKw,
         LParen,
         Ident,
@@ -213,13 +215,14 @@ fn fn_def_contract_requires_then_invariant_is_allowed() {
         has_no_errors(&errors),
         "requires + invariant should parse: {errors:?}"
     );
+    assert!(has_node(&events, ContractSection));
     assert!(has_node(&events, RequiresClause));
     assert!(has_node(&events, InvariantClause));
 }
 
 #[test]
 fn fn_def_contract_ensures_then_invariant_is_allowed() {
-    // fn f() -> Int ensures (x) invariant (y) { 1 }
+    // fn f() -> Int contract ensures (x) invariant (y) { 1 }
     let (events, errors) = parse_tokens(&[
         FnKw,
         Ident,
@@ -227,6 +230,7 @@ fn fn_def_contract_ensures_then_invariant_is_allowed() {
         RParen,
         Arrow,
         Ident,
+        ContractKw,
         EnsuresKw,
         LParen,
         Ident,
@@ -243,16 +247,17 @@ fn fn_def_contract_ensures_then_invariant_is_allowed() {
         has_no_errors(&errors),
         "ensures + invariant should parse: {errors:?}"
     );
+    assert!(has_node(&events, ContractSection));
     assert!(has_node(&events, EnsuresClause));
     assert!(has_node(&events, InvariantClause));
 }
 
 #[test]
 fn fn_def_contract_requires_after_ensures_reports_order_error() {
-    // fn f() -> Int ensures (x) requires (y) { 1 }
+    // fn f() -> Int contract ensures (x) requires (y) { 1 }
     let (events, errors) = parse_tokens(&[
-        FnKw, Ident, LParen, RParen, Arrow, Ident, EnsuresKw, LParen, Ident, RParen, RequiresKw,
-        LParen, Ident, RParen, LBrace, IntLiteral, RBrace,
+        FnKw, Ident, LParen, RParen, Arrow, Ident, ContractKw, EnsuresKw, LParen, Ident, RParen,
+        RequiresKw, LParen, Ident, RParen, LBrace, IntLiteral, RBrace,
     ]);
     assert_eq!(
         errors.len(),
@@ -272,9 +277,10 @@ fn fn_def_contract_requires_after_ensures_reports_order_error() {
 
 #[test]
 fn fn_def_contract_unparenthesized_requires_reports_targeted_error() {
-    // fn f() -> Int requires x { 1 }
+    // fn f() -> Int contract requires x { 1 }
     let (_events, errors) = parse_tokens(&[
-        FnKw, Ident, LParen, RParen, Arrow, Ident, RequiresKw, Ident, LBrace, IntLiteral, RBrace,
+        FnKw, Ident, LParen, RParen, Arrow, Ident, ContractKw, RequiresKw, Ident, LBrace,
+        IntLiteral, RBrace,
     ]);
     assert_eq!(
         errors.len(),
@@ -291,10 +297,10 @@ fn fn_def_contract_unparenthesized_requires_reports_targeted_error() {
 
 #[test]
 fn fn_def_contract_requires_unparenthesized_record_like_expr_reports_single_targeted_error() {
-    // fn f() -> Int requires Point { x: 1 } { 1 }
+    // fn f() -> Int contract requires Point { x: 1 } { 1 }
     let (_events, errors) = parse_tokens(&[
-        FnKw, Ident, LParen, RParen, Arrow, Ident, RequiresKw, Ident, LBrace, Ident, Colon,
-        IntLiteral, RBrace, LBrace, IntLiteral, RBrace,
+        FnKw, Ident, LParen, RParen, Arrow, Ident, ContractKw, RequiresKw, Ident, LBrace, Ident,
+        Colon, IntLiteral, RBrace, LBrace, IntLiteral, RBrace,
     ]);
     assert_eq!(
         errors.len(),
@@ -311,10 +317,10 @@ fn fn_def_contract_requires_unparenthesized_record_like_expr_reports_single_targ
 
 #[test]
 fn fn_def_contract_ensures_unparenthesized_record_like_expr_reports_single_targeted_error() {
-    // fn f() -> Int ensures Point { x: 1 } { 1 }
+    // fn f() -> Int contract ensures Point { x: 1 } { 1 }
     let (_events, errors) = parse_tokens(&[
-        FnKw, Ident, LParen, RParen, Arrow, Ident, EnsuresKw, Ident, LBrace, Ident, Colon,
-        IntLiteral, RBrace, LBrace, IntLiteral, RBrace,
+        FnKw, Ident, LParen, RParen, Arrow, Ident, ContractKw, EnsuresKw, Ident, LBrace, Ident,
+        Colon, IntLiteral, RBrace, LBrace, IntLiteral, RBrace,
     ]);
     assert_eq!(
         errors.len(),
@@ -331,7 +337,7 @@ fn fn_def_contract_ensures_unparenthesized_record_like_expr_reports_single_targe
 
 #[test]
 fn fn_def_contract_invariant_unparenthesized_record_like_expr_reports_single_targeted_error() {
-    // fn f() -> Int invariant Point { x: 1 } { 1 }
+    // fn f() -> Int contract invariant Point { x: 1 } { 1 }
     let (_events, errors) = parse_tokens(&[
         FnKw,
         Ident,
@@ -339,6 +345,7 @@ fn fn_def_contract_invariant_unparenthesized_record_like_expr_reports_single_tar
         RParen,
         Arrow,
         Ident,
+        ContractKw,
         InvariantKw,
         Ident,
         LBrace,
@@ -360,6 +367,100 @@ fn fn_def_contract_invariant_unparenthesized_record_like_expr_reports_single_tar
             .message
             .contains("invariant clause expression must be parenthesized"),
         "expected parenthesized-invariant diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn fn_def_contract_requires_multiple_clauses_allowed() {
+    // fn f() -> Int contract requires (x) requires (y) { 1 }
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, ContractKw, RequiresKw, LParen, Ident, RParen,
+        RequiresKw, LParen, Ident, RParen, LBrace, IntLiteral, RBrace,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "expected no parse errors: {errors:?}"
+    );
+    assert!(has_node(&events, ContractSection));
+    assert_eq!(count_start_nodes(&events, RequiresClause), 2);
+}
+
+#[test]
+fn fn_def_contract_without_any_clause_reports_targeted_error() {
+    // fn f() -> Int contract { 1 }
+    let (_events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, ContractKw, LBrace, IntLiteral, RBrace,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted empty-contract error, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("contract section must contain at least one clause"),
+        "expected contract-section diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn fn_def_direct_requires_outside_contract_is_rejected() {
+    // fn f() -> Int requires (x > 0) { 1 }
+    let (_events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, RequiresKw, LParen, Ident, Gt, IntLiteral,
+        RParen, LBrace, IntLiteral, RBrace,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted misplaced-clause error, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("`requires` clause must appear inside `contract` section"),
+        "expected misplaced clause diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn fn_def_direct_ensures_outside_contract_is_rejected() {
+    // fn f() -> Int ensures (x > 0) { 1 }
+    let (_events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, EnsuresKw, LParen, Ident, Gt, IntLiteral,
+        RParen, LBrace, IntLiteral, RBrace,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted misplaced-clause error, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("`ensures` clause must appear inside `contract` section"),
+        "expected misplaced clause diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn fn_def_direct_invariant_outside_contract_is_rejected() {
+    // fn f() -> Int invariant (x > 0) { 1 }
+    let (_events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, InvariantKw, LParen, Ident, Gt, IntLiteral,
+        RParen, LBrace, IntLiteral, RBrace,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted misplaced-clause error, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("`invariant` clause must appear inside `contract` section"),
+        "expected misplaced clause diagnostic, got: {errors:?}"
     );
 }
 
@@ -676,13 +777,14 @@ fn hole_expr() {
 
 #[test]
 fn old_expr() {
-    // fn foo(x: Int) ensures (old(x)) { x }
+    // fn foo(x: Int) contract ensures (old(x)) { x }
     let (events, errors) = parse_tokens(&[
-        FnKw, Ident, LParen, Ident, Colon, Ident, RParen, EnsuresKw, LParen, OldKw, LParen, Ident,
-        RParen, RParen, LBrace, Ident, RBrace,
+        FnKw, Ident, LParen, Ident, Colon, Ident, RParen, ContractKw, EnsuresKw, LParen, OldKw,
+        LParen, Ident, RParen, RParen, LBrace, Ident, RBrace,
     ]);
     assert!(has_no_errors(&errors));
     assert!(has_node(&events, OldExpr));
+    assert!(has_node(&events, ContractSection));
     assert!(has_node(&events, EnsuresClause));
 }
 

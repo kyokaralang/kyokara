@@ -396,9 +396,9 @@ impl Interpreter {
             self.env.bind(param.name, val);
         }
 
-        let has_requires = body.requires.is_some();
-        let has_ensures = body.ensures.is_some();
-        let has_invariant = body.invariant.is_some();
+        let has_requires = !body.requires.is_empty();
+        let has_ensures = !body.ensures.is_empty();
+        let has_invariant = !body.invariant.is_empty();
 
         let mut prev_old_env = None;
         let mut swapped_old_env = false;
@@ -411,7 +411,7 @@ impl Interpreter {
                 };
                 Ok(return_val)
             } else {
-                if let Some(req_idx) = body.requires {
+                for req_idx in body.requires.iter().copied() {
                     let val = self.eval_expr_shared(&body, req_idx)?.into_value();
                     if !matches!(val, Value::Bool(true)) {
                         Err(RuntimeError::PreconditionFailed(fn_name_str.clone()))?;
@@ -427,19 +427,21 @@ impl Interpreter {
                     ControlFlow::Value(v) | ControlFlow::Return(v) => v,
                 };
 
-                if let Some(inv_idx) = body.invariant {
+                for inv_idx in body.invariant.iter().copied() {
                     let val = self.eval_expr_shared(&body, inv_idx)?.into_value();
                     if !matches!(val, Value::Bool(true)) {
                         Err(RuntimeError::InvariantViolated(fn_name_str.clone()))?;
                     }
                 }
 
-                if let Some(ens_idx) = body.ensures {
+                if has_ensures {
                     let result_name = Name::new(&mut self.interner, "result");
                     self.env.bind(result_name, return_val.clone());
-                    let val = self.eval_expr_shared(&body, ens_idx)?.into_value();
-                    if !matches!(val, Value::Bool(true)) {
-                        Err(RuntimeError::PostconditionFailed(fn_name_str.clone()))?;
+                    for ens_idx in body.ensures.iter().copied() {
+                        let val = self.eval_expr_shared(&body, ens_idx)?.into_value();
+                        if !matches!(val, Value::Bool(true)) {
+                            Err(RuntimeError::PostconditionFailed(fn_name_str.clone()))?;
+                        }
                     }
                 }
 
@@ -738,9 +740,9 @@ impl Interpreter {
                         exprs: body.exprs.clone(),
                         pats: body.pats.clone(),
                         root: lambda_body_idx,
-                        requires: None,
-                        ensures: None,
-                        invariant: None,
+                        requires: Vec::new(),
+                        ensures: Vec::new(),
+                        invariant: Vec::new(),
                         scopes: Default::default(),
                         pat_scopes: Vec::new(),
                         expr_scopes: Default::default(),
@@ -1040,9 +1042,9 @@ impl Interpreter {
                         exprs: body.exprs.clone(),
                         pats: body.pats.clone(),
                         root: lambda_body_idx,
-                        requires: None,
-                        ensures: None,
-                        invariant: None,
+                        requires: Vec::new(),
+                        ensures: Vec::new(),
+                        invariant: Vec::new(),
                         scopes: Default::default(),
                         pat_scopes: Vec::new(),
                         expr_scopes: Default::default(),
@@ -2192,9 +2194,9 @@ mod tests {
             exprs,
             pats: Arena::new(),
             root,
-            requires: None,
-            ensures: None,
-            invariant: None,
+            requires: Vec::new(),
+            ensures: Vec::new(),
+            invariant: Vec::new(),
             scopes: kyokara_hir_def::scope::ScopeTree::default(),
             pat_scopes: Vec::new(),
             expr_scopes: ArenaMap::default(),
@@ -2408,7 +2410,7 @@ mod tests {
     #[test]
     fn contract_requires_error_does_not_leak_env_or_old_snapshot() {
         let mut interp = make_checked_interpreter(
-            "fn bad(x: Int) -> Int requires (x / 0 > 0) ensures (old(x) == x) { x }\n\
+            "fn bad(x: Int) -> Int contract requires (x / 0 > 0) ensures (old(x) == x) { x }\n\
              fn main() -> Int { 0 }",
         );
         let bad_idx = fn_idx_by_name(&mut interp, "bad");
@@ -2422,7 +2424,7 @@ mod tests {
     #[test]
     fn contract_body_error_does_not_leak_env_or_old_snapshot() {
         let mut interp = make_checked_interpreter(
-            "fn bad(x: Int) -> Int ensures (old(x) == x) { x / 0 }\n\
+            "fn bad(x: Int) -> Int contract ensures (old(x) == x) { x / 0 }\n\
              fn main() -> Int { 0 }",
         );
         let bad_idx = fn_idx_by_name(&mut interp, "bad");
@@ -2436,7 +2438,7 @@ mod tests {
     #[test]
     fn contract_invariant_error_does_not_leak_env_or_old_snapshot() {
         let mut interp = make_checked_interpreter(
-            "fn bad(x: Int) -> Int ensures (old(x) == x) invariant (x / 0 > 0) { x }\n\
+            "fn bad(x: Int) -> Int contract ensures (old(x) == x) invariant (x / 0 > 0) { x }\n\
              fn main() -> Int { 0 }",
         );
         let bad_idx = fn_idx_by_name(&mut interp, "bad");
@@ -2450,7 +2452,7 @@ mod tests {
     #[test]
     fn contract_ensures_error_does_not_leak_env_or_old_snapshot() {
         let mut interp = make_checked_interpreter(
-            "fn bad(x: Int) -> Int ensures (old(x) / 0 > 0) { x }\n\
+            "fn bad(x: Int) -> Int contract ensures (old(x) / 0 > 0) { x }\n\
              fn main() -> Int { 0 }",
         );
         let bad_idx = fn_idx_by_name(&mut interp, "bad");

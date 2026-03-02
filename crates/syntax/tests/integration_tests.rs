@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used)]
 
 use kyokara_syntax::ast::AstNode;
-use kyokara_syntax::ast::nodes::{ElseBranch, IfExpr, SourceFile};
+use kyokara_syntax::ast::nodes::{ElseBranch, FnDef, IfExpr, SourceFile};
 use kyokara_syntax::{SyntaxKind, parse};
 
 /// Helper: parse source, check no errors, return CST debug string.
@@ -120,7 +120,7 @@ fn parse_top_level_fn_empty_body_is_allowed() {
 
 #[test]
 fn parse_misordered_contract_clause_reports_specific_error() {
-    let src = "fn inc(x: Int) -> Int ensures (result > x) requires (x >= 0) { x + 1 }";
+    let src = "fn inc(x: Int) -> Int contract ensures (result > x) requires (x >= 0) { x + 1 }";
     let result = parse(src);
     assert_eq!(
         result.errors.len(),
@@ -133,6 +133,26 @@ fn parse_misordered_contract_clause_reports_specific_error() {
             .message
             .contains("requires cannot appear after ensures"),
         "expected order-specific message, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
+fn parse_direct_requires_clause_outside_contract_reports_targeted_error() {
+    let src = "fn inc(x: Int) -> Int requires (x >= 0) { x + 1 }";
+    let result = parse(src);
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one targeted parse error, got: {:?}",
+        result.errors
+    );
+    assert!(
+        result.errors[0]
+            .message
+            .contains("`requires` clause must appear inside `contract` section"),
+        "expected misplaced-clause message, got: {:?}",
         result.errors
     );
     assert_eq!(green_text(&result.green), src);
@@ -185,6 +205,30 @@ fn parse_else_if_ast_else_branch_chain_is_explicit() {
         matches!(inner_if.else_branch(), Some(ElseBranch::Block(_))),
         "expected inner else-if to end with block else branch"
     );
+}
+
+#[test]
+fn parse_contract_section_ast_accessors_collect_multiple_clauses() {
+    let src = "fn f(x: Int) -> Int contract requires (x > 0) requires (x < 100) ensures (result > x) invariant (x > -1000) { x + 1 }";
+    let result = parse(src);
+    assert!(
+        result.errors.is_empty(),
+        "unexpected parse errors for contract section: {:?}",
+        result.errors
+    );
+
+    let root = kyokara_syntax::SyntaxNode::new_root(result.green);
+    let sf = SourceFile::cast(root).expect("parsed root should cast to SourceFile");
+    let fn_def = sf
+        .syntax()
+        .descendants()
+        .find_map(FnDef::cast)
+        .expect("expected function definition");
+
+    assert!(fn_def.contract_section().is_some());
+    assert_eq!(fn_def.requires_clauses().count(), 2);
+    assert_eq!(fn_def.ensures_clauses().count(), 1);
+    assert_eq!(fn_def.invariant_clauses().count(), 1);
 }
 
 #[test]
@@ -377,7 +421,7 @@ fn roundtrip_return() {
 
 #[test]
 fn roundtrip_old_expr() {
-    let src = "fn foo(x: Int) ensures (old(x)) { x }";
+    let src = "fn foo(x: Int) contract ensures (old(x)) { x }";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
 }
@@ -492,7 +536,7 @@ fn parse_match_without_parenthesized_record_like_scrutinee_reports_single_target
 
 #[test]
 fn parse_requires_without_parenthesized_expr_reports_targeted_error() {
-    let src = "fn f(x: Int) -> Int requires x > 0 { x }";
+    let src = "fn f(x: Int) -> Int contract requires x > 0 { x }";
     let result = parse(src);
     assert_eq!(
         result.errors.len(),
@@ -512,7 +556,7 @@ fn parse_requires_without_parenthesized_expr_reports_targeted_error() {
 
 #[test]
 fn parse_requires_without_parenthesized_record_like_expr_reports_single_targeted_error() {
-    let src = "fn f() -> Int requires Point { x: 1 } { 1 }";
+    let src = "fn f() -> Int contract requires Point { x: 1 } { 1 }";
     let result = parse(src);
     assert_eq!(
         result.errors.len(),
@@ -532,7 +576,7 @@ fn parse_requires_without_parenthesized_record_like_expr_reports_single_targeted
 
 #[test]
 fn parse_ensures_without_parenthesized_record_like_expr_reports_single_targeted_error() {
-    let src = "fn f() -> Int ensures Point { x: 1 } { 1 }";
+    let src = "fn f() -> Int contract ensures Point { x: 1 } { 1 }";
     let result = parse(src);
     assert_eq!(
         result.errors.len(),
@@ -552,7 +596,7 @@ fn parse_ensures_without_parenthesized_record_like_expr_reports_single_targeted_
 
 #[test]
 fn parse_invariant_without_parenthesized_record_like_expr_reports_single_targeted_error() {
-    let src = "fn f() -> Int invariant Point { x: 1 } { 1 }";
+    let src = "fn f() -> Int contract invariant Point { x: 1 } { 1 }";
     let result = parse(src);
     assert_eq!(
         result.errors.len(),

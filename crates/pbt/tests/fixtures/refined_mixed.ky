@@ -1,4 +1,5 @@
 fn clamp(x: Int) -> Int
+  contract
   requires (x > 0)
   ensures (result > 0){
   if (x > 100) { 100 } else { x }

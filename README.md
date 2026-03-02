@@ -22,8 +22,11 @@ The languages AI writes *in* were never designed for this:
 Every side effect is declared and sandboxed. A function that touches the network says so in its type. The runtime enforces it with a deny-by-default capability manifest. No surprises.
 
 ```kyokara
-fn fetch_rate(base: Currency, quote: Currency) -> Result[Float, HttpError] with Net =
-  Http.get(url = "https://rates.example/api") |> parse_rate(base, quote)
+fn fetch_rate(base: Currency, quote: Currency) -> Result<Float, HttpError>
+with Net
+{
+  Http.get(url: "https://rates.example/api") |> parse_rate(base, quote)
+}
 ```
 
 A pure function has no `with` clause. It *cannot* do I/O. This isn't a convention — it's a compiler guarantee.
@@ -49,18 +52,23 @@ kyokara replay run.log --mode=verify       # compare against live
 Preconditions, postconditions, and property tests are first-class language constructs — not comments, not docstrings, not a separate test framework. They're checked at runtime by default. Static verification via SMT is opt-in and scoped to a decidable fragment (see roadmap).
 
 ```kyokara
-fn withdraw(acct: Account, amt: Money) -> Result[Account, WithdrawError]
-  requires amt.amount > 0
-  requires amt.currency == acct.balance.currency
-  ensures  match result:
-             | Ok(a) -> a.balance.amount == old(acct.balance.amount) - amt.amount
-             | Err(_) -> true
-=
+fn withdraw(acct: Account, amt: Money) -> Result<Account, WithdrawError>
+contract
+  requires (amt.amount > 0)
+  requires (amt.currency == acct.balance.currency)
+  ensures (match (result) {
+    Ok(a) => a.balance.amount == old(acct.balance.amount) - amt.amount,
+    Err(_) => true,
+  })
+{
   ...
+}
 ```
 
+Legacy direct-clause form (without `contract`) is invalid in v0.
+
 ```kyokara
-property sort_idempotent(xs: List[Int] <- Gen.auto()) {
+property sort_idempotent(xs: List<Int> <- Gen.auto()) {
   List.sort(List.sort(xs)) == List.sort(xs)
 }
 ```
@@ -74,10 +82,11 @@ property sort_idempotent(xs: List[Int] <- Gen.auto()) {
 Code doesn't have to be finished to be useful. Kyokara compiles incomplete programs — holes carry their expected type, available variables, purity constraints, and contract obligations. The compiler tells the AI exactly what's needed to fill each gap.
 
 ```kyokara
-fn normalize_email(s: String) -> String =
+fn normalize_email(s: String) -> String {
   let trimmed = String.trim(s)
-  let lowered = ?lowercase(trimmed)   // hole: expects String -> String, must be pure
+  let lowered = _   // hole: expects String, must be pure
   lowered
+}
 ```
 
 ### 5. Compiler as API
@@ -121,19 +130,22 @@ kyokara refactor other.ky --action rename --symbol foo --new-name bar --project
 
 ```kyokara
 // math.ky
-pub type Currency = | USD | IDR | EUR
+pub type Currency = USD | IDR | EUR
 
 type Money = { amount: Int, currency: Currency }
 
-pub fn add_fee(x: Money, fee_bps: Int) -> Money =
+pub fn add_fee(x: Money, fee_bps: Int) -> Money {
   let fee = x.amount * fee_bps / 10_000
-  { amount = x.amount + fee, currency = x.currency }
+  Money { amount: x.amount + fee, currency: x.currency }
+}
 
-pub fn currency_symbol(c: Currency) -> String =
-  match c:
-    | USD -> "$"
-    | IDR -> "Rp"
-    | EUR -> "€"
+pub fn currency_symbol(c: Currency) -> String {
+  match (c) {
+    USD => "$",
+    IDR => "Rp",
+    EUR => "€",
+  }
+}
 ```
 
 ```kyokara
@@ -141,12 +153,12 @@ pub fn currency_symbol(c: Currency) -> String =
 import math
 
 fn main() -> Int {
-    let result = add_fee({ amount = 1000, currency = USD }, 250)
-    result.amount
+  let result = math.add_fee(Money { amount: 1000, currency: USD }, 250)
+  result.amount
 }
 ```
 
-Pure by default. Private by default — use `pub` to export. No null — use `Option[T]`. No exceptions — use `Result[T, E]`. Exhaustive pattern matching enforced by the compiler. Pipeline operator (`|>`) and error propagation (`?`) for clean data flow. Convention-based modules — file path determines module path, `import` brings public names into scope.
+Pure by default. Private by default — use `pub` to export. No null — use `Option<T>`. No exceptions — use `Result<T, E>`. Exhaustive pattern matching enforced by the compiler. Pipeline operator (`|>`) and error propagation (`?`) for clean data flow. Convention-based modules — file path determines module path, `import` brings public names into scope.
 
 ## Architecture
 

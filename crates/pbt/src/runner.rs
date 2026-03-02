@@ -368,7 +368,7 @@ fn discover_testable(
         };
 
         let has_contracts =
-            body.requires.is_some() || body.ensures.is_some() || body.invariant.is_some();
+            !body.requires.is_empty() || !body.ensures.is_empty() || !body.invariant.is_empty();
         if !has_contracts {
             continue;
         }

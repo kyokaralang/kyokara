@@ -283,7 +283,7 @@ fn check_match_record_like_head_near_miss_reports_targeted_parse_without_cascade
 
 #[test]
 fn check_requires_record_like_head_near_miss_reports_targeted_parse_without_cascade_noise() {
-    let src = "fn main() -> Int requires Point { x: 1 } { 1 }";
+    let src = "fn main() -> Int contract requires Point { x: 1 } { 1 }";
     let output = check(src, "test.ky");
     assert!(
         output.diagnostics.iter().any(|d| d.code == "E0100"
@@ -490,7 +490,7 @@ fn check_rejects_empty_non_unit_body() {
 
 #[test]
 fn check_misordered_contract_clause_reports_targeted_parse_error() {
-    let src = "fn inc(x: Int) -> Int ensures (result > x) requires (x >= 0) { x + 1 }\nfn main() -> Int { inc(1) }";
+    let src = "fn inc(x: Int) -> Int contract ensures (result > x) requires (x >= 0) { x + 1 }\nfn main() -> Int { inc(1) }";
     let output = check(src, "test.ky");
     let parse_diags: Vec<_> = output
         .diagnostics

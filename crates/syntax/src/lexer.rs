@@ -287,6 +287,7 @@ mod tests {
             ("cap", CapKw),
             ("effect", EffectKw),
             ("with", WithKw),
+            ("contract", ContractKw),
             ("requires", RequiresKw),
             ("ensures", EnsuresKw),
             ("invariant", InvariantKw),

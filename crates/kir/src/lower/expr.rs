@@ -875,20 +875,24 @@ impl<'a> LoweringCtx<'a> {
             None => self.builder.push_const(Constant::Unit, Ty::Unit),
         };
 
-        // Emit ensures assertion before the return terminator.
-        if let (Some(ens_expr), Some(rn)) = (self.ensures_expr, self.result_name) {
-            // Temporarily clear ensures_expr to avoid re-entrant emission.
-            self.ensures_expr = None;
+        // Emit ensures assertions before the return terminator.
+        if !self.ensures_exprs.is_empty()
+            && let Some(rn) = self.result_name
+        {
+            // Temporarily clear ensures expressions to avoid re-entrant emission.
+            let ensures_exprs = std::mem::take(&mut self.ensures_exprs);
             self.push_scope();
             self.define_local(rn, ret_val);
-            let cond = self.lower_expr(ens_expr);
-            let vid = self
-                .builder
-                .push_assert(cond, "ensures".to_string(), Ty::Unit);
-            self.ensures_vids.push(vid);
+            for ens_expr in ensures_exprs.iter().copied() {
+                let cond = self.lower_expr(ens_expr);
+                let vid = self
+                    .builder
+                    .push_assert(cond, "ensures".to_string(), Ty::Unit);
+                self.ensures_vids.push(vid);
+            }
             self.pop_scope();
-            // Restore ensures_expr for subsequent return statements.
-            self.ensures_expr = Some(ens_expr);
+            // Restore ensures expressions for subsequent return statements.
+            self.ensures_exprs = ensures_exprs;
         }
 
         self.builder.set_return(ret_val);

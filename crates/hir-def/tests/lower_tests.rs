@@ -724,9 +724,9 @@ fn foo() { Point { x: 1, y: 2 } }
 
 #[test]
 fn lower_old_expr() {
-    let (body, _, _) = lower_fn_body("fn foo(x: Int) ensures (old(x) == x) { x }");
+    let (body, _, _) = lower_fn_body("fn foo(x: Int) contract ensures (old(x) == x) { x }");
     // ensures clause should contain Old expr
-    assert!(body.ensures.is_some());
+    assert!(!body.ensures.is_empty());
 }
 
 #[test]

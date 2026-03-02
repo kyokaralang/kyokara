@@ -35,7 +35,7 @@ Support "almost valid" programs:
 
 ### 1.2 Intent is explicit and checkable
 First-class specification:
-- preconditions/postconditions (`requires`, `ensures`, `invariant`)
+- preconditions/postconditions (`contract` section with `requires`/`ensures`/`invariant`)
 - property-based tests (`property name(x: T <- Gen.auto()) where pred { body }`)
 - optional refinement constraints (`type PositiveInt = Int where x>0`)
 
@@ -116,30 +116,31 @@ type Money = { amount: Int, currency: Currency }
 
 ```kyokara
 type Currency =
-  | USD
+  USD
   | IDR
   | EUR
 
-type Result[T, E] =
-  | Ok(value: T)
-  | Err(error: E)
+type Result<T, E> =
+  Ok(T)
+  | Err(E)
 
-type Option[T] =
-  | Some(value: T)
+type Option<T> =
+  Some(T)
   | None
 ```
 
 Rules:
-* no `null` in the language; use `Option[T]`.
+* no `null` in the language; use `Option<T>`.
 
 ### 2.4 Functions
 
 Purity default:
 
 ```kyokara
-fn add_fee(x: Money, fee_bps: Int) -> Money =
-  let fee = { amount = x.amount * fee_bps / 10_000, currency = x.currency }
-  { amount = x.amount + fee.amount, currency = x.currency }
+fn add_fee(x: Money, fee_bps: Int) -> Money {
+  let fee = Money { amount: x.amount * fee_bps / 10_000, currency: x.currency }
+  Money { amount: x.amount + fee.amount, currency: x.currency }
+}
 ```
 
 ### 2.5 Effects
@@ -156,8 +157,11 @@ effect Secrets
 Annotate effect requirements:
 
 ```kyokara
-fn fetch_rate(base: Currency, quote: Currency) -> Result[Float, HttpError] with Net =
-  Http.get(url = "...") |> parse_rate(base=base, quote=quote)
+fn fetch_rate(base: Currency, quote: Currency) -> Result<Float, HttpError>
+with Net
+{
+  Http.get(url: "...") |> parse_rate(base: base, quote: quote)
+}
 ```
 
 Rules:
@@ -165,7 +169,7 @@ Rules:
 * callers must "inherit" required effects unless the effect is introduced explicitly via scoped blocks (optional v0 feature).
 
 Open design questions (to resolve before hir-ty):
-* **Effect polymorphism**: higher-order functions need effect-polymorphic signatures, e.g. `fn map(f: fn(A) -> B with e, xs: List[A]) -> List[B] with e`. Without this, the stdlib will be painful.
+* **Effect polymorphism**: higher-order functions need effect-polymorphic signatures, e.g. `fn map(f: fn(A) -> B with e, xs: List<A>) -> List<B> with e`. Without this, the stdlib will be painful.
 * **Subeffecting**: is `Pure` a subeffect of every capability set? Can `with Net` call a `Pure` function? (Yes — effects are an upper bound, "may do", not "must do".)
 * **Scoped capabilities**: can a caller restrict a capability before passing it? e.g. `with caps.restrict(domain="rates.example")`.
 * **Async**: if concurrency is added later, effect tracking must compose with async. Deferring concurrency to post-v0 avoids this for now.
@@ -173,11 +177,13 @@ Open design questions (to resolve before hir-ty):
 ### 2.6 Pattern matching
 
 ```kyokara
-fn currency_symbol(c: Currency) -> String =
-  match c:
-    | USD -> "$"
-    | IDR -> "Rp"
-    | EUR -> "€"
+fn currency_symbol(c: Currency) -> String {
+  match (c) {
+    USD => "$",
+    IDR => "Rp",
+    EUR => "€",
+  }
+}
 ```
 
 Compiler enforces exhaustiveness.
@@ -185,14 +191,27 @@ Compiler enforces exhaustiveness.
 ### 2.7 Contracts
 
 ```kyokara
-fn withdraw(acct: Account, amt: Money) -> Result[Account, WithdrawError]
-  requires amt.amount > 0
-  requires amt.currency == acct.balance.currency
-  ensures  match result:
-             | Ok(a2) -> a2.balance.amount == old(acct.balance.amount) - amt.amount
-             | Err(_) -> true
-=
+fn withdraw(acct: Account, amt: Money) -> Result<Account, WithdrawError>
+contract
+  requires (amt.amount > 0)
+  requires (amt.currency == acct.balance.currency)
+  ensures (match (result) {
+    Ok(a2) => a2.balance.amount == old(acct.balance.amount) - amt.amount,
+    Err(_) => true,
+  })
+{
   ...
+}
+```
+
+Legacy direct-clause form is invalid in v0:
+
+```kyokara
+fn withdraw(acct: Account, amt: Money) -> Result<Account, WithdrawError>
+  requires (amt.amount > 0)
+{
+  ...
+}
 ```
 
 `old(expr)` refers to pre-state.
@@ -200,7 +219,7 @@ fn withdraw(acct: Account, amt: Money) -> Result[Account, WithdrawError]
 ### 2.8 Property-based tests
 
 ```kyokara
-property sort_idempotent(xs: List[Int] <- Gen.auto()) {
+property sort_idempotent(xs: List<Int> <- Gen.auto()) {
   List.sort(List.sort(xs)) == List.sort(xs)
 }
 
@@ -217,8 +236,7 @@ Optional `where` clauses constrain generated inputs:
 
 ```kyokara
 property positive_is_positive(x: Int <- Gen.auto())
-where
-  x > 0
+where (x > 0)
 {
   x > 0
 }
@@ -231,10 +249,11 @@ The `where` expression is lowered as a precondition on the property body. Candid
 Holes are legal syntax:
 
 ```kyokara
-fn normalize_email(s: String) -> String =
+fn normalize_email(s: String) -> String {
   let trimmed = String.trim(s)
-  let lowered = ?lowercase(trimmed)   // expression hole
+  let lowered = lowercase(trimmed)
   lowered
+}
 ```
 
 Rules:
@@ -267,7 +286,7 @@ Rules:
 * optionally, function declarations can mark an explicit pipe parameter:
 
   ```kyokara
-  fn split(text: String, sep: String) -> List[String] pipe text = ...
+  fn split(text: String, sep: String) -> List<String> pipe text = ...
   ```
 
   then `|>` binds to that parameter.
@@ -506,7 +525,7 @@ Error format: `capability denied: {capability} (required by \`{function}\`)`
 
 ### 9.1 Result-based errors
 
-`Result[T, E]` is the sole error channel. There are no exceptions.
+`Result<T, E>` is the sole error channel. There are no exceptions.
 
 ### 9.2 Panic
 

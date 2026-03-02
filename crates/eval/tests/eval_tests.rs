@@ -724,6 +724,7 @@ fn eval_propagate_in_binary_expr() {
 fn eval_requires_passes() {
     let val = run_ok(
         "fn check(x: Int) -> Int
+           contract
            requires (x > 0)
          { x }
          fn main() -> Int { check(5) }",
@@ -735,6 +736,7 @@ fn eval_requires_passes() {
 fn eval_requires_fails() {
     let err = run_err(
         "fn check(x: Int) -> Int
+           contract
            requires (x > 0)
          { x }
          fn main() -> Int { check(-1) }",
@@ -746,6 +748,7 @@ fn eval_requires_fails() {
 fn eval_ensures_passes() {
     let val = run_ok(
         "fn get() -> Int
+           contract
            ensures (result > 0)
          { 42 }
          fn main() -> Int { get() }",
@@ -757,6 +760,7 @@ fn eval_ensures_passes() {
 fn eval_ensures_fails() {
     let err = run_err(
         "fn get() -> Int
+           contract
            ensures (result > 100)
          { 42 }
          fn main() -> Int { get() }",
@@ -768,6 +772,7 @@ fn eval_ensures_fails() {
 fn eval_ensures_result_binding() {
     let val = run_ok(
         "fn ten() -> Int
+           contract
            ensures (result == 10)
          { 10 }
          fn main() -> Int { ten() }",
@@ -779,6 +784,7 @@ fn eval_ensures_result_binding() {
 fn eval_old_in_ensures() {
     let val = run_ok(
         "fn inc(x: Int) -> Int
+           contract
            ensures (result == old(x) + 1)
          { x + 1 }
          fn main() -> Int { inc(5) }",
@@ -790,6 +796,7 @@ fn eval_old_in_ensures() {
 fn eval_old_in_ensures_fails() {
     let err = run_err(
         "fn inc(x: Int) -> Int
+           contract
            ensures (result == old(x))
          { x + 1 }
          fn main() -> Int { inc(5) }",
@@ -801,6 +808,7 @@ fn eval_old_in_ensures_fails() {
 fn eval_invariant_passes() {
     let val = run_ok(
         "fn check(x: Int) -> Int
+           contract
            invariant (x > 0)
          { x }
          fn main() -> Int { check(5) }",
@@ -812,6 +820,7 @@ fn eval_invariant_passes() {
 fn eval_invariant_fails() {
     let err = run_err(
         "fn check(x: Int) -> Int
+           contract
            invariant (x > 100)
          { x }
          fn main() -> Int { check(5) }",
@@ -823,6 +832,7 @@ fn eval_invariant_fails() {
 fn eval_requires_and_ensures_combined() {
     let val = run_ok(
         "fn safe_inc(x: Int) -> Int
+           contract
            requires (x > 0)
            ensures (result > x)
          { x + 1 }
@@ -848,6 +858,7 @@ fn eval_requires_fails_at_boundary() {
     // x == 0 should fail `requires x > 0`.
     let err = run_err(
         "fn positive(x: Int) -> Int
+           contract
            requires (x > 0)
          { x }
          fn main() -> Int { positive(0) }",
@@ -859,6 +870,7 @@ fn eval_requires_fails_at_boundary() {
 fn eval_requires_fails_with_equality_check() {
     let err = run_err(
         "fn expect_ten(x: Int) -> Int
+           contract
            requires (x == 10)
          { x }
          fn main() -> Int { expect_ten(9) }",
@@ -871,6 +883,7 @@ fn eval_requires_fails_multi_param() {
     // Precondition references multiple params.
     let err = run_err(
         "fn safe_div(a: Int, b: Int) -> Int
+           contract
            requires (b > 0)
          { a / b }
          fn main() -> Int { safe_div(10, 0) }",
@@ -882,6 +895,7 @@ fn eval_requires_fails_multi_param() {
 fn eval_requires_fails_negative_bound() {
     let err = run_err(
         "fn clamp_low(x: Int) -> Int
+           contract
            requires (x >= 0)
          { x }
          fn main() -> Int { clamp_low(-1) }",
@@ -894,6 +908,7 @@ fn eval_requires_passes_at_boundary() {
     // x == 1 should pass `requires x > 0`.
     let val = run_ok(
         "fn positive(x: Int) -> Int
+           contract
            requires (x > 0)
          { x }
          fn main() -> Int { positive(1) }",
@@ -906,6 +921,7 @@ fn eval_ensures_fails_wrong_return() {
     // Function returns 0 but ensures says result > 0.
     let err = run_err(
         "fn bad() -> Int
+           contract
            ensures (result > 0)
          { 0 }
          fn main() -> Int { bad() }",
@@ -917,6 +933,7 @@ fn eval_ensures_fails_wrong_return() {
 fn eval_ensures_fails_negative_return() {
     let err = run_err(
         "fn negate(x: Int) -> Int
+           contract
            ensures (result >= 0)
          { 0 - x }
          fn main() -> Int { negate(5) }",
@@ -928,6 +945,7 @@ fn eval_ensures_fails_negative_return() {
 fn eval_ensures_fails_equality_mismatch() {
     let err = run_err(
         "fn double(x: Int) -> Int
+           contract
            ensures (result == x + x)
          { x * 3 }
          fn main() -> Int { double(4) }",
@@ -939,6 +957,7 @@ fn eval_ensures_fails_equality_mismatch() {
 fn eval_ensures_passes_with_computation() {
     let val = run_ok(
         "fn double(x: Int) -> Int
+           contract
            ensures (result == x + x)
          { x * 2 }
          fn main() -> Int { double(7) }",
@@ -951,6 +970,7 @@ fn eval_invariant_fails_body_violates() {
     // Invariant checks post-body state; param is fine but invariant uses strict bound.
     let err = run_err(
         "fn process(x: Int) -> Int
+           contract
            invariant (x > 10)
          { x }
          fn main() -> Int { process(5) }",
@@ -962,6 +982,7 @@ fn eval_invariant_fails_body_violates() {
 fn eval_invariant_fails_at_zero() {
     let err = run_err(
         "fn nonzero(x: Int) -> Int
+           contract
            invariant (x != 0)
          { x }
          fn main() -> Int { nonzero(0) }",
@@ -976,6 +997,7 @@ fn eval_old_captures_pre_state() {
     // old(x) should be 10 even though x is used in computation.
     let val = run_ok(
         "fn add_five(x: Int) -> Int
+           contract
            ensures (result == old(x) + 5)
          { x + 5 }
          fn main() -> Int { add_five(10) }",
@@ -988,6 +1010,7 @@ fn eval_old_fails_when_body_changes_meaning() {
     // Body returns x * 2 but ensures says result == old(x) + 1.
     let err = run_err(
         "fn wrong(x: Int) -> Int
+           contract
            ensures (result == old(x) + 1)
          { x * 2 }
          fn main() -> Int { wrong(5) }",
@@ -1000,6 +1023,7 @@ fn eval_requires_and_ensures_requires_fails_first() {
     // Both contracts present, but precondition fails before body runs.
     let err = run_err(
         "fn guarded(x: Int) -> Int
+           contract
            requires (x > 0)
            ensures (result > 0)
          { x + 1 }
@@ -1014,6 +1038,7 @@ fn eval_requires_passes_ensures_fails() {
     // Precondition passes but postcondition catches bad return.
     let err = run_err(
         "fn bad_inc(x: Int) -> Int
+           contract
            requires (x > 0)
            ensures (result > x)
          { x }
@@ -1027,6 +1052,7 @@ fn eval_requires_passes_ensures_fails() {
 fn eval_all_three_contracts_pass() {
     let val = run_ok(
         "fn triple_check(x: Int) -> Int
+           contract
            requires (x > 0)
            ensures (result == old(x) + 1)
            invariant (x > 0)
@@ -1041,6 +1067,7 @@ fn eval_invariant_fails_with_requires_and_ensures() {
     // requires passes, invariant fails before ensures runs.
     let err = run_err(
         "fn strict(x: Int) -> Int
+           contract
            requires (x > 0)
            ensures (result > 0)
            invariant (x > 100)
@@ -1057,6 +1084,7 @@ fn eval_contract_on_recursive_fn() {
     // Contracts checked on every call in recursion.
     let val = run_ok(
         "fn fact(n: Int) -> Int
+           contract
            requires (n >= 0)
            ensures (result >= 1)
          {
@@ -1072,6 +1100,7 @@ fn eval_contract_on_called_fn_not_main() {
     // Contract on a helper, main has none.
     let err = run_err(
         "fn helper(x: Int) -> Int
+           contract
            requires (x > 0)
          { x }
          fn main() -> Int { helper(-1) }",
@@ -1083,6 +1112,7 @@ fn eval_contract_on_called_fn_not_main() {
 fn eval_ensures_with_bool_return() {
     let val = run_ok(
         "fn is_positive(x: Int) -> Bool
+           contract
            ensures (result == true)
          { x > 0 }
          fn main() -> Bool { is_positive(5) }",
@@ -1094,6 +1124,7 @@ fn eval_ensures_with_bool_return() {
 fn eval_ensures_with_bool_return_fails() {
     let err = run_err(
         "fn is_positive(x: Int) -> Bool
+           contract
            ensures (result == true)
          { x > 0 }
          fn main() -> Bool { is_positive(-1) }",
@@ -1106,6 +1137,7 @@ fn eval_requires_compound_condition_fails() {
     // Compound boolean in requires.
     let err = run_err(
         "fn bounded(x: Int) -> Int
+           contract
            requires (x > 0)
          { x }
          fn main() -> Int { bounded(-10) }",
@@ -1117,6 +1149,7 @@ fn eval_requires_compound_condition_fails() {
 fn eval_ensures_result_is_zero() {
     let val = run_ok(
         "fn zero() -> Int
+           contract
            ensures (result == 0)
          { 0 }
          fn main() -> Int { zero() }",
@@ -1128,6 +1161,7 @@ fn eval_ensures_result_is_zero() {
 fn eval_ensures_result_is_zero_fails() {
     let err = run_err(
         "fn not_zero() -> Int
+           contract
            ensures (result == 0)
          { 1 }
          fn main() -> Int { not_zero() }",
@@ -1139,6 +1173,7 @@ fn eval_ensures_result_is_zero_fails() {
 fn eval_old_with_multiple_params() {
     let val = run_ok(
         "fn sum_inc(a: Int, b: Int) -> Int
+           contract
            ensures (result == old(a) + old(b) + 1)
          { a + b + 1 }
          fn main() -> Int { sum_inc(3, 4) }",
@@ -1150,6 +1185,7 @@ fn eval_old_with_multiple_params() {
 fn eval_old_with_multiple_params_fails() {
     let err = run_err(
         "fn sum_inc(a: Int, b: Int) -> Int
+           contract
            ensures (result == old(a) + old(b))
          { a + b + 1 }
          fn main() -> Int { sum_inc(3, 4) }",
@@ -1162,6 +1198,7 @@ fn eval_contract_error_names_function() {
     // Error message should contain the function name.
     let err = run_err(
         "fn my_special_fn(x: Int) -> Int
+           contract
            requires (x > 100)
          { x }
          fn main() -> Int { my_special_fn(1) }",
@@ -1173,6 +1210,7 @@ fn eval_contract_error_names_function() {
 fn eval_postcondition_error_names_function() {
     let err = run_err(
         "fn another_fn() -> Int
+           contract
            ensures (result > 999)
          { 1 }
          fn main() -> Int { another_fn() }",
@@ -1184,6 +1222,7 @@ fn eval_postcondition_error_names_function() {
 fn eval_invariant_error_names_function() {
     let err = run_err(
         "fn inv_fn(x: Int) -> Int
+           contract
            invariant (x > 999)
          { x }
          fn main() -> Int { inv_fn(1) }",
@@ -2123,7 +2162,8 @@ fn run_rejects_user_variable_named_result() {
 #[test]
 fn run_ensures_with_result_still_works() {
     // Guard test: ensures clauses that use `result` should still run fine.
-    let val = run_ok("fn get() -> Int ensures (result > 0) { 42 }\nfn main() -> Int { get() }");
+    let val =
+        run_ok("fn get() -> Int contract ensures (result > 0) { 42 }\nfn main() -> Int { get() }");
     assert!(matches!(val, Value::Int(42)));
 }
 
@@ -2132,7 +2172,7 @@ fn run_ensures_result_and_user_result_coexist() {
     // Edge case: one function has ensures (with implicit `result`),
     // another function references an undefined `result` — the second
     // should still be caught at compile time.
-    let src = "fn get() -> Int ensures (result > 0) { 42 }\nfn main() -> Int { result }";
+    let src = "fn get() -> Int contract ensures (result > 0) { 42 }\nfn main() -> Int { result }";
     let result = kyokara_eval::run(src);
     let err = match result {
         Ok(_) => panic!("expected error for unresolved `result` in main"),
@@ -2255,7 +2295,7 @@ fn run_rejects_compile_invalid_programs_detected_by_check() {
         },
         Case {
             name: "misordered contract clauses",
-            src: "fn inc(x: Int) -> Int ensures (result > x) requires (x >= 0) { x + 1 }\nfn main() -> Int { inc(1) }",
+            src: "fn inc(x: Int) -> Int contract ensures (result > x) requires (x >= 0) { x + 1 }\nfn main() -> Int { inc(1) }",
             run_fragment: "requires cannot appear after ensures",
         },
         Case {

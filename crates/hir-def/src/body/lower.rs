@@ -85,32 +85,36 @@ pub fn lower_body(
     // Lower contract clauses (old() is valid here)
     ctx.in_contract = true;
     let requires = fn_def
-        .requires_clause()
-        .and_then(|rc| rc.expr())
-        .map(|e| ctx.lower_expr(&e));
+        .requires_clauses()
+        .filter_map(|rc| rc.expr().map(|e| ctx.lower_expr(&e)))
+        .collect::<Vec<_>>();
 
-    let ensures = fn_def.ensures_clause().and_then(|ec| ec.expr()).map(|e| {
-        // Introduce implicit `result` binding in ensures scope.
-        ctx.push_scope();
-        let result_name = Name::new(ctx.interner, "result");
-        let result_pat = ctx.alloc_pat(pat::Pat::Bind { name: result_name });
-        ctx.pat_source_map
-            .insert(result_pat, e.syntax().text_range());
-        ctx.register_local_binding(
-            result_name,
-            result_pat,
-            e.syntax().text_range(),
-            LocalBindingOrigin::ContractResult,
-        );
-        let idx = ctx.lower_expr(&e);
-        ctx.pop_scope();
-        idx
-    });
+    let ensures = fn_def
+        .ensures_clauses()
+        .filter_map(|ec| ec.expr())
+        .map(|e| {
+            // Introduce implicit `result` binding in ensures scope.
+            ctx.push_scope();
+            let result_name = Name::new(ctx.interner, "result");
+            let result_pat = ctx.alloc_pat(pat::Pat::Bind { name: result_name });
+            ctx.pat_source_map
+                .insert(result_pat, e.syntax().text_range());
+            ctx.register_local_binding(
+                result_name,
+                result_pat,
+                e.syntax().text_range(),
+                LocalBindingOrigin::ContractResult,
+            );
+            let idx = ctx.lower_expr(&e);
+            ctx.pop_scope();
+            idx
+        })
+        .collect::<Vec<_>>();
 
     let invariant = fn_def
-        .invariant_clause()
-        .and_then(|ic| ic.expr())
-        .map(|e| ctx.lower_expr(&e));
+        .invariant_clauses()
+        .filter_map(|ic| ic.expr().map(|e| ctx.lower_expr(&e)))
+        .collect::<Vec<_>>();
     ctx.in_contract = false;
 
     // Lower body
@@ -186,16 +190,18 @@ pub fn lower_property_body(
 
     // Lower `where` clause as requires (precondition).
     let requires = if let Some(wc) = prop_def.where_clause() {
-        wc.expr().map(|e| {
+        if let Some(e) = wc.expr() {
             ctx.in_contract = true;
             let range = e.syntax().text_range();
             let idx = ctx.lower_expr(&e);
             ctx.expr_source_map.insert(idx, range);
             ctx.in_contract = false;
-            idx
-        })
+            vec![idx]
+        } else {
+            Vec::new()
+        }
     } else {
-        None
+        Vec::new()
     };
 
     // Lower body.
@@ -214,8 +220,8 @@ pub fn lower_property_body(
             pats: ctx.pats,
             root,
             requires,
-            ensures: None,
-            invariant: None,
+            ensures: Vec::new(),
+            invariant: Vec::new(),
             scopes: ctx.scopes,
             pat_scopes: ctx.pat_scopes,
             expr_scopes: ctx.expr_scopes,

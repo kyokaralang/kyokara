@@ -53,6 +53,7 @@ fn format_node_inner(node: &SyntaxNode) -> Doc {
         SyntaxKind::ReturnType => format_return_type(node),
         SyntaxKind::WithClause => format_with_clause(node),
         SyntaxKind::PipeClause => format_pipe_clause(node),
+        SyntaxKind::ContractSection => format_contract_section(node),
         SyntaxKind::RequiresClause => format_requires_clause(node),
         SyntaxKind::EnsuresClause => format_ensures_clause(node),
         SyntaxKind::InvariantClause => format_invariant_clause(node),
@@ -459,6 +460,7 @@ fn format_record_field(node: &SyntaxNode) -> Doc {
 
 fn format_fn_def(node: &SyntaxNode) -> Doc {
     let mut parts = vec![Doc::text("fn"), Doc::text(" ")];
+    let mut has_sections = false;
 
     if let Some(name) = find_ident(node) {
         parts.push(format_token(&name));
@@ -477,24 +479,30 @@ fn format_fn_def(node: &SyntaxNode) -> Doc {
         parts.push(format_node(&ret));
     }
 
-    // Clauses
-    for kind in [
-        SyntaxKind::WithClause,
-        SyntaxKind::PipeClause,
-        SyntaxKind::RequiresClause,
-        SyntaxKind::EnsuresClause,
-        SyntaxKind::InvariantClause,
-    ] {
-        if let Some(clause) = find_child_node(node, kind) {
-            parts.push(Doc::indent(
-                INDENT,
-                Doc::concat(vec![Doc::HardLine, format_node(&clause)]),
-            ));
-        }
+    if let Some(with_clause) = find_child_node(node, SyntaxKind::WithClause) {
+        has_sections = true;
+        parts.push(Doc::HardLine);
+        parts.push(format_node(&with_clause));
+    }
+
+    if let Some(pipe_clause) = find_child_node(node, SyntaxKind::PipeClause) {
+        has_sections = true;
+        parts.push(Doc::HardLine);
+        parts.push(format_node(&pipe_clause));
+    }
+
+    if let Some(contract) = find_child_node(node, SyntaxKind::ContractSection) {
+        has_sections = true;
+        parts.push(Doc::HardLine);
+        parts.push(format_node(&contract));
     }
 
     if let Some(body) = find_child_node(node, SyntaxKind::BlockExpr) {
-        parts.push(Doc::text(" "));
+        if has_sections {
+            parts.push(Doc::HardLine);
+        } else {
+            parts.push(Doc::text(" "));
+        }
         parts.push(format_node(&body));
     }
 
@@ -560,6 +568,23 @@ fn format_pipe_clause(node: &SyntaxNode) -> Doc {
         type_docs,
         Doc::concat(vec![Doc::text(","), Doc::text(" ")]),
     ));
+    Doc::concat(parts)
+}
+
+fn format_contract_section(node: &SyntaxNode) -> Doc {
+    let mut parts = vec![Doc::text("contract")];
+    for kind in [
+        SyntaxKind::RequiresClause,
+        SyntaxKind::EnsuresClause,
+        SyntaxKind::InvariantClause,
+    ] {
+        for clause in child_nodes(node, kind) {
+            parts.push(Doc::indent(
+                INDENT,
+                Doc::concat(vec![Doc::HardLine, format_node(&clause)]),
+            ));
+        }
+    }
     Doc::concat(parts)
 }
 

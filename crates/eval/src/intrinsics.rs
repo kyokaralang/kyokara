@@ -1027,7 +1027,10 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
             Name::new(interner, "result_unwrap_or"),
             IntrinsicFn::ResultUnwrapOr,
         ),
-        (Name::new(interner, "result_map_or"), IntrinsicFn::ResultMapOr),
+        (
+            Name::new(interner, "result_map_or"),
+            IntrinsicFn::ResultMapOr,
+        ),
         // String
         (Name::new(interner, "string_len"), IntrinsicFn::StringLen),
         (
