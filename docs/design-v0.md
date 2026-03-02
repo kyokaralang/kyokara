@@ -566,8 +566,9 @@ while `io`/`fs` are module namespaces for no-owner/effectful operations.
 
 **Implemented (v0.1+):**
 * `Option<T>` — builtin ADT (`Some(T) | None`), used as return type for safe lookups ✓
+  * Methods: `o.unwrap_or(fallback)`, `o.map_or(fallback, f)`, `o.map(f)`, `o.and_then(f)`
 * `Result<T, E>` — builtin ADT (`Ok(T) | Err(E)`), `?` propagation works ✓
-  * Methods: `r.unwrap_or(fallback)`, `r.map_or(fallback, f)`
+  * Methods: `r.unwrap_or(fallback)`, `r.map_or(fallback, f)`, `r.map(f)`, `r.and_then(f)`, `r.map_err(f)`
 * `ParseError` — builtin ADT (`InvalidInt(String) | InvalidFloat(String)`), used as error type for `parse_int`/`parse_float` ✓
 * `List<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<Vec<Value>>`) ✓
   * Constructor: `List.new()`

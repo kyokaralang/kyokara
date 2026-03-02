@@ -1464,14 +1464,92 @@ impl Interpreter {
         })
     }
 
-    /// Decode a `Result` value into `Some(ok_payload)` for `Ok`, `None` for `Err`.
+    /// Decode an `Option` value into `Some(payload)` for `Some`, `None` for `None`.
     ///
     /// Resolve by core type identity so user shadowing cannot reinterpret ADTs.
-    fn decode_result_ok_payload(
+    fn decode_option_some_payload(
         &self,
         value: &Value,
         intrinsic_name: &str,
     ) -> Result<Option<Value>, RuntimeError> {
+        let Value::Adt {
+            type_idx,
+            variant,
+            fields,
+        } = value
+        else {
+            return Err(RuntimeError::TypeError(format!(
+                "{intrinsic_name} expects an Option value"
+            )));
+        };
+
+        let Some(option_type_idx) = self
+            .module_scope
+            .core_types
+            .get(CoreType::Option)
+            .map(|i| i.type_idx)
+        else {
+            return Err(RuntimeError::TypeError(
+                "core type Option is unavailable".into(),
+            ));
+        };
+        if *type_idx != option_type_idx {
+            return Err(RuntimeError::TypeError(format!(
+                "{intrinsic_name} expects an Option value"
+            )));
+        }
+
+        let TypeDefKind::Adt { variants } = &self.item_tree.types[*type_idx].kind else {
+            return Err(RuntimeError::TypeError(format!(
+                "{intrinsic_name} expects an Option ADT"
+            )));
+        };
+        if variants.get(*variant).is_none() {
+            return Err(RuntimeError::TypeError(format!(
+                "{intrinsic_name} received invalid Option variant index"
+            )));
+        }
+
+        let Some((_, some_variant)) = self.option_some else {
+            return Err(RuntimeError::TypeError(
+                "core constructor Option::Some is unavailable".into(),
+            ));
+        };
+        let Some((_, none_variant)) = self.option_none else {
+            return Err(RuntimeError::TypeError(
+                "core constructor Option::None is unavailable".into(),
+            ));
+        };
+
+        if *variant == some_variant {
+            if fields.len() != 1 {
+                return Err(RuntimeError::TypeError(format!(
+                    "{intrinsic_name} expects Option::Some to carry one value"
+                )));
+            }
+            Ok(Some(fields[0].clone()))
+        } else if *variant == none_variant {
+            if !fields.is_empty() {
+                return Err(RuntimeError::TypeError(format!(
+                    "{intrinsic_name} expects Option::None to carry no values"
+                )));
+            }
+            Ok(None)
+        } else {
+            Err(RuntimeError::TypeError(format!(
+                "{intrinsic_name} expects Option::Some/None variants"
+            )))
+        }
+    }
+
+    /// Decode a `Result` value into `(is_ok, payload)`.
+    ///
+    /// Resolve by core type identity so user shadowing cannot reinterpret ADTs.
+    fn decode_result_payload(
+        &self,
+        value: &Value,
+        intrinsic_name: &str,
+    ) -> Result<(bool, Value), RuntimeError> {
         let Value::Adt {
             type_idx,
             variant,
@@ -1521,20 +1599,33 @@ impl Interpreter {
             ));
         };
 
+        if fields.len() != 1 {
+            return Err(RuntimeError::TypeError(format!(
+                "{intrinsic_name} expects Result::Ok/Err to carry one value"
+            )));
+        }
+
         if *variant == ok_variant {
-            if fields.len() != 1 {
-                return Err(RuntimeError::TypeError(format!(
-                    "{intrinsic_name} expects Result::Ok to carry one value"
-                )));
-            }
-            Ok(Some(fields[0].clone()))
+            Ok((true, fields[0].clone()))
         } else if *variant == err_variant {
-            Ok(None)
+            Ok((false, fields[0].clone()))
         } else {
             Err(RuntimeError::TypeError(format!(
                 "{intrinsic_name} expects Result::Ok/Err variants"
             )))
         }
+    }
+
+    /// Decode a `Result` value into `Some(ok_payload)` for `Ok`, `None` for `Err`.
+    ///
+    /// Resolve by core type identity so user shadowing cannot reinterpret ADTs.
+    fn decode_result_ok_payload(
+        &self,
+        value: &Value,
+        intrinsic_name: &str,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let (is_ok, payload) = self.decode_result_payload(value, intrinsic_name)?;
+        if is_ok { Ok(Some(payload)) } else { Ok(None) }
     }
 
     fn make_invalid_int(&self, msg: String) -> Result<Value, RuntimeError> {
@@ -1730,11 +1821,80 @@ impl Interpreter {
                 }
                 Ok(Value::list(items))
             }
+            IntrinsicFn::OptionUnwrapOr => {
+                let fallback = args[1].clone();
+                match self.decode_option_some_payload(&args[0], "option_unwrap_or")? {
+                    Some(v) => Ok(v),
+                    None => Ok(fallback),
+                }
+            }
+            IntrinsicFn::OptionMapOr => {
+                let fallback = args[1].clone();
+                let mapper = args[2].clone();
+                match self.decode_option_some_payload(&args[0], "option_map_or")? {
+                    Some(v) => self.call_value(mapper, smallvec::smallvec![v]),
+                    None => Ok(fallback),
+                }
+            }
+            IntrinsicFn::OptionMap => {
+                let mapper = args[1].clone();
+                match self.decode_option_some_payload(&args[0], "option_map")? {
+                    Some(v) => {
+                        let mapped = self.call_value(mapper, smallvec::smallvec![v])?;
+                        self.make_some(mapped)
+                    }
+                    None => self.make_none(),
+                }
+            }
+            IntrinsicFn::OptionAndThen => {
+                let mapper = args[1].clone();
+                match self.decode_option_some_payload(&args[0], "option_and_then")? {
+                    Some(v) => {
+                        let mapped = self.call_value(mapper, smallvec::smallvec![v])?;
+                        // Enforce mapper contract at runtime even if called dynamically.
+                        let _ = self.decode_option_some_payload(&mapped, "option_and_then")?;
+                        Ok(mapped)
+                    }
+                    None => self.make_none(),
+                }
+            }
             IntrinsicFn::ResultUnwrapOr => {
                 let fallback = args[1].clone();
                 match self.decode_result_ok_payload(&args[0], "result_unwrap_or")? {
                     Some(v) => Ok(v),
                     None => Ok(fallback),
+                }
+            }
+            IntrinsicFn::ResultMap => {
+                let mapper = args[1].clone();
+                match self.decode_result_ok_payload(&args[0], "result_map")? {
+                    Some(v) => {
+                        let mapped = self.call_value(mapper, smallvec::smallvec![v])?;
+                        self.make_ok(mapped)
+                    }
+                    None => Ok(args[0].clone()),
+                }
+            }
+            IntrinsicFn::ResultAndThen => {
+                let mapper = args[1].clone();
+                match self.decode_result_ok_payload(&args[0], "result_and_then")? {
+                    Some(v) => {
+                        let mapped = self.call_value(mapper, smallvec::smallvec![v])?;
+                        // Enforce mapper contract at runtime even if called dynamically.
+                        let _ = self.decode_result_ok_payload(&mapped, "result_and_then")?;
+                        Ok(mapped)
+                    }
+                    None => Ok(args[0].clone()),
+                }
+            }
+            IntrinsicFn::ResultMapErr => {
+                let mapper = args[1].clone();
+                let (is_ok, payload) = self.decode_result_payload(&args[0], "result_map_err")?;
+                if is_ok {
+                    Ok(args[0].clone())
+                } else {
+                    let mapped_err = self.call_value(mapper, smallvec::smallvec![payload])?;
+                    self.make_err(mapped_err)
                 }
             }
             IntrinsicFn::ResultMapOr => {

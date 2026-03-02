@@ -685,6 +685,33 @@ fn infer_result_ergonomics_happy_paths() {
 }
 
 #[test]
+fn infer_option_result_combinator_parity_happy_paths() {
+    let cases = [
+        "fn main() -> Int { List.new().push(41).head().unwrap_or(0) }",
+        "fn main() -> Int { List.new().push(41).head().map_or(0, fn(n: Int) => n + 1) }",
+        "fn main() -> Int { List.new().push(41).head().map(fn(n: Int) => n + 1).unwrap_or(0) }",
+        "fn main() -> Int { List.new().push(41).head().and_then(fn(n: Int) => Some(n + 1)).unwrap_or(0) }",
+        "fn main() -> Int { \"41\".parse_int().map(fn(n: Int) => n + 1).unwrap_or(0) }",
+        "fn main() -> Int { \"41\".parse_int().and_then(fn(n: Int) => Ok(n + 1)).unwrap_or(0) }",
+        "fn main() -> Int {
+            match (\"oops\".parse_int().map_err(fn(_e: ParseError) => 7)) {
+                Ok(n) => n
+                Err(e) => e
+            }
+        }",
+    ];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected no diagnostics, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
 fn err_result_ergonomics_wrong_types_or_arity() {
     struct Case<'a> {
         src: &'a str,
@@ -702,6 +729,64 @@ fn err_result_ergonomics_wrong_types_or_arity() {
         },
         Case {
             src: "fn main() -> Int { \"42\".parse_int().map_or(0, fn(n: Int) => \"x\") }",
+            expected_fragment: "type mismatch",
+        },
+    ];
+
+    for case in cases {
+        let (result, _) = check(case.src);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains(case.expected_fragment)),
+            "expected diagnostic containing `{}`; got: {:?}\nsource:\n{}",
+            case.expected_fragment,
+            result.diagnostics,
+            case.src
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|d| !d.message.contains("unresolved name")),
+            "expected canonical surface to resolve names; got unresolved-name diagnostics: {:?}\nsource:\n{}",
+            result.diagnostics,
+            case.src
+        );
+    }
+}
+
+#[test]
+fn err_option_result_combinator_wrong_types_or_arity() {
+    struct Case<'a> {
+        src: &'a str,
+        expected_fragment: &'a str,
+    }
+
+    let cases = [
+        Case {
+            src: "fn main() -> Int { List.new().head().unwrap_or() }",
+            expected_fragment: "expected 1 argument(s)",
+        },
+        Case {
+            src: "fn main() -> Int { List.new().head().map_or(0) }",
+            expected_fragment: "expected 2 argument(s)",
+        },
+        Case {
+            src: "fn main() -> Int { List.new().head().map(fn(n: Int) => n + 1, 0).unwrap_or(0) }",
+            expected_fragment: "expected 1 argument(s)",
+        },
+        Case {
+            src: "fn main() -> Int { List.new().push(1).head().and_then(fn(n: Int) => n + 1).unwrap_or(0) }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "fn main() -> Int { \"42\".parse_int().map_err().unwrap_or(0) }",
+            expected_fragment: "expected 1 argument(s)",
+        },
+        Case {
+            src: "fn main() -> Int { \"42\".parse_int().and_then(fn(n: Int) => n + 1).unwrap_or(0) }",
             expected_fragment: "type mismatch",
         },
     ];
