@@ -2214,6 +2214,11 @@ fn run_rejects_compile_invalid_programs_detected_by_check() {
             run_fragment: "parse errors:",
         },
         Case {
+            name: "misordered contract clauses",
+            src: "fn inc(x: Int) -> Int ensures result > x requires x >= 0 { x + 1 }\nfn main() -> Int { inc(1) }",
+            run_fragment: "requires cannot appear after ensures",
+        },
+        Case {
             name: "duplicate pattern binding",
             src: "type Pair = | Pair(Int, Int)\nfn main() -> Int {\n  let Pair(x, x) = Pair(1, 2)\n  x\n}",
             run_fragment: "duplicate binding",

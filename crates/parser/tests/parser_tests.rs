@@ -144,6 +144,59 @@ fn fn_def_with_contract() {
 }
 
 #[test]
+fn fn_def_contract_requires_then_invariant_is_allowed() {
+    // fn f() -> Int requires x invariant y { 1 }
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, RequiresKw, Ident, InvariantKw, Ident, LBrace,
+        IntLiteral, RBrace,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "requires + invariant should parse: {errors:?}"
+    );
+    assert!(has_node(&events, RequiresClause));
+    assert!(has_node(&events, InvariantClause));
+}
+
+#[test]
+fn fn_def_contract_ensures_then_invariant_is_allowed() {
+    // fn f() -> Int ensures x invariant y { 1 }
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, EnsuresKw, Ident, InvariantKw, Ident, LBrace,
+        IntLiteral, RBrace,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "ensures + invariant should parse: {errors:?}"
+    );
+    assert!(has_node(&events, EnsuresClause));
+    assert!(has_node(&events, InvariantClause));
+}
+
+#[test]
+fn fn_def_contract_requires_after_ensures_reports_order_error() {
+    // fn f() -> Int ensures x requires y { 1 }
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, EnsuresKw, Ident, RequiresKw, Ident, LBrace,
+        IntLiteral, RBrace,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted order error, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("requires cannot appear after ensures"),
+        "expected order-specific error, got: {:?}",
+        errors[0]
+    );
+    assert!(has_node(&events, EnsuresClause));
+    assert!(has_node(&events, RequiresClause));
+}
+
+#[test]
 fn top_level_fn_def_without_body_reports_error() {
     // fn foo() -> Int
     let (events, errors) = parse_tokens(&[FnKw, Ident, LParen, RParen, Arrow, Ident]);

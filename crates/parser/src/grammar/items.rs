@@ -217,22 +217,64 @@ fn return_type(p: &mut Parser<'_>) {
     m.complete(p, ReturnType);
 }
 
-/// Parse optional contract clauses: with, pipe, requires, ensures, invariant.
+/// Parse optional contract clauses in strict canonical order:
+/// with, pipe, requires, ensures, invariant.
+///
+/// Out-of-order clauses produce a targeted diagnostic and are still parsed so
+/// the parser can recover without cascading item-level errors.
 fn fn_contract(p: &mut Parser<'_>) {
-    if p.at(WithKw) {
-        with_clause(p);
+    let mut max_seen_rank: Option<u8> = None;
+    let mut seen_mask: u8 = 0;
+
+    while let Some((rank, name)) = contract_clause_rank_and_name(p.current()) {
+        let bit = 1u8 << rank;
+        if (seen_mask & bit) != 0 {
+            p.error(&format!("duplicate `{name}` clause"));
+        } else {
+            seen_mask |= bit;
+        }
+
+        if let Some(prev_rank) = max_seen_rank
+            && rank < prev_rank
+            && let Some(prev_name) = contract_clause_name_by_rank(prev_rank)
+        {
+            p.error(&format!(
+                "{name} cannot appear after {prev_name} (contract clause order: with, pipe, requires, ensures, invariant)"
+            ));
+        }
+
+        max_seen_rank = Some(max_seen_rank.map_or(rank, |r| r.max(rank)));
+
+        match p.current() {
+            WithKw => with_clause(p),
+            PipeKw => pipe_clause(p),
+            RequiresKw => requires_clause(p),
+            EnsuresKw => ensures_clause(p),
+            InvariantKw => invariant_clause(p),
+            _ => unreachable!("contract clause dispatch mismatch"),
+        }
     }
-    if p.at(PipeKw) {
-        pipe_clause(p);
+}
+
+fn contract_clause_rank_and_name(kind: crate::SyntaxKind) -> Option<(u8, &'static str)> {
+    match kind {
+        WithKw => Some((0, "with")),
+        PipeKw => Some((1, "pipe")),
+        RequiresKw => Some((2, "requires")),
+        EnsuresKw => Some((3, "ensures")),
+        InvariantKw => Some((4, "invariant")),
+        _ => None,
     }
-    if p.at(RequiresKw) {
-        requires_clause(p);
-    }
-    if p.at(EnsuresKw) {
-        ensures_clause(p);
-    }
-    if p.at(InvariantKw) {
-        invariant_clause(p);
+}
+
+fn contract_clause_name_by_rank(rank: u8) -> Option<&'static str> {
+    match rank {
+        0 => Some("with"),
+        1 => Some("pipe"),
+        2 => Some("requires"),
+        3 => Some("ensures"),
+        4 => Some("invariant"),
+        _ => None,
     }
 }
 

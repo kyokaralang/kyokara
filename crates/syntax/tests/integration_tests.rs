@@ -88,6 +88,26 @@ fn parse_top_level_fn_empty_body_is_allowed() {
 }
 
 #[test]
+fn parse_misordered_contract_clause_reports_specific_error() {
+    let src = "fn inc(x: Int) -> Int ensures result > x requires x >= 0 { x + 1 }";
+    let result = parse(src);
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one targeted parse error, got: {:?}",
+        result.errors
+    );
+    assert!(
+        result.errors[0]
+            .message
+            .contains("requires cannot appear after ensures"),
+        "expected order-specific message, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
 fn roundtrip_type_def_variants() {
     let src = "type Option = | Some(Int) | None";
     let green = parse_ok(src);

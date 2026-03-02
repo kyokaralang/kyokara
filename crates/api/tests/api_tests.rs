@@ -216,6 +216,30 @@ fn check_rejects_empty_non_unit_body() {
 }
 
 #[test]
+fn check_misordered_contract_clause_reports_targeted_parse_error() {
+    let src = "fn inc(x: Int) -> Int ensures result > x requires x >= 0 { x + 1 }\nfn main() -> Int { inc(1) }";
+    let output = check(src, "test.ky");
+    let parse_diags: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0100")
+        .collect();
+    assert_eq!(
+        parse_diags.len(),
+        1,
+        "expected one parse diagnostic, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        parse_diags[0]
+            .message
+            .contains("requires cannot appear after ensures"),
+        "expected targeted clause-order message, got: {:?}",
+        parse_diags[0]
+    );
+}
+
+#[test]
 fn check_json_roundtrip() {
     let output = check(r#"fn bad() -> Int { "hello" }"#, "test.ky");
     let json = serde_json::to_string_pretty(&output).expect("serialization failed");
