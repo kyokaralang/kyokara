@@ -4164,6 +4164,130 @@ fn eval_parse_int_map_or_err_returns_default() {
     assert_eq!(val, Value::Int(9));
 }
 
+#[test]
+fn eval_option_unwrap_or_some_returns_inner_value() {
+    let val = run_ok(r#"fn main() -> Int { List.new().push(42).head().unwrap_or(0) }"#);
+    assert_eq!(val, Value::Int(42));
+}
+
+#[test]
+fn eval_option_unwrap_or_none_returns_default() {
+    let val = run_ok(r#"fn main() -> Int { List.new().head().unwrap_or(7) }"#);
+    assert_eq!(val, Value::Int(7));
+}
+
+#[test]
+fn eval_option_map_some_applies_mapper() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            List.new().push(41).head().map(fn(n: Int) => n + 1).unwrap_or(0)
+        }"#,
+    );
+    assert_eq!(val, Value::Int(42));
+}
+
+#[test]
+fn eval_option_map_or_none_returns_default() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            List.new().head().map_or(9, fn(n: Int) => n + 1)
+        }"#,
+    );
+    assert_eq!(val, Value::Int(9));
+}
+
+#[test]
+fn eval_option_and_then_some_chains() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            List.new().push(41).head().and_then(fn(n: Int) => Some(n + 1)).unwrap_or(0)
+        }"#,
+    );
+    assert_eq!(val, Value::Int(42));
+}
+
+#[test]
+fn eval_option_and_then_none_short_circuits() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            List.new().head().and_then(fn(n: Int) => Some(n + 1)).unwrap_or(9)
+        }"#,
+    );
+    assert_eq!(val, Value::Int(9));
+}
+
+#[test]
+fn eval_result_map_ok_applies_mapper() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            "41".parse_int().map(fn(n: Int) => n + 1).unwrap_or(0)
+        }"#,
+    );
+    assert_eq!(val, Value::Int(42));
+}
+
+#[test]
+fn eval_result_map_err_preserves_error_branch() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            match ("oops".parse_int().map(fn(n: Int) => n + 1)) {
+                Ok(n) => n
+                Err(_) => 9
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Int(9));
+}
+
+#[test]
+fn eval_result_and_then_ok_applies_mapper() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            "41".parse_int().and_then(fn(n: Int) => Ok(n + 1)).unwrap_or(0)
+        }"#,
+    );
+    assert_eq!(val, Value::Int(42));
+}
+
+#[test]
+fn eval_result_and_then_err_short_circuits() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            match ("oops".parse_int().and_then(fn(n: Int) => Ok(n + 1))) {
+                Ok(n) => n
+                Err(_) => 9
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Int(9));
+}
+
+#[test]
+fn eval_result_map_err_err_applies_mapper() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            match ("oops".parse_int().map_err(fn(_e: ParseError) => 7)) {
+                Ok(n) => n
+                Err(e) => e
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Int(7));
+}
+
+#[test]
+fn eval_result_map_err_ok_preserves_ok_branch() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            match ("41".parse_int().map_err(fn(_e: ParseError) => 7)) {
+                Ok(n) => n
+                Err(e) => e
+            }
+        }"#,
+    );
+    assert_eq!(val, Value::Int(41));
+}
+
 // ── parse_float tests ───────────────────────────────────────────────
 // parse_float returns Result<Float, ParseError>.
 

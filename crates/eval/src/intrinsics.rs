@@ -59,8 +59,16 @@ pub enum IntrinsicFn {
     SetLen,
     SetIsEmpty,
     SetValues,
+    // Option<T>
+    OptionUnwrapOr,
+    OptionMapOr,
+    OptionMap,
+    OptionAndThen,
     // Result<T, E>
     ResultUnwrapOr,
+    ResultMap,
+    ResultAndThen,
+    ResultMapErr,
     ResultMapOr,
 
     // String ops
@@ -136,7 +144,14 @@ impl IntrinsicFn {
                 | IntrinsicFn::ListZip
                 | IntrinsicFn::MapGet
                 | IntrinsicFn::ListSortBy
+                | IntrinsicFn::OptionUnwrapOr
+                | IntrinsicFn::OptionMapOr
+                | IntrinsicFn::OptionMap
+                | IntrinsicFn::OptionAndThen
                 | IntrinsicFn::ResultUnwrapOr
+                | IntrinsicFn::ResultMap
+                | IntrinsicFn::ResultAndThen
+                | IntrinsicFn::ResultMapErr
                 | IntrinsicFn::ResultMapOr
                 | IntrinsicFn::ParseInt
                 | IntrinsicFn::ParseFloat
@@ -694,7 +709,14 @@ impl IntrinsicFn {
             }
 
             // ── Parsing (now complex — needs interpreter for Result construction) ──
-            IntrinsicFn::ResultUnwrapOr
+            IntrinsicFn::OptionUnwrapOr
+            | IntrinsicFn::OptionMapOr
+            | IntrinsicFn::OptionMap
+            | IntrinsicFn::OptionAndThen
+            | IntrinsicFn::ResultUnwrapOr
+            | IntrinsicFn::ResultMap
+            | IntrinsicFn::ResultAndThen
+            | IntrinsicFn::ResultMapErr
             | IntrinsicFn::ResultMapOr
             | IntrinsicFn::ParseInt
             | IntrinsicFn::ParseFloat => Err(RuntimeError::TypeError(
@@ -1024,8 +1046,30 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (Name::new(interner, "set_is_empty"), IntrinsicFn::SetIsEmpty),
         (Name::new(interner, "set_values"), IntrinsicFn::SetValues),
         (
+            Name::new(interner, "option_unwrap_or"),
+            IntrinsicFn::OptionUnwrapOr,
+        ),
+        (
+            Name::new(interner, "option_map_or"),
+            IntrinsicFn::OptionMapOr,
+        ),
+        (Name::new(interner, "option_map"), IntrinsicFn::OptionMap),
+        (
+            Name::new(interner, "option_and_then"),
+            IntrinsicFn::OptionAndThen,
+        ),
+        (
             Name::new(interner, "result_unwrap_or"),
             IntrinsicFn::ResultUnwrapOr,
+        ),
+        (Name::new(interner, "result_map"), IntrinsicFn::ResultMap),
+        (
+            Name::new(interner, "result_and_then"),
+            IntrinsicFn::ResultAndThen,
+        ),
+        (
+            Name::new(interner, "result_map_err"),
+            IntrinsicFn::ResultMapErr,
         ),
         (
             Name::new(interner, "result_map_or"),

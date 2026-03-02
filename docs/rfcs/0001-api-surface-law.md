@@ -115,6 +115,14 @@ Canonical parsing forms for numeric text:
 - canonical fallback/composition on `Result`:
   - `s.parse_int().unwrap_or(0)`
   - `s.parse_int().map_or(0, fn(n: Int) => n + 1)`
+  - `s.parse_int().map(fn(n: Int) => n + 1).unwrap_or(0)`
+  - `s.parse_int().and_then(fn(n: Int) => Ok(n + 1)).unwrap_or(0)`
+  - `s.parse_int().map_err(fn(e: ParseError) => e)`
+- canonical fallback/composition on `Option`:
+  - `parts.get(0).unwrap_or("0")`
+  - `parts.get(0).map_or("0", fn(s: String) => s)`
+  - `parts.get(0).map(fn(s: String) => s.trim())`
+  - `parts.get(0).and_then(fn(s: String) => Some(s))`
 
 Non-canonical aliases must not be introduced as parallel public APIs:
 

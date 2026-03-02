@@ -4016,6 +4016,65 @@ fn check_result_ergonomics_canonical_surface_has_no_diagnostics() {
 }
 
 #[test]
+fn check_option_result_combinator_parity_canonical_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"fn main() -> Int {
+            let o0 = List.new().head().unwrap_or(1)
+            let o1 = List.new().push(41).head().map_or(0, fn(n: Int) => n + 1)
+            let o2 = List.new().push(41).head().map(fn(n: Int) => n + 1).unwrap_or(0)
+            let o3 = List.new().push(41).head().and_then(fn(n: Int) => Some(n + 1)).unwrap_or(0)
+            let r1 = "41".parse_int().map(fn(n: Int) => n + 1).unwrap_or(0)
+            let r2 = "41".parse_int().and_then(fn(n: Int) => Ok(n + 1)).unwrap_or(0)
+            let r3 = match ("oops".parse_int().map_err(fn(_e: ParseError) => 7)) {
+                Ok(n) => n
+                Err(e) => e
+            }
+            o0 + o1 + o2 + o3 + r1 + r2 + r3
+        }"#,
+        "option/result combinator parity canonical surface",
+    );
+}
+
+#[test]
+fn check_option_and_then_wrong_mapper_result_reports_type_mismatch() {
+    let output = check(
+        r#"fn main() -> Int {
+            List.new().push(1).head().and_then(fn(n: Int) => n + 1).unwrap_or(0)
+        }"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0001" && d.message.contains("type mismatch")),
+        "expected E0001 type mismatch for option and_then mapper return type, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_result_map_err_wrong_mapper_result_reports_type_mismatch() {
+    let output = check(
+        r#"fn main() -> Int {
+            match ("oops".parse_int().map_err(fn(_e: ParseError) => "bad")) {
+                Ok(n) => n
+                Err(e) => e
+            }
+        }"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0001" && d.message.contains("type mismatch")),
+        "expected E0001 type mismatch for result map_err mapper result type, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_result_map_or_wrong_mapper_type_reports_type_mismatch() {
     let output = check(
         r#"fn main() -> Int {
