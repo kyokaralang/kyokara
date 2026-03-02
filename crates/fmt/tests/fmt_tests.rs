@@ -373,13 +373,13 @@ fn fmt_fn_with_type_params() {
     );
 }
 
-// ── Capability definitions ──────────────────────────────────────────
+// ── Effect definitions ──────────────────────────────────────────────
 
 #[test]
-fn fmt_cap_def() {
+fn fmt_effect_def() {
     assert_fmt(
-        "cap IO { fn read() -> String { _ }\nfn write(s: String) -> Unit { _ } }",
-        "cap IO {\n  fn read() -> String {\n    _\n  }\n\n  fn write(s: String) -> Unit {\n    _\n  }\n}\n",
+        "effect IO { fn read() -> String { _ }\nfn write(s: String) -> Unit { _ } }",
+        "effect IO {\n  fn read() -> String {\n    _\n  }\n\n  fn write(s: String) -> Unit {\n    _\n  }\n}\n",
     );
 }
 

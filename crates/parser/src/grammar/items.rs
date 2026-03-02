@@ -1,7 +1,7 @@
 //! Top-level item parsing.
 //!
 //! Handles module declarations, imports, type definitions, function
-//! definitions, capability definitions, property definitions, and
+//! definitions, effect definitions, property definitions, and
 //! let bindings.
 
 use crate::SyntaxKind::*;
@@ -10,11 +10,11 @@ use crate::token_set::TokenSet;
 
 /// Tokens that can start an item — used for error recovery.
 pub(super) const ITEM_RECOVERY: TokenSet = TokenSet::new(&[
-    ModuleKw, ImportKw, TypeKw, FnKw, CapKw, PropertyKw, LetKw, PubKw,
+    ModuleKw, ImportKw, TypeKw, FnKw, CapKw, EffectKw, PropertyKw, LetKw, PubKw,
 ]);
 
 pub(super) fn item(p: &mut Parser<'_>) -> Option<CompletedMarker> {
-    // `pub` can precede fn, type, or cap.
+    // `pub` can precede fn, type, or effect.
     let is_pub = p.at(PubKw);
     let start = if is_pub {
         p.current_after_pub()
@@ -25,7 +25,12 @@ pub(super) fn item(p: &mut Parser<'_>) -> Option<CompletedMarker> {
     let cm = match start {
         TypeKw => type_def(p, is_pub),
         FnKw => fn_def(p, is_pub, false),
-        CapKw => cap_def(p, is_pub),
+        CapKw => {
+            p.error("`cap` is no longer supported; use `effect`");
+            p.bump();
+            return None;
+        }
+        EffectKw => cap_def(p, is_pub),
         PropertyKw => {
             if is_pub {
                 p.error_recover("expected item", ITEM_RECOVERY);
@@ -337,15 +342,15 @@ fn invariant_clause(p: &mut Parser<'_>) {
     m.complete(p, InvariantClause);
 }
 
-// ── Capability Definition ───────────────────────────────────────────
+// ── Effect Definition ───────────────────────────────────────────────
 
-/// `pub? cap Ident TypeParamList? '{' FnDef* '}'`
+/// `pub? effect Ident TypeParamList? '{' FnDef* '}'`
 fn cap_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
     let m = p.open();
     if is_pub {
         p.bump(); // pub
     }
-    p.bump(); // cap
+    p.bump(); // effect
     p.expect(Ident);
     if p.at(Lt) {
         type_param_list(p);

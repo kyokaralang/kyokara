@@ -142,15 +142,15 @@ fn add_fee(x: Money, fee_bps: Int) -> Money =
   { amount = x.amount + fee.amount, currency = x.currency }
 ```
 
-### 2.5 Capabilities / effects
+### 2.5 Effects
 
-Declare capabilities:
+Declare effects:
 
 ```kyokara
-cap Net
-cap Clock
-cap Db
-cap Secrets
+effect Net
+effect Clock
+effect Db
+effect Secrets
 ```
 
 Annotate effect requirements:
@@ -162,7 +162,7 @@ fn fetch_rate(base: Currency, quote: Currency) -> Result[Float, HttpError] with 
 
 Rules:
 * a function without `with ...` is pure and cannot invoke effectful operations.
-* callers must "inherit" required caps unless the cap is introduced explicitly via scoped blocks (optional v0 feature).
+* callers must "inherit" required effects unless the effect is introduced explicitly via scoped blocks (optional v0 feature).
 
 Open design questions (to resolve before hir-ty):
 * **Effect polymorphism**: higher-order functions need effect-polymorphic signatures, e.g. `fn map(f: fn(A) -> B with e, xs: List[A]) -> List[B] with e`. Without this, the stdlib will be painful.

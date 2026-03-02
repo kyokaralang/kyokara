@@ -573,10 +573,24 @@ fn refined_type() {
 // ── Cap definition ──────────────────────────────────────────────────
 
 #[test]
-fn cap_def() {
+fn cap_keyword_is_rejected_with_effect_rewrite_hint() {
     // cap IO { fn read() { 0 } }
-    let (events, errors) = parse_tokens(&[
+    let (_events, errors) = parse_tokens(&[
         CapKw, Ident, LBrace, FnKw, Ident, LParen, RParen, LBrace, IntLiteral, RBrace, RBrace,
+    ]);
+    assert!(
+        errors.iter().any(|e| e
+            .message
+            .contains("`cap` is no longer supported; use `effect`")),
+        "expected cap->effect rewrite hint, got: {errors:?}"
+    );
+}
+
+#[test]
+fn effect_def() {
+    // effect IO { fn read() { 0 } }
+    let (events, errors) = parse_tokens(&[
+        EffectKw, Ident, LBrace, FnKw, Ident, LParen, RParen, LBrace, IntLiteral, RBrace, RBrace,
     ]);
     assert!(has_no_errors(&errors));
     assert!(has_node(&events, CapDef));

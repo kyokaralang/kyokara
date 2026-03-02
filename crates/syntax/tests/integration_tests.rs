@@ -75,9 +75,23 @@ fn parse_top_level_fn_without_body_reports_error() {
 
 #[test]
 fn parse_cap_member_fn_without_body_is_allowed() {
-    let src = "cap IO {\n  fn read() -> String\n}";
+    let src = "effect IO {\n  fn read() -> String\n}";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn parse_cap_keyword_is_rejected_with_effect_rewrite_hint() {
+    let src = "cap IO {\n  fn read() -> String\n}";
+    let result = parse(src);
+    assert!(
+        result.errors.iter().any(|e| e
+            .message
+            .contains("`cap` is no longer supported; use `effect`")),
+        "expected cap->effect rewrite hint, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
 }
 
 #[test]
@@ -211,7 +225,7 @@ fn roundtrip_fn_type() {
 
 #[test]
 fn roundtrip_cap_def() {
-    let src = "cap IO {\n  fn read() { 0 }\n}";
+    let src = "effect IO {\n  fn read() { 0 }\n}";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
 }

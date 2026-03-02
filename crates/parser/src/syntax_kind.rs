@@ -58,6 +58,8 @@ pub enum SyntaxKind {
     MatchKw,
     /// `cap`
     CapKw,
+    /// `effect`
+    EffectKw,
     /// `with`
     WithKw,
     /// `requires`
@@ -188,7 +190,7 @@ pub enum SyntaxKind {
     TypeDef,
     /// `fn foo(…) -> … { … }`
     FnDef,
-    /// `cap Foo { … }`
+    /// `effect Foo { … }`
     CapDef,
     /// `property foo(…) { … }`
     PropertyDef,
@@ -351,6 +353,7 @@ impl SyntaxKind {
                 | Self::LetKw
                 | Self::MatchKw
                 | Self::CapKw
+                | Self::EffectKw
                 | Self::WithKw
                 | Self::RequiresKw
                 | Self::EnsuresKw
@@ -443,6 +446,7 @@ impl SyntaxKind {
             "let" => Some(Self::LetKw),
             "match" => Some(Self::MatchKw),
             "cap" => Some(Self::CapKw),
+            "effect" => Some(Self::EffectKw),
             "with" => Some(Self::WithKw),
             "requires" => Some(Self::RequiresKw),
             "ensures" => Some(Self::EnsuresKw),
