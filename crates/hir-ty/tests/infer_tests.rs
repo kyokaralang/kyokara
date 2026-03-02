@@ -142,6 +142,25 @@ fn infer_if_else() {
 }
 
 #[test]
+fn infer_else_if_chain() {
+    check_ok("fn foo() -> Int { if (true) { 1 } else if (false) { 2 } else { 3 } }");
+}
+
+#[test]
+fn infer_else_if_equivalent_to_nested_else_if_form() {
+    check_ok("fn foo() -> Int { if (true) { 1 } else if (false) { 2 } else { 3 } }");
+    check_ok("fn foo() -> Int { if (true) { 1 } else { if (false) { 2 } else { 3 } } }");
+}
+
+#[test]
+fn infer_else_if_without_final_else_matches_nested_error() {
+    let else_if = "fn foo() -> Int { if (true) { 1 } else if (false) { 2 } }";
+    let nested = "fn foo() -> Int { if (true) { 1 } else { if (false) { 2 } } }";
+    check_err(else_if, "type mismatch");
+    check_err(nested, "type mismatch");
+}
+
+#[test]
 fn infer_if_no_else_is_unit() {
     check_ok("fn foo() { if (true) { 1 } }");
 }

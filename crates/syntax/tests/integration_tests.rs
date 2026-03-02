@@ -1,6 +1,8 @@
 //! Integration tests — parse source text, verify CST structure + lossless roundtrip.
 #![allow(clippy::unwrap_used)]
 
+use kyokara_syntax::ast::AstNode;
+use kyokara_syntax::ast::nodes::{ElseBranch, IfExpr, SourceFile};
 use kyokara_syntax::{SyntaxKind, parse};
 
 /// Helper: parse source, check no errors, return CST debug string.
@@ -155,6 +157,34 @@ fn roundtrip_if_else() {
     let src = "let x = if (true) { 1 } else { 2 }";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn parse_else_if_ast_else_branch_chain_is_explicit() {
+    let src = "let x = if (true) { 1 } else if (false) { 2 } else { 3 }";
+    let result = parse(src);
+    assert!(
+        result.errors.is_empty(),
+        "unexpected parse errors for else-if chain: {:?}",
+        result.errors
+    );
+
+    let root = kyokara_syntax::SyntaxNode::new_root(result.green);
+    let sf = SourceFile::cast(root).expect("parsed root should cast to SourceFile");
+    let outer_if = sf
+        .syntax()
+        .descendants()
+        .find_map(IfExpr::cast)
+        .expect("expected outer if expression");
+
+    let inner_if = match outer_if.else_branch() {
+        Some(ElseBranch::IfExpr(elif)) => elif,
+        other => panic!("expected outer else branch to be else-if, got: {other:?}"),
+    };
+    assert!(
+        matches!(inner_if.else_branch(), Some(ElseBranch::Block(_))),
+        "expected inner else-if to end with block else branch"
+    );
 }
 
 #[test]

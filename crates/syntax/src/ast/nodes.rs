@@ -736,21 +736,26 @@ impl IfExpr {
     }
 
     pub fn else_branch(&self) -> Option<ElseBranch> {
-        let has_else = self
-            .syntax
-            .children_with_tokens()
-            .filter_map(|it| it.into_token())
-            .any(|tok| tok.kind() == SyntaxKind::ElseKw);
-        if !has_else {
-            return None;
+        let mut seen_else = false;
+        for child in self.syntax.children_with_tokens() {
+            match child {
+                rowan::NodeOrToken::Token(tok) => {
+                    if tok.kind() == SyntaxKind::ElseKw {
+                        seen_else = true;
+                    }
+                }
+                rowan::NodeOrToken::Node(node) if seen_else => {
+                    if let Some(if_expr) = IfExpr::cast(node.clone()) {
+                        return Some(ElseBranch::IfExpr(if_expr));
+                    }
+                    if let Some(block) = BlockExpr::cast(node) {
+                        return Some(ElseBranch::Block(block));
+                    }
+                }
+                rowan::NodeOrToken::Node(_) => {}
+            }
         }
-        // else branch is either an IfExpr or the second BlockExpr
-        if let Some(if_expr) = support::children::<IfExpr>(&self.syntax).nth(1) {
-            return Some(ElseBranch::IfExpr(if_expr));
-        }
-        support::children::<BlockExpr>(&self.syntax)
-            .nth(1)
-            .map(ElseBranch::Block)
+        None
     }
 }
 

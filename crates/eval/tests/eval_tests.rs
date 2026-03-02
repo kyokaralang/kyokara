@@ -238,6 +238,26 @@ fn eval_if_with_comparison() {
     assert!(matches!(val, Value::Int(100)));
 }
 
+#[test]
+fn eval_else_if_true_path() {
+    let val = run_ok("fn main() -> Int { if (true) { 1 } else if (true) { 2 } else { 3 } }");
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_else_if_middle_path() {
+    let val = run_ok("fn main() -> Int { if (false) { 1 } else if (true) { 2 } else { 3 } }");
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_else_if_matches_nested_form() {
+    let else_if = run_ok("fn main() -> Int { if (false) { 1 } else if (true) { 2 } else { 3 } }");
+    let nested =
+        run_ok("fn main() -> Int { if (false) { 1 } else { if (true) { 2 } else { 3 } } }");
+    assert_eq!(else_if, nested);
+}
+
 // ── Comparison operator tests ────────────────────────────────────────
 
 #[test]

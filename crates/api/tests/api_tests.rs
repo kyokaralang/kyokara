@@ -35,6 +35,48 @@ fn check_type_mismatch_has_code() {
 }
 
 #[test]
+fn check_else_if_expression_form_typechecks_like_nested_form() {
+    let src = "fn main() -> Int { let x = if (true) { 1 } else if (false) { 2 } else { 3 }\n x }";
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics for else-if expression form, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_else_if_missing_final_else_matches_nested_form_diagnostics() {
+    let else_if = "fn main() -> Int { if (true) { 1 } else if (false) { 2 } }";
+    let nested = "fn main() -> Int { if (true) { 1 } else { if (false) { 2 } } }";
+
+    let else_if_output = check(else_if, "test.ky");
+    let nested_output = check(nested, "test.ky");
+
+    let else_if_codes: BTreeSet<String> = else_if_output
+        .diagnostics
+        .iter()
+        .map(|d| d.code.clone())
+        .collect();
+    let nested_codes: BTreeSet<String> = nested_output
+        .diagnostics
+        .iter()
+        .map(|d| d.code.clone())
+        .collect();
+
+    assert_eq!(
+        else_if_codes, nested_codes,
+        "expected else-if and nested forms to produce same diagnostic code set, got else-if={:?}, nested={:?}",
+        else_if_output.diagnostics, nested_output.diagnostics
+    );
+    assert!(
+        else_if_codes.contains("E0001"),
+        "expected type mismatch E0001 for missing final else, got: {:?}",
+        else_if_output.diagnostics
+    );
+}
+
+#[test]
 fn check_hole_produces_spec() {
     let output = check("fn foo() -> Int { _ }", "test.ky");
     assert_eq!(output.holes.len(), 1);
