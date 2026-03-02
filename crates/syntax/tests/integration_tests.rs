@@ -89,7 +89,7 @@ fn parse_top_level_fn_empty_body_is_allowed() {
 
 #[test]
 fn parse_misordered_contract_clause_reports_specific_error() {
-    let src = "fn inc(x: Int) -> Int ensures result > x requires x >= 0 { x + 1 }";
+    let src = "fn inc(x: Int) -> Int ensures (result > x) requires (x >= 0) { x + 1 }";
     let result = parse(src);
     assert_eq!(
         result.errors.len(),
@@ -123,21 +123,21 @@ fn roundtrip_module_and_import() {
 
 #[test]
 fn roundtrip_if_else() {
-    let src = "let x = if true { 1 } else { 2 }";
+    let src = "let x = if (true) { 1 } else { 2 }";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
 }
 
 #[test]
 fn roundtrip_match() {
-    let src = "let x = match y { 1 => 2, _ => 3 }";
+    let src = "let x = match (y) { 1 => 2, _ => 3 }";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
 }
 
 #[test]
 fn parse_match_with_leading_pipe_arm_reports_targeted_error() {
-    let src = "let x = match y { | _ => 0 }";
+    let src = "let x = match (y) { | _ => 0 }";
     let result = parse(src);
     assert!(
         result
@@ -152,7 +152,7 @@ fn parse_match_with_leading_pipe_arm_reports_targeted_error() {
 
 #[test]
 fn parse_match_with_repeated_leading_pipes_reports_each() {
-    let src = "let x = match y { | | 1 => 2, _ => 3 }";
+    let src = "let x = match (y) { | | 1 => 2, _ => 3 }";
     let result = parse(src);
     assert!(
         result
@@ -318,7 +318,7 @@ fn roundtrip_return() {
 
 #[test]
 fn roundtrip_old_expr() {
-    let src = "fn foo(x: Int) ensures old(x) { x }";
+    let src = "fn foo(x: Int) ensures (old(x)) { x }";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
 }
@@ -346,9 +346,69 @@ fn roundtrip_property_def() {
 
 #[test]
 fn roundtrip_property_with_where() {
-    let src = "property p(x: Int <- Gen.auto()) where x > 0 { x > 0 }";
+    let src = "property p(x: Int <- Gen.auto()) where (x > 0) { x > 0 }";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn parse_if_without_parenthesized_condition_reports_targeted_error() {
+    let src = "let x = if true { 1 } else { 2 }";
+    let result = parse(src);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("if condition must be parenthesized")),
+        "expected parenthesized-if diagnostic, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
+fn parse_match_without_parenthesized_scrutinee_reports_targeted_error() {
+    let src = "let x = match y { 1 => 2, _ => 3 }";
+    let result = parse(src);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("match scrutinee must be parenthesized")),
+        "expected parenthesized-match diagnostic, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
+fn parse_requires_without_parenthesized_expr_reports_targeted_error() {
+    let src = "fn f(x: Int) -> Int requires x > 0 { x }";
+    let result = parse(src);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("requires clause expression must be parenthesized")),
+        "expected parenthesized-requires diagnostic, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
+fn parse_where_without_parenthesized_expr_reports_targeted_error() {
+    let src = "property p(x: Int <- Gen.auto()) where x > 0 { x > 0 }";
+    let result = parse(src);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("where clause expression must be parenthesized")),
+        "expected parenthesized-where diagnostic, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
 }
 
 #[test]
@@ -397,7 +457,7 @@ type Option<T> =
     | None
 
 fn map<T, U>(opt: Option<T>, f: fn(T) -> U) -> Option<U> {
-    match opt {
+    match (opt) {
         Some(x) => f(x),
         None => None,
     }

@@ -564,29 +564,32 @@ fn format_pipe_clause(node: &SyntaxNode) -> Doc {
 }
 
 fn format_requires_clause(node: &SyntaxNode) -> Doc {
-    let mut parts = vec![Doc::text("requires"), Doc::text(" ")];
+    let mut parts = vec![Doc::text("requires"), Doc::text(" "), Doc::text("(")];
     let expr = node.children().find(|c| is_expr(c.kind()));
     if let Some(e) = expr {
         parts.push(format_node(&e));
     }
+    parts.push(Doc::text(")"));
     Doc::concat(parts)
 }
 
 fn format_ensures_clause(node: &SyntaxNode) -> Doc {
-    let mut parts = vec![Doc::text("ensures"), Doc::text(" ")];
+    let mut parts = vec![Doc::text("ensures"), Doc::text(" "), Doc::text("(")];
     let expr = node.children().find(|c| is_expr(c.kind()));
     if let Some(e) = expr {
         parts.push(format_node(&e));
     }
+    parts.push(Doc::text(")"));
     Doc::concat(parts)
 }
 
 fn format_invariant_clause(node: &SyntaxNode) -> Doc {
-    let mut parts = vec![Doc::text("invariant"), Doc::text(" ")];
+    let mut parts = vec![Doc::text("invariant"), Doc::text(" "), Doc::text("(")];
     let expr = node.children().find(|c| is_expr(c.kind()));
     if let Some(e) = expr {
         parts.push(format_node(&e));
     }
+    parts.push(Doc::text(")"));
     Doc::concat(parts)
 }
 
@@ -691,12 +694,14 @@ fn format_property_param(node: &SyntaxNode) -> Doc {
 }
 
 fn format_where_clause(node: &SyntaxNode) -> Doc {
-    let mut parts = vec![Doc::text("where"), Doc::text(" ")];
+    let mut parts = vec![Doc::text("where"), Doc::text(" "), Doc::text("(")];
 
     let expr = node.children().find(|c| is_expr(c.kind()));
     if let Some(e) = expr {
         parts.push(format_node(&e));
     }
+
+    parts.push(Doc::text(")"));
 
     Doc::concat(parts)
 }
@@ -1045,11 +1050,15 @@ fn format_match_expr(node: &SyntaxNode) -> Doc {
     let scrutinee = node.children().find(|c| is_expr(c.kind()));
     let arm_list = find_child_node(node, SyntaxKind::MatchArmList);
 
-    let mut parts = vec![Doc::text("match"), Doc::text(" ")];
+    let mut parts = vec![
+        Doc::text("match"),
+        Doc::text(" "),
+        Doc::text("("),
+    ];
     if let Some(s) = scrutinee {
         parts.push(format_node(&s));
     }
-    parts.push(Doc::text(" "));
+    parts.push(Doc::text(") "));
     if let Some(al) = arm_list {
         parts.push(format_node(&al));
     }
@@ -1109,12 +1118,13 @@ fn format_match_arm(node: &SyntaxNode) -> Doc {
 }
 
 fn format_if_expr(node: &SyntaxNode) -> Doc {
-    let mut parts = vec![Doc::text("if"), Doc::text(" ")];
+    let mut parts = vec![Doc::text("if"), Doc::text(" "), Doc::text("(")];
 
     let condition = node.children().find(|c| is_expr(c.kind()));
     if let Some(c) = condition {
         parts.push(format_node(&c));
     }
+    parts.push(Doc::text(")"));
 
     let blocks: Vec<SyntaxNode> = child_nodes(node, SyntaxKind::BlockExpr);
     if let Some(then) = blocks.first() {

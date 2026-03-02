@@ -1,9 +1,8 @@
 fn is_positive(x: Int) -> Bool
-  ensures result == (x > 0)
-{
+  ensures (result == (x > 0)){
   x > 0
 }
 
 property gt_antisymmetric(a: Int <- Gen.auto(), b: Int <- Gen.auto()) {
-  if a > b { b > a == false } else { true }
+  if (a > b) { b > a == false } else { true }
 }

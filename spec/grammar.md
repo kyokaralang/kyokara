@@ -119,9 +119,9 @@ FnContract     <- WithClause? PipeClause?
 
 WithClause     <- 'with' TypeExpr (',' TypeExpr)*
 PipeClause     <- 'pipe' TypeExpr (',' TypeExpr)*
-RequiresClause <- 'requires' Expr
-EnsuresClause  <- 'ensures' Expr
-InvariantClause <- 'invariant' Expr
+RequiresClause <- 'requires' '(' Expr ')'
+EnsuresClause  <- 'ensures' '(' Expr ')'
+InvariantClause <- 'invariant' '(' Expr ')'
 ```
 
 ### Capability Definitions
@@ -134,7 +134,8 @@ CapMember      <- FnDef
 ### Property Definitions
 
 ```peg
-PropertyDef    <- 'property' Ident ParamList BlockExpr
+PropertyDef    <- 'property' Ident ParamList WhereClause? BlockExpr?
+WhereClause    <- 'where' '(' Expr ')'
 ForAllBinder   <- 'for' 'all' Ident ':' TypeExpr '.'
 ```
 
@@ -219,8 +220,8 @@ IdentExpr      <- Ident
 PathExpr       <- Path       # when Path has 2+ segments
 ParenExpr      <- '(' Expr ')'
 BlockExpr      <- '{' (LetBinding / Expr)* Expr? '}'
-IfExpr         <- 'if' Expr BlockExpr ('else' (IfExpr / BlockExpr))?
-MatchExpr      <- 'match' Expr MatchArmList
+IfExpr         <- 'if' '(' Expr ')' BlockExpr ('else' (IfExpr / BlockExpr))?
+MatchExpr      <- 'match' '(' Expr ')' MatchArmList
 MatchArmList   <- '{' (MatchArm (',' MatchArm)* ','?)? '}'
 MatchArm       <- Pattern '=>' Expr
 RecordExpr     <- Path '{' RecordExprFieldList '}'

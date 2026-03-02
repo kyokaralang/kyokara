@@ -212,7 +212,7 @@ fn lower_unary_expr() {
 
 #[test]
 fn lower_if_expr() {
-    let (body, diags, _) = lower_fn_body("fn foo(x: Bool) { if x { 1 } else { 2 } }");
+    let (body, diags, _) = lower_fn_body("fn foo(x: Bool) { if (x) { 1 } else { 2 } }");
     assert!(diags.is_empty());
     match &body.exprs[body.root] {
         Expr::Block {
@@ -233,7 +233,7 @@ fn lower_match_expr() {
     let src = r#"
 type Bool = True | False
 fn foo(x: Bool) {
-    match x {
+    match (x) {
         True => 1
         False => 0
     }
@@ -618,7 +618,7 @@ fn match_arm_introduces_scope() {
     let src = r#"
 type Option<T> = Some(T) | None
 fn foo(x: Option<Int>) {
-    match x {
+    match (x) {
         Some(v) => v
         None => 0
     }
@@ -693,7 +693,7 @@ fn foo() { Point { x: 1, y: 2 } }
 
 #[test]
 fn lower_old_expr() {
-    let (body, _, _) = lower_fn_body("fn foo(x: Int) ensures old(x) == x { x }");
+    let (body, _, _) = lower_fn_body("fn foo(x: Int) ensures (old(x) == x) { x }");
     // ensures clause should contain Old expr
     assert!(body.ensures.is_some());
 }
@@ -745,7 +745,7 @@ fn collect_property_def() {
 
 #[test]
 fn collect_property_with_where() {
-    let src = "property p(x: Int <- Gen.auto()) where x > 0 { x > 0 }";
+    let src = "property p(x: Int <- Gen.auto()) where (x > 0) { x > 0 }";
     let root = parse_source(src);
     let sf = SourceFile::cast(root).unwrap();
     let mut interner = Interner::new();

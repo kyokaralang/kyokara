@@ -1,6 +1,4 @@
 property bad_bound(x: Int <- Gen.auto())
-where
-  x > 0
-{
+where (x > 0){
   x > 100
 }

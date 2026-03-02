@@ -1,26 +1,23 @@
 import io
 
 fn abs(x: Int) -> Int
-  ensures result >= 0
-{
-  if x < 0 { 0 - x } else { x }
+  ensures (result >= 0){
+  if (x < 0) { 0 - x } else { x }
 }
 
 fn increment(x: Int) -> Int
-  requires x >= 0
-  ensures result == old(x) + 1
-{
+  requires (x >= 0)
+  ensures (result == old(x) + 1){
   x + 1
 }
 
 fn clamp(x: Int, lo: Int, hi: Int) -> Int
-  requires lo <= hi
-  ensures result >= lo
-{
-  if x < lo {
+  requires (lo <= hi)
+  ensures (result >= lo){
+  if (x < lo) {
     lo
   } else {
-    if x > hi { hi } else { x }
+    if (x > hi) { hi } else { x }
   }
 }
 

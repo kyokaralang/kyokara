@@ -3,7 +3,7 @@ import io
 type Color = | Red | Green | Blue
 
 fn color_name(c: Color) -> String {
-  match c {
+  match (c) {
     Red => "red"
     Green => "green"
     Blue => "blue"
@@ -15,7 +15,7 @@ type Shape =
   | Rect(Int, Int)
 
 fn area(s: Shape) -> Int {
-  match s {
+  match (s) {
     Circle(r) => r * r * 3
     Rect(w, h) => w * h
   }

@@ -1,7 +1,7 @@
 type Direction = | North | South | East | West
 
 fn opposite(d: Direction) -> Direction {
-  match d {
+  match (d) {
     North => South
     South => North
     East => _

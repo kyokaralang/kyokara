@@ -29,16 +29,6 @@ pub(super) fn expr(p: &mut Parser<'_>) -> Option<CompletedMarker> {
     expr_bp(p, 0)
 }
 
-/// Parse an expression without allowing `Path {` as RecordExpr.
-/// Used in match scrutinees, if conditions, and contract clauses.
-pub(super) fn expr_no_record(p: &mut Parser<'_>) -> Option<CompletedMarker> {
-    let old = p.no_record_expr;
-    p.no_record_expr = true;
-    let result = expr_bp(p, 0);
-    p.no_record_expr = old;
-    result
-}
-
 /// Pratt parser: parse expression with minimum binding power `min_bp`.
 fn expr_bp(p: &mut Parser<'_>, min_bp: u8) -> Option<CompletedMarker> {
     let mut lhs = lhs(p)?;
@@ -156,13 +146,7 @@ fn hole_expr(p: &mut Parser<'_>) -> CompletedMarker {
 fn paren_expr(p: &mut Parser<'_>) -> CompletedMarker {
     let m = p.open();
     p.bump(); // (
-    // `expr_no_record` disables `Path { .. }` at the immediate parse site to
-    // avoid ambiguity with blocks, but parenthesized expressions should still
-    // be able to contain record literals.
-    let old = p.no_record_expr;
-    p.no_record_expr = false;
     expr(p);
-    p.no_record_expr = old;
     p.expect(RParen);
     m.complete(p, ParenExpr)
 }
@@ -188,11 +172,18 @@ pub(super) fn block_expr(p: &mut Parser<'_>) -> CompletedMarker {
     m.complete(p, BlockExpr)
 }
 
-/// `if Expr BlockExpr ('else' (IfExpr / BlockExpr))?`
+/// `if '(' Expr ')' BlockExpr ('else' (IfExpr / BlockExpr))?`
 fn if_expr(p: &mut Parser<'_>) -> CompletedMarker {
     let m = p.open();
     p.bump(); // if
-    expr_no_record(p);
+    if p.eat(LParen) {
+        expr(p);
+        p.expect(RParen);
+    } else {
+        p.error("if condition must be parenthesized");
+        // Recovery: parse condition expression so we can continue to the block.
+        expr(p);
+    }
     if p.at(LBrace) {
         block_expr(p);
     } else {
@@ -210,11 +201,18 @@ fn if_expr(p: &mut Parser<'_>) -> CompletedMarker {
     m.complete(p, IfExpr)
 }
 
-/// `match Expr MatchArmList`
+/// `match '(' Expr ')' MatchArmList`
 fn match_expr(p: &mut Parser<'_>) -> CompletedMarker {
     let m = p.open();
     p.bump(); // match
-    expr_no_record(p);
+    if p.eat(LParen) {
+        expr(p);
+        p.expect(RParen);
+    } else {
+        p.error("match scrutinee must be parenthesized");
+        // Recovery: parse scrutinee expression so we can continue to arm list.
+        expr(p);
+    }
     match_arm_list(p);
     m.complete(p, MatchExpr)
 }
@@ -314,7 +312,7 @@ fn ident_or_path_or_record(p: &mut Parser<'_>) -> CompletedMarker {
     let path_cm = super::parse_single_path(p);
 
     match p.current() {
-        LBrace if !p.no_record_expr => {
+        LBrace => {
             // Record expression: `Path { field: value, ... }`
             let m = path_cm.precede(p);
             record_expr_field_list(p);

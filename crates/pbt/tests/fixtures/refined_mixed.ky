@@ -1,13 +1,10 @@
 fn clamp(x: Int) -> Int
-  requires x > 0
-  ensures result > 0
-{
-  if x > 100 { 100 } else { x }
+  requires (x > 0)
+  ensures (result > 0){
+  if (x > 100) { 100 } else { x }
 }
 
 property pos_capped(x: Int <- Gen.auto())
-where
-  x > 0 && x < 1000
-{
+where (x > 0 && x < 1000){
   x + x > 0
 }

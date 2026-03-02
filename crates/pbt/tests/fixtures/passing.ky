@@ -1,5 +1,4 @@
 fn is_positive(x: Int) -> Bool
-  ensures result == (x > 0)
-{
+  ensures (result == (x > 0)){
   x > 0
 }

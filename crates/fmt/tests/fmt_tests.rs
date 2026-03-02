@@ -218,16 +218,16 @@ fn fmt_call_expr() {
 #[test]
 fn fmt_if_expr() {
     assert_fmt(
-        "fn main() -> Int { if true { 1 } else { 2 } }",
-        "fn main() -> Int {\n  if true {\n    1\n  } else {\n    2\n  }\n}\n",
+        "fn main() -> Int { if (true) { 1 } else { 2 } }",
+        "fn main() -> Int {\n  if (true) {\n    1\n  } else {\n    2\n  }\n}\n",
     );
 }
 
 #[test]
 fn fmt_match_expr() {
     assert_fmt(
-        "fn main() -> Int { match x { 1 => 2, _ => 3 } }",
-        "fn main() -> Int {\n  match x {\n    1 => 2,\n    _ => 3,\n  }\n}\n",
+        "fn main() -> Int { match (x) { 1 => 2, _ => 3 } }",
+        "fn main() -> Int {\n  match (x) {\n    1 => 2,\n    _ => 3,\n  }\n}\n",
     );
 }
 
@@ -291,16 +291,16 @@ fn fmt_record_expr() {
 #[test]
 fn fmt_wildcard_pattern() {
     assert_fmt(
-        "fn main() -> Int { match x { _ => 0 } }",
-        "fn main() -> Int {\n  match x {\n    _ => 0,\n  }\n}\n",
+        "fn main() -> Int { match (x) { _ => 0 } }",
+        "fn main() -> Int {\n  match (x) {\n    _ => 0,\n  }\n}\n",
     );
 }
 
 #[test]
 fn fmt_constructor_pattern() {
     assert_fmt(
-        "fn main() -> Int { match x { Some(v) => v, None => 0 } }",
-        "fn main() -> Int {\n  match x {\n    Some(v) => v,\n    None => 0,\n  }\n}\n",
+        "fn main() -> Int { match (x) { Some(v) => v, None => 0 } }",
+        "fn main() -> Int {\n  match (x) {\n    Some(v) => v,\n    None => 0,\n  }\n}\n",
     );
 }
 
@@ -347,7 +347,7 @@ fn add(x:Int,y:Int) -> Int { x + y }
 
 fn main() -> Int {
   let result = add(1, 2)
-  match result {
+  match (result) {
     0 => 42,
     _ => result + 1
   }
@@ -388,16 +388,16 @@ fn fmt_cap_def() {
 #[test]
 fn fmt_let_match() {
     assert_fmt(
-        "fn main() -> Int { let y = match x { 0 => 1, _ => 2 }\ny }",
-        "fn main() -> Int {\n  let y = match x {\n    0 => 1,\n    _ => 2,\n  }\n  y\n}\n",
+        "fn main() -> Int { let y = match (x) { 0 => 1, _ => 2 }\ny }",
+        "fn main() -> Int {\n  let y = match (x) {\n    0 => 1,\n    _ => 2,\n  }\n  y\n}\n",
     );
 }
 
 #[test]
 fn fmt_let_if() {
     assert_fmt(
-        "fn main() -> Int { let y = if true { 1 } else { 2 }\ny }",
-        "fn main() -> Int {\n  let y = if true {\n    1\n  } else {\n    2\n  }\n  y\n}\n",
+        "fn main() -> Int { let y = if (true) { 1 } else { 2 }\ny }",
+        "fn main() -> Int {\n  let y = if (true) {\n    1\n  } else {\n    2\n  }\n  y\n}\n",
     );
 }
 
@@ -417,8 +417,8 @@ fn fmt_lambda_expr() {
 fn fmt_empty_match_arms() {
     // Empty match arm list should not produce a trailing comma.
     assert_fmt(
-        "fn main() -> Int { match x {} }",
-        "fn main() -> Int {\n  match x {}\n}\n",
+        "fn main() -> Int { match (x) {} }",
+        "fn main() -> Int {\n  match (x) {}\n}\n",
     );
 }
 
@@ -436,7 +436,7 @@ fn fmt_error_node_verbatim() {
 #[test]
 fn fmt_top_level_error_node_preserved() {
     // Top-level parse-error nodes should be preserved verbatim, not dropped.
-    let input = "match x {}";
+    let input = "match (x) {}";
     let output = format_source(input);
     assert!(
         output.contains("match"),
@@ -472,7 +472,7 @@ fn fmt_comment_only_file_preserved() {
 #[test]
 fn fmt_match_comment_only_no_dangling_comma() {
     // Bug test: comment-only match arm list should NOT emit a dangling comma.
-    let input = "fn main() -> Int { match x { // keep\n } }";
+    let input = "fn main() -> Int { match (x) { // keep\n } }";
     let output = format_source(input);
     assert!(
         !output.contains(","),
@@ -489,7 +489,7 @@ fn fmt_match_comment_only_no_dangling_comma() {
 #[test]
 fn fmt_match_arms_with_comment_still_has_commas() {
     // Guard test: real arms with a comment should still get commas.
-    let input = "fn main() -> Int { match x { // note\n 1 => 2, _ => 3 } }";
+    let input = "fn main() -> Int { match (x) { // note\n 1 => 2, _ => 3 } }";
     let output = format_source(input);
     assert!(
         output.contains(","),
@@ -506,7 +506,7 @@ fn fmt_match_arms_with_comment_still_has_commas() {
 #[test]
 fn fmt_match_trailing_comment_after_arms() {
     // Edge case: comment after last arm should be preserved, commas present.
-    let input = "fn main() -> Int { match x { 1 => 2 // trailing\n } }";
+    let input = "fn main() -> Int { match (x) { 1 => 2 // trailing\n } }";
     let output = format_source(input);
     assert!(
         output.contains(","),

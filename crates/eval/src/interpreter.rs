@@ -2297,7 +2297,7 @@ mod tests {
     #[test]
     fn contract_requires_error_does_not_leak_env_or_old_snapshot() {
         let mut interp = make_checked_interpreter(
-            "fn bad(x: Int) -> Int requires x / 0 > 0 ensures old(x) == x { x }\n\
+            "fn bad(x: Int) -> Int requires (x / 0 > 0) ensures (old(x) == x) { x }\n\
              fn main() -> Int { 0 }",
         );
         let bad_idx = fn_idx_by_name(&mut interp, "bad");
@@ -2311,7 +2311,7 @@ mod tests {
     #[test]
     fn contract_body_error_does_not_leak_env_or_old_snapshot() {
         let mut interp = make_checked_interpreter(
-            "fn bad(x: Int) -> Int ensures old(x) == x { x / 0 }\n\
+            "fn bad(x: Int) -> Int ensures (old(x) == x) { x / 0 }\n\
              fn main() -> Int { 0 }",
         );
         let bad_idx = fn_idx_by_name(&mut interp, "bad");
@@ -2325,7 +2325,7 @@ mod tests {
     #[test]
     fn contract_invariant_error_does_not_leak_env_or_old_snapshot() {
         let mut interp = make_checked_interpreter(
-            "fn bad(x: Int) -> Int ensures old(x) == x invariant x / 0 > 0 { x }\n\
+            "fn bad(x: Int) -> Int ensures (old(x) == x) invariant (x / 0 > 0) { x }\n\
              fn main() -> Int { 0 }",
         );
         let bad_idx = fn_idx_by_name(&mut interp, "bad");
@@ -2339,7 +2339,7 @@ mod tests {
     #[test]
     fn contract_ensures_error_does_not_leak_env_or_old_snapshot() {
         let mut interp = make_checked_interpreter(
-            "fn bad(x: Int) -> Int ensures old(x) / 0 > 0 { x }\n\
+            "fn bad(x: Int) -> Int ensures (old(x) / 0 > 0) { x }\n\
              fn main() -> Int { 0 }",
         );
         let bad_idx = fn_idx_by_name(&mut interp, "bad");

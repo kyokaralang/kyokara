@@ -137,12 +137,12 @@ fn infer_unary_not() {
 
 #[test]
 fn infer_if_else() {
-    check_ok("fn foo() -> Int { if true { 1 } else { 2 } }");
+    check_ok("fn foo() -> Int { if (true) { 1 } else { 2 } }");
 }
 
 #[test]
 fn infer_if_no_else_is_unit() {
-    check_ok("fn foo() { if true { 1 } }");
+    check_ok("fn foo() { if (true) { 1 } }");
 }
 
 #[test]
@@ -314,13 +314,13 @@ fn err_type_mismatch_return() {
 
 #[test]
 fn err_type_mismatch_if_condition() {
-    check_err("fn foo() { if 42 { 1 } else { 2 } }", "type mismatch");
+    check_err("fn foo() { if (42) { 1 } else { 2 } }", "type mismatch");
 }
 
 #[test]
 fn err_type_mismatch_if_branches() {
     check_err(
-        "fn foo() -> Int { if true { 1 } else { true } }",
+        "fn foo() -> Int { if (true) { 1 } else { true } }",
         "type mismatch",
     );
 }
@@ -376,7 +376,7 @@ fn infer_match_basic() {
     check_ok(
         "type Bool2 = True | False
          fn foo(x: Bool2) -> Int {
-             match x {
+             match (x) {
                  True => 1
                  False => 0
              }
@@ -389,7 +389,7 @@ fn infer_match_with_bind() {
     check_ok(
         "type Option<T> = Some(T) | None
          fn foo(x: Option<Int>) -> Int {
-             match x {
+             match (x) {
                  Some(v) => v
                  None => 0
              }
@@ -404,7 +404,7 @@ fn err_non_exhaustive_match() {
     check_err(
         "type Color = Red | Green | Blue
          fn foo(c: Color) -> Int {
-             match c {
+             match (c) {
                  Red => 1
                  Green => 2
              }
@@ -418,7 +418,7 @@ fn exhaustive_with_wildcard() {
     check_ok(
         "type Color = Red | Green | Blue
          fn foo(c: Color) -> Int {
-             match c {
+             match (c) {
                  Red => 1
                  _ => 0
              }
@@ -431,7 +431,7 @@ fn err_redundant_arm() {
     check_err(
         "type Bool2 = True | False
          fn foo(x: Bool2) -> Int {
-             match x {
+             match (x) {
                  True => 1
                  False => 0
                  True => 2
@@ -446,7 +446,7 @@ fn err_redundant_arm_after_wildcard() {
     check_err(
         "type Bool2 = True | False
          fn foo(x: Bool2) -> Int {
-             match x {
+             match (x) {
                  _ => 0
                  True => 1
              }
@@ -665,7 +665,7 @@ fn match_arm_scope_isolation() {
     check_ok(
         "type Option<T> = Some(T) | None
          fn foo(o: Option<Int>) -> Int {
-             let result = match o {
+             let result = match (o) {
                  Some(v) => v
                  None => 0
              }

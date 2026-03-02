@@ -178,10 +178,10 @@ fn fn_def_with_params_and_return() {
 
 #[test]
 fn fn_def_with_contract() {
-    // fn foo(x: Int) -> Int requires x { x }
+    // fn foo(x: Int) -> Int requires (x) { x }
     let (events, errors) = parse_tokens(&[
-        FnKw, Ident, LParen, Ident, Colon, Ident, RParen, Arrow, Ident, RequiresKw, Ident, LBrace,
-        Ident, RBrace,
+        FnKw, Ident, LParen, Ident, Colon, Ident, RParen, Arrow, Ident, RequiresKw, LParen, Ident,
+        RParen, LBrace, Ident, RBrace,
     ]);
     assert!(has_no_errors(&errors));
     assert!(has_node(&events, RequiresClause));
@@ -189,7 +189,7 @@ fn fn_def_with_contract() {
 
 #[test]
 fn fn_def_contract_requires_then_invariant_is_allowed() {
-    // fn f() -> Int requires x invariant y { 1 }
+    // fn f() -> Int requires (x) invariant (y) { 1 }
     let (events, errors) = parse_tokens(&[
         FnKw,
         Ident,
@@ -198,9 +198,13 @@ fn fn_def_contract_requires_then_invariant_is_allowed() {
         Arrow,
         Ident,
         RequiresKw,
+        LParen,
         Ident,
+        RParen,
         InvariantKw,
+        LParen,
         Ident,
+        RParen,
         LBrace,
         IntLiteral,
         RBrace,
@@ -215,7 +219,7 @@ fn fn_def_contract_requires_then_invariant_is_allowed() {
 
 #[test]
 fn fn_def_contract_ensures_then_invariant_is_allowed() {
-    // fn f() -> Int ensures x invariant y { 1 }
+    // fn f() -> Int ensures (x) invariant (y) { 1 }
     let (events, errors) = parse_tokens(&[
         FnKw,
         Ident,
@@ -224,9 +228,13 @@ fn fn_def_contract_ensures_then_invariant_is_allowed() {
         Arrow,
         Ident,
         EnsuresKw,
+        LParen,
         Ident,
+        RParen,
         InvariantKw,
+        LParen,
         Ident,
+        RParen,
         LBrace,
         IntLiteral,
         RBrace,
@@ -241,10 +249,10 @@ fn fn_def_contract_ensures_then_invariant_is_allowed() {
 
 #[test]
 fn fn_def_contract_requires_after_ensures_reports_order_error() {
-    // fn f() -> Int ensures x requires y { 1 }
+    // fn f() -> Int ensures (x) requires (y) { 1 }
     let (events, errors) = parse_tokens(&[
-        FnKw, Ident, LParen, RParen, Arrow, Ident, EnsuresKw, Ident, RequiresKw, Ident, LBrace,
-        IntLiteral, RBrace,
+        FnKw, Ident, LParen, RParen, Arrow, Ident, EnsuresKw, LParen, Ident, RParen, RequiresKw,
+        LParen, Ident, RParen, LBrace, IntLiteral, RBrace,
     ]);
     assert_eq!(
         errors.len(),
@@ -260,6 +268,20 @@ fn fn_def_contract_requires_after_ensures_reports_order_error() {
     );
     assert!(has_node(&events, EnsuresClause));
     assert!(has_node(&events, RequiresClause));
+}
+
+#[test]
+fn fn_def_contract_unparenthesized_requires_reports_targeted_error() {
+    // fn f() -> Int requires x { 1 }
+    let (_events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, RequiresKw, Ident, LBrace, IntLiteral, RBrace,
+    ]);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message.contains("requires clause expression must be parenthesized")),
+        "expected parenthesized-requires diagnostic, got: {errors:?}"
+    );
 }
 
 #[test]
@@ -379,10 +401,10 @@ fn propagate_expr() {
 
 #[test]
 fn if_expr() {
-    // let x = if true { 1 } else { 2 }
+    // let x = if (true) { 1 } else { 2 }
     let (events, errors) = parse_tokens(&[
-        LetKw, Ident, Eq, IfKw, TrueKw, LBrace, IntLiteral, RBrace, ElseKw, LBrace, IntLiteral,
-        RBrace,
+        LetKw, Ident, Eq, IfKw, LParen, TrueKw, RParen, LBrace, IntLiteral, RBrace, ElseKw, LBrace,
+        IntLiteral, RBrace,
     ]);
     assert!(has_no_errors(&errors));
     assert!(has_node(&events, IfExpr));
@@ -390,11 +412,26 @@ fn if_expr() {
 }
 
 #[test]
+fn if_expr_unparenthesized_condition_reports_targeted_error() {
+    // let x = if true { 1 } else { 2 }
+    let (_events, errors) = parse_tokens(&[
+        LetKw, Ident, Eq, IfKw, TrueKw, LBrace, IntLiteral, RBrace, ElseKw, LBrace, IntLiteral,
+        RBrace,
+    ]);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message.contains("if condition must be parenthesized")),
+        "expected parenthesized-if diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
 fn match_expr() {
-    // let x = match y { 1 => 2, _ => 3 }
+    // let x = match (y) { 1 => 2, _ => 3 }
     let (events, errors) = parse_tokens(&[
-        LetKw, Ident, Eq, MatchKw, Ident, LBrace, IntLiteral, FatArrow, IntLiteral, Comma,
-        Underscore, FatArrow, IntLiteral, RBrace,
+        LetKw, Ident, Eq, MatchKw, LParen, Ident, RParen, LBrace, IntLiteral, FatArrow, IntLiteral,
+        Comma, Underscore, FatArrow, IntLiteral, RBrace,
     ]);
     assert!(has_no_errors(&errors));
     assert!(has_node(&events, MatchExpr));
@@ -403,10 +440,26 @@ fn match_expr() {
 }
 
 #[test]
-fn match_expr_leading_pipe_arm_reports_targeted_error() {
-    // let x = match y { | _ => 0 }
+fn match_expr_unparenthesized_scrutinee_reports_targeted_error() {
+    // let x = match y { 1 => 2, _ => 3 }
     let (_events, errors) = parse_tokens(&[
-        LetKw, Ident, Eq, MatchKw, Ident, LBrace, Pipe, Underscore, FatArrow, IntLiteral, RBrace,
+        LetKw, Ident, Eq, MatchKw, Ident, LBrace, IntLiteral, FatArrow, IntLiteral, Comma,
+        Underscore, FatArrow, IntLiteral, RBrace,
+    ]);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message.contains("match scrutinee must be parenthesized")),
+        "expected parenthesized-match diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn match_expr_leading_pipe_arm_reports_targeted_error() {
+    // let x = match (y) { | _ => 0 }
+    let (_events, errors) = parse_tokens(&[
+        LetKw, Ident, Eq, MatchKw, LParen, Ident, RParen, LBrace, Pipe, Underscore, FatArrow,
+        IntLiteral, RBrace,
     ]);
     assert!(
         errors
@@ -418,10 +471,10 @@ fn match_expr_leading_pipe_arm_reports_targeted_error() {
 
 #[test]
 fn match_expr_multiple_leading_pipes_recovers_without_hanging() {
-    // let x = match y { | | 1 => 2, _ => 3 }
+    // let x = match (y) { | | 1 => 2, _ => 3 }
     let (events, errors) = parse_tokens(&[
-        LetKw, Ident, Eq, MatchKw, Ident, LBrace, Pipe, Pipe, IntLiteral, FatArrow, IntLiteral,
-        Comma, Underscore, FatArrow, IntLiteral, RBrace,
+        LetKw, Ident, Eq, MatchKw, LParen, Ident, RParen, LBrace, Pipe, Pipe, IntLiteral, FatArrow,
+        IntLiteral, Comma, Underscore, FatArrow, IntLiteral, RBrace,
     ]);
     assert!(
         errors
@@ -452,11 +505,11 @@ fn match_expr_parenthesized_record_scrutinee() {
 
 #[test]
 fn if_expr_parenthesized_record_condition() {
-    // let x = if (Point { x: 1 }) == (Point { x: 1 }) { 1 } else { 0 }
+    // let x = if ((Point { x: 1 }) == (Point { x: 1 })) { 1 } else { 0 }
     let (events, errors) = parse_tokens(&[
-        LetKw, Ident, Eq, IfKw, LParen, Ident, LBrace, Ident, Colon, IntLiteral, RBrace, RParen,
-        EqEq, LParen, Ident, LBrace, Ident, Colon, IntLiteral, RBrace, RParen, LBrace, IntLiteral,
-        RBrace, ElseKw, LBrace, IntLiteral, RBrace,
+        LetKw, Ident, Eq, IfKw, LParen, LParen, Ident, LBrace, Ident, Colon, IntLiteral, RBrace,
+        RParen, EqEq, LParen, Ident, LBrace, Ident, Colon, IntLiteral, RBrace, RParen, RParen,
+        LBrace, IntLiteral, RBrace, ElseKw, LBrace, IntLiteral, RBrace,
     ]);
     assert!(has_no_errors(&errors));
     assert!(has_node(&events, IfExpr));
@@ -493,10 +546,10 @@ fn hole_expr() {
 
 #[test]
 fn old_expr() {
-    // fn foo(x: Int) ensures old(x) { x }
+    // fn foo(x: Int) ensures (old(x)) { x }
     let (events, errors) = parse_tokens(&[
-        FnKw, Ident, LParen, Ident, Colon, Ident, RParen, EnsuresKw, OldKw, LParen, Ident, RParen,
-        LBrace, Ident, RBrace,
+        FnKw, Ident, LParen, Ident, Colon, Ident, RParen, EnsuresKw, LParen, OldKw, LParen, Ident,
+        RParen, RParen, LBrace, Ident, RBrace,
     ]);
     assert!(has_no_errors(&errors));
     assert!(has_node(&events, OldExpr));
@@ -519,9 +572,10 @@ fn block_expr_allows_semicolon_separators() {
 
 #[test]
 fn wildcard_pattern() {
-    // match x { _ => 0 }
+    // match (x) { _ => 0 }
     let (events, errors) = parse_tokens(&[
-        LetKw, Ident, Eq, MatchKw, Ident, LBrace, Underscore, FatArrow, IntLiteral, RBrace,
+        LetKw, Ident, Eq, MatchKw, LParen, Ident, RParen, LBrace, Underscore, FatArrow, IntLiteral,
+        RBrace,
     ]);
     assert!(has_no_errors(&errors));
     assert!(has_node(&events, WildcardPat));
@@ -529,10 +583,10 @@ fn wildcard_pattern() {
 
 #[test]
 fn constructor_pattern() {
-    // match x { Some(y) => y }
+    // match (x) { Some(y) => y }
     let (events, errors) = parse_tokens(&[
-        LetKw, Ident, Eq, MatchKw, Ident, LBrace, Ident, LParen, Ident, RParen, FatArrow, Ident,
-        RBrace,
+        LetKw, Ident, Eq, MatchKw, LParen, Ident, RParen, LBrace, Ident, LParen, Ident, RParen,
+        FatArrow, Ident, RBrace,
     ]);
     assert!(has_no_errors(&errors));
     assert!(has_node(&events, ConstructorPat));
@@ -752,10 +806,11 @@ fn property_with_generator_binding() {
 
 #[test]
 fn property_with_where_clause() {
-    // property p(x: Int <- Gen.auto()) where x > 0 { x > 0 }
+    // property p(x: Int <- Gen.auto()) where (x > 0) { x > 0 }
     let (events, errors) = parse_tokens(&[
         PropertyKw, Ident, LParen, Ident, Colon, Ident, LeftArrow, Ident, Dot, Ident, LParen,
-        RParen, RParen, WhereKw, Ident, Gt, IntLiteral, LBrace, Ident, Gt, IntLiteral, RBrace,
+        RParen, RParen, WhereKw, LParen, Ident, Gt, IntLiteral, RParen, LBrace, Ident, Gt,
+        IntLiteral, RBrace,
     ]);
     assert!(has_no_errors(&errors), "errors: {errors:?}");
     assert!(has_node(&events, PropertyDef));
@@ -853,10 +908,10 @@ fn property_empty_params() {
 
 #[test]
 fn property_where_without_body() {
-    // property p(x: Int <- Gen.auto()) where x > 0
+    // property p(x: Int <- Gen.auto()) where (x > 0)
     let (events, errors) = parse_tokens(&[
         PropertyKw, Ident, LParen, Ident, Colon, Ident, LeftArrow, Ident, Dot, Ident, LParen,
-        RParen, RParen, WhereKw, Ident, Gt, IntLiteral,
+        RParen, RParen, WhereKw, LParen, Ident, Gt, IntLiteral, RParen,
     ]);
     assert!(
         has_no_errors(&errors),
@@ -864,6 +919,21 @@ fn property_where_without_body() {
     );
     assert!(has_node(&events, PropertyDef));
     assert!(has_node(&events, WhereClause));
+}
+
+#[test]
+fn property_where_unparenthesized_reports_targeted_error() {
+    // property p(x: Int <- Gen.auto()) where x > 0
+    let (_events, errors) = parse_tokens(&[
+        PropertyKw, Ident, LParen, Ident, Colon, Ident, LeftArrow, Ident, Dot, Ident, LParen,
+        RParen, RParen, WhereKw, Ident, Gt, IntLiteral,
+    ]);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message.contains("where clause expression must be parenthesized")),
+        "expected parenthesized-where diagnostic, got: {errors:?}"
+    );
 }
 
 #[test]
@@ -894,10 +964,10 @@ fn left_arrow_after_binary_op() {
 
 #[test]
 fn left_arrow_in_if_branch() {
-    // let x = if true { <- 1 } else { 0 }
+    // let x = if (true) { <- 1 } else { 0 }
     let (_events, errors) = parse_tokens(&[
-        LetKw, Ident, Eq, IfKw, TrueKw, LBrace, LeftArrow, IntLiteral, RBrace, ElseKw, LBrace,
-        IntLiteral, RBrace,
+        LetKw, Ident, Eq, IfKw, LParen, TrueKw, RParen, LBrace, LeftArrow, IntLiteral, RBrace,
+        ElseKw, LBrace, IntLiteral, RBrace,
     ]);
     assert!(
         !has_no_errors(&errors),

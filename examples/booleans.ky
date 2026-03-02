@@ -5,15 +5,15 @@ fn is_even(n: Int) -> Bool {
 }
 
 fn both(a: Bool, b: Bool) -> Bool {
-  if a { b } else { false }
+  if (a) { b } else { false }
 }
 
 fn either(a: Bool, b: Bool) -> Bool {
-  if a { true } else { b }
+  if (a) { true } else { b }
 }
 
 fn show_bool(b: Bool) -> String {
-  if b { "true" } else { "false" }
+  if (b) { "true" } else { "false" }
 }
 
 fn main() -> Unit {

@@ -30,9 +30,6 @@ pub struct Parser<'i> {
     events: Vec<Event>,
     /// Accumulated errors.
     errors: Vec<ParseError>,
-    /// When true, `Path {` is NOT parsed as a RecordExpr.
-    /// Used in match scrutinees, if conditions, and contract clauses.
-    pub(crate) no_record_expr: bool,
 }
 
 impl<'i> Parser<'i> {
@@ -42,7 +39,6 @@ impl<'i> Parser<'i> {
             pos: 0,
             events: Vec::new(),
             errors: Vec::new(),
-            no_record_expr: false,
         }
     }
 

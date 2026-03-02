@@ -1,1 +1,1 @@
-fn main() -> Int { match Some(1) { A.Some(_) => 0, _ => 1 } }
+fn main() -> Int { match (Some(1)) { A.Some(_) => 0, _ => 1 } }

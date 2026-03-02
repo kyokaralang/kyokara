@@ -4,14 +4,14 @@ fn main() -> Int {
   let m = Map.new().insert("x", 10).insert("y", 20).insert("z", 30)
 
   // Lookup
-  let x_val = match m.get("x") {
+  let x_val = match (m.get("x")) {
     Some(v) => v
     None => 0
   }
 
   // Overwrite "x" with 99
   let m2 = m.insert("x", 99)
-  let new_x = match m2.get("x") {
+  let new_x = match (m2.get("x")) {
     Some(v) => v
     None => 0
   }

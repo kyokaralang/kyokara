@@ -1,16 +1,16 @@
 import io
 
 fn abs(x: Int) -> Int {
-  if x < 0 { -x } else { x }
+  if (x < 0) { -x } else { x }
 }
 
 fn max(a: Int, b: Int) -> Int {
-  if a > b { a } else { b }
+  if (a > b) { a } else { b }
 }
 
 fn clamp(lo: Int, hi: Int, x: Int) -> Int {
-  if x < lo { lo }
-  else { if x > hi { hi } else { x } }
+  if (x < lo) { lo }
+  else { if (x > hi) { hi } else { x } }
 }
 
 fn main() -> Unit {

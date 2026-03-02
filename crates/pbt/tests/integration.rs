@@ -375,7 +375,7 @@ fn refined_unsatisfiable_reported() {
 #[test]
 fn where_constrained_type_check() {
     // Valid where-constrained property: should have no type errors.
-    let result = kyokara_hir::check_file("property p(x: Int <- Gen.auto()) where x > 0 { x > 0 }");
+    let result = kyokara_hir::check_file("property p(x: Int <- Gen.auto()) where (x > 0) { x > 0 }");
     let all_diags: Vec<_> = result
         .type_check
         .raw_diagnostics
@@ -452,7 +452,7 @@ fn refined_corpus_replay() {
 #[test]
 fn property_type_check_with_where_and_multiple_params() {
     let result = kyokara_hir::check_file(
-        "property p(a: Int <- Gen.auto(), b: Int <- Gen.auto()) where a > 0 && b > 0 { a + b > 0 }",
+        "property p(a: Int <- Gen.auto(), b: Int <- Gen.auto()) where (a > 0 && b > 0) { a + b > 0 }",
     );
     let all_diags: Vec<_> = result
         .type_check
@@ -462,7 +462,7 @@ fn property_type_check_with_where_and_multiple_params() {
         .collect();
     assert!(
         all_diags.is_empty(),
-        "multi-param property with where should have no type errors: {all_diags:?}"
+        "multi-param property with where (should have no type errors:) {all_diags:?}"
     );
 }
 
@@ -582,7 +582,7 @@ fn property_bare_param_parse_error() {
 fn property_where_unresolved_name() {
     // Where clause referencing a nonexistent variable.
     let result =
-        kyokara_hir::check_file("property p(x: Int <- Gen.auto()) where nonexistent > 0 { x > 0 }");
+        kyokara_hir::check_file("property p(x: Int <- Gen.auto()) where (nonexistent > 0) { x > 0 }");
     // Unresolved names surface in body_lowering_diagnostics or diagnostics.
     let all_diags: Vec<String> = result
         .type_check
@@ -780,8 +780,7 @@ fn property_where_complex_conjunction() {
     // Where clause with a complex boolean conjunction.
     let source = r#"
 property bounded(x: Int <- Gen.auto())
-where
-  x > 0 && x < 100
+where (x > 0 && x < 100)
 {
   x + x > 0
 }
@@ -801,8 +800,7 @@ fn property_discard_rate_logged() {
     // Where clause that filters ~50% — should still succeed with budget.
     let source = r#"
 property half_positive(x: Int <- Gen.auto())
-where
-  x > 0
+where (x > 0)
 {
   x > 0
 }
@@ -878,7 +876,7 @@ fn project_invalid_range_reports_generator_error_not_where_unsat() {
 
 #[test]
 fn where_unsat_still_reports_where_unsatisfiable() {
-    let source = "property impossible(x: Int <- Gen.int()) where x > 0 && x < 0 { true }";
+    let source = "property impossible(x: Int <- Gen.int()) where (x > 0 && x < 0) { true }";
     let config = test_config();
     let report = run_tests(source, &config).unwrap();
     assert!(!report.all_passed(), "unsatisfiable where should fail");

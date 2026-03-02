@@ -178,7 +178,7 @@ fn test_let_chain() {
 #[test]
 fn test_if_else_true() {
     assert_eq!(
-        run_main_i64("fn main() -> Int { if true { 1 } else { 2 } }"),
+        run_main_i64("fn main() -> Int { if (true) { 1 } else { 2 } }"),
         1
     );
 }
@@ -186,7 +186,7 @@ fn test_if_else_true() {
 #[test]
 fn test_if_else_false() {
     assert_eq!(
-        run_main_i64("fn main() -> Int { if false { 1 } else { 2 } }"),
+        run_main_i64("fn main() -> Int { if (false) { 1 } else { 2 } }"),
         2
     );
 }
@@ -194,7 +194,7 @@ fn test_if_else_false() {
 #[test]
 fn test_if_else_condition() {
     assert_eq!(
-        run_main_i64("fn main() -> Int { let x = 10\n if x > 5 { 100 } else { 0 } }"),
+        run_main_i64("fn main() -> Int { let x = 10\n if (x > 5) { 100 } else { 0 } }"),
         100
     );
 }
@@ -205,7 +205,7 @@ fn test_nested_if_else() {
         run_main_i64(
             "fn main() -> Int {\
                let x = 3\n\
-               if x > 5 { 100 } else { if x > 1 { 50 } else { 0 } }\
+               if (x > 5) { 100 } else { if (x > 1) { 50 } else { 0 } }\
              }"
         ),
         50
@@ -257,7 +257,7 @@ fn test_adt_construct_and_match() {
         run_main_i64(
             "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
-               match Some(42) {\n\
+               match (Some(42)) {\n\
                  Some(x) => x\n\
                  None => 0\n\
                }\n\
@@ -273,7 +273,7 @@ fn test_adt_match_none() {
         run_main_i64(
             "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
-               match None {\n\
+               match (None) {\n\
                  Some(x) => x\n\
                  None => -1\n\
                }\n\
@@ -289,7 +289,7 @@ fn test_adt_three_variants() {
         run_main_i64(
             "type Color = Red | Green | Blue\n\
              fn to_int(c: Color) -> Int {\n\
-               match c {\n\
+               match (c) {\n\
                  Red => 1\n\
                  Green => 2\n\
                  Blue => 3\n\
@@ -370,7 +370,7 @@ fn test_requires_pass() {
     // Requires clause that passes — should return normally.
     assert_eq!(
         run_main_i64(
-            "fn check(x: Int) -> Int requires x > 0 { x * 2 }\n\
+            "fn check(x: Int) -> Int requires (x > 0) { x * 2 }\n\
              fn main() -> Int { check(5) }"
         ),
         10
@@ -380,7 +380,7 @@ fn test_requires_pass() {
 #[test]
 fn test_requires_fail_traps() {
     assert!(run_main_traps(
-        "fn check(x: Int) -> Int requires x > 0 { x * 2 }\n\
+        "fn check(x: Int) -> Int requires (x > 0) { x * 2 }\n\
          fn main() -> Int { check(-5) }"
     ));
 }
@@ -388,7 +388,7 @@ fn test_requires_fail_traps() {
 #[test]
 fn test_requires_fail_zero_traps() {
     assert!(run_main_traps(
-        "fn check(x: Int) -> Int requires x > 0 { x * 2 }\n\
+        "fn check(x: Int) -> Int requires (x > 0) { x * 2 }\n\
          fn main() -> Int { check(0) }"
     ));
 }
@@ -397,7 +397,7 @@ fn test_requires_fail_zero_traps() {
 fn test_requires_pass_boundary() {
     assert_eq!(
         run_main_i64(
-            "fn check(x: Int) -> Int requires x > 0 { x * 2 }\n\
+            "fn check(x: Int) -> Int requires (x > 0) { x * 2 }\n\
              fn main() -> Int { check(1) }"
         ),
         2
@@ -408,7 +408,7 @@ fn test_requires_pass_boundary() {
 fn test_requires_multiple_callers() {
     assert_eq!(
         run_main_i64(
-            "fn check(x: Int) -> Int requires x > 0 { x * 2 }\n\
+            "fn check(x: Int) -> Int requires (x > 0) { x * 2 }\n\
              fn main() -> Int { check(3) + check(7) }"
         ),
         20
@@ -418,7 +418,7 @@ fn test_requires_multiple_callers() {
 #[test]
 fn test_requires_fail_complex_condition_traps() {
     assert!(run_main_traps(
-        "fn check(x: Int, y: Int) -> Int requires x > y { x - y }\n\
+        "fn check(x: Int, y: Int) -> Int requires (x > y) { x - y }\n\
          fn main() -> Int { check(3, 5) }"
     ));
 }
@@ -427,7 +427,7 @@ fn test_requires_fail_complex_condition_traps() {
 fn test_ensures_pass() {
     assert_eq!(
         run_main_i64(
-            "fn positive() -> Int ensures result > 0 { 42 }\n\
+            "fn positive() -> Int ensures (result > 0) { 42 }\n\
              fn main() -> Int { positive() }"
         ),
         42
@@ -437,7 +437,7 @@ fn test_ensures_pass() {
 #[test]
 fn test_ensures_fail_traps() {
     assert!(run_main_traps(
-        "fn positive() -> Int ensures result > 0 { -1 }\n\
+        "fn positive() -> Int ensures (result > 0) { -1 }\n\
          fn main() -> Int { positive() }"
     ));
 }
@@ -544,7 +544,7 @@ fn test_deeply_nested_if_else() {
         run_main_i64(
             "fn main() -> Int {\n\
                let x = 5\n\
-               if x > 10 { 100 } else { if x > 3 { if x > 4 { 50 } else { 30 } } else { 0 } }\n\
+               if (x > 10) { 100 } else { if (x > 3) { if (x > 4) { 50 } else { 30 } } else { 0 } }\n\
              }"
         ),
         50
@@ -556,7 +556,7 @@ fn test_if_else_both_return() {
     assert_eq!(
         run_main_i64(
             "fn abs(x: Int) -> Int {\n\
-               if x > 0 { x } else { -(x) }\n\
+               if (x > 0) { x } else { -(x) }\n\
              }\n\
              fn main() -> Int { abs(-7) }"
         ),
@@ -569,7 +569,7 @@ fn test_if_else_in_let() {
     assert_eq!(
         run_main_i64(
             "fn main() -> Int {\n\
-               let x = if true { 10 } else { 20 }\n\
+               let x = if (true) { 10 } else { 20 }\n\
                x + 5\n\
              }"
         ),
@@ -583,7 +583,7 @@ fn test_match_with_complex_arm_body() {
         run_main_i64(
             "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
-               match Some(10) {\n\
+               match (Some(10)) {\n\
                  Some(x) => x * 2 + 1\n\
                  None => 0\n\
                }\n\
@@ -599,8 +599,8 @@ fn test_if_inside_match_arm() {
         run_main_i64(
             "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
-               match Some(5) {\n\
-                 Some(x) => if x > 3 { x * 10 } else { x }\n\
+               match (Some(5)) {\n\
+                 Some(x) => if (x > 3) { x * 10 } else { x }\n\
                  None => 0\n\
                }\n\
              }"
@@ -615,7 +615,7 @@ fn test_match_four_variants() {
         run_main_i64(
             "type Dir = North | South | East | West\n\
              fn to_int(d: Dir) -> Int {\n\
-               match d {\n\
+               match (d) {\n\
                  North => 1\n\
                  South => 2\n\
                  East => 3\n\
@@ -634,7 +634,7 @@ fn test_match_then_computation() {
         run_main_i64(
             "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
-               let v = match Some(6) {\n\
+               let v = match (Some(6)) {\n\
                  Some(x) => x\n\
                  None => 0\n\
                }\n\
@@ -653,7 +653,7 @@ fn test_adt_two_fields() {
         run_main_i64(
             "type Pair = Pair(Int, Int)\n\
              fn main() -> Int {\n\
-               match Pair(10, 20) {\n\
+               match (Pair(10, 20)) {\n\
                  Pair(a, b) => a + b\n\
                }\n\
              }"
@@ -668,7 +668,7 @@ fn test_adt_three_fields() {
         run_main_i64(
             "type Triple = Triple(Int, Int, Int)\n\
              fn main() -> Int {\n\
-               match Triple(1, 2, 3) {\n\
+               match (Triple(1, 2, 3)) {\n\
                  Triple(a, b, c) => a + b + c\n\
                }\n\
              }"
@@ -715,11 +715,11 @@ fn test_multiple_adt_allocations() {
              fn main() -> Int {\n\
                let a = Some(10)\n\
                let b = Some(20)\n\
-               let x = match a {\n\
+               let x = match (a) {\n\
                  Some(v) => v\n\
                  None => 0\n\
                }\n\
-               let y = match b {\n\
+               let y = match (b) {\n\
                  Some(v) => v\n\
                  None => 0\n\
                }\n\
@@ -736,7 +736,7 @@ fn test_adt_field_in_computation() {
         run_main_i64(
             "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
-               let v = match Some(5) {\n\
+               let v = match (Some(5)) {\n\
                  Some(x) => x\n\
                  None => 0\n\
                }\n\
@@ -819,7 +819,7 @@ fn test_function_returning_bool() {
         run_main_i64(
             "fn is_positive(x: Int) -> Bool { x > 0 }\n\
              fn main() -> Int {\n\
-               if is_positive(5) { 100 } else { 0 }\n\
+               if (is_positive(5)) { 100 } else { 0 }\n\
              }"
         ),
         100
@@ -888,7 +888,7 @@ fn test_let_adt_then_match() {
             "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                let x = Some(7)\n\
-               match x {\n\
+               match (x) {\n\
                  Some(v) => v\n\
                  None => 0\n\
                }\n\
@@ -918,7 +918,7 @@ fn test_let_if_result() {
         run_main_i64(
             "fn main() -> Int {\n\
                let x = 10\n\
-               let y = if x > 5 { x * 2 } else { x }\n\
+               let y = if (x > 5) { x * 2 } else { x }\n\
                y + 1\n\
              }"
         ),
@@ -935,8 +935,8 @@ fn test_adt_construction_in_if_arms() {
             "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                let x = 5\n\
-               let opt = if x > 3 { Some(x) } else { None }\n\
-               match opt {\n\
+               let opt = if (x > 3) { Some(x) } else { None }\n\
+               match (opt) {\n\
                  Some(v) => v\n\
                  None => 0\n\
                }\n\
@@ -953,7 +953,7 @@ fn test_record_creation_in_match_arm() {
             "type Opt = Some(Int) | None\n\
              type Pair = { x: Int, y: Int }\n\
              fn main() -> Int {\n\
-               let r = match Some(10) {\n\
+               let r = match (Some(10)) {\n\
                  Some(v) => Pair { x: v, y: v * 2 }\n\
                  None => Pair { x: 0, y: 0 }\n\
                }\n\
@@ -970,7 +970,7 @@ fn test_function_call_with_adt_arg() {
         run_main_i64(
             "type Opt = Some(Int) | None\n\
              fn unwrap_or(o: Opt, default: Int) -> Int {\n\
-               match o {\n\
+               match (o) {\n\
                  Some(v) => v\n\
                  None => default\n\
                }\n\
@@ -987,7 +987,7 @@ fn test_function_call_with_adt_arg_none() {
         run_main_i64(
             "type Opt = Some(Int) | None\n\
              fn unwrap_or(o: Opt, default: Int) -> Int {\n\
-               match o {\n\
+               match (o) {\n\
                  Some(v) => v\n\
                  None => default\n\
                }\n\
@@ -1017,7 +1017,7 @@ fn test_function_returning_adt() {
             "type Opt = Some(Int) | None\n\
              fn make_some(x: Int) -> Opt { Some(x) }\n\
              fn main() -> Int {\n\
-               match make_some(42) {\n\
+               match (make_some(42)) {\n\
                  Some(v) => v\n\
                  None => 0\n\
                }\n\
@@ -1050,8 +1050,8 @@ fn test_nested_match_in_match() {
              type Inner = X(Int) | Y\n\
              fn main() -> Int {\n\
                let o = A(1)\n\
-               match o {\n\
-                 A(v) => match X(v * 10) {\n\
+               match (o) {\n\
+                 A(v) => match (X(v * 10)) {\n\
                    X(w) => w + 1\n\
                    Y => 0\n\
                  }\n\
@@ -1081,7 +1081,7 @@ fn test_comparison_result_in_computation() {
     assert_eq!(
         run_main_i64(
             "fn classify(x: Int) -> Int {\n\
-               if x > 0 { if x > 100 { 3 } else { 2 } } else { 1 }\n\
+               if (x > 0) { if (x > 100) { 3 } else { 2 } } else { 1 }\n\
              }\n\
              fn main() -> Int { classify(50) + classify(-1) + classify(200) }"
         ),
@@ -1105,7 +1105,7 @@ fn test_ensures_gteq_pass() {
     // ensures with >= comparison on result — passes (15 >= 10).
     assert_eq!(
         run_main_i64(
-            "fn tripled(x: Int) -> Int ensures result >= 10 { x * 3 }\n\
+            "fn tripled(x: Int) -> Int ensures (result >= 10) { x * 3 }\n\
              fn main() -> Int { tripled(5) }"
         ),
         15
@@ -1116,7 +1116,7 @@ fn test_ensures_gteq_pass() {
 fn test_ensures_gteq_traps() {
     // 3 >= 10 is false → trap.
     assert!(run_main_traps(
-        "fn tripled(x: Int) -> Int ensures result >= 10 { x }\n\
+        "fn tripled(x: Int) -> Int ensures (result >= 10) { x }\n\
          fn main() -> Int { tripled(3) }"
     ));
 }
@@ -1125,7 +1125,7 @@ fn test_ensures_gteq_traps() {
 fn test_ensures_equality_pass() {
     assert_eq!(
         run_main_i64(
-            "fn get_42() -> Int ensures result == 42 { 42 }\n\
+            "fn get_42() -> Int ensures (result == 42) { 42 }\n\
              fn main() -> Int { get_42() }"
         ),
         42
@@ -1135,7 +1135,7 @@ fn test_ensures_equality_pass() {
 #[test]
 fn test_ensures_equality_traps() {
     assert!(run_main_traps(
-        "fn get_42() -> Int ensures result == 42 { 41 }\n\
+        "fn get_42() -> Int ensures (result == 42) { 41 }\n\
          fn main() -> Int { get_42() }"
     ));
 }
@@ -1144,7 +1144,7 @@ fn test_ensures_equality_traps() {
 fn test_requires_and_ensures_both_pass() {
     assert_eq!(
         run_main_i64(
-            "fn safe(x: Int) -> Int requires x > 0 ensures result > x { x + 1 }\n\
+            "fn safe(x: Int) -> Int requires (x > 0) ensures (result > x) { x + 1 }\n\
              fn main() -> Int { safe(5) }"
         ),
         6
@@ -1155,7 +1155,7 @@ fn test_requires_and_ensures_both_pass() {
 fn test_requires_pass_ensures_fail_traps() {
     // requires passes (5 > 0), but ensures fails (4 > 5 is false).
     assert!(run_main_traps(
-        "fn safe(x: Int) -> Int requires x > 0 ensures result > x { x - 1 }\n\
+        "fn safe(x: Int) -> Int requires (x > 0) ensures (result > x) { x - 1 }\n\
          fn main() -> Int { safe(5) }"
     ));
 }
@@ -1164,7 +1164,7 @@ fn test_requires_pass_ensures_fail_traps() {
 fn test_requires_fail_with_ensures_traps() {
     // requires fails first (-1 > 0 is false) — traps before body runs.
     assert!(run_main_traps(
-        "fn safe(x: Int) -> Int requires x > 0 ensures result > x { x + 1 }\n\
+        "fn safe(x: Int) -> Int requires (x > 0) ensures (result > x) { x + 1 }\n\
          fn main() -> Int { safe(-1) }"
     ));
 }
@@ -1174,7 +1174,7 @@ fn test_contract_on_bool_returning_fn() {
     // ensures on a Bool-returning function, condition uses result.
     assert_eq!(
         run_main_i32(
-            "fn check(x: Int) -> Bool ensures result == true { x > 10 }\n\
+            "fn check(x: Int) -> Bool ensures (result == true) { x > 10 }\n\
              fn main() -> Bool { check(42) }"
         ),
         1
@@ -1192,11 +1192,11 @@ fn test_multiple_adt_in_same_if_arm() {
             "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                let x = 5\n\
-               let pair = if x > 0 {\n\
+               let pair = if (x > 0) {\n\
                  let a = Some(x)\n\
                  let b = Some(x * 2)\n\
-                 let va = match a { Some(v) => v\n None => 0 }\n\
-                 let vb = match b { Some(v) => v\n None => 0 }\n\
+                 let va = match (a) { Some(v) => v\n None => 0 }\n\
+                 let vb = match (b) { Some(v) => v\n None => 0 }\n\
                  va + vb\n\
                } else { 0 }\n\
                pair\n\
@@ -1214,12 +1214,12 @@ fn test_adt_in_deeply_nested_if() {
             "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                let x = 5\n\
-               let opt = if x > 0 {\n\
-                 if x > 3 {\n\
-                   if x > 4 { Some(x) } else { None }\n\
+               let opt = if (x > 0) {\n\
+                 if (x > 3) {\n\
+                   if (x > 4) { Some(x) } else { None }\n\
                  } else { None }\n\
                } else { None }\n\
-               match opt { Some(v) => v\n None => -1 }\n\
+               match (opt) { Some(v) => v\n None => -1 }\n\
              }"
         ),
         5
@@ -1235,14 +1235,14 @@ fn test_adt_in_nested_match_arms() {
              type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                let x = A\n\
-               let opt = match x {\n\
-                 A => match B {\n\
+               let opt = match (x) {\n\
+                 A => match (B) {\n\
                    A => Some(1)\n\
                    B => Some(2)\n\
                  }\n\
                  B => None\n\
                }\n\
-               match opt { Some(v) => v\n None => 0 }\n\
+               match (opt) { Some(v) => v\n None => 0 }\n\
              }"
         ),
         2
@@ -1257,7 +1257,7 @@ fn test_record_in_if_arms() {
             "type Pair = { x: Int, y: Int }\n\
              fn main() -> Int {\n\
                let cond = true\n\
-               let r = if cond { Pair { x: 10, y: 20 } } else { Pair { x: 1, y: 2 } }\n\
+               let r = if (cond) { Pair { x: 10, y: 20 } } else { Pair { x: 1, y: 2 } }\n\
                r.x + r.y\n\
              }"
         ),
@@ -1276,8 +1276,8 @@ fn test_mixed_adt_and_record_in_scope() {
                let a = Some(10)\n\
                let r = Pair { x: 20, y: 30 }\n\
                let b = Some(40)\n\
-               let va = match a { Some(v) => v\n None => 0 }\n\
-               let vb = match b { Some(v) => v\n None => 0 }\n\
+               let va = match (a) { Some(v) => v\n None => 0 }\n\
+               let vb = match (b) { Some(v) => v\n None => 0 }\n\
                va + r.x + r.y + vb\n\
              }"
         ),
@@ -1293,8 +1293,8 @@ fn test_record_in_match_arm_with_if() {
             "type Opt = Some(Int) | None\n\
              type Pair = { x: Int, y: Int }\n\
              fn main() -> Int {\n\
-               let r = match Some(5) {\n\
-                 Some(v) => if v > 3 {\n\
+               let r = match (Some(5)) {\n\
+                 Some(v) => if (v > 3) {\n\
                    Pair { x: v, y: v * 10 }\n\
                  } else {\n\
                    Pair { x: 0, y: 0 }\n\
@@ -1317,7 +1317,7 @@ fn test_match_all_arms_return() {
         run_main_i64(
             "type Opt = Some(Int) | None\n\
              fn extract(o: Opt) -> Int {\n\
-               match o {\n\
+               match (o) {\n\
                  Some(x) => return x\n\
                  None => return -1\n\
                }\n\
@@ -1335,7 +1335,7 @@ fn test_match_all_arms_return_default() {
         run_main_i64(
             "type Opt = Some(Int) | None\n\
              fn extract(o: Opt) -> Int {\n\
-               match o {\n\
+               match (o) {\n\
                  Some(x) => return x\n\
                  None => return -1\n\
                }\n\
@@ -1352,7 +1352,7 @@ fn test_if_both_arms_explicit_return() {
     assert_eq!(
         run_main_i64(
             "fn abs_ret(x: Int) -> Int {\n\
-               if x > 0 { return x } else { return -(x) }\n\
+               if (x > 0) { return x } else { return -(x) }\n\
              }\n\
              fn main() -> Int { abs_ret(-7) }"
         ),
@@ -1369,9 +1369,9 @@ fn test_match_mixed_branch_and_switch_arms() {
              type Inner = X(Int) | Y\n\
              fn main() -> Int {\n\
                let o = A(5)\n\
-               match o {\n\
-                 A(v) => if v > 3 { v * 10 } else { v }\n\
-                 B(v) => match X(v) {\n\
+               match (o) {\n\
+                 A(v) => if (v > 3) { v * 10 } else { v }\n\
+                 B(v) => match (X(v)) {\n\
                    X(w) => w + 100\n\
                    Y => 0\n\
                  }\n\
@@ -1391,9 +1391,9 @@ fn test_match_mixed_branch_and_switch_arms_other() {
              type Inner = X(Int) | Y\n\
              fn main() -> Int {\n\
                let o = B(7)\n\
-               match o {\n\
-                 A(v) => if v > 3 { v * 10 } else { v }\n\
-                 B(v) => match X(v) {\n\
+               match (o) {\n\
+                 A(v) => if (v > 3) { v * 10 } else { v }\n\
+                 B(v) => match (X(v)) {\n\
                    X(w) => w + 100\n\
                    Y => 0\n\
                  }\n\
@@ -1411,7 +1411,7 @@ fn test_single_variant_match() {
         run_main_i64(
             "type Wrap = Wrap(Int)\n\
              fn main() -> Int {\n\
-               match Wrap(42) {\n\
+               match (Wrap(42)) {\n\
                  Wrap(x) => x\n\
                }\n\
              }"
@@ -1543,7 +1543,7 @@ fn test_ensures_result_mul_pass() {
     // result * 2 = 30, 30 > 10 → ensures passes.
     assert_eq!(
         run_main_i64(
-            "fn tripled(x: Int) -> Int ensures result * 2 > 10 { x * 3 }\n\
+            "fn tripled(x: Int) -> Int ensures (result * 2 > 10) { x * 3 }\n\
              fn main() -> Int { tripled(5) }"
         ),
         15
@@ -1554,7 +1554,7 @@ fn test_ensures_result_mul_pass() {
 fn test_ensures_result_mul_traps() {
     // result = 3, 3 * 2 = 6, 6 > 10 is false → trap.
     assert!(run_main_traps(
-        "fn identity(x: Int) -> Int ensures result * 2 > 10 { x }\n\
+        "fn identity(x: Int) -> Int ensures (result * 2 > 10) { x }\n\
          fn main() -> Int { identity(3) }"
     ));
 }
@@ -1564,7 +1564,7 @@ fn test_ensures_result_add_pass() {
     // result = 10, 10 + 5 = 15, 15 > 10 → passes.
     assert_eq!(
         run_main_i64(
-            "fn double(x: Int) -> Int ensures result + 5 > 10 { x * 2 }\n\
+            "fn double(x: Int) -> Int ensures (result + 5 > 10) { x * 2 }\n\
              fn main() -> Int { double(5) }"
         ),
         10
@@ -1576,7 +1576,7 @@ fn test_ensures_result_sub_pass() {
     // result = 10, 10 - 1 = 9, 9 >= 0 → passes.
     assert_eq!(
         run_main_i64(
-            "fn inc(x: Int) -> Int ensures result - 1 >= 0 { x + 1 }\n\
+            "fn inc(x: Int) -> Int ensures (result - 1 >= 0) { x + 1 }\n\
              fn main() -> Int { inc(9) }"
         ),
         10
@@ -1588,7 +1588,7 @@ fn test_ensures_result_div_pass() {
     // result = 20, 20 / 2 = 10, 10 > 0 → passes.
     assert_eq!(
         run_main_i64(
-            "fn dbl(x: Int) -> Int ensures result / 2 > 0 { x * 2 }\n\
+            "fn dbl(x: Int) -> Int ensures (result / 2 > 0) { x * 2 }\n\
              fn main() -> Int { dbl(10) }"
         ),
         20
@@ -1600,7 +1600,7 @@ fn test_ensures_result_neg_pass() {
     // result = -5, -(result) = 5, 5 > 0 → passes.
     assert_eq!(
         run_main_i64(
-            "fn negate(x: Int) -> Int ensures -(result) > 0 { -(x) }\n\
+            "fn negate(x: Int) -> Int ensures (-(result) > 0) { -(x) }\n\
              fn main() -> Int { negate(5) }"
         ),
         -5
@@ -1612,7 +1612,7 @@ fn test_ensures_result_squared_pass() {
     // result = 4, 4 * 4 = 16, 16 > 0 → passes.
     assert_eq!(
         run_main_i64(
-            "fn square(x: Int) -> Int ensures result * result > 0 { x * x }\n\
+            "fn square(x: Int) -> Int ensures (result * result > 0) { x * x }\n\
              fn main() -> Int { square(2) }"
         ),
         4
@@ -1624,7 +1624,7 @@ fn test_ensures_result_with_param_arithmetic() {
     // result = 6, x = 5, 6 - 5 = 1, 1 > 0 → passes.
     assert_eq!(
         run_main_i64(
-            "fn inc(x: Int) -> Int ensures result - x > 0 { x + 1 }\n\
+            "fn inc(x: Int) -> Int ensures (result - x > 0) { x + 1 }\n\
              fn main() -> Int { inc(5) }"
         ),
         6
@@ -1636,7 +1636,7 @@ fn test_ensures_result_chained_arithmetic() {
     // result = 7, 7 * 2 + 1 = 15, 15 > 10 → passes.
     assert_eq!(
         run_main_i64(
-            "fn compute(x: Int) -> Int ensures result * 2 + 1 > 10 { x }\n\
+            "fn compute(x: Int) -> Int ensures (result * 2 + 1 > 10) { x }\n\
              fn main() -> Int { compute(7) }"
         ),
         7
@@ -1647,7 +1647,7 @@ fn test_ensures_result_chained_arithmetic() {
 fn test_ensures_result_chained_arithmetic_traps() {
     // result = 3, 3 * 2 + 1 = 7, 7 > 10 is false → trap.
     assert!(run_main_traps(
-        "fn compute(x: Int) -> Int ensures result * 2 + 1 > 10 { x }\n\
+        "fn compute(x: Int) -> Int ensures (result * 2 + 1 > 10) { x }\n\
          fn main() -> Int { compute(3) }"
     ));
 }
@@ -1657,7 +1657,7 @@ fn test_ensures_result_self_eq() {
     // result == result is always true — both sides reference result.
     assert_eq!(
         run_main_i64(
-            "fn identity(x: Int) -> Int ensures result == result { x }\n\
+            "fn identity(x: Int) -> Int ensures (result == result) { x }\n\
              fn main() -> Int { identity(42) }"
         ),
         42
@@ -1668,7 +1668,7 @@ fn test_ensures_result_self_eq() {
 fn test_ensures_float_result_arithmetic() {
     // Float return: result + 1.0 = 5.0, 5.0 > 3.0 → passes.
     let r = run_main_f64(
-        "fn half(x: Float) -> Float ensures result + 1.0 > 3.0 { x / 2.0 }\n\
+        "fn half(x: Float) -> Float ensures (result + 1.0 > 3.0) { x / 2.0 }\n\
          fn main() -> Float { half(8.0) }",
     );
     assert!((r - 4.0).abs() < f64::EPSILON);
@@ -1678,7 +1678,7 @@ fn test_ensures_float_result_arithmetic() {
 fn test_ensures_float_result_mul() {
     // Float return: result * 2.0 = 10.0, 10.0 > 5.0 → passes.
     let r = run_main_f64(
-        "fn half(x: Float) -> Float ensures result * 2.0 > 5.0 { x / 2.0 }\n\
+        "fn half(x: Float) -> Float ensures (result * 2.0 > 5.0) { x / 2.0 }\n\
          fn main() -> Float { half(10.0) }",
     );
     assert!((r - 5.0).abs() < f64::EPSILON);
@@ -1690,7 +1690,7 @@ fn test_requires_param_arithmetic() {
     // Verifies requires expressions also get proper type inference.
     assert_eq!(
         run_main_i64(
-            "fn check(x: Int) -> Int requires x * 2 > 5 { x }\n\
+            "fn check(x: Int) -> Int requires (x * 2 > 5) { x }\n\
              fn main() -> Int { check(4) }"
         ),
         4
@@ -1701,7 +1701,7 @@ fn test_requires_param_arithmetic() {
 fn test_requires_param_arithmetic_traps() {
     // x = 2, 2 * 2 = 4, 4 > 5 is false → trap.
     assert!(run_main_traps(
-        "fn check(x: Int) -> Int requires x * 2 > 5 { x }\n\
+        "fn check(x: Int) -> Int requires (x * 2 > 5) { x }\n\
          fn main() -> Int { check(2) }"
     ));
 }
@@ -1713,7 +1713,7 @@ fn test_requires_complex_and_ensures_complex() {
     // result = 30, ensures: result - x > 0 → 30 - 10 = 20 > 0 ✓
     assert_eq!(
         run_main_i64(
-            "fn triple(x: Int) -> Int requires x * 2 > 0 ensures result - x > 0 { x * 3 }\n\
+            "fn triple(x: Int) -> Int requires (x * 2 > 0) ensures (result - x > 0) { x * 3 }\n\
              fn main() -> Int { triple(10) }"
         ),
         30

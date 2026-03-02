@@ -301,7 +301,7 @@ fn test_chained_field_access() {
 
 #[test]
 fn test_if_else() {
-    let out = lower_and_display("fn f(x: Int) -> Int { if x > 0 { x } else { -x } }");
+    let out = lower_and_display("fn f(x: Int) -> Int { if (x > 0) { x } else { -x } }");
     assert!(out.contains("branch"), "output:\n{out}");
     assert!(out.contains("then"), "output:\n{out}");
     assert!(out.contains("else"), "output:\n{out}");
@@ -310,14 +310,14 @@ fn test_if_else() {
 
 #[test]
 fn test_if_no_else() {
-    let out = lower_and_display("fn f(x: Bool) { if x { } }");
+    let out = lower_and_display("fn f(x: Bool) { if (x) { } }");
     assert!(out.contains("branch"), "output:\n{out}");
 }
 
 #[test]
 fn test_nested_if() {
     let out = lower_and_display(
-        "fn f(x: Int) -> Int { if x > 0 { if x > 10 { 10 } else { x } } else { 0 } }",
+        "fn f(x: Int) -> Int { if (x > 0) { if (x > 10) { 10 } else { x } } else { 0 } }",
     );
     let branch_count = out.matches("branch").count();
     assert!(
@@ -329,7 +329,7 @@ fn test_nested_if() {
 #[test]
 fn test_if_in_let() {
     let out =
-        lower_and_display("fn f(x: Int) -> Int {\n  let y = if x > 0 { 1 } else { 0 }\n  y\n}");
+        lower_and_display("fn f(x: Int) -> Int {\n  let y = if (x > 0) { 1 } else { 0 }\n  y\n}");
     assert!(out.contains("branch"), "output:\n{out}");
     assert!(out.contains("merge"), "output:\n{out}");
 }
@@ -341,7 +341,7 @@ fn test_adt_match_switch() {
     let out = lower_and_display(
         "type Wrap<T> = Val(T) | Empty
          fn f(x: Wrap<Int>) -> Int {
-           match x {
+           match (x) {
              Val(n) => n
              Empty => 0
            }
@@ -356,7 +356,7 @@ fn test_adt_match_switch() {
 fn test_literal_match() {
     let out = lower_and_display(
         "fn f(x: Int) -> Int {
-           match x {
+           match (x) {
              0 => 100
              _ => x
            }
@@ -373,7 +373,7 @@ fn test_wildcard_match() {
     let out = lower_and_display(
         "type Wrap<T> = Val(T) | Empty
          fn f(x: Wrap<Int>) -> Int {
-           match x {
+           match (x) {
              Val(n) => n
              _ => 0
            }
@@ -388,7 +388,7 @@ fn test_bind_pattern_match() {
     let out = lower_and_display(
         "type Wrap<T> = Val(T) | Empty
          fn f(x: Wrap<Int>) -> Int {
-           match x {
+           match (x) {
              Val(n) => n
              other => 0
            }
@@ -402,7 +402,7 @@ fn test_nested_constructor() {
     let out = lower_and_display(
         "type Wrap<T> = Val(T) | Empty
          fn f(x: Wrap<Int>) -> Int {
-           match x {
+           match (x) {
              Val(n) => n + 1
              Empty => 0
            }
@@ -417,7 +417,7 @@ fn test_multiple_arms() {
     let out = lower_and_display(
         "type Color = Red | Green | Blue
          fn f(c: Color) -> Int {
-           match c {
+           match (c) {
              Red => 1
              Green => 2
              Blue => 3
@@ -470,7 +470,7 @@ fn test_discarded_expression() {
 fn test_early_return() {
     let out = lower_and_display(
         "fn f(x: Int) -> Int {
-           if x > 0 { return x } else { }
+           if (x > 0) { return x } else { }
            -x
          }",
     );
@@ -488,7 +488,7 @@ fn test_return_in_match_arm() {
     let out = lower_and_display(
         "type Wrap<T> = Val(T) | Empty
          fn f(x: Wrap<Int>) -> Int {
-           match x {
+           match (x) {
              Val(n) => return n
              Empty => 0
            }
@@ -524,14 +524,14 @@ fn test_typed_hole() {
 
 #[test]
 fn test_requires_clause() {
-    let out = lower_and_display("fn f(x: Int) -> Int requires x > 0 { x }");
+    let out = lower_and_display("fn f(x: Int) -> Int requires (x > 0) { x }");
     assert!(out.contains("assert"), "output:\n{out}");
     assert!(out.contains("requires"), "output:\n{out}");
 }
 
 #[test]
 fn test_ensures_clause() {
-    let out = lower_and_display("fn f(x: Int) -> Int ensures x > 0 { x }");
+    let out = lower_and_display("fn f(x: Int) -> Int ensures (x > 0) { x }");
     assert!(out.contains("assert"), "output:\n{out}");
     assert!(out.contains("ensures"), "output:\n{out}");
 }
@@ -580,7 +580,7 @@ fn test_regression_last_literal_arm_uses_branch() {
     // (including the last) emits a branch (conditional).
     let out = lower_and_display(
         "fn f(x: Int) -> Int {
-           match x {
+           match (x) {
              0 => 100
              1 => 200
              _ => -1
@@ -633,8 +633,8 @@ fn test_nested_control_flow() {
     let source = "
         type Wrap<T> = Val(T) | Empty
         fn f(x: Wrap<Int>) -> Int {
-            match x {
-                Val(n) => if n > 0 { n } else { 0 }
+            match (x) {
+                Val(n) => if (n > 0) { n } else { 0 }
                 Empty => -1
             }
         }
@@ -648,7 +648,7 @@ fn test_nested_control_flow() {
 fn test_recursive_call() {
     let source = "
         fn fib(n: Int) -> Int {
-            if n < 2 {
+            if (n < 2) {
                 n
             } else {
                 fib(n - 1) + fib(n - 2)
@@ -663,7 +663,7 @@ fn test_recursive_call() {
 
 #[test]
 fn test_ensures_binds_result_variable() {
-    let out = lower_and_display("fn f(x: Int) -> Int ensures result > 0 { x }");
+    let out = lower_and_display("fn f(x: Int) -> Int ensures (result > 0) { x }");
     // The ensures clause should reference the return value, not produce a hole.
     // Before fix: `result` lowered to a hole because it wasn't defined as a local.
     assert!(
@@ -679,7 +679,7 @@ fn test_ensures_binds_result_variable() {
 #[test]
 fn test_ensures_with_early_return() {
     let out = lower_and_display(
-        "fn f(x: Int) -> Int ensures result > 0 {
+        "fn f(x: Int) -> Int ensures (result > 0) {
            return x
          }",
     );
@@ -710,7 +710,7 @@ fn test_sequential_match_record_pattern() {
     let out = lower_and_display(
         "type Point = { x: Int, y: Int }
          fn f(p: Point) -> Int {
-           match p {
+           match (p) {
              { x, y } => x + y
            }
          }",
@@ -731,7 +731,7 @@ fn test_sequential_match_constructor_pattern() {
     let out = lower_and_display(
         "type Wrap<T> = Val(T) | Empty
          fn f(x: Int) -> Int {
-           match x {
+           match (x) {
              0 => 100
              n => n
            }
@@ -749,7 +749,7 @@ fn test_ensures_early_return_recorded_in_contracts() {
     // postcondition assert recorded in KirContracts.ensures, not just
     // emitted silently.
     let result = check_file(
-        "fn f(x: Int) -> Int ensures result > 0 {
+        "fn f(x: Int) -> Int ensures (result > 0) {
            return x
          }",
     );
@@ -777,7 +777,7 @@ fn test_ensures_early_return_recorded_in_contracts() {
 #[test]
 fn test_ensures_implicit_return_recorded_in_contracts() {
     // Baseline: implicit return path should also record ensures in contracts.
-    let result = check_file("fn f(x: Int) -> Int ensures result > 0 { x }");
+    let result = check_file("fn f(x: Int) -> Int ensures (result > 0) { x }");
     assert!(
         result.type_check.raw_diagnostics.is_empty(),
         "type errors: {:?}",
@@ -804,7 +804,7 @@ fn test_constructor_in_if_branches() {
     let source = "
         type Wrap<T> = Val(T) | Empty
         fn f(x: Int) -> Wrap<Int> {
-            if x > 0 {
+            if (x > 0) {
                 Val(x)
             } else {
                 Empty
@@ -825,7 +825,7 @@ fn test_old_in_ensures_with_explicit_return() {
     // ensures is emitted at the return site while the rebinding is still in
     // scope — so old(x) incorrectly references the rebound value.
     let out = lower_and_display(
-        "fn f(x: Int) -> Int ensures old(x) > 0 {
+        "fn f(x: Int) -> Int ensures (old(x) > 0) {
            let x = x + 1
            return x
          }",
@@ -855,7 +855,7 @@ fn test_old_in_ensures_with_explicit_return() {
 #[test]
 fn test_ensures_without_old_still_works() {
     // Guard: ensures clause without old() should continue to work.
-    let out = lower_and_display("fn f(x: Int) -> Int ensures result > 0 { x }");
+    let out = lower_and_display("fn f(x: Int) -> Int ensures (result > 0) { x }");
     assert!(out.contains("assert"), "output:\n{out}");
     assert!(out.contains("ensures"), "output:\n{out}");
     assert!(!out.contains("hole"), "output:\n{out}");
@@ -865,7 +865,7 @@ fn test_ensures_without_old_still_works() {
 fn test_old_without_rebinding_references_param() {
     // Guard: old(x) where x is NOT rebound — should reference the original
     // param regardless (trivially correct, verifies old() doesn't break).
-    let out = lower_and_display("fn f(x: Int) -> Int ensures old(x) > 0 { x }");
+    let out = lower_and_display("fn f(x: Int) -> Int ensures (old(x) > 0) { x }");
     assert!(out.contains("assert"), "output:\n{out}");
     assert!(out.contains("ensures"), "output:\n{out}");
     let lines: Vec<&str> = out.lines().collect();
@@ -888,7 +888,7 @@ fn test_adt_switch_default_uses_first_catchall() {
     let result = check_file(
         "type W = A | B
          fn f(x: W) -> Int {
-           match x {
+           match (x) {
              A => 1
              _ => 2
              _ => 3
@@ -945,7 +945,7 @@ fn test_adt_switch_single_catchall_still_works() {
     let out = lower_and_display(
         "type W = A | B
          fn f(x: W) -> Int {
-           match x {
+           match (x) {
              A => 1
              _ => 99
            }
@@ -964,7 +964,7 @@ fn test_adt_switch_no_cases_after_catchall() {
     let result = check_file(
         "type W = A | B
          fn f(x: W) -> Int {
-           match x {
+           match (x) {
              other => 1
              A => 2
            }
@@ -1012,7 +1012,7 @@ fn test_adt_switch_constructor_before_catchall_still_works() {
     let out = lower_and_display(
         "type W = A | B
          fn f(x: W) -> Int {
-           match x {
+           match (x) {
              A => 1
              other => 2
            }
@@ -1031,7 +1031,7 @@ fn test_adt_switch_no_duplicate_cases() {
     let result = check_file(
         "type W = A | B
          fn f(x: W) -> Int {
-           match x {
+           match (x) {
              A => 1
              A => 2
              B => 3
@@ -1081,7 +1081,7 @@ fn test_adt_switch_first_dup_case_wins() {
     let result = check_file(
         "type W = A | B
          fn f(x: W) -> Int {
-           match x {
+           match (x) {
              A => 10
              A => 20
              B => 30
@@ -1205,7 +1205,7 @@ fn test_validator_accepts_unique_switch_cases() {
     let out = lower_and_display(
         "type W = A | B
          fn f(x: W) -> Int {
-           match x {
+           match (x) {
              A => 1
              B => 2
            }
@@ -1275,7 +1275,7 @@ fn test_sequential_match_all_return_marks_merge_unreachable() {
     // when all arms return, no one jumps to merge, leaving an unbound param.
     let out = lower_and_display(
         "fn f(x: Int) -> Int {
-           match x {
+           match (x) {
              0 => return 1
              _ => return 2
            }
@@ -1299,7 +1299,7 @@ fn test_sequential_match_partial_return_keeps_merge() {
     // Guard: if some arms don't return, merge should be reachable.
     let out = lower_and_display(
         "fn f(x: Int) -> Int {
-           match x {
+           match (x) {
              0 => return 1
              _ => 2
            }
@@ -1331,7 +1331,7 @@ fn test_sequential_match_wildcard_stops_dispatch() {
     // later literal arms can still affect control flow.
     let result = check_file(
         "fn f(x: Int) -> Int {
-           match x {
+           match (x) {
              _ => 1
              0 => 2
            }
@@ -1374,7 +1374,7 @@ fn test_sequential_match_bind_stops_dispatch() {
     // Same but with a bind pattern.
     let result = check_file(
         "fn f(x: Int) -> Int {
-           match x {
+           match (x) {
              n => n
              0 => 2
            }
@@ -1416,7 +1416,7 @@ fn test_adt_match_nested_literal_check() {
     let out = lower_and_display(
         "type O = Some(Int) | None
          fn f(x: O) -> Int {
-           match x {
+           match (x) {
              Some(1) => 10
              _ => 0
            }
@@ -1435,7 +1435,7 @@ fn test_adt_match_nested_bind_still_works() {
     let out = lower_and_display(
         "type O = Some(Int) | None
          fn f(x: O) -> Int {
-           match x {
+           match (x) {
              Some(n) => n
              None => 0
            }
@@ -1567,7 +1567,7 @@ fn test_adt_match_unsupported_pattern_falls_back_to_sequential() {
     // This source has a type error (literal on ADT) but lowering runs anyway.
     let source = "type O = Some(Int) | None
          fn f(x: O) -> Int {
-           match x {
+           match (x) {
              1 => 1
              Some(n) => n
              _ => 0
@@ -1601,7 +1601,7 @@ fn test_adt_match_all_supported_still_uses_switch() {
     let out = lower_and_display(
         "type O = Some(Int) | None
          fn f(x: O) -> Int {
-           match x {
+           match (x) {
              Some(n) => n
              None => 0
            }

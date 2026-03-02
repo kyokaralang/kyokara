@@ -5,7 +5,7 @@ fn greet(first: String, last: String) -> String {
 }
 
 fn repeat(s: String, n: Int) -> String {
-  if n <= 0 {
+  if (n <= 0) {
     ""
   } else {
     s.concat(repeat(s, n - 1))

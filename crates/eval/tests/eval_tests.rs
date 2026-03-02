@@ -217,13 +217,13 @@ fn eval_let_multiple() {
 
 #[test]
 fn eval_if_true() {
-    let val = run_ok("fn main() -> Int { if true { 1 } else { 2 } }");
+    let val = run_ok("fn main() -> Int { if (true) { 1 } else { 2 } }");
     assert!(matches!(val, Value::Int(1)));
 }
 
 #[test]
 fn eval_if_false() {
-    let val = run_ok("fn main() -> Int { if false { 1 } else { 2 } }");
+    let val = run_ok("fn main() -> Int { if (false) { 1 } else { 2 } }");
     assert!(matches!(val, Value::Int(2)));
 }
 
@@ -232,7 +232,7 @@ fn eval_if_with_comparison() {
     let val = run_ok(
         "fn main() -> Int {
            let x = 5
-           if x > 3 { 100 } else { 0 }
+           if (x > 3) { 100 } else { 0 }
          }",
     );
     assert!(matches!(val, Value::Int(100)));
@@ -360,7 +360,7 @@ fn eval_pattern_match_nullary() {
     let val = run_ok(
         "type Bool2 = True | False
          fn to_int(x: Bool2) -> Int {
-           match x {
+           match (x) {
              True => 1
              False => 0
            }
@@ -375,7 +375,7 @@ fn eval_pattern_match_with_bind() {
     let val = run_ok(
         "type Option<T> = Some(T) | None
          fn unwrap(x: Option<Int>) -> Int {
-           match x {
+           match (x) {
              Some(v) => v
              None => 0
            }
@@ -390,7 +390,7 @@ fn eval_pattern_match_wildcard() {
     let val = run_ok(
         "type Color = Red | Green | Blue
          fn is_red(c: Color) -> Int {
-           match c {
+           match (c) {
              Red => 1
              _ => 0
            }
@@ -436,7 +436,7 @@ fn eval_record_literal_not_confused_with_adt_constructor() {
 fn eval_factorial() {
     let val = run_ok(
         "fn fact(n: Int) -> Int {
-           if n <= 1 { 1 } else { n * fact(n - 1) }
+           if (n <= 1) { 1 } else { n * fact(n - 1) }
          }
          fn main() -> Int { fact(5) }",
     );
@@ -447,7 +447,7 @@ fn eval_factorial() {
 fn eval_fibonacci() {
     let val = run_ok(
         "fn fib(n: Int) -> Int {
-           if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+           if (n < 2) { n } else { fib(n - 1) + fib(n - 2) }
          }
          fn main() -> Int { fib(10) }",
     );
@@ -536,7 +536,7 @@ fn eval_adt_option_program() {
         "type Option<T> = Some(T) | None
 
          fn unwrap_or(opt: Option<Int>, default: Int) -> Int {
-           match opt {
+           match (opt) {
              Some(x) => x
              None => default
            }
@@ -567,7 +567,7 @@ fn eval_higher_order_function() {
 fn eval_builtin_option_some() {
     let val = run_ok(
         "fn main() -> Int {
-           match Some(42) {
+           match (Some(42)) {
              Some(x) => x
              None => 0
            }
@@ -580,7 +580,7 @@ fn eval_builtin_option_some() {
 fn eval_builtin_option_none() {
     let val = run_ok(
         "fn main() -> Int {
-           match None {
+           match (None) {
              Some(x) => x
              None => 0
            }
@@ -595,7 +595,7 @@ fn eval_builtin_option_none() {
 fn eval_builtin_result_ok() {
     let val = run_ok(
         "fn main() -> Int {
-           match Ok(1) {
+           match (Ok(1)) {
              Ok(x) => x
              Err(e) => 0
            }
@@ -608,7 +608,7 @@ fn eval_builtin_result_ok() {
 fn eval_builtin_result_err() {
     let val = run_ok(
         "fn main() -> Int {
-           match Err(99) {
+           match (Err(99)) {
              Ok(x) => x
              Err(e) => e
            }
@@ -704,7 +704,7 @@ fn eval_propagate_in_binary_expr() {
 fn eval_requires_passes() {
     let val = run_ok(
         "fn check(x: Int) -> Int
-           requires x > 0
+           requires (x > 0)
          { x }
          fn main() -> Int { check(5) }",
     );
@@ -715,7 +715,7 @@ fn eval_requires_passes() {
 fn eval_requires_fails() {
     let err = run_err(
         "fn check(x: Int) -> Int
-           requires x > 0
+           requires (x > 0)
          { x }
          fn main() -> Int { check(-1) }",
     );
@@ -726,7 +726,7 @@ fn eval_requires_fails() {
 fn eval_ensures_passes() {
     let val = run_ok(
         "fn get() -> Int
-           ensures result > 0
+           ensures (result > 0)
          { 42 }
          fn main() -> Int { get() }",
     );
@@ -737,7 +737,7 @@ fn eval_ensures_passes() {
 fn eval_ensures_fails() {
     let err = run_err(
         "fn get() -> Int
-           ensures result > 100
+           ensures (result > 100)
          { 42 }
          fn main() -> Int { get() }",
     );
@@ -748,7 +748,7 @@ fn eval_ensures_fails() {
 fn eval_ensures_result_binding() {
     let val = run_ok(
         "fn ten() -> Int
-           ensures result == 10
+           ensures (result == 10)
          { 10 }
          fn main() -> Int { ten() }",
     );
@@ -759,7 +759,7 @@ fn eval_ensures_result_binding() {
 fn eval_old_in_ensures() {
     let val = run_ok(
         "fn inc(x: Int) -> Int
-           ensures result == old(x) + 1
+           ensures (result == old(x) + 1)
          { x + 1 }
          fn main() -> Int { inc(5) }",
     );
@@ -770,7 +770,7 @@ fn eval_old_in_ensures() {
 fn eval_old_in_ensures_fails() {
     let err = run_err(
         "fn inc(x: Int) -> Int
-           ensures result == old(x)
+           ensures (result == old(x))
          { x + 1 }
          fn main() -> Int { inc(5) }",
     );
@@ -781,7 +781,7 @@ fn eval_old_in_ensures_fails() {
 fn eval_invariant_passes() {
     let val = run_ok(
         "fn check(x: Int) -> Int
-           invariant x > 0
+           invariant (x > 0)
          { x }
          fn main() -> Int { check(5) }",
     );
@@ -792,7 +792,7 @@ fn eval_invariant_passes() {
 fn eval_invariant_fails() {
     let err = run_err(
         "fn check(x: Int) -> Int
-           invariant x > 100
+           invariant (x > 100)
          { x }
          fn main() -> Int { check(5) }",
     );
@@ -803,8 +803,8 @@ fn eval_invariant_fails() {
 fn eval_requires_and_ensures_combined() {
     let val = run_ok(
         "fn safe_inc(x: Int) -> Int
-           requires x > 0
-           ensures result > x
+           requires (x > 0)
+           ensures (result > x)
          { x + 1 }
          fn main() -> Int { safe_inc(5) }",
     );
@@ -828,7 +828,7 @@ fn eval_requires_fails_at_boundary() {
     // x == 0 should fail `requires x > 0`.
     let err = run_err(
         "fn positive(x: Int) -> Int
-           requires x > 0
+           requires (x > 0)
          { x }
          fn main() -> Int { positive(0) }",
     );
@@ -839,7 +839,7 @@ fn eval_requires_fails_at_boundary() {
 fn eval_requires_fails_with_equality_check() {
     let err = run_err(
         "fn expect_ten(x: Int) -> Int
-           requires x == 10
+           requires (x == 10)
          { x }
          fn main() -> Int { expect_ten(9) }",
     );
@@ -851,7 +851,7 @@ fn eval_requires_fails_multi_param() {
     // Precondition references multiple params.
     let err = run_err(
         "fn safe_div(a: Int, b: Int) -> Int
-           requires b > 0
+           requires (b > 0)
          { a / b }
          fn main() -> Int { safe_div(10, 0) }",
     );
@@ -862,7 +862,7 @@ fn eval_requires_fails_multi_param() {
 fn eval_requires_fails_negative_bound() {
     let err = run_err(
         "fn clamp_low(x: Int) -> Int
-           requires x >= 0
+           requires (x >= 0)
          { x }
          fn main() -> Int { clamp_low(-1) }",
     );
@@ -874,7 +874,7 @@ fn eval_requires_passes_at_boundary() {
     // x == 1 should pass `requires x > 0`.
     let val = run_ok(
         "fn positive(x: Int) -> Int
-           requires x > 0
+           requires (x > 0)
          { x }
          fn main() -> Int { positive(1) }",
     );
@@ -886,7 +886,7 @@ fn eval_ensures_fails_wrong_return() {
     // Function returns 0 but ensures says result > 0.
     let err = run_err(
         "fn bad() -> Int
-           ensures result > 0
+           ensures (result > 0)
          { 0 }
          fn main() -> Int { bad() }",
     );
@@ -897,7 +897,7 @@ fn eval_ensures_fails_wrong_return() {
 fn eval_ensures_fails_negative_return() {
     let err = run_err(
         "fn negate(x: Int) -> Int
-           ensures result >= 0
+           ensures (result >= 0)
          { 0 - x }
          fn main() -> Int { negate(5) }",
     );
@@ -908,7 +908,7 @@ fn eval_ensures_fails_negative_return() {
 fn eval_ensures_fails_equality_mismatch() {
     let err = run_err(
         "fn double(x: Int) -> Int
-           ensures result == x + x
+           ensures (result == x + x)
          { x * 3 }
          fn main() -> Int { double(4) }",
     );
@@ -919,7 +919,7 @@ fn eval_ensures_fails_equality_mismatch() {
 fn eval_ensures_passes_with_computation() {
     let val = run_ok(
         "fn double(x: Int) -> Int
-           ensures result == x + x
+           ensures (result == x + x)
          { x * 2 }
          fn main() -> Int { double(7) }",
     );
@@ -931,7 +931,7 @@ fn eval_invariant_fails_body_violates() {
     // Invariant checks post-body state; param is fine but invariant uses strict bound.
     let err = run_err(
         "fn process(x: Int) -> Int
-           invariant x > 10
+           invariant (x > 10)
          { x }
          fn main() -> Int { process(5) }",
     );
@@ -942,7 +942,7 @@ fn eval_invariant_fails_body_violates() {
 fn eval_invariant_fails_at_zero() {
     let err = run_err(
         "fn nonzero(x: Int) -> Int
-           invariant x != 0
+           invariant (x != 0)
          { x }
          fn main() -> Int { nonzero(0) }",
     );
@@ -956,7 +956,7 @@ fn eval_old_captures_pre_state() {
     // old(x) should be 10 even though x is used in computation.
     let val = run_ok(
         "fn add_five(x: Int) -> Int
-           ensures result == old(x) + 5
+           ensures (result == old(x) + 5)
          { x + 5 }
          fn main() -> Int { add_five(10) }",
     );
@@ -968,7 +968,7 @@ fn eval_old_fails_when_body_changes_meaning() {
     // Body returns x * 2 but ensures says result == old(x) + 1.
     let err = run_err(
         "fn wrong(x: Int) -> Int
-           ensures result == old(x) + 1
+           ensures (result == old(x) + 1)
          { x * 2 }
          fn main() -> Int { wrong(5) }",
     );
@@ -980,8 +980,8 @@ fn eval_requires_and_ensures_requires_fails_first() {
     // Both contracts present, but precondition fails before body runs.
     let err = run_err(
         "fn guarded(x: Int) -> Int
-           requires x > 0
-           ensures result > 0
+           requires (x > 0)
+           ensures (result > 0)
          { x + 1 }
          fn main() -> Int { guarded(-5) }",
     );
@@ -994,8 +994,8 @@ fn eval_requires_passes_ensures_fails() {
     // Precondition passes but postcondition catches bad return.
     let err = run_err(
         "fn bad_inc(x: Int) -> Int
-           requires x > 0
-           ensures result > x
+           requires (x > 0)
+           ensures (result > x)
          { x }
          fn main() -> Int { bad_inc(5) }",
     );
@@ -1007,9 +1007,9 @@ fn eval_requires_passes_ensures_fails() {
 fn eval_all_three_contracts_pass() {
     let val = run_ok(
         "fn triple_check(x: Int) -> Int
-           requires x > 0
-           ensures result == old(x) + 1
-           invariant x > 0
+           requires (x > 0)
+           ensures (result == old(x) + 1)
+           invariant (x > 0)
          { x + 1 }
          fn main() -> Int { triple_check(5) }",
     );
@@ -1021,9 +1021,9 @@ fn eval_invariant_fails_with_requires_and_ensures() {
     // requires passes, invariant fails before ensures runs.
     let err = run_err(
         "fn strict(x: Int) -> Int
-           requires x > 0
-           ensures result > 0
-           invariant x > 100
+           requires (x > 0)
+           ensures (result > 0)
+           invariant (x > 100)
          { x }
          fn main() -> Int { strict(5) }",
     );
@@ -1037,10 +1037,10 @@ fn eval_contract_on_recursive_fn() {
     // Contracts checked on every call in recursion.
     let val = run_ok(
         "fn fact(n: Int) -> Int
-           requires n >= 0
-           ensures result >= 1
+           requires (n >= 0)
+           ensures (result >= 1)
          {
-           if n <= 1 { 1 } else { n * fact(n - 1) }
+           if (n <= 1) { 1 } else { n * fact(n - 1) }
          }
          fn main() -> Int { fact(5) }",
     );
@@ -1052,7 +1052,7 @@ fn eval_contract_on_called_fn_not_main() {
     // Contract on a helper, main has none.
     let err = run_err(
         "fn helper(x: Int) -> Int
-           requires x > 0
+           requires (x > 0)
          { x }
          fn main() -> Int { helper(-1) }",
     );
@@ -1063,7 +1063,7 @@ fn eval_contract_on_called_fn_not_main() {
 fn eval_ensures_with_bool_return() {
     let val = run_ok(
         "fn is_positive(x: Int) -> Bool
-           ensures result == true
+           ensures (result == true)
          { x > 0 }
          fn main() -> Bool { is_positive(5) }",
     );
@@ -1074,7 +1074,7 @@ fn eval_ensures_with_bool_return() {
 fn eval_ensures_with_bool_return_fails() {
     let err = run_err(
         "fn is_positive(x: Int) -> Bool
-           ensures result == true
+           ensures (result == true)
          { x > 0 }
          fn main() -> Bool { is_positive(-1) }",
     );
@@ -1086,7 +1086,7 @@ fn eval_requires_compound_condition_fails() {
     // Compound boolean in requires.
     let err = run_err(
         "fn bounded(x: Int) -> Int
-           requires x > 0
+           requires (x > 0)
          { x }
          fn main() -> Int { bounded(-10) }",
     );
@@ -1097,7 +1097,7 @@ fn eval_requires_compound_condition_fails() {
 fn eval_ensures_result_is_zero() {
     let val = run_ok(
         "fn zero() -> Int
-           ensures result == 0
+           ensures (result == 0)
          { 0 }
          fn main() -> Int { zero() }",
     );
@@ -1108,7 +1108,7 @@ fn eval_ensures_result_is_zero() {
 fn eval_ensures_result_is_zero_fails() {
     let err = run_err(
         "fn not_zero() -> Int
-           ensures result == 0
+           ensures (result == 0)
          { 1 }
          fn main() -> Int { not_zero() }",
     );
@@ -1119,7 +1119,7 @@ fn eval_ensures_result_is_zero_fails() {
 fn eval_old_with_multiple_params() {
     let val = run_ok(
         "fn sum_inc(a: Int, b: Int) -> Int
-           ensures result == old(a) + old(b) + 1
+           ensures (result == old(a) + old(b) + 1)
          { a + b + 1 }
          fn main() -> Int { sum_inc(3, 4) }",
     );
@@ -1130,7 +1130,7 @@ fn eval_old_with_multiple_params() {
 fn eval_old_with_multiple_params_fails() {
     let err = run_err(
         "fn sum_inc(a: Int, b: Int) -> Int
-           ensures result == old(a) + old(b)
+           ensures (result == old(a) + old(b))
          { a + b + 1 }
          fn main() -> Int { sum_inc(3, 4) }",
     );
@@ -1142,7 +1142,7 @@ fn eval_contract_error_names_function() {
     // Error message should contain the function name.
     let err = run_err(
         "fn my_special_fn(x: Int) -> Int
-           requires x > 100
+           requires (x > 100)
          { x }
          fn main() -> Int { my_special_fn(1) }",
     );
@@ -1153,7 +1153,7 @@ fn eval_contract_error_names_function() {
 fn eval_postcondition_error_names_function() {
     let err = run_err(
         "fn another_fn() -> Int
-           ensures result > 999
+           ensures (result > 999)
          { 1 }
          fn main() -> Int { another_fn() }",
     );
@@ -1164,7 +1164,7 @@ fn eval_postcondition_error_names_function() {
 fn eval_invariant_error_names_function() {
     let err = run_err(
         "fn inv_fn(x: Int) -> Int
-           invariant x > 999
+           invariant (x > 999)
          { x }
          fn main() -> Int { inv_fn(1) }",
     );
@@ -1178,7 +1178,7 @@ fn eval_user_option_overrides_builtin() {
     let val = run_ok(
         "type Option<T> = Some(T) | None
          fn main() -> Int {
-           match Some(7) {
+           match (Some(7)) {
              Some(x) => x
              None => 0
            }
@@ -1217,7 +1217,7 @@ fn eval_list_get_some() {
     let val = run_ok(
         "fn main() -> Int {
            let xs = List.new().push(10).push(20)
-           match xs.get(1) {
+           match (xs.get(1)) {
              Some(x) => x
              None => 0
            }
@@ -1231,7 +1231,7 @@ fn eval_list_get_none() {
     let val = run_ok(
         "fn main() -> Int {
            let xs = List.new().push(10)
-           match xs.get(5) {
+           match (xs.get(5)) {
              Some(x) => x
              None => -1
            }
@@ -1245,7 +1245,7 @@ fn eval_list_head_some() {
     let val = run_ok(
         "fn main() -> Int {
            let xs = List.new().push(10).push(20)
-           match xs.head() {
+           match (xs.head()) {
              Some(x) => x
              None => 0
            }
@@ -1258,7 +1258,7 @@ fn eval_list_head_some() {
 fn eval_list_head_none() {
     let val = run_ok(
         "fn main() -> Int {
-           match List.new().head() {
+           match (List.new().head()) {
              Some(x) => x
              None => -1
            }
@@ -1314,7 +1314,7 @@ fn eval_list_reverse() {
         "fn main() -> Int {
            let xs = List.new().push(1).push(2).push(3)
            let rev = xs.reverse()
-           match rev.head() {
+           match (rev.head()) {
              Some(x) => x
              None => 0
            }
@@ -1341,7 +1341,7 @@ fn eval_list_map_lambda() {
         "fn main() -> Int {
            let xs = List.new().push(1).push(2).push(3)
            let ys = xs.map(fn(x: Int) => x * 2)
-           match ys.get(2) {
+           match (ys.get(2)) {
              Some(x) => x
              None => 0
            }
@@ -1357,7 +1357,7 @@ fn eval_list_map_named_fn() {
          fn main() -> Int {
            let xs = List.new().push(5).push(10)
            let ys = xs.map(double)
-           match ys.head() {
+           match (ys.head()) {
              Some(x) => x
              None => 0
            }
@@ -1396,7 +1396,7 @@ fn eval_map_insert_and_get() {
     let val = run_ok(
         r#"fn main() -> Int {
            let m = Map.new().insert("a", 1)
-           match m.get("a") {
+           match (m.get("a")) {
              Some(x) => x
              None => 0
            }
@@ -1410,7 +1410,7 @@ fn eval_map_get_missing() {
     let val = run_ok(
         r#"fn main() -> Int {
            let m = Map.new().insert("a", 1)
-           match m.get("b") {
+           match (m.get("b")) {
              Some(x) => x
              None => -1
            }
@@ -1492,7 +1492,7 @@ fn eval_map_insert_overwrite() {
         r#"fn main() -> Int {
            let m = Map.new().insert("a", 1)
            let m = m.insert("a", 99)
-           match m.get("a") {
+           match (m.get("a")) {
              Some(x) => x
              None => 0
            }
@@ -2103,7 +2103,7 @@ fn run_rejects_user_variable_named_result() {
 #[test]
 fn run_ensures_with_result_still_works() {
     // Guard test: ensures clauses that use `result` should still run fine.
-    let val = run_ok("fn get() -> Int ensures result > 0 { 42 }\nfn main() -> Int { get() }");
+    let val = run_ok("fn get() -> Int ensures (result > 0) { 42 }\nfn main() -> Int { get() }");
     assert!(matches!(val, Value::Int(42)));
 }
 
@@ -2112,7 +2112,7 @@ fn run_ensures_result_and_user_result_coexist() {
     // Edge case: one function has ensures (with implicit `result`),
     // another function references an undefined `result` — the second
     // should still be caught at compile time.
-    let src = "fn get() -> Int ensures result > 0 { 42 }\nfn main() -> Int { result }";
+    let src = "fn get() -> Int ensures (result > 0) { 42 }\nfn main() -> Int { result }";
     let result = kyokara_eval::run(src);
     let err = match result {
         Ok(_) => panic!("expected error for unresolved `result` in main"),
@@ -2177,7 +2177,7 @@ fn run_rejects_duplicate_binding_in_match_arm() {
     let src = r#"
 type Pair = Pair(Int, Int)
 fn main() -> Int {
-  match Pair(1, 2) {
+  match (Pair(1, 2)) {
     Pair(x, x) => x,
   }
 }
@@ -2210,7 +2210,7 @@ fn run_rejects_compile_invalid_programs_detected_by_check() {
         },
         Case {
             name: "legacy leading-pipe match arm syntax",
-            src: "fn main() -> Int { match 1 { | _ => 0 } }",
+            src: "fn main() -> Int { match (1) { | _ => 0 } }",
             run_fragment: "match arms do not use a leading `|`",
         },
         Case {
@@ -2235,7 +2235,7 @@ fn run_rejects_compile_invalid_programs_detected_by_check() {
         },
         Case {
             name: "misordered contract clauses",
-            src: "fn inc(x: Int) -> Int ensures result > x requires x >= 0 { x + 1 }\nfn main() -> Int { inc(1) }",
+            src: "fn inc(x: Int) -> Int ensures (result > x) requires (x >= 0) { x + 1 }\nfn main() -> Int { inc(1) }",
             run_fragment: "requires cannot appear after ensures",
         },
         Case {
@@ -3248,7 +3248,7 @@ fn eval_match_escaped_char_literal() {
     let val = run_ok(
         r"fn main() -> Int {
             let c = '\n'
-            match c {
+            match (c) {
                 '\n' => 1
                 _ => 0
             }
@@ -3262,7 +3262,7 @@ fn eval_match_escaped_string_literal() {
     let val = run_ok(
         r#"fn main() -> Int {
             let s = "\t"
-            match s {
+            match (s) {
                 "\t" => 1
                 _ => 0
             }
@@ -3932,7 +3932,7 @@ fn eval_tilde_and_logical_not_distinct() {
 fn eval_parse_int_basic() {
     let val = run_ok(
         r#"fn main() -> Int {
-            match "42".parse_int() {
+            match ("42".parse_int()) {
                 Ok(n) => n
                 Err(_) => -1
             }
@@ -3945,7 +3945,7 @@ fn eval_parse_int_basic() {
 fn eval_parse_int_negative() {
     let val = run_ok(
         r#"fn main() -> Int {
-            match "-7".parse_int() {
+            match ("-7".parse_int()) {
                 Ok(n) => n
                 Err(_) => 0
             }
@@ -3958,7 +3958,7 @@ fn eval_parse_int_negative() {
 fn eval_parse_int_zero() {
     let val = run_ok(
         r#"fn main() -> Int {
-            match "0".parse_int() {
+            match ("0".parse_int()) {
                 Ok(n) => n
                 Err(_) => -1
             }
@@ -3971,7 +3971,7 @@ fn eval_parse_int_zero() {
 fn eval_parse_int_with_plus() {
     let val = run_ok(
         r#"fn main() -> Int {
-            match "+42".parse_int() {
+            match ("+42".parse_int()) {
                 Ok(n) => n
                 Err(_) => -1
             }
@@ -3984,7 +3984,7 @@ fn eval_parse_int_with_plus() {
 fn eval_parse_int_max() {
     let val = run_ok(
         r#"fn main() -> Int {
-            match "9223372036854775807".parse_int() {
+            match ("9223372036854775807".parse_int()) {
                 Ok(n) => n
                 Err(_) => 0
             }
@@ -3997,7 +3997,7 @@ fn eval_parse_int_max() {
 fn eval_parse_int_min() {
     let val = run_ok(
         r#"fn main() -> Int {
-            match "-9223372036854775808".parse_int() {
+            match ("-9223372036854775808".parse_int()) {
                 Ok(n) => n
                 Err(_) => 0
             }
@@ -4010,7 +4010,7 @@ fn eval_parse_int_min() {
 fn eval_parse_int_empty_fails() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            match "".parse_int() {
+            match ("".parse_int()) {
                 Ok(_) => false
                 Err(_) => true
             }
@@ -4023,7 +4023,7 @@ fn eval_parse_int_empty_fails() {
 fn eval_parse_int_non_numeric_fails() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            match "abc".parse_int() {
+            match ("abc".parse_int()) {
                 Ok(_) => false
                 Err(_) => true
             }
@@ -4036,7 +4036,7 @@ fn eval_parse_int_non_numeric_fails() {
 fn eval_parse_int_float_string_fails() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            match "3.14".parse_int() {
+            match ("3.14".parse_int()) {
                 Ok(_) => false
                 Err(_) => true
             }
@@ -4049,7 +4049,7 @@ fn eval_parse_int_float_string_fails() {
 fn eval_parse_int_whitespace_fails() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            match " 42".parse_int() {
+            match (" 42".parse_int()) {
                 Ok(_) => false
                 Err(_) => true
             }
@@ -4062,7 +4062,7 @@ fn eval_parse_int_whitespace_fails() {
 fn eval_parse_int_overflow_fails() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            match "9223372036854775808".parse_int() {
+            match ("9223372036854775808".parse_int()) {
                 Ok(_) => false
                 Err(_) => true
             }
@@ -4078,7 +4078,7 @@ fn eval_parse_int_overflow_fails() {
 fn eval_parse_float_basic() {
     let val = run_ok(
         r#"fn main() -> Float {
-            match "3.14".parse_float() {
+            match ("3.14".parse_float()) {
                 Ok(f) => f
                 Err(_) => 0.0
             }
@@ -4091,7 +4091,7 @@ fn eval_parse_float_basic() {
 fn eval_parse_float_integer_string() {
     let val = run_ok(
         r#"fn main() -> Float {
-            match "42".parse_float() {
+            match ("42".parse_float()) {
                 Ok(f) => f
                 Err(_) => 0.0
             }
@@ -4104,7 +4104,7 @@ fn eval_parse_float_integer_string() {
 fn eval_parse_float_negative() {
     let val = run_ok(
         r#"fn main() -> Float {
-            match "-2.5".parse_float() {
+            match ("-2.5".parse_float()) {
                 Ok(f) => f
                 Err(_) => 0.0
             }
@@ -4117,7 +4117,7 @@ fn eval_parse_float_negative() {
 fn eval_parse_float_zero() {
     let val = run_ok(
         r#"fn main() -> Float {
-            match "0.0".parse_float() {
+            match ("0.0".parse_float()) {
                 Ok(f) => f
                 Err(_) => 1.0
             }
@@ -4130,7 +4130,7 @@ fn eval_parse_float_zero() {
 fn eval_parse_float_scientific() {
     let val = run_ok(
         r#"fn main() -> Float {
-            match "1.5e10".parse_float() {
+            match ("1.5e10".parse_float()) {
                 Ok(f) => f
                 Err(_) => 0.0
             }
@@ -4143,7 +4143,7 @@ fn eval_parse_float_scientific() {
 fn eval_parse_float_infinity() {
     let val = run_ok(
         r#"fn main() -> Float {
-            match "inf".parse_float() {
+            match ("inf".parse_float()) {
                 Ok(f) => f
                 Err(_) => 0.0
             }
@@ -4156,7 +4156,7 @@ fn eval_parse_float_infinity() {
 fn eval_parse_float_neg_infinity() {
     let val = run_ok(
         r#"fn main() -> Float {
-            match "-inf".parse_float() {
+            match ("-inf".parse_float()) {
                 Ok(f) => f
                 Err(_) => 0.0
             }
@@ -4169,7 +4169,7 @@ fn eval_parse_float_neg_infinity() {
 fn eval_parse_float_nan() {
     let val = run_ok(
         r#"fn main() -> Float {
-            match "NaN".parse_float() {
+            match ("NaN".parse_float()) {
                 Ok(f) => f
                 Err(_) => 0.0
             }
@@ -4185,7 +4185,7 @@ fn eval_parse_float_nan() {
 fn eval_parse_float_empty_fails() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            match "".parse_float() {
+            match ("".parse_float()) {
                 Ok(_) => false
                 Err(_) => true
             }
@@ -4198,7 +4198,7 @@ fn eval_parse_float_empty_fails() {
 fn eval_parse_float_non_numeric_fails() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            match "abc".parse_float() {
+            match ("abc".parse_float()) {
                 Ok(_) => false
                 Err(_) => true
             }
@@ -4213,9 +4213,9 @@ fn eval_parse_float_non_numeric_fails() {
 fn eval_parse_int_error_is_invalid_int() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            match "abc".parse_int() {
+            match ("abc".parse_int()) {
                 Ok(_) => false
-                Err(e) => match e {
+                Err(e) => match (e) {
                     InvalidInt(_) => true
                     InvalidFloat(_) => false
                 }
@@ -4229,9 +4229,9 @@ fn eval_parse_int_error_is_invalid_int() {
 fn eval_parse_float_error_is_invalid_float() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            match "xyz".parse_float() {
+            match ("xyz".parse_float()) {
                 Ok(_) => false
-                Err(e) => match e {
+                Err(e) => match (e) {
                     InvalidInt(_) => false
                     InvalidFloat(_) => true
                 }
@@ -4245,9 +4245,9 @@ fn eval_parse_float_error_is_invalid_float() {
 fn eval_parse_int_error_carries_message() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            match "not_a_number".parse_int() {
+            match ("not_a_number".parse_int()) {
                 Ok(_) => false
-                Err(e) => match e {
+                Err(e) => match (e) {
                     InvalidInt(msg) => msg.len() > 0
                     InvalidFloat(_) => false
                 }
@@ -4261,9 +4261,9 @@ fn eval_parse_int_error_carries_message() {
 fn eval_parse_float_error_carries_message() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            match "not_a_float".parse_float() {
+            match ("not_a_float".parse_float()) {
                 Ok(_) => false
-                Err(e) => match e {
+                Err(e) => match (e) {
                     InvalidInt(_) => false
                     InvalidFloat(msg) => msg.len() > 0
                 }
@@ -4278,7 +4278,7 @@ fn eval_parse_int_user_defined_parse_error_missing_variant_reports_runtime_error
     let err = run_err(
         r#"type ParseError = Oops
            fn main() -> Bool {
-             match "abc".parse_int() {
+             match ("abc".parse_int()) {
                Ok(_) => false
                Err(_) => true
              }
@@ -4295,7 +4295,7 @@ fn eval_parse_float_user_defined_parse_error_missing_variant_reports_runtime_err
     let err = run_err(
         r#"type ParseError = Oops
            fn main() -> Bool {
-             match "abc".parse_float() {
+             match ("abc".parse_float()) {
                Ok(_) => false
                Err(_) => true
              }
@@ -4312,7 +4312,7 @@ fn eval_parse_int_user_defined_parse_error_wrong_payload_type_reports_runtime_er
     let err = run_err(
         r#"type ParseError = InvalidInt(Int) | InvalidFloat(Int)
            fn main() -> Bool {
-             match "abc".parse_int() {
+             match ("abc".parse_int()) {
                Ok(_) => false
                Err(_) => true
              }
@@ -4329,7 +4329,7 @@ fn eval_parse_float_user_defined_parse_error_wrong_payload_type_reports_runtime_
     let err = run_err(
         r#"type ParseError = InvalidInt(Int) | InvalidFloat(Int)
            fn main() -> Bool {
-             match "abc".parse_float() {
+             match ("abc".parse_float()) {
                Ok(_) => false
                Err(_) => true
              }
@@ -4365,7 +4365,7 @@ fn eval_string_lines_empty() {
 fn eval_string_lines_single() {
     let val = run_ok(
         r#"fn main() -> String {
-            match "hello".lines().head() {
+            match ("hello".lines().head()) {
                 Some(s) => s
                 None => "fail"
             }
@@ -4392,7 +4392,7 @@ fn eval_string_lines_content_check() {
     let val = run_ok(
         r#"fn main() -> String {
             let lines = "first\nsecond\nthird".lines()
-            match lines.get(1) {
+            match (lines.get(1)) {
                 Some(s) => s
                 None => "fail"
             }
@@ -4552,7 +4552,7 @@ fn eval_list_sort_ints() {
         "fn main() -> Int {
             let xs = List.new().push(3).push(1).push(2)
             let sorted = xs.sort()
-            match sorted.get(0) {
+            match (sorted.get(0)) {
                 Some(x) => x
                 None => -1
             }
@@ -4567,7 +4567,7 @@ fn eval_list_sort_ints_reverse() {
         "fn main() -> Int {
             let xs = List.new().push(5).push(4).push(3).push(2).push(1)
             let sorted = xs.sort()
-            match sorted.get(4) {
+            match (sorted.get(4)) {
                 Some(x) => x
                 None => -1
             }
@@ -4582,7 +4582,7 @@ fn eval_list_sort_ints_already_sorted() {
         "fn main() -> Int {
             let xs = List.new().push(1).push(2).push(3)
             let sorted = xs.sort()
-            match sorted.get(2) {
+            match (sorted.get(2)) {
                 Some(x) => x
                 None => -1
             }
@@ -4598,7 +4598,7 @@ fn eval_list_sort_ints_duplicates() {
             let xs = List.new().push(3).push(1).push(3).push(2)
             let sorted = xs.sort()
             // sorted should be [1, 2, 3, 3], check index 2
-            match sorted.get(2) {
+            match (sorted.get(2)) {
                 Some(x) => x
                 None => -1
             }
@@ -4613,7 +4613,7 @@ fn eval_list_sort_ints_negative() {
         "fn main() -> Int {
             let xs = List.new().push(3).push(-1).push(0).push(-5)
             let sorted = xs.sort()
-            match sorted.get(0) {
+            match (sorted.get(0)) {
                 Some(x) => x
                 None => 0
             }
@@ -4628,7 +4628,7 @@ fn eval_list_sort_ints_single() {
         "fn main() -> Int {
             let xs = List.new().push(42)
             let sorted = xs.sort()
-            match sorted.get(0) {
+            match (sorted.get(0)) {
                 Some(x) => x
                 None => -1
             }
@@ -4655,7 +4655,7 @@ fn eval_list_sort_strings() {
         r#"fn main() -> String {
             let xs = List.new().push("banana").push("apple").push("cherry")
             let sorted = xs.sort()
-            match sorted.get(0) {
+            match (sorted.get(0)) {
                 Some(s) => s
                 None => "fail"
             }
@@ -4670,7 +4670,7 @@ fn eval_list_sort_bools() {
         "fn main() -> Bool {
             let xs = List.new().push(true).push(false).push(true)
             let sorted = xs.sort()
-            match sorted.get(0) {
+            match (sorted.get(0)) {
                 Some(b) => b
                 None => true
             }
@@ -4685,7 +4685,7 @@ fn eval_list_sort_floats() {
         "fn main() -> Float {
             let xs = List.new().push(3.0).push(1.0).push(2.0)
             let sorted = xs.sort()
-            match sorted.get(0) {
+            match (sorted.get(0)) {
                 Some(x) => x
                 None => -1.0
             }
@@ -4699,13 +4699,13 @@ fn eval_list_sort_floats_with_nan() {
     // NaN sorts to end via f64::total_cmp
     let val = run_ok(
         r#"fn main() -> Float {
-            let nan = match "NaN".parse_float() {
+            let nan = match ("NaN".parse_float()) {
                 Ok(f) => f
                 Err(_) => 0.0
             }
             let xs = List.new().push(nan).push(1.0).push(2.0)
             let sorted = xs.sort()
-            match sorted.get(0) {
+            match (sorted.get(0)) {
                 Some(x) => x
                 None => -1.0
             }
@@ -4720,7 +4720,7 @@ fn eval_list_sort_chars() {
         "fn main() -> Char {
             let xs = List.new().push('c').push('a').push('b')
             let sorted = xs.sort()
-            match sorted.get(0) {
+            match (sorted.get(0)) {
                 Some(c) => c
                 None => 'z'
             }
@@ -4792,7 +4792,7 @@ fn eval_list_sort_by_ascending() {
         "fn main() -> Int {
             let xs = List.new().push(3).push(1).push(2)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
-            match sorted.get(0) {
+            match (sorted.get(0)) {
                 Some(x) => x
                 None => -1
             }
@@ -4807,7 +4807,7 @@ fn eval_list_sort_by_descending() {
         "fn main() -> Int {
             let xs = List.new().push(3).push(1).push(2)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => b - a)
-            match sorted.get(0) {
+            match (sorted.get(0)) {
                 Some(x) => x
                 None => -1
             }
@@ -4823,7 +4823,7 @@ fn eval_list_sort_by_named_fn() {
         fn main() -> Int {
             let xs = List.new().push(3).push(1).push(2)
             let sorted = xs.sort_by(cmp)
-            match sorted.get(0) {
+            match (sorted.get(0)) {
                 Some(x) => x
                 None => -1
             }
@@ -4850,7 +4850,7 @@ fn eval_list_sort_by_single() {
         "fn main() -> Int {
             let xs = List.new().push(42)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
-            match sorted.get(0) {
+            match (sorted.get(0)) {
                 Some(x) => x
                 None => -1
             }
@@ -4865,7 +4865,7 @@ fn eval_list_sort_by_strings_by_len() {
         r#"fn main() -> String {
             let xs = List.new().push("bb").push("a").push("ccc")
             let sorted = xs.sort_by(fn(a: String, b: String) => a.len() - b.len())
-            match sorted.get(0) {
+            match (sorted.get(0)) {
                 Some(s) => s
                 None => "fail"
             }
@@ -4883,7 +4883,7 @@ fn eval_list_sort_by_stable() {
         "fn main() -> Int {
             let xs = List.new().push(21).push(12).push(11).push(22)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a / 10 - b / 10)
-            match sorted.get(0) {
+            match (sorted.get(0)) {
                 Some(x) => x
                 None => -1
             }
@@ -4899,7 +4899,7 @@ fn eval_list_sort_by_already_sorted() {
         "fn main() -> Int {
             let xs = List.new().push(1).push(2).push(3)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
-            match sorted.get(1) {
+            match (sorted.get(1)) {
                 Some(x) => x
                 None => -1
             }
@@ -5253,7 +5253,7 @@ fn eval_method_list_get() {
     let val = run_ok(
         "fn main() -> Int {
             let xs = List.new().push(10).push(20)
-            match xs.get(1) {
+            match (xs.get(1)) {
                 Some(v) => v
                 None => 0
             }
@@ -5351,7 +5351,7 @@ fn eval_method_map_insert_and_get() {
         r#"fn main() -> Int {
             let m = Map.new()
             let m2 = m.insert("a", 42)
-            match m2.get("a") {
+            match (m2.get("a")) {
                 Some(v) => v
                 None => 0
             }
@@ -5548,7 +5548,7 @@ fn eval_user_method_on_adt() {
         type Shape = Circle(Int) | Rect(Int, Int)
 
         fn Shape.area(self) -> Int {
-            match self {
+            match (self) {
                 Circle(r) => r * r * 3
                 Rect(w, h) => w * h
             }
@@ -5697,7 +5697,7 @@ fn eval_user_method_on_adt_circle() {
         type Shape = Circle(Int) | Rect(Int, Int)
 
         fn Shape.describe(self) -> String {
-            match self {
+            match (self) {
                 Circle(_) => "circle"
                 Rect(_, _) => "rect"
             }
@@ -5904,7 +5904,7 @@ fn eval_map_insertion_order_preserved() {
                 .insert("a", 1)
                 .insert("b", 2)
             let ks = m.keys()
-            match ks.head() {
+            match (ks.head()) {
                 Some(k) => k
                 None => "fail"
             }
@@ -5925,7 +5925,7 @@ fn eval_map_overwrite_preserves_position() {
                 .insert("a", 1)
                 .insert("b", 2)
                 .insert("a", 99)
-            match m.get("a") {
+            match (m.get("a")) {
                 Some(v) => v
                 None => 0
             }
@@ -5968,7 +5968,7 @@ fn eval_map_get_after_remove() {
         r#"fn main() -> Bool {
             let m = Map.new().insert("a", 1).insert("b", 2)
             let m2 = m.remove("a")
-            match m2.get("a") {
+            match (m2.get("a")) {
                 Some(_) => false
                 None => true
             }
@@ -6170,7 +6170,7 @@ fn eval_set_values_preserve_insertion_order() {
         r#"fn main() -> String {
             let s = Set.new().insert("c").insert("a").insert("b")
             let vals = s.values()
-            match vals.head() {
+            match (vals.head()) {
                 Some(v) => v
                 None => "fail"
             }
@@ -6188,9 +6188,9 @@ fn eval_set_values_remove_and_reinsert_goes_to_end() {
         r#"fn main() -> Bool {
             let s = Set.new().insert("a").insert("b").remove("a").insert("a")
             let vals = s.values()
-            match vals.get(0) {
+            match (vals.get(0)) {
                 Some(first) =>
-                    match vals.get(1) {
+                    match (vals.get(1)) {
                         Some(second) => first == "b" && second == "a"
                         None => false
                     }

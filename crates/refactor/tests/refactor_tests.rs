@@ -102,7 +102,7 @@ fn rename_type() {
 fn rename_variant() {
     let src = r#"type Color = Red | Green | Blue
 fn name(c: Color) -> String {
-    match c {
+    match (c) {
         Red => "red"
         Green => "green"
         Blue => "blue"
@@ -236,7 +236,7 @@ fn rename_symbol_not_found() {
 fn add_missing_match_cases() {
     let src = r#"type Color = Red | Green | Blue
 fn pick(c: Color) -> Int {
-    match c {
+    match (c) {
         Red => 1
     }
 }"#;
@@ -785,7 +785,7 @@ fn transact_rename_multifile_reports_failed_verification_when_project_has_errors
 fn quickfix_match_cases_transact_verified() {
     let src = r#"type Color = Red | Green | Blue
 fn pick(c: Color) -> Int {
-    match c {
+    match (c) {
         Red => 1
     }
 }"#;
@@ -1064,13 +1064,13 @@ fn project_quickfix_match_cases_filters_by_target_file() {
     // main.ky: type A with missing arm
     std::fs::write(
         &main_path,
-        "type A = X | Y\nfn check_a(a: A) -> Int {\n    match a {\n        X => 1\n    }\n}\n",
+        "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        X => 1\n    }\n}\n",
     )
     .unwrap();
     // math.ky: type B with missing arm
     std::fs::write(
         &math_path,
-        "pub type B = P | Q\npub fn check_b(b: B) -> Int {\n    match b {\n        P => 1\n    }\n}\n",
+        "pub type B = P | Q\npub fn check_b(b: B) -> Int {\n    match (b) {\n        P => 1\n    }\n}\n",
     )
     .unwrap();
 
@@ -1185,7 +1185,7 @@ fn project_quickfix_wrong_target_file_returns_error() {
 
     std::fs::write(
         &main_path,
-        "type A = X | Y\nfn check_a(a: A) -> Int {\n    match a {\n        X => 1\n    }\n}\n",
+        "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        X => 1\n    }\n}\n",
     )
     .unwrap();
     std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x + y }\n").unwrap();

@@ -316,24 +316,35 @@ fn pipe_clause(p: &mut Parser<'_>) {
     m.complete(p, PipeClause);
 }
 
+fn parse_parenthesized_clause_expr(p: &mut Parser<'_>, message: &str) {
+    if p.eat(LParen) {
+        super::expressions::expr(p);
+        p.expect(RParen);
+    } else {
+        p.error(message);
+        // Recovery: parse the clause expression in old style and continue.
+        super::expressions::expr(p);
+    }
+}
+
 fn requires_clause(p: &mut Parser<'_>) {
     let m = p.open();
     p.bump(); // requires
-    super::expressions::expr_no_record(p);
+    parse_parenthesized_clause_expr(p, "requires clause expression must be parenthesized");
     m.complete(p, RequiresClause);
 }
 
 fn ensures_clause(p: &mut Parser<'_>) {
     let m = p.open();
     p.bump(); // ensures
-    super::expressions::expr_no_record(p);
+    parse_parenthesized_clause_expr(p, "ensures clause expression must be parenthesized");
     m.complete(p, EnsuresClause);
 }
 
 fn invariant_clause(p: &mut Parser<'_>) {
     let m = p.open();
     p.bump(); // invariant
-    super::expressions::expr_no_record(p);
+    parse_parenthesized_clause_expr(p, "invariant clause expression must be parenthesized");
     m.complete(p, InvariantClause);
 }
 
@@ -415,11 +426,11 @@ fn property_param(p: &mut Parser<'_>) {
     m.complete(p, PropertyParam);
 }
 
-/// `where Expr`
+/// `where '(' Expr ')'`
 fn where_clause(p: &mut Parser<'_>) {
     let m = p.open();
     p.bump(); // where
-    super::expressions::expr_no_record(p);
+    parse_parenthesized_clause_expr(p, "where clause expression must be parenthesized");
     m.complete(p, WhereClause);
 }
 

@@ -1,7 +1,7 @@
 import io
 
 fn safe_div(x: Int, y: Int) -> Option<Int> {
-  if y == 0 {
+  if (y == 0) {
     None
   } else {
     Some(x / y)
@@ -9,7 +9,7 @@ fn safe_div(x: Int, y: Int) -> Option<Int> {
 }
 
 fn show_option(o: Option<Int>) -> String {
-  match o {
+  match (o) {
     Some(v) => "Some(".concat(v.to_string().concat(")"))
     None => "None"
   }

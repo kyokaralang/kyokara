@@ -16,7 +16,7 @@ fn check_clean_program_no_diagnostics() {
 
 #[test]
 fn check_type_mismatch_has_code() {
-    // Return a String where Int is expected.
+    // Return a String where (Int is expected.)
     let output = check(r#"fn bad() -> Int { "hello" }"#, "test.ky");
     assert!(
         !output.diagnostics.is_empty(),
@@ -184,7 +184,7 @@ fn check_rejects_leading_pipe_type_variant_syntax() {
 
 #[test]
 fn check_rejects_leading_pipe_match_arm_syntax() {
-    let src = "fn main() -> Int { match 1 { | _ => 0 } }";
+    let src = "fn main() -> Int { match (1) { | _ => 0 } }";
     let output = check(src, "test.ky");
     let parse_diags: Vec<_> = output
         .diagnostics
@@ -281,7 +281,8 @@ fn check_rejects_empty_non_unit_body() {
 
 #[test]
 fn check_misordered_contract_clause_reports_targeted_parse_error() {
-    let src = "fn inc(x: Int) -> Int ensures result > x requires x >= 0 { x + 1 }\nfn main() -> Int { inc(1) }";
+    let src =
+        "fn inc(x: Int) -> Int ensures (result > x) requires (x >= 0) { x + 1 }\nfn main() -> Int { inc(1) }";
     let output = check(src, "test.ky");
     let parse_diags: Vec<_> = output
         .diagnostics
@@ -525,7 +526,7 @@ fn symbol_graph_effect_annotations() {
 fn patch_missing_match_arm() {
     let src = "type Color = Red | Green | Blue
         fn describe(c: Color) -> Int {
-            match c {
+            match (c) {
                 Red => 1
             }
         }";
@@ -578,7 +579,7 @@ fn patch_apply_missing_arm_fixes_error() {
     // Source with all arms present should have no E0009 errors.
     let src = "type Color = Red | Green | Blue
         fn describe(c: Color) -> Int {
-            match c {
+            match (c) {
                 Red => 1
                 Green => 2
                 Blue => 3
@@ -1683,16 +1684,16 @@ fn verification_diagnostic_dto_nullable_fields() {
 
 #[test]
 fn api_refactor_project_quickfix_with_target_file() {
-    // Set up a project where two modules have match exhaustiveness errors.
+    // Set up a project where (two modules have match exhaustiveness errors.)
     // The API should accept target_file to disambiguate.
     let (_dir, main_path) = write_project(&[
         (
             "main.ky",
-            "type A = X | Y\nfn check_a(a: A) -> Int {\n    match a {\n        X => 1\n    }\n}",
+            "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        X => 1\n    }\n}",
         ),
         (
             "math.ky",
-            "pub type B = P | Q\npub fn check_b(b: B) -> Int {\n    match b {\n        P => 1\n    }\n}",
+            "pub type B = P | Q\npub fn check_b(b: B) -> Int {\n    match (b) {\n        P => 1\n    }\n}",
         ),
     ]);
 
@@ -1731,7 +1732,7 @@ fn api_refactor_project_quickfix_wrong_target_file_gives_error() {
     let (_dir, main_path) = write_project(&[
         (
             "main.ky",
-            "type A = X | Y\nfn check_a(a: A) -> Int {\n    match a {\n        X => 1\n    }\n}",
+            "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        X => 1\n    }\n}",
         ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
     ]);
@@ -1956,7 +1957,7 @@ fn check_project_lowering_diagnostic_has_real_file_path() {
 #[test]
 fn constructor_pattern_binding_is_in_scope() {
     // `Some(x) => x` should not produce "unresolved name x".
-    let src = "fn main() -> Int { match Some(1) { Some(x) => x, None => 0 } }";
+    let src = "fn main() -> Int { match (Some(1)) { Some(x) => x, None => 0 } }";
     let output = check(src, "test.ky");
     let unresolved: Vec<_> = output
         .diagnostics
@@ -1973,7 +1974,7 @@ fn constructor_pattern_binding_is_in_scope() {
 #[test]
 fn constructor_pattern_arity_mismatch_produces_diagnostic() {
     // `Some(_, _)` has 2 args but Some expects 1.
-    let src = "fn main() -> Int { match Some(1) { Some(_, _) => 0, None => 1 } }";
+    let src = "fn main() -> Int { match (Some(1)) { Some(_, _) => 0, None => 1 } }";
     let output = check(src, "test.ky");
     let arity_errors: Vec<_> = output
         .diagnostics
@@ -1994,7 +1995,7 @@ fn constructor_pattern_arity_mismatch_produces_diagnostic() {
 #[test]
 fn nested_constructor_pattern_binding_is_in_scope() {
     // `Some(Some(x)) => x` — nested constructor bindings should also work.
-    let src = "fn main() -> Int { match Some(Some(1)) { Some(Some(x)) => x, _ => 0 } }";
+    let src = "fn main() -> Int { match (Some(Some(1))) { Some(Some(x)) => x, _ => 0 } }";
     let output = check(src, "test.ky");
     let unresolved: Vec<_> = output
         .diagnostics
@@ -2035,7 +2036,7 @@ fn duplicate_record_field_in_type_alias_produces_diagnostic() {
 #[test]
 fn unknown_constructor_pattern_emits_diagnostic() {
     // `Nope` is not a constructor in scope — should produce E0013.
-    let src = "fn main() -> Int { match Some(1) { Nope(x) => x, _ => 0 } }";
+    let src = "fn main() -> Int { match (Some(1)) { Nope(x) => x, _ => 0 } }";
     let output = check(src, "test.ky");
     let unresolved: Vec<_> = output
         .diagnostics
@@ -2060,7 +2061,7 @@ fn unknown_constructor_pattern_emits_diagnostic() {
 
 #[test]
 fn unknown_constructor_pattern_diagnostic_uses_pattern_span() {
-    let src = "fn main() -> Int { match Some(1) { Nope(x) => x, _ => 0 } }";
+    let src = "fn main() -> Int { match (Some(1)) { Nope(x) => x, _ => 0 } }";
     let output = check(src, "test.ky");
     let diag = output
         .diagnostics
@@ -2084,7 +2085,7 @@ fn unknown_constructor_pattern_diagnostic_uses_pattern_span() {
 
 #[test]
 fn constructor_pattern_arity_mismatch_diagnostic_uses_pattern_span() {
-    let src = "fn main() -> Int { match Some(1) { Some(_, _) => 0, None => 1 } }";
+    let src = "fn main() -> Int { match (Some(1)) { Some(_, _) => 0, None => 1 } }";
     let output = check(src, "test.ky");
     let diag = output
         .diagnostics
@@ -2200,7 +2201,7 @@ fn old_outside_contract_produces_diagnostic() {
 
 #[test]
 fn dotted_constructor_pattern_produces_diagnostic() {
-    let src = "fn main() -> Int { match Some(1) { A.B(_) => 0, _ => 1 } }";
+    let src = "fn main() -> Int { match (Some(1)) { A.B(_) => 0, _ => 1 } }";
     let output = check(src, "test.ky");
     let errs: Vec<_> = output
         .diagnostics
@@ -2220,7 +2221,7 @@ fn dotted_constructor_pattern_produces_diagnostic() {
 
 #[test]
 fn record_pattern_invalid_field_produces_diagnostic() {
-    let src = "type Point = { x: Int }\nfn f(p: Point) -> Int { match p { Point { y } => 0, _ => 1 } }\nfn main() -> Int { f(Point { x: 1 }) }";
+    let src = "type Point = { x: Int }\nfn f(p: Point) -> Int { match (p) { Point { y } => 0, _ => 1 } }\nfn main() -> Int { f(Point { x: 1 }) }";
     let output = check(src, "test.ky");
     let errs: Vec<_> = output
         .diagnostics
@@ -2240,7 +2241,7 @@ fn record_pattern_invalid_field_produces_diagnostic() {
 
 #[test]
 fn record_pattern_on_non_record_scrutinee_produces_diagnostic() {
-    let src = "fn main() -> Int { match 1 { { x } => 0, _ => 1 } }";
+    let src = "fn main() -> Int { match (1) { { x } => 0, _ => 1 } }";
     let output = check(src, "test.ky");
     let errs: Vec<_> = output
         .diagnostics
@@ -2260,7 +2261,7 @@ fn record_pattern_on_non_record_scrutinee_produces_diagnostic() {
 
 #[test]
 fn duplicate_fields_in_record_pattern_produce_diagnostic() {
-    let src = "type Point = { x: Int }\nfn f(p: Point) -> Int { match p { Point { x, x } => x } }\nfn main() -> Int { f(Point { x: 1 }) }";
+    let src = "type Point = { x: Int }\nfn f(p: Point) -> Int { match (p) { Point { x, x } => x } }\nfn main() -> Int { f(Point { x: 1 }) }";
     let output = check(src, "test.ky");
     let dups: Vec<_> = output
         .diagnostics
@@ -2282,7 +2283,7 @@ fn duplicate_fields_in_record_pattern_produce_diagnostic() {
 fn record_pattern_binding_is_typed_for_not_a_function_issue_133() {
     let src = r#"
 type Point = { x: Int }
-fn f(p: Point) -> Int { match p { { x } => x("oops"), _ => 0 } }
+fn f(p: Point) -> Int { match (p) { { x } => x("oops"), _ => 0 } }
 fn main() -> Int { f(Point { x: 1 }) }
 "#;
     let output = check(src, "test.ky");
@@ -2302,7 +2303,7 @@ fn main() -> Int { f(Point { x: 1 }) }
 fn record_pattern_binding_typed_field_still_allows_valid_use_issue_133_guard() {
     let src = r#"
 type Point = { x: Int }
-fn f(p: Point) -> Int { match p { { x } => x + 1, _ => 0 } }
+fn f(p: Point) -> Int { match (p) { { x } => x + 1, _ => 0 } }
 fn main() -> Int { f(Point { x: 1 }) }
 "#;
     let output = check(src, "test.ky");
@@ -2356,7 +2357,7 @@ fn named_record_literal_unknown_field_produces_diagnostic() {
 #[test]
 fn capitalized_unknown_pattern_produces_diagnostic() {
     // `Smoe` looks like a constructor but isn't — should warn, not silently bind.
-    let src = "fn main() -> Int { match Some(1) { Smoe => 0, _ => 1 } }";
+    let src = "fn main() -> Int { match (Some(1)) { Smoe => 0, _ => 1 } }";
     let output = check(src, "test.ky");
     let errs: Vec<_> = output
         .diagnostics
@@ -2376,7 +2377,7 @@ fn capitalized_unknown_pattern_produces_diagnostic() {
 
 #[test]
 fn duplicate_bindings_in_constructor_pattern_produce_diagnostic() {
-    let src = "type Pair = Pair(Int, Int)\nfn f(p: Pair) -> Int { match p { Pair(x, x) => x } }\nfn main() -> Int { f(Pair(1, 2)) }";
+    let src = "type Pair = Pair(Int, Int)\nfn f(p: Pair) -> Int { match (p) { Pair(x, x) => x } }\nfn main() -> Int { f(Pair(1, 2)) }";
     let output = check(src, "test.ky");
     let dups: Vec<_> = output
         .diagnostics
@@ -2396,7 +2397,7 @@ fn duplicate_bindings_in_constructor_pattern_produce_diagnostic() {
 
 #[test]
 fn duplicate_binding_detection_is_local_to_each_match_arm_pattern() {
-    let src = "type Pair = Pair(Int, Int)\nfn f(p: Pair) -> Int { match p { Pair(x, x) => x, Pair(x, y) => x } }\nfn main() -> Int { f(Pair(1, 2)) }";
+    let src = "type Pair = Pair(Int, Int)\nfn f(p: Pair) -> Int { match (p) { Pair(x, x) => x, Pair(x, y) => x } }\nfn main() -> Int { f(Pair(1, 2)) }";
     let output = check(src, "test.ky");
     let dup_binding_diags: Vec<_> = output
         .diagnostics
@@ -2406,7 +2407,7 @@ fn duplicate_binding_detection_is_local_to_each_match_arm_pattern() {
     assert_eq!(
         dup_binding_diags.len(),
         1,
-        "duplicate-binding detection should not leak across match arms, got: {:?}",
+        "duplicate-binding detection should not leak across match (arms, got:) {:?}",
         dup_binding_diags
             .iter()
             .map(|d| &d.message)
@@ -2961,7 +2962,7 @@ fn if_condition_rejects_non_bool() {
 
 #[test]
 fn fallback_unification_catches_literal_type_mismatch() {
-    // Returning Int where String is expected — the fallback unification
+    // Returning Int where (String is expected — the fallback unification)
     // should catch this even for literal expressions.
     let output = check("fn f() -> String { 42 }", "test.ky");
     assert!(

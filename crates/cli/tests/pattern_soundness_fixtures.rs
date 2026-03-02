@@ -217,7 +217,7 @@ fn metamorphic_catch_all_addition_does_not_increase_errors() {
     let original = r#"
 type Color = Red | Green | Blue
 fn main() -> Int {
-  match Red {
+  match (Red) {
     Red => 1
   }
 }
@@ -225,7 +225,7 @@ fn main() -> Int {
     let transformed = r#"
 type Color = Red | Green | Blue
 fn main() -> Int {
-  match Red {
+  match (Red) {
     Red => 1
     _ => 0
   }
@@ -279,7 +279,7 @@ fn metamorphic_arm_reorder_preserves_exhaustiveness_and_behavior() {
     let original = r#"
 type Color = Red | Green | Blue
 fn main() -> Int {
-  match Green {
+  match (Green) {
     Red => 1
     Green => 1
     Blue => 1
@@ -289,7 +289,7 @@ fn main() -> Int {
     let transformed = r#"
 type Color = Red | Green | Blue
 fn main() -> Int {
-  match Green {
+  match (Green) {
     Blue => 1
     Red => 1
     Green => 1
@@ -314,7 +314,7 @@ fn metamorphic_nested_flat_equivalence() {
 type AB = A | B
 type Opt = Some(AB) | None
 fn main() -> Int {
-  match Some(B) {
+  match (Some(B)) {
     Some(A) => 1
     Some(B) => 2
     None => 0
@@ -325,8 +325,8 @@ fn main() -> Int {
 type AB = A | B
 type Opt = Some(AB) | None
 fn main() -> Int {
-  match Some(B) {
-    Some(x) => match x {
+  match (Some(B)) {
+    Some(x) => match (x) {
       A => 1
       B => 2
     }
@@ -350,7 +350,7 @@ fn metamorphic_alpha_rename_binder_preserves_diagnostics_and_behavior() {
     let bin = PathBuf::from(env!("CARGO_BIN_EXE_kyokara"));
     let original = r#"
 fn main() -> Int {
-  match Some(1) {
+  match (Some(1)) {
     Some(x) => x
     None => 0
   }
@@ -358,7 +358,7 @@ fn main() -> Int {
 "#;
     let transformed = r#"
 fn main() -> Int {
-  match Some(1) {
+  match (Some(1)) {
     Some(y) => y
     None => 0
   }
@@ -704,7 +704,7 @@ fn is_runtime_match_failure(run: &RunInvocation) -> bool {
 
 fn matrix_source(prelude: &str, match_ty: &str, arms: &str, scrutinee: &str) -> String {
     format!(
-        "{prelude}\n\nfn probe(v: {match_ty}) -> Int {{\n  match v {{\n{arms}\n  }}\n}}\n\nfn main() -> Int {{\n  probe({scrutinee})\n}}\n"
+        "{prelude}\n\nfn probe(v: {match_ty}) -> Int {{\n  match (v) {{\n{arms}\n  }}\n}}\n\nfn main() -> Int {{\n  probe({scrutinee})\n}}\n"
     )
 }
 

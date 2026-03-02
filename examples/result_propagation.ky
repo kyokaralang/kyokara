@@ -1,7 +1,7 @@
 import io
 
 fn parse_positive(n: Int) -> Result<Int, String> {
-  if n > 0 {
+  if (n > 0) {
     Ok(n)
   } else {
     Err("must be positive")
@@ -14,7 +14,7 @@ fn double_positive(n: Int) -> Result<Int, String> {
 }
 
 fn show_result(r: Result<Int, String>) -> String {
-  match r {
+  match (r) {
     Ok(v) => "Ok(".concat(v.to_string().concat(")"))
     Err(e) => "Err(".concat(e.concat(")"))
   }
