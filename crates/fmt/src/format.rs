@@ -596,7 +596,7 @@ fn format_invariant_clause(node: &SyntaxNode) -> Doc {
 // ── Cap / Property ──────────────────────────────────────────────────
 
 fn format_cap_def(node: &SyntaxNode) -> Doc {
-    let mut parts = vec![Doc::text("cap"), Doc::text(" ")];
+    let mut parts = vec![Doc::text("effect"), Doc::text(" ")];
 
     if let Some(name) = find_ident(node) {
         parts.push(format_token(&name));

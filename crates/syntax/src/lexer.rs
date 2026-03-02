@@ -285,6 +285,7 @@ mod tests {
             ("let", LetKw),
             ("match", MatchKw),
             ("cap", CapKw),
+            ("effect", EffectKw),
             ("with", WithKw),
             ("requires", RequiresKw),
             ("ensures", EnsuresKw),
