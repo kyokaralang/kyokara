@@ -27,6 +27,7 @@ pub enum CoreType {
     Option,
     Result,
     List,
+    Seq,
     Map,
     Set,
     ParseError,
@@ -60,6 +61,7 @@ pub struct CoreTypes {
     pub option: Option<CoreTypeInfo>,
     pub result: Option<CoreTypeInfo>,
     pub list: Option<CoreTypeInfo>,
+    pub seq: Option<CoreTypeInfo>,
     pub map: Option<CoreTypeInfo>,
     pub set: Option<CoreTypeInfo>,
     pub parse_error: Option<CoreTypeInfo>,
@@ -71,6 +73,7 @@ impl CoreTypes {
             CoreType::Option => self.option,
             CoreType::Result => self.result,
             CoreType::List => self.list,
+            CoreType::Seq => self.seq,
             CoreType::Map => self.map,
             CoreType::Set => self.set,
             CoreType::ParseError => self.parse_error,
@@ -82,6 +85,7 @@ impl CoreTypes {
             CoreType::Option => self.option = Some(info),
             CoreType::Result => self.result = Some(info),
             CoreType::List => self.list = Some(info),
+            CoreType::Seq => self.seq = Some(info),
             CoreType::Map => self.map = Some(info),
             CoreType::Set => self.set = Some(info),
             CoreType::ParseError => self.parse_error = Some(info),
@@ -89,19 +93,17 @@ impl CoreTypes {
     }
 
     pub fn kind_for_idx(&self, type_idx: TypeItemIdx) -> Option<CoreType> {
-        for core in [
+        [
             CoreType::Option,
             CoreType::Result,
             CoreType::List,
+            CoreType::Seq,
             CoreType::Map,
             CoreType::Set,
             CoreType::ParseError,
-        ] {
-            if self.get(core).is_some_and(|info| info.type_idx == type_idx) {
-                return Some(core);
-            }
-        }
-        None
+        ]
+        .into_iter()
+        .find(|&core| self.get(core).is_some_and(|info| info.type_idx == type_idx))
     }
 }
 
@@ -111,6 +113,7 @@ pub fn core_type_from_public_name(name: Name, interner: &Interner) -> Option<Cor
         "Option" => Some(CoreType::Option),
         "Result" => Some(CoreType::Result),
         "List" => Some(CoreType::List),
+        "Seq" => Some(CoreType::Seq),
         "Map" => Some(CoreType::Map),
         "Set" => Some(CoreType::Set),
         "ParseError" => Some(CoreType::ParseError),
@@ -129,6 +132,7 @@ pub struct WellKnownNames {
     pub bool_: Option<Name>,
     pub char_: Option<Name>,
     pub list: Option<Name>,
+    pub seq: Option<Name>,
     pub map: Option<Name>,
     pub set: Option<Name>,
 }

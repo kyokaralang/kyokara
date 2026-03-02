@@ -592,8 +592,8 @@ fn symbol_graph_contains_types() {
     let src = "type Color = Red | Green | Blue
         fn id(x: Int) -> Int { x }";
     let output = check(src, "test.ky");
-    // 7 types: Color (user-defined) + Option + Result + List + Map + Set + ParseError (builtins)
-    assert_eq!(output.symbol_graph.types.len(), 7);
+    // 8 types: Color (user-defined) + Option + Result + List + Seq + Map + Set + ParseError
+    assert_eq!(output.symbol_graph.types.len(), 8);
     let color = output
         .symbol_graph
         .types
@@ -3971,11 +3971,11 @@ fn check_list_binary_search_sortable_elements_have_no_e0025() {
 fn check_iteration_ergonomics_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
         r#"fn main() -> Bool {
-            let xs = List.range(0, 5)
-            let e = xs.enumerate()
-            let z = xs.zip(List.new().push(10).push(20))
-            let c = xs.chunks(2)
-            let w = xs.windows(3)
+            let xs = Seq.range(0, 5)
+            let e = xs.enumerate().to_list()
+            let z = xs.zip(List.new().push(10).push(20).seq()).to_list()
+            let c = xs.chunks(2).to_list()
+            let w = xs.windows(3).to_list()
             e[0].index == 0 && e[0].value == 0 && z.len() == 2 && c.len() == 3 && w.len() == 3
         }"#,
         "iteration canonical surface",
@@ -3987,14 +3987,14 @@ fn check_iteration_ergonomics_chains_from_map_set_string_have_no_diagnostics() {
     assert_check_no_diagnostics(
         r#"fn main() -> Bool {
             let m = Map.new().insert("x", 1).insert("y", 2)
-            let km = m.keys().enumerate()
+            let km = m.keys().enumerate().to_list()
             let map_ok = km.len() == 2 && km[0].index == 0
 
             let s = Set.new().insert("a").insert("b").insert("c")
-            let sc = s.values().chunks(2)
+            let sc = s.values().chunks(2).to_list()
             let set_ok = sc.len() == 2 && sc[1].len() == 1
 
-            let p = "abc".chars().zip(List.new().push(1).push(2))
+            let p = "abc".chars().zip(List.new().push(1).push(2).seq()).to_list()
             let str_ok = p.len() == 2 && p[0].left == 'a' && p[1].right == 2
 
             map_ok && set_ok && str_ok
@@ -4101,6 +4101,48 @@ fn check_non_canonical_free_range_function_reports_unresolved_name() {
             .iter()
             .any(|d| d.message.contains("unresolved name")),
         "expected unresolved-name diagnostic for free `range`, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_seq_surface_canonical_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"fn main() -> Int {
+            let xs = Seq.range(0, 5)
+                .map(fn(n: Int) => n + 1)
+                .filter(fn(n: Int) => n > 2)
+            let a = xs.count()
+            let b = xs.to_list().len()
+            let c = List.new().push(1).push(2).seq().count()
+            let d = Map.new().insert("a", 1).insert("b", 2).keys().count()
+            let e = Set.new().insert("x").insert("y").values().count()
+            let f = "a,b,c".split(",").count()
+            let g = "x\ny".lines().count()
+            let h = "abc".chars().count()
+            a + b + c + d + e + f + g + h
+        }"#,
+        "seq canonical surface",
+    );
+}
+
+#[test]
+fn check_removed_list_traversal_surface_reports_diagnostics() {
+    let output = check(
+        r#"fn main() -> Int {
+            let a = List.range(0, 5).len()
+            let b = List.new().push(1).map(fn(n: Int) => n + 1).len()
+            a + b
+        }"#,
+        "test.ky",
+    );
+
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("no method") || d.message.contains("unresolved name")),
+        "expected removed-surface diagnostics, got: {:?}",
         output.diagnostics
     );
 }

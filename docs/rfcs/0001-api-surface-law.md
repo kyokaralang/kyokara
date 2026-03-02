@@ -201,6 +201,17 @@ Until qualified constructors are available, unqualified user ADT variants with n
 This is a temporary safety gate and must be removed once qualified constructor usage
 (`Type.Variant`) is implemented ([#293](https://github.com/kyokaralang/kyokara/issues/293)).
 
+### L18. Storage/traversal split is explicit (`MUST`)
+
+Traversal APIs live on `Seq<T>`. Storage/random-access APIs live on `List<T>`.
+
+Canonical consequences:
+
+- integer ranges are `Seq.range(start, end)` (not `List.range`)
+- `List` exposes storage methods (`push/get/len/sort/...`) plus `xs.seq()` bridge
+- traversal transforms/terminals (`map/filter/enumerate/zip/chunks/windows/fold/count/to_list`) are on `Seq`
+- producer traversal APIs return `Seq` (`String.split/lines/chars`, `Map.keys/values`, `Set.values`)
+
 ## Visibility policy (canonical decision)
 
 Kyokara uses this intrinsic visibility matrix:

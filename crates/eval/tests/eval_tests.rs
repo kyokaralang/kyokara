@@ -1402,7 +1402,7 @@ fn eval_list_map_lambda() {
     let val = run_ok(
         "fn main() -> Int {
            let xs = List.new().push(1).push(2).push(3)
-           let ys = xs.map(fn(x: Int) => x * 2)
+           let ys = xs.seq().map(fn(x: Int) => x * 2).to_list()
            match (ys.get(2)) {
              Some(x) => x
              None => 0
@@ -1418,7 +1418,7 @@ fn eval_list_map_named_fn() {
         "fn double(x: Int) -> Int { x * 2 }
          fn main() -> Int {
            let xs = List.new().push(5).push(10)
-           let ys = xs.map(double)
+           let ys = xs.seq().map(double).to_list()
            match (ys.head()) {
              Some(x) => x
              None => 0
@@ -1433,8 +1433,7 @@ fn eval_list_filter() {
     let val = run_ok(
         "fn main() -> Int {
            let xs = List.new().push(1).push(2).push(3).push(4)
-           let evens = xs.filter(fn(x: Int) => x > 2)
-           evens.len()
+           xs.seq().filter(fn(x: Int) => x > 2).count()
          }",
     );
     assert!(matches!(val, Value::Int(2)));
@@ -1445,7 +1444,7 @@ fn eval_list_fold_sum() {
     let val = run_ok(
         "fn main() -> Int {
            let xs = List.new().push(1).push(2).push(3)
-           xs.fold(0, fn(acc: Int, x: Int) => acc + x)
+           xs.seq().fold(0, fn(acc: Int, x: Int) => acc + x)
          }",
     );
     assert!(matches!(val, Value::Int(6)));
@@ -1520,7 +1519,7 @@ fn eval_map_keys() {
     let val = run_ok(
         r#"fn main() -> Int {
            let m = Map.new().insert("a", 1).insert("b", 2)
-           m.keys().len()
+           m.keys().count()
          }"#,
     );
     assert!(matches!(val, Value::Int(2)));
@@ -1600,7 +1599,7 @@ fn eval_string_split() {
     let val = run_ok(
         r#"fn main() -> Int {
            let parts = "a,b,c".split(",")
-           parts.len()
+           parts.count()
          }"#,
     );
     assert!(matches!(val, Value::Int(3)));
@@ -1765,7 +1764,7 @@ fn eval_list_map_fold_composition() {
     let val = run_ok(
         "fn main() -> Int {
            let xs = List.new().push(1).push(2).push(3)
-           let doubled = xs.map(fn(x: Int) => x * 2)
+           let doubled = xs.seq().map(fn(x: Int) => x * 2)
            doubled.fold(0, fn(acc: Int, x: Int) => acc + x)
          }",
     );
@@ -1779,7 +1778,7 @@ fn eval_map_list_interop() {
            let m = Map.new().insert("x", 10).insert("y", 20)
            let keys = m.keys()
            let vals = m.values()
-           keys.len() + vals.fold(0, fn(acc: Int, x: Int) => acc + x)
+           keys.count() + vals.fold(0, fn(acc: Int, x: Int) => acc + x)
          }"#,
     );
     assert!(matches!(val, Value::Int(32)));
@@ -4556,19 +4555,19 @@ fn eval_parse_float_user_defined_parse_error_reserved_variants_are_compile_error
 
 #[test]
 fn eval_string_lines_basic() {
-    let val = run_ok(r#"fn main() -> Int { "a\nb\nc".lines().len() }"#);
+    let val = run_ok(r#"fn main() -> Int { "a\nb\nc".lines().count() }"#);
     assert_eq!(val, Value::Int(3));
 }
 
 #[test]
 fn eval_string_lines_trailing_newline() {
-    let val = run_ok(r#"fn main() -> Int { "a\nb\n".lines().len() }"#);
+    let val = run_ok(r#"fn main() -> Int { "a\nb\n".lines().count() }"#);
     assert_eq!(val, Value::Int(2));
 }
 
 #[test]
 fn eval_string_lines_empty() {
-    let val = run_ok(r#"fn main() -> Int { "".lines().len() }"#);
+    let val = run_ok(r#"fn main() -> Int { "".lines().count() }"#);
     assert_eq!(val, Value::Int(0));
 }
 
@@ -4576,7 +4575,7 @@ fn eval_string_lines_empty() {
 fn eval_string_lines_single() {
     let val = run_ok(
         r#"fn main() -> String {
-            match ("hello".lines().head()) {
+            match ("hello".lines().to_list().head()) {
                 Some(s) => s
                 None => "fail"
             }
@@ -4587,14 +4586,14 @@ fn eval_string_lines_single() {
 
 #[test]
 fn eval_string_lines_crlf() {
-    let val = run_ok(r#"fn main() -> Int { "a\r\nb\r\nc".lines().len() }"#);
+    let val = run_ok(r#"fn main() -> Int { "a\r\nb\r\nc".lines().count() }"#);
     assert_eq!(val, Value::Int(3));
 }
 
 #[test]
 fn eval_string_lines_blank_lines() {
     // Two newlines = two empty lines (lines() strips trailing but keeps interior)
-    let val = run_ok(r#"fn main() -> Int { "\n\n".lines().len() }"#);
+    let val = run_ok(r#"fn main() -> Int { "\n\n".lines().count() }"#);
     assert_eq!(val, Value::Int(2));
 }
 
@@ -4602,7 +4601,7 @@ fn eval_string_lines_blank_lines() {
 fn eval_string_lines_content_check() {
     let val = run_ok(
         r#"fn main() -> String {
-            let lines = "first\nsecond\nthird".lines()
+            let lines = "first\nsecond\nthird".lines().to_list()
             match (lines.get(1)) {
                 Some(s) => s
                 None => "fail"
@@ -4616,26 +4615,26 @@ fn eval_string_lines_content_check() {
 
 #[test]
 fn eval_string_chars_basic() {
-    let val = run_ok(r#"fn main() -> Int { "hello".chars().len() }"#);
+    let val = run_ok(r#"fn main() -> Int { "hello".chars().count() }"#);
     assert_eq!(val, Value::Int(5));
 }
 
 #[test]
 fn eval_string_chars_empty() {
-    let val = run_ok(r#"fn main() -> Int { "".chars().len() }"#);
+    let val = run_ok(r#"fn main() -> Int { "".chars().count() }"#);
     assert_eq!(val, Value::Int(0));
 }
 
 #[test]
 fn eval_string_chars_single() {
-    let val = run_ok(r#"fn main() -> Int { "x".chars().len() }"#);
+    let val = run_ok(r#"fn main() -> Int { "x".chars().count() }"#);
     assert_eq!(val, Value::Int(1));
 }
 
 #[test]
 fn eval_string_chars_unicode() {
     // "café" has 4 chars (é is a single codepoint U+00E9)
-    let val = run_ok(r#"fn main() -> Int { "café".chars().len() }"#);
+    let val = run_ok(r#"fn main() -> Int { "café".chars().count() }"#);
     assert_eq!(val, Value::Int(4));
 }
 
@@ -4655,7 +4654,7 @@ fn eval_string_chars_roundtrip() {
 #[test]
 fn eval_string_chars_with_newlines() {
     // "a\nb" has 3 chars: 'a', '\n', 'b'
-    let val = run_ok(r#"fn main() -> Int { "a\nb".chars().len() }"#);
+    let val = run_ok(r#"fn main() -> Int { "a\nb".chars().count() }"#);
     assert_eq!(val, Value::Int(3));
 }
 
@@ -4680,7 +4679,7 @@ fn eval_read_file_multiline() {
     std::fs::write(&file_path, "line1\nline2\nline3\n").unwrap();
     let path_str = file_path.to_str().unwrap();
     let source =
-        format!("import fs\nfn main() -> Int {{ fs.read_file(\"{path_str}\").lines().len() }}");
+        format!("import fs\nfn main() -> Int {{ fs.read_file(\"{path_str}\").lines().count() }}");
     let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
     let val = run_with_manifest_ok(&source, Some(manifest));
     assert_eq!(val, Value::Int(3));
@@ -5174,25 +5173,25 @@ fn eval_list_iteration_ergonomics_matrix() {
         Case {
             name: "range half-open",
             src: "fn main() -> Int {
-                let xs = List.range(0, 5)
+                let xs = Seq.range(0, 5).to_list()
                 xs.len() * 100 + xs[0] * 10 + xs[4]
             }",
             expected: Value::Int(504),
         },
         Case {
             name: "range equal bounds empty",
-            src: "fn main() -> Int { List.range(3, 3).len() }",
+            src: "fn main() -> Int { Seq.range(3, 3).count() }",
             expected: Value::Int(0),
         },
         Case {
             name: "range descending empty",
-            src: "fn main() -> Int { List.range(5, 2).len() }",
+            src: "fn main() -> Int { Seq.range(5, 2).count() }",
             expected: Value::Int(0),
         },
         Case {
             name: "enumerate fields",
             src: "fn main() -> Int {
-                let pairs = List.new().push(10).push(20).enumerate()
+                let pairs = List.new().push(10).push(20).seq().enumerate().to_list()
                 pairs[0].index + pairs[0].value + pairs[1].index + pairs[1].value
             }",
             expected: Value::Int(31),
@@ -5201,7 +5200,9 @@ fn eval_list_iteration_ergonomics_matrix() {
             name: "zip truncates",
             src: "fn main() -> Int {
                 let pairs = List.new().push(1).push(2).push(3)
-                    .zip(List.new().push(10).push(20))
+                    .seq()
+                    .zip(List.new().push(10).push(20).seq())
+                    .to_list()
                 pairs.len() * 100 + pairs[0].left * 10 + pairs[1].right
             }",
             expected: Value::Int(230),
@@ -5209,7 +5210,7 @@ fn eval_list_iteration_ergonomics_matrix() {
         Case {
             name: "chunks keeps tail",
             src: "fn main() -> Int {
-                let cs = List.new().push(1).push(2).push(3).push(4).push(5).chunks(2)
+                let cs = List.new().push(1).push(2).push(3).push(4).push(5).seq().chunks(2).to_list()
                 cs.len() * 100 + cs[0].len() * 10 + cs[2].len()
             }",
             expected: Value::Int(321),
@@ -5217,7 +5218,7 @@ fn eval_list_iteration_ergonomics_matrix() {
         Case {
             name: "windows overlap",
             src: "fn main() -> Int {
-                let ws = List.new().push(1).push(2).push(3).push(4).push(5).windows(3)
+                let ws = List.new().push(1).push(2).push(3).push(4).push(5).seq().windows(3).to_list()
                 ws.len() * 100 + ws[0][0] * 10 + ws[2][2]
             }",
             expected: Value::Int(315),
@@ -5225,7 +5226,7 @@ fn eval_list_iteration_ergonomics_matrix() {
         Case {
             name: "windows larger than len empty",
             src: "fn main() -> Int {
-                List.new().push(1).push(2).windows(6).len()
+                List.new().push(1).push(2).seq().windows(6).count()
             }",
             expected: Value::Int(0),
         },
@@ -5233,14 +5234,14 @@ fn eval_list_iteration_ergonomics_matrix() {
             name: "chaining from map set string",
             src: "fn main() -> Bool {
                 let m = Map.new().insert(\"x\", 1).insert(\"y\", 2)
-                let km = m.keys().enumerate()
+                let km = m.keys().enumerate().to_list()
                 let map_ok = km.len() == 2 && km[0].index == 0 && km[0].value == \"x\"
 
                 let s = Set.new().insert(\"a\").insert(\"b\").insert(\"c\")
-                let sc = s.values().chunks(2)
+                let sc = s.values().chunks(2).to_list()
                 let set_ok = sc.len() == 2 && sc[0].len() == 2 && sc[1].len() == 1
 
-                let p = \"abc\".chars().zip(List.new().push(10).push(20))
+                let p = \"abc\".chars().zip(List.new().push(10).push(20).seq()).to_list()
                 let string_ok = p.len() == 2 && p[0].left == 'a' && p[1].right == 20
 
                 map_ok && set_ok && string_ok
@@ -5266,23 +5267,23 @@ fn eval_list_chunks_windows_invalid_sizes_report_direct_errors() {
     let cases = [
         Case {
             name: "chunks zero",
-            src: "fn main() -> Int { List.new().push(1).chunks(0).len() }",
-            expected_fragment: "list_chunks: chunk size must be > 0",
+            src: "fn main() -> Int { Seq.range(0, 3).chunks(0).count() }",
+            expected_fragment: "seq_chunks: chunk size must be > 0",
         },
         Case {
             name: "chunks negative",
-            src: "fn main() -> Int { List.new().push(1).chunks(-1).len() }",
-            expected_fragment: "list_chunks: chunk size must be > 0",
+            src: "fn main() -> Int { Seq.range(0, 3).chunks(-1).count() }",
+            expected_fragment: "seq_chunks: chunk size must be > 0",
         },
         Case {
             name: "windows zero",
-            src: "fn main() -> Int { List.new().push(1).windows(0).len() }",
-            expected_fragment: "list_windows: window size must be > 0",
+            src: "fn main() -> Int { Seq.range(0, 3).windows(0).count() }",
+            expected_fragment: "seq_windows: window size must be > 0",
         },
         Case {
             name: "windows negative",
-            src: "fn main() -> Int { List.new().push(1).windows(-3).len() }",
-            expected_fragment: "list_windows: window size must be > 0",
+            src: "fn main() -> Int { Seq.range(0, 3).windows(-3).count() }",
+            expected_fragment: "seq_windows: window size must be > 0",
         },
     ];
 
@@ -5296,6 +5297,86 @@ fn eval_list_chunks_windows_invalid_sizes_report_direct_errors() {
             err
         );
     }
+}
+
+#[test]
+fn eval_seq_surface_happy_paths() {
+    struct Case<'a> {
+        name: &'a str,
+        src: &'a str,
+        expected: Value,
+    }
+
+    let cases = [
+        Case {
+            name: "seq range fold without list materialization",
+            src: r#"fn main() -> Int {
+                Seq.range(0, 5).fold(0, fn(acc: Int, n: Int) => acc + n)
+            }"#,
+            expected: Value::Int(10),
+        },
+        Case {
+            name: "list to seq map filter count",
+            src: r#"fn main() -> Int {
+                List.new().push(1).push(2).push(3)
+                    .seq()
+                    .map(fn(n: Int) => n + 1)
+                    .filter(fn(n: Int) => n > 2)
+                    .count()
+            }"#,
+            expected: Value::Int(2),
+        },
+        Case {
+            name: "producer methods return seq",
+            src: r#"fn main() -> Int {
+                let a = "a,b,c".split(",").count()
+                let b = "x\ny".lines().count()
+                let c = "abc".chars().count()
+                a + b + c
+            }"#,
+            expected: Value::Int(8),
+        },
+        Case {
+            name: "seq is re-iterable",
+            src: r#"fn main() -> Int {
+                let xs = Seq.range(0, 3).map(fn(n: Int) => n + 1)
+                xs.count() * 10 + xs.to_list().len()
+            }"#,
+            expected: Value::Int(33),
+        },
+    ];
+
+    for case in cases {
+        let got = run_ok(case.src);
+        assert_eq!(got, case.expected, "case `{}` failed", case.name);
+    }
+}
+
+#[test]
+fn eval_seq_invalid_sizes_and_removed_list_surface() {
+    let err_chunks = run_err(
+        r#"fn main() -> Int {
+            Seq.range(0, 3).chunks(0).count()
+        }"#,
+    );
+    assert!(err_chunks.contains("chunk size"), "got: {err_chunks}");
+
+    let err_windows = run_err(
+        r#"fn main() -> Int {
+            Seq.range(0, 3).windows(0).count()
+        }"#,
+    );
+    assert!(err_windows.contains("window size"), "got: {err_windows}");
+
+    let removed = run_err(
+        r#"fn main() -> Int {
+            List.range(0, 3).len()
+        }"#,
+    );
+    assert!(
+        removed.contains("no method") || removed.contains("unresolved"),
+        "got: {removed}"
+    );
 }
 
 // ── Index syntax tests ──────────────────────────────────────────────
@@ -5545,7 +5626,7 @@ fn eval_method_string_split() {
     let val = run_ok(
         r#"fn main() -> Int {
             let parts = "a,b,c".split(",")
-            parts.len()
+            parts.count()
         }"#,
     );
     assert!(matches!(val, Value::Int(3)));
@@ -5556,7 +5637,7 @@ fn eval_method_string_lines() {
     let val = run_ok(
         r#"fn main() -> Int {
             let ls = "a\nb\nc".lines()
-            ls.len()
+            ls.count()
         }"#,
     );
     assert!(matches!(val, Value::Int(3)));
@@ -5567,7 +5648,7 @@ fn eval_method_string_chars() {
     let val = run_ok(
         r#"fn main() -> Int {
             let cs = "hello".chars()
-            cs.len()
+            cs.count()
         }"#,
     );
     assert!(matches!(val, Value::Int(5)));
@@ -5639,7 +5720,7 @@ fn eval_method_list_map() {
     let val = run_ok(
         "fn main() -> Int {
             let xs = List.new().push(1).push(2)
-            let ys = xs.map(fn(x: Int) => x * 10)
+            let ys = xs.seq().map(fn(x: Int) => x * 10).to_list()
             ys[0]
         }",
     );
@@ -5651,8 +5732,7 @@ fn eval_method_list_filter() {
     let val = run_ok(
         "fn main() -> Int {
             let xs = List.new().push(1).push(2).push(3)
-            let ys = xs.filter(fn(x: Int) => x > 1)
-            ys.len()
+            xs.seq().filter(fn(x: Int) => x > 1).count()
         }",
     );
     assert!(matches!(val, Value::Int(2)));
@@ -5663,7 +5743,7 @@ fn eval_method_list_fold() {
     let val = run_ok(
         "fn main() -> Int {
             let xs = List.new().push(1).push(2).push(3)
-            xs.fold(0, fn(acc: Int, x: Int) => acc + x)
+            xs.seq().fold(0, fn(acc: Int, x: Int) => acc + x)
         }",
     );
     assert!(matches!(val, Value::Int(6)));
@@ -5737,7 +5817,7 @@ fn eval_method_map_keys() {
         r#"fn main() -> Int {
             let m = Map.new().insert("a", 1)
             let ks = m.keys()
-            ks.len()
+            ks.count()
         }"#,
     );
     assert!(matches!(val, Value::Int(1)));
@@ -5805,7 +5885,7 @@ fn eval_method_chaining_push_push_len() {
 fn eval_method_chaining_split_len() {
     let val = run_ok(
         r#"fn main() -> Int {
-            "a,b,c".split(",").len()
+            "a,b,c".split(",").count()
         }"#,
     );
     assert!(matches!(val, Value::Int(3)));
@@ -6103,11 +6183,11 @@ fn eval_index_then_method() {
 
 #[test]
 fn eval_method_then_index() {
-    // "hello".chars()[1] — method returning list, then index
+    // "hello".chars().to_list()[1] — method returning seq, then list indexing
     let val = run_ok(
         r#"
         fn main() -> Char {
-            "hello".chars()[1]
+            "hello".chars().to_list()[1]
         }
         "#,
     );
@@ -6116,11 +6196,11 @@ fn eval_method_then_index() {
 
 #[test]
 fn eval_method_chain_then_index() {
-    // "a,b,c".split(",")[2] — method returning list, then index
+    // "a,b,c".split(",").to_list()[2] — method returning seq, then list indexing
     let val = run_ok(
         r#"
         fn main() -> String {
-            "a,b,c".split(",")[2]
+            "a,b,c".split(",").to_list()[2]
         }
         "#,
     );
@@ -6252,7 +6332,7 @@ fn eval_map_insertion_order_preserved() {
                 .insert("c", 3)
                 .insert("a", 1)
                 .insert("b", 2)
-            let ks = m.keys()
+            let ks = m.keys().to_list()
             match (ks.head()) {
                 Some(k) => k
                 None => "fail"
@@ -6388,7 +6468,7 @@ fn eval_map_empty_keys_and_values() {
     let val = run_ok(
         "fn main() -> Bool {
             let m = Map.new()
-            m.keys().is_empty() && m.values().is_empty()
+            m.keys().count() == 0 && m.values().count() == 0
         }",
     );
     assert!(matches!(val, Value::Bool(true)));
@@ -6518,7 +6598,7 @@ fn eval_set_values_preserve_insertion_order() {
     let val = run_ok(
         r#"fn main() -> String {
             let s = Set.new().insert("c").insert("a").insert("b")
-            let vals = s.values()
+            let vals = s.values().to_list()
             match (vals.head()) {
                 Some(v) => v
                 None => "fail"
@@ -6536,7 +6616,7 @@ fn eval_set_values_remove_and_reinsert_goes_to_end() {
     let val = run_ok(
         r#"fn main() -> Bool {
             let s = Set.new().insert("a").insert("b").remove("a").insert("a")
-            let vals = s.values()
+            let vals = s.values().to_list()
             match (vals.get(0)) {
                 Some(first) =>
                     match (vals.get(1)) {

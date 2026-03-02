@@ -258,7 +258,7 @@ fn add_module_scope_completions(analysis: &FileAnalysis, items: &mut Vec<Complet
 
 fn add_builtin_completions(items: &mut Vec<CompletionItem>) {
     for name in &[
-        "Int", "Float", "String", "Bool", "Char", "Unit", "Option", "Result", "List", "Map",
+        "Int", "Float", "String", "Bool", "Char", "Unit", "Option", "Result", "List", "Seq", "Map",
     ] {
         items.push(CompletionItem {
             label: name.to_string(),

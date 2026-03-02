@@ -1258,6 +1258,23 @@ impl<'a> InferenceCtx<'a> {
             if let Some(&fn_idx) = self.module_scope.static_methods.get(&(owner_key, field)) {
                 return Some(self.infer_qualified_fn_call(callee, fn_idx, args));
             }
+            // Type exists but static method not found — emit deterministic diagnostic
+            // instead of falling through to "type name used as value".
+            self.push_diag(TyDiagnosticData::NoSuchMethod {
+                method: field.resolve(self.interner).to_string(),
+                ty: Ty::Adt {
+                    def: type_idx,
+                    args: Vec::new(),
+                },
+            });
+            for arg in args {
+                match arg {
+                    CallArg::Positional(e) | CallArg::Named { value: e, .. } => {
+                        self.infer_expr(*e, &Expectation::None);
+                    }
+                }
+            }
+            return Some(Ty::Error);
         }
 
         None
