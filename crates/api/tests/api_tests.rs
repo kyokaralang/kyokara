@@ -165,6 +165,57 @@ fn check_parse_error_code() {
 }
 
 #[test]
+fn check_rejects_top_level_bodyless_fn_declaration() {
+    let src = "fn foo() -> Int\nfn main() -> Int { foo() }";
+    let output = check(src, "test.ky");
+    assert!(
+        !output.diagnostics.is_empty(),
+        "expected diagnostics for bodyless top-level fn, got none"
+    );
+    let parse_diags: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0100")
+        .collect();
+    assert!(
+        !parse_diags.is_empty(),
+        "expected parse error diagnostics (E0100), got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_allows_bodyless_cap_member_signature() {
+    let src = "cap IO {\n  fn read() -> String\n}\nfn main() -> Int { 1 }";
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics for cap signature, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_allows_empty_unit_body() {
+    let output = check("fn noop() -> Unit {}", "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected empty Unit body to type-check, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_rejects_empty_non_unit_body() {
+    let output = check("fn bad() -> Int {}", "test.ky");
+    assert!(
+        output.diagnostics.iter().any(|d| d.code == "E0001"),
+        "expected type mismatch for empty non-Unit body, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_json_roundtrip() {
     let output = check(r#"fn bad() -> Int { "hello" }"#, "test.ky");
     let json = serde_json::to_string_pretty(&output).expect("serialization failed");

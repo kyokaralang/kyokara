@@ -63,6 +63,31 @@ fn roundtrip_fn_def() {
 }
 
 #[test]
+fn parse_top_level_fn_without_body_reports_error() {
+    let src = "fn foo() -> Int";
+    let result = parse(src);
+    assert!(
+        !result.errors.is_empty(),
+        "expected parse error for missing fn body"
+    );
+    assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
+fn parse_cap_member_fn_without_body_is_allowed() {
+    let src = "cap IO {\n  fn read() -> String\n}";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn parse_top_level_fn_empty_body_is_allowed() {
+    let src = "fn noop() -> Unit {}";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
 fn roundtrip_type_def_variants() {
     let src = "type Option = | Some(Int) | None";
     let green = parse_ok(src);

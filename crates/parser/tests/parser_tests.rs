@@ -143,6 +143,50 @@ fn fn_def_with_contract() {
     assert!(has_node(&events, RequiresClause));
 }
 
+#[test]
+fn top_level_fn_def_without_body_reports_error() {
+    // fn foo() -> Int
+    let (events, errors) = parse_tokens(&[FnKw, Ident, LParen, RParen, Arrow, Ident]);
+    assert!(!errors.is_empty(), "expected parse error for missing fn body");
+    assert!(has_node(&events, FnDef));
+}
+
+#[test]
+fn pub_top_level_fn_def_without_body_reports_error() {
+    // pub fn foo() -> Int
+    let (events, errors) =
+        parse_tokens(&[PubKw, FnKw, Ident, LParen, RParen, Arrow, Ident]);
+    assert!(!errors.is_empty(), "expected parse error for missing pub fn body");
+    assert!(has_node(&events, FnDef));
+}
+
+#[test]
+fn method_def_without_body_reports_error() {
+    // fn List.len(self: List) -> Int
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, Dot, Ident, LParen, Ident, Colon, Ident, RParen, Arrow, Ident,
+    ]);
+    assert!(
+        !errors.is_empty(),
+        "expected parse error for missing method body"
+    );
+    assert!(has_node(&events, FnDef));
+}
+
+#[test]
+fn fn_def_empty_body_is_allowed() {
+    // fn noop() -> Unit {}
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, LBrace, RBrace,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "empty function body should parse: {errors:?}"
+    );
+    assert!(has_node(&events, FnDef));
+    assert!(has_node(&events, BlockExpr));
+}
+
 // ── Expressions ─────────────────────────────────────────────────────
 
 #[test]

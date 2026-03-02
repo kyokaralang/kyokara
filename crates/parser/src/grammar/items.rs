@@ -24,7 +24,7 @@ pub(super) fn item(p: &mut Parser<'_>) -> Option<CompletedMarker> {
 
     let cm = match start {
         TypeKw => type_def(p, is_pub),
-        FnKw => fn_def(p, is_pub),
+        FnKw => fn_def(p, is_pub, false),
         CapKw => cap_def(p, is_pub),
         PropertyKw => {
             if is_pub {
@@ -148,7 +148,14 @@ fn variant_field_list(p: &mut Parser<'_>) {
 
 /// `pub? fn Ident TypeParamList? ParamList ReturnType? FnContract? BlockExpr`
 /// or method: `pub? fn Ident '.' Ident TypeParamList? ParamList ReturnType? FnContract? BlockExpr`
-pub(super) fn fn_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
+///
+/// Capability member signatures are the only bodyless `fn` forms currently
+/// allowed (`allow_bodyless = true`).
+pub(super) fn fn_def(
+    p: &mut Parser<'_>,
+    is_pub: bool,
+    allow_bodyless: bool,
+) -> CompletedMarker {
     let m = p.open();
     if is_pub {
         p.bump(); // pub
@@ -170,6 +177,8 @@ pub(super) fn fn_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
     fn_contract(p);
     if p.at(LBrace) {
         super::expressions::block_expr(p);
+    } else if !allow_bodyless {
+        p.error("expected function body");
     }
     m.complete(p, FnDef)
 }
@@ -291,9 +300,9 @@ fn cap_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
     p.expect(LBrace);
     while !p.at(RBrace) && !p.at_eof() {
         if p.at(FnKw) {
-            fn_def(p, false);
+            fn_def(p, false, true);
         } else if p.at(PubKw) && p.current_after_pub() == FnKw {
-            fn_def(p, true);
+            fn_def(p, true, true);
         } else {
             p.error_recover("expected fn in cap body", TokenSet::new(&[FnKw, RBrace]));
         }

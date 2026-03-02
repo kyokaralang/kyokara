@@ -2209,6 +2209,11 @@ fn run_rejects_compile_invalid_programs_detected_by_check() {
             run_fragment: "lowering errors:",
         },
         Case {
+            name: "top-level bodyless function declaration",
+            src: "fn foo() -> Int\nfn main() -> Int { foo() }",
+            run_fragment: "parse errors:",
+        },
+        Case {
             name: "duplicate pattern binding",
             src: "type Pair = | Pair(Int, Int)\nfn main() -> Int {\n  let Pair(x, x) = Pair(1, 2)\n  x\n}",
             run_fragment: "duplicate binding",
@@ -2265,6 +2270,18 @@ fn run_rejects_compile_invalid_programs_detected_by_check() {
             err
         );
     }
+}
+
+#[test]
+fn run_allows_cap_member_bodyless_signature() {
+    let src = r#"
+cap IO {
+  fn read() -> String
+}
+fn main() -> Int { 1 }
+"#;
+    let value = run_ok(src);
+    assert_eq!(value, Value::Int(1));
 }
 
 #[test]
