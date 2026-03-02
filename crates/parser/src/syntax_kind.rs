@@ -190,7 +190,7 @@ pub enum SyntaxKind {
     TypeDef,
     /// `fn foo(…) -> … { … }`
     FnDef,
-    /// `effect Foo { … }`
+    /// `effect Foo`
     CapDef,
     /// `property foo(…) { … }`
     PropertyDef,

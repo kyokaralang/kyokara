@@ -74,10 +74,25 @@ fn parse_top_level_fn_without_body_reports_error() {
 }
 
 #[test]
-fn parse_cap_member_fn_without_body_is_allowed() {
-    let src = "effect IO {\n  fn read() -> String\n}";
+fn parse_effect_label_is_allowed() {
+    let src = "effect IO";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn parse_effect_with_body_is_rejected() {
+    let src = "effect IO {\n  fn read() -> String\n}";
+    let result = parse(src);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("effect declarations are labels only")),
+        "expected label-only effect diagnostic, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
 }
 
 #[test]
@@ -225,7 +240,7 @@ fn roundtrip_fn_type() {
 
 #[test]
 fn roundtrip_cap_def() {
-    let src = "effect IO {\n  fn read() { 0 }\n}";
+    let src = "effect IO";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
 }

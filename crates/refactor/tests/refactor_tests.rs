@@ -136,9 +136,8 @@ fn name(c: Color) -> String {
 
 #[test]
 fn rename_cap() {
-    let src = r#"cap Console {
-    fn print_line(s: String) -> Unit
-}
+    let src = r#"effect Console
+fn print_line(s: String) -> Unit { }
 fn log(msg: String) -> Unit with Console {
     print_line(msg)
 }"#;
@@ -153,8 +152,8 @@ fn log(msg: String) -> Unit with Console {
     let new_source = apply_edits(src, &refactor.edits);
 
     assert!(
-        new_source.contains("cap Output"),
-        "cap def should be renamed: {new_source}"
+        new_source.contains("effect Output"),
+        "effect def should be renamed: {new_source}"
     );
     assert!(
         new_source.contains("with Output"),
@@ -162,7 +161,7 @@ fn log(msg: String) -> Unit with Console {
     );
     assert!(
         !new_source.contains("Console"),
-        "old cap name should not remain: {new_source}"
+        "old effect name should not remain: {new_source}"
     );
 }
 
@@ -275,9 +274,7 @@ fn pick(c: Color) -> Int {
 
 #[test]
 fn add_missing_capability() {
-    let src = r#"cap Console {
-    fn emit(s: String) -> Unit
-}
+    let src = r#"effect Console
 fn emit(s: String) -> Unit { }
 fn effectful() -> Unit with Console { emit("hi") }
 fn pure_caller() -> Unit { effectful() }"#;
@@ -824,9 +821,7 @@ fn pick(c: Color) -> Int {
 
 #[test]
 fn quickfix_capability_transact_verified() {
-    let src = r#"cap Console {
-    fn emit(s: String) -> Unit
-}
+    let src = r#"effect Console
 fn emit(s: String) -> Unit { }
 fn effectful() -> Unit with Console { emit("hi") }
 fn pure_caller() -> Unit { effectful() }"#;
@@ -1129,12 +1124,12 @@ fn project_quickfix_capability_filters_by_target_file() {
 
     std::fs::write(
         &main_path,
-        "cap Logger {\n    fn log(s: String) -> Unit\n}\nfn do_log() -> Unit with Logger { log(\"hi\") }\nfn bad_main() -> Unit { do_log() }\n",
+        "effect Logger\nfn log(s: String) -> Unit { }\nfn do_log() -> Unit with Logger { log(\"hi\") }\nfn bad_main() -> Unit { do_log() }\n",
     )
     .unwrap();
     std::fs::write(
         &math_path,
-        "pub cap Counter {\n    pub fn incr() -> Unit\n}\npub fn do_count() -> Unit with Counter { incr() }\npub fn bad_math() -> Unit { do_count() }\n",
+        "pub effect Counter\npub fn incr() -> Unit { }\npub fn do_count() -> Unit with Counter { incr() }\npub fn bad_math() -> Unit { do_count() }\n",
     )
     .unwrap();
 

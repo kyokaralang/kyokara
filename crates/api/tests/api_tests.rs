@@ -126,10 +126,8 @@ fn main() -> Int {
 #[test]
 fn check_effect_violation_code() {
     let src = r#"
-        cap Console {
-            fn print(s: String) -> Unit
-        }
-        fn effectful() -> Unit with Console { print("hi") }
+        effect Console
+        fn effectful() -> Unit with Console { () }
         fn pure_caller() -> Unit { effectful() }
     "#;
     let output = check(src, "test.ky");
@@ -249,12 +247,12 @@ fn check_rejects_top_level_bodyless_fn_declaration() {
 }
 
 #[test]
-fn check_allows_bodyless_cap_member_signature() {
-    let src = "cap IO {\n  fn read() -> String\n}\nfn main() -> Int { 1 }";
+fn check_allows_label_only_effect_declaration() {
+    let src = "effect IO\nfn main() -> Int { 1 }";
     let output = check(src, "test.ky");
     assert!(
         output.diagnostics.is_empty(),
-        "expected no diagnostics for cap signature, got: {:?}",
+        "expected no diagnostics for label-only effect declaration, got: {:?}",
         output.diagnostics
     );
 }
@@ -342,9 +340,7 @@ fn check_clean_program_no_holes() {
 #[test]
 fn check_hole_effect_constraints() {
     let src = r#"
-        cap IO {
-            fn read() -> String
-        }
+        effect IO
         fn with_io() -> Int with IO { _ }
     "#;
     let output = check(src, "test.ky");
@@ -428,10 +424,7 @@ fn symbol_graph_alias_to_record_emits_record_kind_with_fields() {
 #[test]
 fn symbol_graph_contains_capabilities() {
     let src = r#"
-        cap IO {
-            fn read() -> String
-            fn write(s: String) -> Unit
-        }
+        effect IO
         fn noop() -> Unit { () }
     "#;
     let output = check(src, "test.ky");
@@ -439,13 +432,8 @@ fn symbol_graph_contains_capabilities() {
     let cap = &output.symbol_graph.capabilities[0];
     assert_eq!(cap.name, "IO");
     assert!(
-        cap.functions.contains(&"cap::IO::read".to_string()),
-        "missing 'cap::IO::read' in {:?}",
-        cap.functions
-    );
-    assert!(
-        cap.functions.contains(&"cap::IO::write".to_string()),
-        "missing 'cap::IO::write' in {:?}",
+        cap.functions.is_empty(),
+        "label-only effect should not carry member fn refs, got: {:?}",
         cap.functions
     );
 }
@@ -501,10 +489,8 @@ fn symbol_graph_repeated_direct_calls_are_deduped() {
 #[test]
 fn symbol_graph_effect_annotations() {
     let src = r#"
-        cap IO {
-            fn read() -> String
-        }
-        fn effectful() -> String with IO { read() }
+        effect IO
+        fn effectful() -> String with IO { "" }
     "#;
     let output = check(src, "test.ky");
     let fn_node = output
@@ -553,10 +539,8 @@ fn patch_missing_match_arm() {
 #[test]
 fn patch_effect_violation() {
     let src = r#"
-        cap Console {
-            fn print(s: String) -> Unit
-        }
-        fn effectful() -> Unit with Console { print("hi") }
+        effect Console
+        fn effectful() -> Unit with Console { () }
         fn pure_caller() -> Unit { effectful() }
     "#;
     let output = check(src, "test.ky");
@@ -601,10 +585,8 @@ fn patch_apply_missing_arm_fixes_error() {
 fn patch_apply_effect_fix_fixes_error() {
     // Source with correct `with` clause should have no E0011 errors.
     let src = r#"
-        cap Console {
-            fn print(s: String) -> Unit
-        }
-        fn effectful() -> Unit with Console { print("hi") }
+        effect Console
+        fn effectful() -> Unit with Console { () }
         fn caller() -> Unit with Console { effectful() }
     "#;
     let output = check(src, "test.ky");
@@ -726,9 +708,7 @@ fn stable_id_variant_nodes_have_ids() {
 #[test]
 fn stable_id_cap_nodes_have_ids() {
     let src = r#"
-        cap IO {
-            fn read() -> String
-        }
+        effect IO
         fn noop() -> Unit { () }
     "#;
     let output = check(src, "test.ky");
@@ -744,20 +724,16 @@ fn stable_id_cap_nodes_have_ids() {
 #[test]
 fn stable_id_cap_function_refs_use_ids() {
     let src = r#"
-        cap IO {
-            fn read() -> String
-            fn write(s: String) -> Unit
-        }
+        effect IO
         fn noop() -> Unit { () }
     "#;
     let output = check(src, "test.ky");
     let cap = &output.symbol_graph.capabilities[0];
-    for f in &cap.functions {
-        assert!(
-            f.starts_with("cap::IO::"),
-            "cap function ref should start with 'cap::IO::', got: {f}"
-        );
-    }
+    assert!(
+        cap.functions.is_empty(),
+        "label-only effect should not emit function refs, got: {:?}",
+        cap.functions
+    );
 }
 
 #[test]
@@ -785,9 +761,7 @@ fn stable_id_call_edges_use_fn_ids() {
 fn stable_id_uniqueness() {
     let src = r#"
         type Color = Red | Green | Blue
-        cap IO {
-            fn read() -> String
-        }
+        effect IO
         fn foo(x: Int) -> Int { x }
     "#;
     let output = check(src, "test.ky");
@@ -1319,7 +1293,7 @@ fn project_variant_ids_are_module_qualified() {
 fn project_capability_ids_are_module_qualified() {
     let output = check_project_from_files(&[
         ("main.ky", "fn foo() -> Int { 1 }"),
-        ("math.ky", "pub cap IO { fn read() -> String }"),
+        ("math.ky", "pub effect IO"),
     ]);
     let io = output
         .symbol_graph
@@ -1332,8 +1306,8 @@ fn project_capability_ids_are_module_qualified() {
         "capability ID should be module-qualified"
     );
     assert!(
-        io.functions.contains(&"cap::math::IO::read".to_string()),
-        "cap function ref should be module-qualified, got: {:?}",
+        io.functions.is_empty(),
+        "label-only effect should not emit member function refs, got: {:?}",
         io.functions
     );
 }
@@ -2560,51 +2534,20 @@ fn project_import_collision_does_not_misattribute_call_edge_to_specific_module()
 }
 
 #[test]
-fn cap_member_same_name_as_top_level_fn_no_duplicate_diags() {
-    // A capability member `foo` and a top-level `foo` should each get type-checked
-    // against their own body, not mis-matched by name.
-    let src =
-        "cap C {\n  fn foo() -> Int { true }\n}\nfn foo() -> Int { 1 }\nfn main() -> Int { foo() }";
+fn effect_declaration_with_body_produces_label_only_diagnostic() {
+    let src = "effect C {\n  fn foo() -> Int\n}\nfn main() -> Int { 1 }";
     let output = check(src, "test.ky");
-    // Exactly one type mismatch for the capability member body (Bool vs Int).
-    let mismatches: Vec<_> = output
-        .diagnostics
-        .iter()
-        .filter(|d| d.message.contains("mismatch"))
-        .collect();
-    assert_eq!(
-        mismatches.len(),
-        1,
-        "expected exactly 1 type mismatch (from cap member), got {}: {:?}",
-        mismatches.len(),
-        mismatches.iter().map(|d| &d.message).collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn symbol_graph_no_duplicate_fn_ids_with_cap_member() {
-    // Cap member `foo` and top-level `foo` should not produce duplicate fn IDs.
-    let src = "cap C {\n  fn foo() -> Int\n}\nfn foo() -> Int { 1 }\nfn main() -> Int { foo() }";
-    let output = check(src, "test.ky");
-    let fn_ids: Vec<&str> = output
-        .symbol_graph
-        .functions
-        .iter()
-        .map(|f| f.id.as_str())
-        .collect();
-    // Check no duplicates.
-    let mut seen = std::collections::HashSet::new();
-    for id in &fn_ids {
-        assert!(
-            seen.insert(*id),
-            "duplicate function ID in symbol graph: {id}"
-        );
-    }
-    // Top-level `foo` should appear once as `fn::foo`, cap member as `cap::C::foo`.
-    let top_foo_count = fn_ids.iter().filter(|id| **id == "fn::foo").count();
-    assert_eq!(
-        top_foo_count, 1,
-        "expected exactly 1 top-level fn::foo node, got {top_foo_count}: {fn_ids:?}"
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("effect declarations are labels only")),
+        "expected label-only effect diagnostic, got: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
     );
 }
 
@@ -2638,17 +2581,17 @@ fn extra_type_args_produce_diagnostic() {
 }
 
 #[test]
-fn duplicate_cap_member_names_produce_diagnostic() {
-    let src = "cap C {\n  fn f() -> Int\n  fn f() -> Int\n}\nfn main() -> Int { 1 }";
+fn duplicate_effect_names_produce_diagnostic() {
+    let src = "effect C\neffect C\nfn main() -> Int { 1 }";
     let output = check(src, "test.ky");
     let dups: Vec<_> = output
         .diagnostics
         .iter()
-        .filter(|d| d.message.contains("duplicate") && d.message.contains("f"))
+        .filter(|d| d.message.contains("duplicate") && d.message.contains("C"))
         .collect();
     assert!(
         !dups.is_empty(),
-        "expected duplicate cap member diagnostic, got: {:?}",
+        "expected duplicate effect diagnostic, got: {:?}",
         output
             .diagnostics
             .iter()
@@ -2658,23 +2601,15 @@ fn duplicate_cap_member_names_produce_diagnostic() {
 }
 
 #[test]
-fn cap_member_fn_ids_resolve_in_symbol_graph() {
-    // Every capability function reference should point to an actual fn node.
-    let src = "cap C {\n  fn g() -> Int { 1 }\n}\nfn main() -> Int { 1 }";
+fn effect_nodes_have_no_member_fn_refs() {
+    let src = "effect C\nfn main() -> Int { 1 }";
     let output = check(src, "test.ky");
-    let fn_ids: std::collections::HashSet<&str> = output
-        .symbol_graph
-        .functions
-        .iter()
-        .map(|f| f.id.as_str())
-        .collect();
     for cap in &output.symbol_graph.capabilities {
-        for fn_ref in &cap.functions {
-            assert!(
-                fn_ids.contains(fn_ref.as_str()),
-                "cap function reference `{fn_ref}` has no matching fn node; fn_ids: {fn_ids:?}"
-            );
-        }
+        assert!(
+            cap.functions.is_empty(),
+            "label-only effect should not emit function refs, got: {:?}",
+            cap.functions
+        );
     }
 }
 

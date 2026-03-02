@@ -602,29 +602,6 @@ fn format_cap_def(node: &SyntaxNode) -> Doc {
         parts.push(format_token(&name));
     }
 
-    if let Some(type_params) = find_child_node(node, SyntaxKind::TypeParamList) {
-        parts.push(format_node(&type_params));
-    }
-
-    parts.push(Doc::text(" {"));
-
-    let fn_docs = comments::format_children_with_comments(
-        node,
-        |c| c.kind() == SyntaxKind::FnDef,
-        format_node,
-    );
-    if !fn_docs.is_empty() {
-        parts.push(Doc::indent(
-            INDENT,
-            Doc::concat(vec![
-                Doc::HardLine,
-                Doc::join(fn_docs, Doc::concat(vec![Doc::HardLine, Doc::HardLine])),
-            ]),
-        ));
-        parts.push(Doc::HardLine);
-    }
-
-    parts.push(Doc::text("}"));
     Doc::concat(parts)
 }
 

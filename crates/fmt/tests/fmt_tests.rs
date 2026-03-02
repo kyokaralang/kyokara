@@ -377,10 +377,7 @@ fn fmt_fn_with_type_params() {
 
 #[test]
 fn fmt_effect_def() {
-    assert_fmt(
-        "effect IO { fn read() -> String { _ }\nfn write(s: String) -> Unit { _ } }",
-        "effect IO {\n  fn read() -> String {\n    _\n  }\n\n  fn write(s: String) -> Unit {\n    _\n  }\n}\n",
-    );
+    assert_fmt("effect  IO", "effect IO\n");
 }
 
 // ── Let binding with compound expressions ───────────────────────────

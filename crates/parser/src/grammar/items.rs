@@ -355,7 +355,7 @@ fn invariant_clause(p: &mut Parser<'_>) {
 
 // ── Effect Definition ───────────────────────────────────────────────
 
-/// `pub? effect Ident TypeParamList? '{' FnDef* '}'`
+/// `pub? effect Ident`
 fn cap_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
     let m = p.open();
     if is_pub {
@@ -363,20 +363,22 @@ fn cap_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
     }
     p.bump(); // effect
     p.expect(Ident);
+
     if p.at(Lt) {
+        p.error("effect declarations cannot have type parameters");
         type_param_list(p);
     }
-    p.expect(LBrace);
-    while !p.at(RBrace) && !p.at_eof() {
-        if p.at(FnKw) {
-            fn_def(p, false, true);
-        } else if p.at(PubKw) && p.current_after_pub() == FnKw {
-            fn_def(p, true, true);
-        } else {
-            p.error_recover("expected fn in cap body", TokenSet::new(&[FnKw, RBrace]));
+
+    if p.at(LBrace) {
+        let err = p.open();
+        p.error("effect declarations are labels only; remove body");
+        p.bump(); // {
+        while !p.at(RBrace) && !p.at_eof() {
+            p.bump();
         }
+        p.expect(RBrace);
+        err.complete(p, ErrorNode);
     }
-    p.expect(RBrace);
     m.complete(p, CapDef)
 }
 
