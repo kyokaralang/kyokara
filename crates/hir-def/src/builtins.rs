@@ -298,6 +298,10 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("list_map", "List", "map"),
         ("list_filter", "List", "filter"),
         ("list_fold", "List", "fold"),
+        ("list_enumerate", "List", "enumerate"),
+        ("list_zip", "List", "zip"),
+        ("list_chunks", "List", "chunks"),
+        ("list_windows", "List", "windows"),
         ("list_sort", "List", "sort"),
         ("list_sort_by", "List", "sort_by"),
         ("list_binary_search", "List", "binary_search"),
@@ -520,6 +524,7 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     // (intrinsic_fn_name, type_name, static_method_name)
     let mappings: &[(&str, &str, &str)] = &[
         ("list_new", "List", "new"),
+        ("list_range", "List", "range"),
         ("map_new", "Map", "new"),
         ("set_new", "Set", "new"),
     ];
@@ -629,6 +634,10 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
         path: Path::single(Name::new(interner, "List")),
         args: vec![u_ref.clone()],
     };
+    let list_list_t = TypeRef::Path {
+        path: Path::single(Name::new(interner, "List")),
+        args: vec![list_t.clone()],
+    };
     let list_k = TypeRef::Path {
         path: Path::single(Name::new(interner, "List")),
         args: vec![k_ref.clone()],
@@ -644,6 +653,30 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
     let list_char = TypeRef::Path {
         path: Path::single(Name::new(interner, "List")),
         args: vec![char_ty.clone()],
+    };
+    let list_int = TypeRef::Path {
+        path: Path::single(Name::new(interner, "List")),
+        args: vec![int_ty.clone()],
+    };
+    let indexed_t = TypeRef::Record {
+        fields: vec![
+            (Name::new(interner, "index"), int_ty.clone()),
+            (Name::new(interner, "value"), t_ref.clone()),
+        ],
+    };
+    let list_indexed_t = TypeRef::Path {
+        path: Path::single(Name::new(interner, "List")),
+        args: vec![indexed_t],
+    };
+    let pair_tu = TypeRef::Record {
+        fields: vec![
+            (Name::new(interner, "left"), t_ref.clone()),
+            (Name::new(interner, "right"), u_ref.clone()),
+        ],
+    };
+    let list_pair_tu = TypeRef::Path {
+        path: Path::single(Name::new(interner, "List")),
+        args: vec![pair_tu],
     };
     let map_kv = TypeRef::Path {
         path: Path::single(Name::new(interner, "Map")),
@@ -804,6 +837,46 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
                 ("f", fn_ut_to_u.clone()),
             ],
             u_ref.clone(),
+        ),
+        // list_range(start: Int, end: Int) -> List<Int>
+        mk_intrinsic(
+            interner,
+            "list_range",
+            vec![],
+            vec![("start", int_ty.clone()), ("end", int_ty.clone())],
+            list_int,
+        ),
+        // list_enumerate<T>(xs: List<T>) -> List<{ index: Int, value: T }>
+        mk_intrinsic(
+            interner,
+            "list_enumerate",
+            vec![t_name],
+            vec![("xs", list_t.clone())],
+            list_indexed_t,
+        ),
+        // list_zip<T, U>(xs: List<T>, ys: List<U>) -> List<{ left: T, right: U }>
+        mk_intrinsic(
+            interner,
+            "list_zip",
+            vec![t_name, u_name],
+            vec![("xs", list_t.clone()), ("ys", list_u.clone())],
+            list_pair_tu,
+        ),
+        // list_chunks<T>(xs: List<T>, n: Int) -> List<List<T>>
+        mk_intrinsic(
+            interner,
+            "list_chunks",
+            vec![t_name],
+            vec![("xs", list_t.clone()), ("n", int_ty.clone())],
+            list_list_t.clone(),
+        ),
+        // list_windows<T>(xs: List<T>, n: Int) -> List<List<T>>
+        mk_intrinsic(
+            interner,
+            "list_windows",
+            vec![t_name],
+            vec![("xs", list_t.clone()), ("n", int_ty.clone())],
+            list_list_t,
         ),
         // ── Map<K, V> ───────────────────────────────────────────
         // map_new<K, V>() -> Map<K, V>

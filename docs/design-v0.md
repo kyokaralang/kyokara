@@ -544,8 +544,10 @@ while `io`/`fs` are module namespaces for no-owner/effectful operations.
 * `ParseError` — builtin ADT (`InvalidInt(String) | InvalidFloat(String)`), used as error type for `parse_int`/`parse_float` ✓
 * `List<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<Vec<Value>>`) ✓
   * Constructor: `List.new()`
+  * Static helpers: `List.range(start, end)` returns half-open ascending range `[start, end)` (empty when `start >= end`)
   * Methods: `xs.push(v)`, `xs.len()`, `xs.get(i)` → `Option<T>`, `xs.head()` → `Option<T>`, `xs.tail()`, `xs.is_empty()`, `xs.reverse()`, `xs.concat(ys)`
   * Higher-order: `xs.map(f)`, `xs.filter(f)`, `xs.fold(init, f)`, `xs.sort()`, `xs.sort_by(f)`
+  * Iteration ergonomics: `xs.enumerate()` → `List<{ index: Int, value: T }>`, `xs.zip(ys)` → `List<{ left: T, right: U }>`, `xs.chunks(n)` → `List<List<T>>`, `xs.windows(n)` → `List<List<T>>` (`chunks/windows` require `n > 0`)
   * Search helper: `xs.binary_search(x)` → `Int` with Rust/Java-style insertion contract:
     found index returns `>= 0`; missing element returns `-(insertion_point + 1)`.
     `insertion_point` is where `x` would be inserted to keep sorted order.

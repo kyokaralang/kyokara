@@ -4967,6 +4967,144 @@ fn eval_list_sort_by_runtime_error() {
     assert!(err.contains("division by zero"), "got: {err}");
 }
 
+// ── Iteration ergonomics tests (#259) ──────────────────────────────
+
+#[test]
+fn eval_list_iteration_ergonomics_matrix() {
+    struct Case<'a> {
+        name: &'a str,
+        src: &'a str,
+        expected: Value,
+    }
+
+    let cases = [
+        Case {
+            name: "range half-open",
+            src: "fn main() -> Int {
+                let xs = List.range(0, 5)
+                xs.len() * 100 + xs[0] * 10 + xs[4]
+            }",
+            expected: Value::Int(504),
+        },
+        Case {
+            name: "range equal bounds empty",
+            src: "fn main() -> Int { List.range(3, 3).len() }",
+            expected: Value::Int(0),
+        },
+        Case {
+            name: "range descending empty",
+            src: "fn main() -> Int { List.range(5, 2).len() }",
+            expected: Value::Int(0),
+        },
+        Case {
+            name: "enumerate fields",
+            src: "fn main() -> Int {
+                let pairs = List.new().push(10).push(20).enumerate()
+                pairs[0].index + pairs[0].value + pairs[1].index + pairs[1].value
+            }",
+            expected: Value::Int(31),
+        },
+        Case {
+            name: "zip truncates",
+            src: "fn main() -> Int {
+                let pairs = List.new().push(1).push(2).push(3)
+                    .zip(List.new().push(10).push(20))
+                pairs.len() * 100 + pairs[0].left * 10 + pairs[1].right
+            }",
+            expected: Value::Int(230),
+        },
+        Case {
+            name: "chunks keeps tail",
+            src: "fn main() -> Int {
+                let cs = List.new().push(1).push(2).push(3).push(4).push(5).chunks(2)
+                cs.len() * 100 + cs[0].len() * 10 + cs[2].len()
+            }",
+            expected: Value::Int(321),
+        },
+        Case {
+            name: "windows overlap",
+            src: "fn main() -> Int {
+                let ws = List.new().push(1).push(2).push(3).push(4).push(5).windows(3)
+                ws.len() * 100 + ws[0][0] * 10 + ws[2][2]
+            }",
+            expected: Value::Int(315),
+        },
+        Case {
+            name: "windows larger than len empty",
+            src: "fn main() -> Int {
+                List.new().push(1).push(2).windows(6).len()
+            }",
+            expected: Value::Int(0),
+        },
+        Case {
+            name: "chaining from map set string",
+            src: "fn main() -> Bool {
+                let m = Map.new().insert(\"x\", 1).insert(\"y\", 2)
+                let km = m.keys().enumerate()
+                let map_ok = km.len() == 2 && km[0].index == 0 && km[0].value == \"x\"
+
+                let s = Set.new().insert(\"a\").insert(\"b\").insert(\"c\")
+                let sc = s.values().chunks(2)
+                let set_ok = sc.len() == 2 && sc[0].len() == 2 && sc[1].len() == 1
+
+                let p = \"abc\".chars().zip(List.new().push(10).push(20))
+                let string_ok = p.len() == 2 && p[0].left == 'a' && p[1].right == 20
+
+                map_ok && set_ok && string_ok
+            }",
+            expected: Value::Bool(true),
+        },
+    ];
+
+    for case in cases {
+        let got = run_ok(case.src);
+        assert_eq!(got, case.expected, "case `{}` failed", case.name);
+    }
+}
+
+#[test]
+fn eval_list_chunks_windows_invalid_sizes_report_direct_errors() {
+    struct Case<'a> {
+        name: &'a str,
+        src: &'a str,
+        expected_fragment: &'a str,
+    }
+
+    let cases = [
+        Case {
+            name: "chunks zero",
+            src: "fn main() -> Int { List.new().push(1).chunks(0).len() }",
+            expected_fragment: "list_chunks: chunk size must be > 0",
+        },
+        Case {
+            name: "chunks negative",
+            src: "fn main() -> Int { List.new().push(1).chunks(-1).len() }",
+            expected_fragment: "list_chunks: chunk size must be > 0",
+        },
+        Case {
+            name: "windows zero",
+            src: "fn main() -> Int { List.new().push(1).windows(0).len() }",
+            expected_fragment: "list_windows: window size must be > 0",
+        },
+        Case {
+            name: "windows negative",
+            src: "fn main() -> Int { List.new().push(1).windows(-3).len() }",
+            expected_fragment: "list_windows: window size must be > 0",
+        },
+    ];
+
+    for case in cases {
+        let err = run_err(case.src);
+        assert!(
+            err.contains(case.expected_fragment),
+            "case `{}` expected error containing `{}`, got: {}",
+            case.name,
+            case.expected_fragment,
+            err
+        );
+    }
+}
+
 // ── Index syntax tests ──────────────────────────────────────────────
 
 #[test]

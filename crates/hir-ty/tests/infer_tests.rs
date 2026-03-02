@@ -1,6 +1,10 @@
 //! End-to-end type inference tests: parse → collect item tree → lower → type check → assert.
 #![allow(clippy::unwrap_used)]
 
+use kyokara_hir_def::builtins::{
+    activate_synthetic_imports, register_builtin_intrinsics, register_builtin_methods,
+    register_builtin_types, register_static_methods, register_synthetic_modules,
+};
 use kyokara_hir_def::item_tree::lower::collect_item_tree;
 use kyokara_hir_ty::ty::Ty;
 use kyokara_hir_ty::{TypeCheckResult, check_module};
@@ -24,7 +28,29 @@ fn check(src: &str) -> (TypeCheckResult, Interner) {
     let root = parse_source(src);
     let sf = SourceFile::cast(root.clone()).unwrap();
     let mut interner = Interner::new();
-    let item_result = collect_item_tree(&sf, file_id(), &mut interner);
+    let mut item_result = collect_item_tree(&sf, file_id(), &mut interner);
+    register_builtin_types(
+        &mut item_result.tree,
+        &mut item_result.module_scope,
+        &mut interner,
+    );
+    register_builtin_intrinsics(
+        &mut item_result.tree,
+        &mut item_result.module_scope,
+        &mut interner,
+    );
+    register_builtin_methods(&mut item_result.module_scope, &mut interner);
+    register_synthetic_modules(
+        &mut item_result.tree,
+        &mut item_result.module_scope,
+        &mut interner,
+    );
+    activate_synthetic_imports(
+        &item_result.tree,
+        &mut item_result.module_scope,
+        &mut interner,
+    );
+    register_static_methods(&mut item_result.module_scope, &mut interner);
     let result = check_module(
         &root,
         &item_result.tree,
@@ -617,6 +643,87 @@ fn comparison_returns_bool() {
     check_ok("fn foo() -> Bool { 1 >= 2 }");
 }
 
+// ── Iteration ergonomics inference tests (#259) ────────────────────
+
+#[test]
+fn infer_iteration_ergonomics_happy_paths() {
+    let cases = ["fn main() -> Bool {
+            let xs = List.range(0, 5)
+            let e = xs.enumerate()
+            let z = xs.zip(List.new().push(10).push(20))
+            let c = xs.chunks(2)
+            let w = xs.windows(3)
+            e.len() > 0 && z.len() == 2 && c.len() == 3 && w.len() == 3
+        }"];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected no diagnostics, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn err_iteration_ergonomics_wrong_arity_or_type() {
+    struct Case<'a> {
+        src: &'a str,
+        expected_fragment: &'a str,
+    }
+
+    let cases = [
+        Case {
+            src: "fn main() -> Int { List.range(0) }",
+            expected_fragment: "expected 2 argument(s)",
+        },
+        Case {
+            src: "fn main() -> Int { List.range(0, 3, 5).len() }",
+            expected_fragment: "expected 2 argument(s)",
+        },
+        Case {
+            src: "fn main() -> Int { List.range(true, 3).len() }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "fn main() -> Int { List.new().push(1).zip(1).len() }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "fn main() -> Int { List.new().push(1).chunks(true).len() }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "fn main() -> Int { List.new().push(1).windows(false).len() }",
+            expected_fragment: "type mismatch",
+        },
+    ];
+
+    for case in cases {
+        let (result, _) = check(case.src);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains(case.expected_fragment)),
+            "expected diagnostic containing `{}`; got: {:?}\nsource:\n{}",
+            case.expected_fragment,
+            result.diagnostics,
+            case.src
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|d| !d.message.contains("unresolved name")),
+            "expected canonical surface to resolve names; got unresolved-name diagnostics: {:?}\nsource:\n{}",
+            result.diagnostics,
+            case.src
+        );
+    }
+}
+
 // ── Unresolved name tests ───────────────────────────────────────────
 
 #[test]
@@ -627,6 +734,11 @@ fn err_unresolved_name() {
 #[test]
 fn err_unresolved_name_in_expr() {
     check_err("fn main() -> Int { foo + 1 }", "unresolved name");
+}
+
+#[test]
+fn err_non_canonical_free_range_function_is_unresolved() {
+    check_err("fn main() -> Int { range(0, 3).len() }", "unresolved name");
 }
 
 // ── Unresolved-name diagnostics ─────────────────────────────────────
