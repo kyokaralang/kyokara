@@ -171,7 +171,6 @@ impl<'i> Parser<'i> {
 
     /// Skip tokens wrapping them in an ErrorNode until we hit something
     /// in `recovery` or EOF.
-    #[allow(dead_code)]
     pub fn error_recover_until(&mut self, message: &str, recovery: TokenSet) {
         if self.at_eof() || recovery.contains(self.current()) {
             self.error(message);

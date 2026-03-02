@@ -23,6 +23,8 @@ use crate::token_set::TokenSet;
 const EXPR_RECOVERY: TokenSet = TokenSet::new(&[
     LetKw, RBrace, Semicolon, RParen, Comma, FatArrow, TypeKw, FnKw, CapKw, PropertyKw, LeftArrow,
 ]);
+const IF_HEAD_RECOVERY: TokenSet = TokenSet::new(&[LBrace, ElseKw, Semicolon, RBrace]);
+const MATCH_HEAD_RECOVERY: TokenSet = TokenSet::new(&[LBrace, Semicolon, RBrace]);
 
 /// Entry point: parse an expression.
 pub(super) fn expr(p: &mut Parser<'_>) -> Option<CompletedMarker> {
@@ -180,9 +182,7 @@ fn if_expr(p: &mut Parser<'_>) -> CompletedMarker {
         expr(p);
         p.expect(RParen);
     } else {
-        p.error("if condition must be parenthesized");
-        // Recovery: parse condition expression so we can continue to the block.
-        expr(p);
+        p.error_recover_until("if condition must be parenthesized", IF_HEAD_RECOVERY);
     }
     if p.at(LBrace) {
         block_expr(p);
@@ -209,9 +209,7 @@ fn match_expr(p: &mut Parser<'_>) -> CompletedMarker {
         expr(p);
         p.expect(RParen);
     } else {
-        p.error("match scrutinee must be parenthesized");
-        // Recovery: parse scrutinee expression so we can continue to arm list.
-        expr(p);
+        p.error_recover_until("match scrutinee must be parenthesized", MATCH_HEAD_RECOVERY);
     }
     match_arm_list(p);
     m.complete(p, MatchExpr)

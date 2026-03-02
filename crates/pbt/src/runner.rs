@@ -11,7 +11,7 @@ use kyokara_hir::{
 };
 use kyokara_hir_def::item_tree::FnItemIdx;
 use kyokara_intern::Interner;
-use kyokara_span::FileId;
+use kyokara_span::{FileId, TextRange, TextSize};
 use kyokara_stdx::FxHashMap;
 use kyokara_syntax::SyntaxNode;
 use kyokara_syntax::ast::AstNode;
@@ -78,6 +78,11 @@ pub fn run_tests(source: &str, config: &TestConfig) -> Result<TestReport, String
 
     // 1. Parse.
     let parse = kyokara_syntax::parse(source);
+    let parse_error_ranges: Vec<TextRange> = parse
+        .errors
+        .iter()
+        .map(|err| normalize_parse_error_range(err.range_start, err.range_end, source.len() as u32))
+        .collect();
 
     // 2. Build CST.
     let root = SyntaxNode::new_root(parse.green);
@@ -118,6 +123,7 @@ pub fn run_tests(source: &str, config: &TestConfig) -> Result<TestReport, String
         &root,
         &item_result.tree,
         &item_result.module_scope,
+        &parse_error_ranges,
         file_id,
         &mut interner,
     );
@@ -296,6 +302,23 @@ fn collect_compile_errors_project<T: std::fmt::Debug>(
 
 fn is_error(d: &&kyokara_diagnostics::Diagnostic) -> bool {
     d.severity == kyokara_diagnostics::Severity::Error
+}
+
+fn normalize_parse_error_range(start: u32, end: u32, source_len: u32) -> TextRange {
+    let start = start.min(source_len);
+    let end = end.min(source_len);
+    if start < end {
+        return TextRange::new(TextSize::from(start), TextSize::from(end));
+    }
+    if source_len == 0 {
+        return TextRange::new(TextSize::from(0), TextSize::from(0));
+    }
+    if start < source_len {
+        let right = (start + 1).min(source_len);
+        return TextRange::new(TextSize::from(start), TextSize::from(right));
+    }
+    let left = start.saturating_sub(1);
+    TextRange::new(TextSize::from(left), TextSize::from(start))
 }
 
 fn format_module_path(path: &ModulePath, interner: &Interner) -> String {

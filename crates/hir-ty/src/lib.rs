@@ -25,7 +25,7 @@ use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree};
 use kyokara_hir_def::resolver::ModuleScope;
 use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_intern::Interner;
-use kyokara_span::{FileId, Span};
+use kyokara_span::{FileId, Span, TextRange};
 use kyokara_stdx::FxHashMap;
 use kyokara_syntax::SyntaxNode;
 use kyokara_syntax::ast::AstNode;
@@ -62,6 +62,7 @@ pub fn check_module(
     root: &SyntaxNode,
     item_tree: &ItemTree,
     module_scope: &ModuleScope,
+    parse_error_ranges: &[TextRange],
     file_id: FileId,
     interner: &mut Interner,
 ) -> TypeCheckResult {
@@ -77,6 +78,12 @@ pub fn check_module(
 
     for (fn_idx, fn_item) in item_tree.functions.iter() {
         if !fn_item.has_body {
+            continue;
+        }
+        if fn_item
+            .source_range
+            .is_some_and(|range| overlaps_parse_error(range, parse_error_ranges))
+        {
             continue;
         }
 
@@ -134,6 +141,12 @@ pub fn check_module(
 
     // Validate type argument arities in function signatures.
     for (_, fn_item) in item_tree.functions.iter() {
+        if fn_item
+            .source_range
+            .is_some_and(|range| overlaps_parse_error(range, parse_error_ranges))
+        {
+            continue;
+        }
         let fn_span = fn_item
             .source_range
             .map(|r| Span {
@@ -174,6 +187,12 @@ pub fn check_module(
         body_lowering_diagnostics,
         fn_calls,
     }
+}
+
+fn overlaps_parse_error(range: TextRange, parse_error_ranges: &[TextRange]) -> bool {
+    parse_error_ranges
+        .iter()
+        .any(|parse_range| range.intersect(*parse_range).is_some())
 }
 
 /// Walk a TypeRef tree and emit diagnostics for type argument arity mismatches.

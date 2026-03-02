@@ -12,6 +12,9 @@ use crate::token_set::TokenSet;
 pub(super) const ITEM_RECOVERY: TokenSet = TokenSet::new(&[
     ModuleKw, ImportKw, TypeKw, FnKw, CapKw, EffectKw, PropertyKw, LetKw, PubKw,
 ]);
+const CLAUSE_EXPR_RECOVERY: TokenSet = TokenSet::new(&[
+    LBrace, RBrace, Semicolon, Comma, WithKw, PipeKw, RequiresKw, EnsuresKw, InvariantKw, WhereKw,
+]);
 
 pub(super) fn item(p: &mut Parser<'_>) -> Option<CompletedMarker> {
     // `pub` can precede fn, type, or effect.
@@ -326,9 +329,7 @@ fn parse_parenthesized_clause_expr(p: &mut Parser<'_>, message: &str) {
         super::expressions::expr(p);
         p.expect(RParen);
     } else {
-        p.error(message);
-        // Recovery: parse the clause expression in old style and continue.
-        super::expressions::expr(p);
+        p.error_recover_until(message, CLAUSE_EXPR_RECOVERY);
     }
 }
 

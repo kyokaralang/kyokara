@@ -156,7 +156,7 @@ mod tests {
     fn quickfix_for_missing_match_arms() {
         let source = "type Color = Red | Green | Blue\n\
                       fn pick(c: Color) -> Int {\n\
-                        match c {\n\
+                        match (c) {\n\
                           Red => 1\n\
                         }\n\
                       }";

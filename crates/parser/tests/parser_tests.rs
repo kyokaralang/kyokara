@@ -276,10 +276,15 @@ fn fn_def_contract_unparenthesized_requires_reports_targeted_error() {
     let (_events, errors) = parse_tokens(&[
         FnKw, Ident, LParen, RParen, Arrow, Ident, RequiresKw, Ident, LBrace, IntLiteral, RBrace,
     ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted requires error, got: {errors:?}"
+    );
     assert!(
-        errors.iter().any(|e| e
+        errors[0]
             .message
-            .contains("requires clause expression must be parenthesized")),
+            .contains("requires clause expression must be parenthesized"),
         "expected parenthesized-requires diagnostic, got: {errors:?}"
     );
 }
@@ -418,10 +423,15 @@ fn if_expr_unparenthesized_condition_reports_targeted_error() {
         LetKw, Ident, Eq, IfKw, TrueKw, LBrace, IntLiteral, RBrace, ElseKw, LBrace, IntLiteral,
         RBrace,
     ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted if error, got: {errors:?}"
+    );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.message.contains("if condition must be parenthesized")),
+        errors[0]
+            .message
+            .contains("if condition must be parenthesized"),
         "expected parenthesized-if diagnostic, got: {errors:?}"
     );
 }
@@ -446,10 +456,15 @@ fn match_expr_unparenthesized_scrutinee_reports_targeted_error() {
         LetKw, Ident, Eq, MatchKw, Ident, LBrace, IntLiteral, FatArrow, IntLiteral, Comma,
         Underscore, FatArrow, IntLiteral, RBrace,
     ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted match error, got: {errors:?}"
+    );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.message.contains("match scrutinee must be parenthesized")),
+        errors[0]
+            .message
+            .contains("match scrutinee must be parenthesized"),
         "expected parenthesized-match diagnostic, got: {errors:?}"
     );
 }
@@ -963,10 +978,15 @@ fn property_where_unparenthesized_reports_targeted_error() {
         PropertyKw, Ident, LParen, Ident, Colon, Ident, LeftArrow, Ident, Dot, Ident, LParen,
         RParen, RParen, WhereKw, Ident, Gt, IntLiteral,
     ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted where error, got: {errors:?}"
+    );
     assert!(
-        errors.iter().any(|e| e
+        errors[0]
             .message
-            .contains("where clause expression must be parenthesized")),
+            .contains("where clause expression must be parenthesized"),
         "expected parenthesized-where diagnostic, got: {errors:?}"
     );
 }

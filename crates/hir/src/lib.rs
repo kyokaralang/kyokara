@@ -34,7 +34,7 @@ use std::collections::HashMap;
 use kyokara_diagnostics::{Diagnostic, DiagnosticKind};
 use kyokara_intern::Interner;
 use kyokara_parser::ParseError;
-use kyokara_span::{FileId, FileMap, TextRange};
+use kyokara_span::{FileId, FileMap, TextRange, TextSize};
 use kyokara_syntax::SyntaxNode;
 use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::SourceFile;
@@ -117,6 +117,7 @@ pub fn check_file(source: &str) -> CheckResult {
     let parse = kyokara_syntax::parse(source);
     let green = parse.green.clone();
     let parse_errors = parse.errors;
+    let parse_error_ranges = normalized_parse_error_ranges(&parse_errors, source.len() as u32);
 
     // 2. Build CST root and SourceFile.
     let root = SyntaxNode::new_root(parse.green);
@@ -155,6 +156,7 @@ pub fn check_file(source: &str) -> CheckResult {
         &root,
         &item_result.tree,
         &item_result.module_scope,
+        &parse_error_ranges,
         file_id,
         &mut interner,
     );
@@ -191,6 +193,7 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
     let mut module_graph = ModuleGraph::new();
     let mut all_parse_errors = Vec::new();
     let mut all_lowering_diagnostics = Vec::new();
+    let mut parse_error_ranges_by_module: HashMap<ModulePath, Vec<TextRange>> = HashMap::new();
     let mut cst_roots: Vec<(ModulePath, SyntaxNode)> = Vec::new();
 
     let root = entry_file.parent().unwrap_or(std::path::Path::new("."));
@@ -215,6 +218,8 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
             }
         };
         let parse = kyokara_syntax::parse(&source);
+        let parse_error_ranges = normalized_parse_error_ranges(&parse.errors, source.len() as u32);
+        parse_error_ranges_by_module.insert(mod_path.clone(), parse_error_ranges);
 
         if !parse.errors.is_empty() {
             all_parse_errors.push((mod_path.clone(), parse.errors.clone()));
@@ -271,10 +276,15 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
     for (mod_path, cst_root) in &cst_roots {
         #[allow(clippy::unwrap_used)] // key comes from cst_roots, always in module_graph
         let info = module_graph.get(mod_path).unwrap();
+        let parse_error_ranges = parse_error_ranges_by_module
+            .get(mod_path)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
         let tc = check_module(
             cst_root,
             &info.item_tree,
             &info.scope,
+            parse_error_ranges,
             info.file_id,
             &mut interner,
         );
@@ -289,6 +299,33 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
         parse_errors: all_parse_errors,
         lowering_diagnostics: all_lowering_diagnostics,
     }
+}
+
+fn normalized_parse_error_ranges(parse_errors: &[ParseError], source_len: u32) -> Vec<TextRange> {
+    parse_errors
+        .iter()
+        .map(|err| normalize_parse_error_range(err, source_len))
+        .collect()
+}
+
+fn normalize_parse_error_range(err: &ParseError, source_len: u32) -> TextRange {
+    let start = err.range_start.min(source_len);
+    let end = err.range_end.min(source_len);
+    if start < end {
+        return TextRange::new(TextSize::from(start), TextSize::from(end));
+    }
+
+    if source_len == 0 {
+        return TextRange::new(TextSize::from(0), TextSize::from(0));
+    }
+
+    if start < source_len {
+        let right = (start + 1).min(source_len);
+        return TextRange::new(TextSize::from(start), TextSize::from(right));
+    }
+
+    let left = start.saturating_sub(1);
+    TextRange::new(TextSize::from(left), TextSize::from(start))
 }
 
 /// Resolve imports across all modules in the graph.

@@ -1473,7 +1473,7 @@ fn test_fn_ref_emitted_for_function_value() {
 #[test]
 fn test_fn_ref_guard_hole_stays_hole() {
     // Guard: typed holes should still emit hole instructions, not fn_ref.
-    let out = lower_and_display("fn f(x: Int) -> Int { x + ?todo }");
+    let out = lower_and_display("fn f(x: Int) -> Int { x + _ }");
     assert!(
         out.contains("hole #"),
         "typed hole should remain a hole. output:\n{out}"
