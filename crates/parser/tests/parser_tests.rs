@@ -588,13 +588,34 @@ fn cap_keyword_is_rejected_with_effect_rewrite_hint() {
 
 #[test]
 fn effect_def() {
+    // effect IO
+    let (events, errors) = parse_tokens(&[EffectKw, Ident]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, CapDef));
+    assert_eq!(
+        count_start_nodes(&events, FnDef),
+        0,
+        "label-only effect declarations should not contain member fns"
+    );
+}
+
+#[test]
+fn effect_def_with_body_is_rejected() {
     // effect IO { fn read() { 0 } }
     let (events, errors) = parse_tokens(&[
         EffectKw, Ident, LBrace, FnKw, Ident, LParen, RParen, LBrace, IntLiteral, RBrace, RBrace,
     ]);
-    assert!(has_no_errors(&errors));
-    assert!(has_node(&events, CapDef));
-    assert!(has_node(&events, FnDef));
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message.contains("effect declarations are labels only")),
+        "expected label-only effect diagnostic, got: {errors:?}"
+    );
+    assert_eq!(
+        count_start_nodes(&events, FnDef),
+        0,
+        "rejected effect body should not lower nested fn defs"
+    );
 }
 
 // ── Modulo, logical, and bitwise operators ──────────────────────────

@@ -716,10 +716,7 @@ fn lower_hole_expr() {
 #[test]
 fn collect_cap_def() {
     let src = r#"
-cap Console {
-    fn print(msg: String) -> Unit {}
-    fn read() -> String {}
-}
+effect Console
 "#;
     let root = parse_source(src);
     let sf = SourceFile::cast(root).unwrap();
@@ -729,7 +726,7 @@ cap Console {
     assert_eq!(result.tree.caps.len(), 1);
     let cap = &result.tree.caps[result.tree.caps.iter().next().unwrap().0];
     assert_eq!(cap.name.resolve(&interner), "Console");
-    assert_eq!(cap.functions.len(), 2);
+    assert_eq!(cap.functions.len(), 0);
 }
 
 #[test]

@@ -225,12 +225,6 @@ impl HasName for CapDef {}
 impl HasTypeParams for CapDef {}
 impl HasVisibility for CapDef {}
 
-impl CapDef {
-    pub fn functions(&self) -> impl Iterator<Item = FnDef> + '_ {
-        support::children(&self.syntax)
-    }
-}
-
 define_ast_node!(PropertyDef, PropertyDef);
 
 impl HasName for PropertyDef {}

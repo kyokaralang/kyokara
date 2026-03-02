@@ -188,10 +188,8 @@ mod tests {
 
     #[test]
     fn quickfix_for_missing_capability() {
-        let source = r#"cap Console {
-    fn print(s: String) -> Unit
-}
-fn effectful() -> Unit with Console { print("hi") }
+        let source = r#"effect Console
+fn effectful() -> Unit with Console { () }
 fn pure_caller() -> Unit { effectful() }"#;
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));

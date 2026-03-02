@@ -31,7 +31,7 @@ pub fn hover(analysis: &Arc<FileAnalysis>, _source: &str, offset: TextSize) -> O
         SymbolAtPosition::Type { ref name, .. } => {
             hover_type(name, &analysis.item_tree, &analysis.interner)
         }
-        SymbolAtPosition::Capability { ref name, .. } => Some(format!("cap {name}")),
+        SymbolAtPosition::Capability { ref name, .. } => Some(format!("effect {name}")),
         SymbolAtPosition::Variant { ref name, .. } => {
             hover_variant(name, &analysis.item_tree, &analysis.interner)
         }
@@ -285,16 +285,14 @@ mod tests {
 
     #[test]
     fn hover_on_capability_usage() {
-        let source = "cap Console {\n\
-                        fn print(s: String) -> Unit\n\
-                      }\n\
-                      fn effectful() -> Unit with Console { print(\"hi\") }";
+        let source = "effect Console\n\
+                      fn effectful() -> Unit with Console { () }";
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
-        let cap_offset = source.find("Console {").expect("cap usage offset");
+        let cap_offset = source.find("Console").expect("effect usage offset");
         let contents = hover_text(&analysis, source, TextSize::from(cap_offset as u32))
             .expect("hover should exist");
-        assert!(contents.contains("cap Console"), "got: {contents}");
+        assert!(contents.contains("effect Console"), "got: {contents}");
     }
 
     #[test]

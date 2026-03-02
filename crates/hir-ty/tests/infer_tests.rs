@@ -468,9 +468,7 @@ fn effect_pure_calling_pure_ok() {
 #[test]
 fn effect_with_cap_calling_effectful_ok() {
     check_ok(
-        "cap Console {
-             fn print(msg: String) -> Unit {}
-         }
+        "effect Console
          fn effectful() -> Unit with Console { }
          fn foo() -> Unit with Console { effectful() }",
     );
@@ -479,9 +477,7 @@ fn effect_with_cap_calling_effectful_ok() {
 #[test]
 fn err_effect_violation() {
     check_err(
-        "cap Console {
-             fn print(msg: String) -> Unit {}
-         }
+        "effect Console
          fn effectful() -> Unit with Console { }
          fn foo() -> Unit { effectful() }",
         "effect violation",

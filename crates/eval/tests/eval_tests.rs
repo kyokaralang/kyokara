@@ -1833,7 +1833,7 @@ fn manifest_grants_user_cap() {
     let manifest = manifest_from_json(r#"{"caps": {"Console": {}}}"#);
     let val = run_with_manifest_ok(
         r#"
-        cap Console { fn log(msg: String) -> Unit }
+        effect Console
         fn greet(name: String) -> String with Console {
             "hi ".concat(name)
         }
@@ -1852,7 +1852,7 @@ fn manifest_denies_user_cap() {
     let manifest = manifest_from_json(r#"{"caps": {"io": {}}}"#);
     let err = run_with_manifest_err(
         r#"
-        cap Console { fn log(msg: String) -> Unit }
+        effect Console
         fn greet(name: String) -> String with Console {
             "hi ".concat(name)
         }
@@ -1871,8 +1871,8 @@ fn manifest_grants_multiple_caps() {
     let manifest = manifest_from_json(r#"{"caps": {"Console": {}, "Logger": {}}}"#);
     let val = run_with_manifest_ok(
         r#"
-        cap Console { fn log(msg: String) -> Unit }
-        cap Logger { fn trace(msg: String) -> Unit }
+        effect Console
+        effect Logger
         fn do_stuff(x: Int) -> Int with Console, Logger {
             x + 1
         }
@@ -1890,8 +1890,8 @@ fn manifest_missing_one_of_multiple_caps() {
     let manifest = manifest_from_json(r#"{"caps": {"Console": {}}}"#);
     let err = run_with_manifest_err(
         r#"
-        cap Console { fn log(msg: String) -> Unit }
-        cap Logger { fn trace(msg: String) -> Unit }
+        effect Console
+        effect Logger
         fn do_stuff(x: Int) -> Int with Console, Logger {
             x + 1
         }
@@ -2298,11 +2298,9 @@ fn run_rejects_compile_invalid_programs_detected_by_check() {
 }
 
 #[test]
-fn run_allows_cap_member_bodyless_signature() {
+fn run_allows_label_only_effect_declaration() {
     let src = r#"
-cap IO {
-  fn read() -> String
-}
+effect IO
 fn main() -> Int { 1 }
 "#;
     let value = run_ok(src);
