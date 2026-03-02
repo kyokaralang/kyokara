@@ -58,7 +58,46 @@ impl<'a> InferenceCtx<'a> {
                 }
                 let name = path.segments[0];
 
-                if let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&name) {
+                // Prefer owner-type resolution when expected type is known.
+                // This avoids constructor-name collisions across unrelated ADTs.
+                let resolved_expected = self.table.resolve_deep(expected);
+                if let Ty::Adt {
+                    def: expected_def, ..
+                } = resolved_expected
+                    && let TypeDefKind::Adt { variants } = &self.item_tree.types[expected_def].kind
+                    && let Some(variant_idx) = variants.iter().position(|v| v.name == name)
+                {
+                    let env = Self::make_env(
+                        self.item_tree,
+                        self.module_scope,
+                        self.interner,
+                        &self.type_params,
+                    );
+                    let (field_tys, adt_ty) =
+                        instantiate_constructor(expected_def, variant_idx, &env, &mut self.table);
+
+                    self.unify_or_err(expected, &adt_ty);
+
+                    if args.len() != field_tys.len() {
+                        self.push_pat_diag(
+                            pat_idx,
+                            TyDiagnosticData::ArgCountMismatch {
+                                expected: field_tys.len(),
+                                actual: args.len(),
+                            },
+                        );
+                        for sub in &args {
+                            self.infer_pat(*sub, &Ty::Error);
+                        }
+                    } else {
+                        for (sub, field_ty) in args.iter().zip(field_tys.iter()) {
+                            self.infer_pat(*sub, field_ty);
+                        }
+                    }
+                    adt_ty
+                } else if let Some(&(type_idx, variant_idx)) =
+                    self.module_scope.constructors.get(&name)
+                {
                     let env = Self::make_env(
                         self.item_tree,
                         self.module_scope,

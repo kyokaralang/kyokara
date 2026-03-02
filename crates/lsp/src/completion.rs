@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use kyokara_hir::{TypeDefKind, display_ty_with_tree};
+use kyokara_hir_def::resolver::StaticOwnerKey;
 use kyokara_parser::SyntaxKind;
 use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::FnDef;
@@ -143,8 +144,21 @@ fn try_dot_completion(
     }
 
     // Check static methods: List.new, Map.new, etc.
-    for ((ty_name, method_name), fn_idx) in &scope.static_methods {
-        if ty_name.resolve(interner) == base_name {
+    let base_type_idx = scope
+        .types
+        .iter()
+        .find_map(|(ty_name, ty_idx)| (ty_name.resolve(interner) == base_name).then_some(*ty_idx));
+    if let Some(ty_idx) = base_type_idx {
+        let owner_key = if let Some(core) = scope.core_types.kind_for_idx(ty_idx) {
+            StaticOwnerKey::Core(core)
+        } else {
+            StaticOwnerKey::User(ty_idx)
+        };
+
+        for ((static_owner, method_name), fn_idx) in &scope.static_methods {
+            if *static_owner != owner_key {
+                continue;
+            }
             let fn_item = &tree.functions[*fn_idx];
             let params: Vec<String> = fn_item
                 .params

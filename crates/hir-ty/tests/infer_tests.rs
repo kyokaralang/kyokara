@@ -404,16 +404,16 @@ fn err_negation_on_bool() {
 #[test]
 fn infer_adt_constructor_call() {
     check_ok(
-        "type Option<T> = Some(T) | None
-         fn foo() -> Option<Int> { Some(42) }",
+        "type Maybe<T> = Just(T) | Nothing
+         fn foo() -> Maybe<Int> { Just(42) }",
     );
 }
 
 #[test]
 fn infer_adt_nullary_constructor() {
     check_ok(
-        "type Option<T> = Some(T) | None
-         fn foo() -> Option<Int> { None }",
+        "type Maybe<T> = Just(T) | Nothing
+         fn foo() -> Maybe<Int> { Nothing }",
     );
 }
 
@@ -433,11 +433,11 @@ fn infer_match_basic() {
 #[test]
 fn infer_match_with_bind() {
     check_ok(
-        "type Option<T> = Some(T) | None
-         fn foo(x: Option<Int>) -> Int {
+        "type Maybe<T> = Just(T) | Nothing
+         fn foo(x: Maybe<Int>) -> Int {
              match (x) {
-                 Some(v) => v
-                 None => 0
+                 Just(v) => v
+                 Nothing => 0
              }
          }",
     );
@@ -855,11 +855,11 @@ fn nested_shadowing_resolves_correctly() {
 fn match_arm_scope_isolation() {
     // Bindings in one match arm must not leak to the next arm or after the match.
     check_ok(
-        "type Option<T> = Some(T) | None
-         fn foo(o: Option<Int>) -> Int {
+        "type Maybe<T> = Just(T) | Nothing
+         fn foo(o: Maybe<Int>) -> Int {
              let result = match (o) {
-                 Some(v) => v
-                 None => 0
+                 Just(v) => v
+                 Nothing => 0
              }
              result
          }",

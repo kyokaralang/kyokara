@@ -175,6 +175,24 @@ Human ergonomics sugar is allowed only if lossless and equivalent to canonical A
 
 Prefer additive evolution. Breaking changes require deprecation windows and migration guidance/tooling.
 
+### L16. Core behavior binds by identity, not names (`MUST`)
+
+Core method/static/constructor behavior must dispatch by internal type identity, not by surface string names.
+
+Implications:
+
+- user type-name shadowing (`type Result<...> = ...`, `type List<T> = ...`) must not retarget builtin core behavior
+- runtime must not rely on `expect("... not registered")` for core constructor lookup paths reachable from user code
+- inference/eval/KIR must agree on the same identity-based owner key model
+
+### L17. Temporary unqualified core constructor reservation (`MUST`, temporary)
+
+Until qualified constructors are available, unqualified user ADT variants with names
+`Some`, `None`, `Ok`, `Err`, `InvalidInt`, `InvalidFloat` are reserved and rejected.
+
+This is a temporary safety gate and must be removed once qualified constructor usage
+(`Type.Variant`) is implemented ([#293](https://github.com/kyokaralang/kyokara/issues/293)).
+
 ## Visibility policy (canonical decision)
 
 Kyokara uses this intrinsic visibility matrix:
@@ -200,6 +218,8 @@ The following can be enforced by lints/tooling:
 5. unnamespaced canonical runtime APIs
 6. unstable parameter ordering changes across versions
 7. forbidden global intrinsic spellings resolving in user scope
+8. core method/static/constructor dispatch keyed by surface names instead of owner identity
+9. unqualified user constructors colliding with reserved core constructor names while reservation is active
 
 ## API-surface conformance checklist
 
@@ -218,6 +238,8 @@ Use this checklist in PRs that add or change stdlib/intrinsic/public APIs.
 - [ ] If pipe-eligible, `x |> f(...)` desugars cleanly to `f(x, ...)` (`L12`).
 - [ ] Any sugar is lossless and desugars to canonical form (`L14`).
 - [ ] Parsing APIs follow source-owner placement and return `Result` (`L6`).
+- [ ] Core dispatch path is identity-based (no string-name dispatch for core behavior) (`L16`).
+- [ ] Constructor names pass temporary reservation gate or use qualified form once available (`L17`).
 
 ### B. API change checklist
 
@@ -241,6 +263,7 @@ Mark one:
 2. align stdlib/intrinsic docs to canonical forms
 3. add conformance checks incrementally (lint + tests)
 4. enforce evolution/deprecation policy in release process
+5. ship qualified constructors and remove temporary reservation rule ([#293](https://github.com/kyokaralang/kyokara/issues/293))
 
 ## Open questions
 

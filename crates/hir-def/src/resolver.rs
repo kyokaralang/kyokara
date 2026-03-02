@@ -5,9 +5,118 @@
 
 use kyokara_stdx::{FxHashMap, FxHashSet};
 
+use kyokara_intern::Interner;
+
 use crate::item_tree::{EffectItemIdx, FnItemIdx, TypeItemIdx};
 use crate::name::Name;
 use crate::scope::{ScopeDef, ScopeIdx, ScopeTree};
+
+/// Primitive receiver categories (for method dispatch).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PrimitiveType {
+    String,
+    Int,
+    Float,
+    Bool,
+    Char,
+}
+
+/// Core stdlib types that must resolve by identity, not by surface name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CoreType {
+    Option,
+    Result,
+    List,
+    Map,
+    Set,
+    ParseError,
+}
+
+/// Method receiver identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReceiverKey {
+    Primitive(PrimitiveType),
+    Core(CoreType),
+    User(TypeItemIdx),
+}
+
+/// Static method owner identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StaticOwnerKey {
+    Core(CoreType),
+    User(TypeItemIdx),
+}
+
+/// Concrete identity of a registered core type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CoreTypeInfo {
+    pub type_idx: TypeItemIdx,
+    pub type_name: Name,
+}
+
+/// Identity registry for core types.
+#[derive(Debug, Default, Clone)]
+pub struct CoreTypes {
+    pub option: Option<CoreTypeInfo>,
+    pub result: Option<CoreTypeInfo>,
+    pub list: Option<CoreTypeInfo>,
+    pub map: Option<CoreTypeInfo>,
+    pub set: Option<CoreTypeInfo>,
+    pub parse_error: Option<CoreTypeInfo>,
+}
+
+impl CoreTypes {
+    pub fn get(&self, core: CoreType) -> Option<CoreTypeInfo> {
+        match core {
+            CoreType::Option => self.option,
+            CoreType::Result => self.result,
+            CoreType::List => self.list,
+            CoreType::Map => self.map,
+            CoreType::Set => self.set,
+            CoreType::ParseError => self.parse_error,
+        }
+    }
+
+    pub fn set(&mut self, core: CoreType, info: CoreTypeInfo) {
+        match core {
+            CoreType::Option => self.option = Some(info),
+            CoreType::Result => self.result = Some(info),
+            CoreType::List => self.list = Some(info),
+            CoreType::Map => self.map = Some(info),
+            CoreType::Set => self.set = Some(info),
+            CoreType::ParseError => self.parse_error = Some(info),
+        }
+    }
+
+    pub fn kind_for_idx(&self, type_idx: TypeItemIdx) -> Option<CoreType> {
+        for core in [
+            CoreType::Option,
+            CoreType::Result,
+            CoreType::List,
+            CoreType::Map,
+            CoreType::Set,
+            CoreType::ParseError,
+        ] {
+            if self.get(core).is_some_and(|info| info.type_idx == type_idx) {
+                return Some(core);
+            }
+        }
+        None
+    }
+}
+
+/// Map user-facing core type names to core categories.
+pub fn core_type_from_public_name(name: Name, interner: &Interner) -> Option<CoreType> {
+    match name.resolve(interner) {
+        "Option" => Some(CoreType::Option),
+        "Result" => Some(CoreType::Result),
+        "List" => Some(CoreType::List),
+        "Map" => Some(CoreType::Map),
+        "Set" => Some(CoreType::Set),
+        "ParseError" => Some(CoreType::ParseError),
+        _ => None,
+    }
+}
 
 /// Cached names for built-in primitive types, used during method resolution
 /// so that type inference can map `Ty::String` → `Name("String")` without
@@ -37,19 +146,21 @@ pub struct ModuleScope {
     pub constructors: FxHashMap<Name, (TypeItemIdx, usize)>,
     /// Imported names: `local_name -> import_index`.
     pub imports: FxHashMap<Name, usize>,
-    /// Method definitions: `(receiver_type_name, method_name)` → `FnItemIdx`.
-    pub methods: FxHashMap<(Name, Name), FnItemIdx>,
+    /// Method definitions: `(receiver_identity, method_name)` → `FnItemIdx`.
+    pub methods: FxHashMap<(ReceiverKey, Name), FnItemIdx>,
     /// Synthetic modules: `module_name` → `{ fn_name → FnItemIdx }`.
     /// Module-qualified calls like `io.println(s)` resolve through this.
     pub synthetic_modules: FxHashMap<Name, FxHashMap<Name, FnItemIdx>>,
-    /// Static methods: `(type_name, method_name)` → `FnItemIdx`.
+    /// Static methods: `(owner_identity, method_name)` → `FnItemIdx`.
     /// Type-namespaced constructors like `List.new()` resolve through this.
-    pub static_methods: FxHashMap<(Name, Name), FnItemIdx>,
+    pub static_methods: FxHashMap<(StaticOwnerKey, Name), FnItemIdx>,
     /// Internal lookup table: intrinsic name → FnItemIdx.
     /// Populated by `register_builtin_intrinsics`, used by method/module/static registration.
     /// Not part of the public name resolution — intrinsics are only reachable through
     /// methods, synthetic modules, or static methods.
     pub intrinsic_fn_lookup: FxHashMap<Name, FnItemIdx>,
+    /// Identity registry for core stdlib types.
+    pub core_types: CoreTypes,
     /// Cached primitive type names for method resolution.
     pub well_known_names: WellKnownNames,
     /// Synthetic modules that have been explicitly imported (e.g., `import io`).

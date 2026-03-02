@@ -5,7 +5,9 @@ use std::collections::HashSet;
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, Stmt, UnaryOp};
 use kyokara_hir_def::item_tree::TypeDefKind;
 use kyokara_hir_def::pat::Pat;
-use kyokara_hir_def::resolver::ResolvedName;
+use kyokara_hir_def::resolver::{
+    CoreType, PrimitiveType, ReceiverKey, ResolvedName, StaticOwnerKey,
+};
 use kyokara_hir_def::scope::ScopeDef;
 
 use crate::diagnostics::TyDiagnosticData;
@@ -1176,18 +1178,34 @@ impl<'a> InferenceCtx<'a> {
             .collect()
     }
 
-    /// Map a resolved type to its well-known type name for method lookup.
-    fn type_category_name(&self, ty: &Ty) -> Option<kyokara_hir_def::name::Name> {
-        let wk = &self.module_scope.well_known_names;
+    /// Map a resolved type to its dispatch identity for method lookup.
+    fn receiver_key_for_ty(&self, ty: &Ty) -> Option<ReceiverKey> {
         match ty {
-            Ty::String => wk.string,
-            Ty::Int => wk.int,
-            Ty::Float => wk.float,
-            Ty::Bool => wk.bool_,
-            Ty::Char => wk.char_,
-            Ty::Adt { def, .. } => Some(self.item_tree.types[*def].name),
+            Ty::String => Some(ReceiverKey::Primitive(PrimitiveType::String)),
+            Ty::Int => Some(ReceiverKey::Primitive(PrimitiveType::Int)),
+            Ty::Float => Some(ReceiverKey::Primitive(PrimitiveType::Float)),
+            Ty::Bool => Some(ReceiverKey::Primitive(PrimitiveType::Bool)),
+            Ty::Char => Some(ReceiverKey::Primitive(PrimitiveType::Char)),
+            Ty::Adt { def, .. } => Some(
+                self.module_scope
+                    .core_types
+                    .kind_for_idx(*def)
+                    .map(ReceiverKey::Core)
+                    .unwrap_or(ReceiverKey::User(*def)),
+            ),
             _ => None,
         }
+    }
+
+    fn static_owner_key_for_type_idx(
+        &self,
+        type_idx: kyokara_hir_def::item_tree::TypeItemIdx,
+    ) -> StaticOwnerKey {
+        self.module_scope
+            .core_types
+            .kind_for_idx(type_idx)
+            .map(StaticOwnerKey::Core)
+            .unwrap_or(StaticOwnerKey::User(type_idx))
     }
 
     /// Try to resolve `base.field(args)` as a module-qualified or static method call.
@@ -1235,10 +1253,11 @@ impl<'a> InferenceCtx<'a> {
         }
 
         // Static method call: List.new(), Map.new()
-        if self.module_scope.types.contains_key(&name)
-            && let Some(&fn_idx) = self.module_scope.static_methods.get(&(name, field))
-        {
-            return Some(self.infer_qualified_fn_call(callee, fn_idx, args));
+        if let Some(&type_idx) = self.module_scope.types.get(&name) {
+            let owner_key = self.static_owner_key_for_type_idx(type_idx);
+            if let Some(&fn_idx) = self.module_scope.static_methods.get(&(owner_key, field)) {
+                return Some(self.infer_qualified_fn_call(callee, fn_idx, args));
+            }
         }
 
         None
@@ -1343,8 +1362,13 @@ impl<'a> InferenceCtx<'a> {
         }
 
         // Look up method in the registry.
-        let type_name = self.type_category_name(&base_ty_resolved)?;
-        let fn_idx = match self.module_scope.methods.get(&(type_name, field)).copied() {
+        let receiver_key = self.receiver_key_for_ty(&base_ty_resolved)?;
+        let fn_idx = match self
+            .module_scope
+            .methods
+            .get(&(receiver_key, field))
+            .copied()
+        {
             Some(idx) => idx,
             None => {
                 // Type has a name but no such method exists — emit diagnostic.
@@ -1429,10 +1453,10 @@ impl<'a> InferenceCtx<'a> {
         // from the receiver are now concrete.
         let base_after = self.table.resolve_deep(&base_ty);
         if let Ty::Adt { def, args } = &base_after {
-            let type_name = self.item_tree.types[*def].name.resolve(self.interner);
+            let core = self.module_scope.core_types.kind_for_idx(*def);
             let method_str = method_name.resolve(self.interner);
 
-            if type_name == "Map"
+            if core == Some(CoreType::Map)
                 && args.len() >= 2
                 && matches!(
                     method_str,
@@ -1447,7 +1471,7 @@ impl<'a> InferenceCtx<'a> {
 
             // Check Set element type: methods that take an element (insert, contains, remove)
             // must have a hashable element type.
-            if type_name == "Set"
+            if core == Some(CoreType::Set)
                 && !args.is_empty()
                 && matches!(method_str, "set_insert" | "set_contains" | "set_remove")
             {
@@ -1459,7 +1483,7 @@ impl<'a> InferenceCtx<'a> {
 
             // Check List.sort()/List.binary_search() element type: only naturally
             // orderable types allowed.
-            if type_name == "List"
+            if core == Some(CoreType::List)
                 && !args.is_empty()
                 && matches!(method_str, "list_sort" | "list_binary_search")
             {
@@ -1478,34 +1502,31 @@ impl<'a> InferenceCtx<'a> {
         let base_ty = self.table.resolve_deep(&base_ty);
 
         match &base_ty {
-            Ty::Adt { def, args } => {
-                let type_name = self.item_tree.types[*def].name.resolve(self.interner);
-                match type_name {
-                    "List" => {
-                        self.infer_expr(index, &Expectation::Has(Ty::Int));
-                        args.first().cloned().unwrap_or(Ty::Error)
-                    }
-                    "Map" => {
-                        let key_ty = args
-                            .first()
-                            .cloned()
-                            .unwrap_or_else(|| self.table.fresh_var());
-                        self.infer_expr(index, &Expectation::Has(key_ty.clone()));
-                        let resolved_key = self.table.resolve_deep(&key_ty);
-                        if !resolved_key.is_hashable_collection_key() {
-                            self.push_diag(TyDiagnosticData::InvalidMapKey { ty: resolved_key });
-                        }
-                        args.get(1).cloned().unwrap_or(Ty::Error)
-                    }
-                    _ => {
-                        self.infer_expr(index, &Expectation::None);
-                        self.push_diag(TyDiagnosticData::InvalidIndexTarget {
-                            ty: base_ty.clone(),
-                        });
-                        Ty::Error
-                    }
+            Ty::Adt { def, args } => match self.module_scope.core_types.kind_for_idx(*def) {
+                Some(CoreType::List) => {
+                    self.infer_expr(index, &Expectation::Has(Ty::Int));
+                    args.first().cloned().unwrap_or(Ty::Error)
                 }
-            }
+                Some(CoreType::Map) => {
+                    let key_ty = args
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| self.table.fresh_var());
+                    self.infer_expr(index, &Expectation::Has(key_ty.clone()));
+                    let resolved_key = self.table.resolve_deep(&key_ty);
+                    if !resolved_key.is_hashable_collection_key() {
+                        self.push_diag(TyDiagnosticData::InvalidMapKey { ty: resolved_key });
+                    }
+                    args.get(1).cloned().unwrap_or(Ty::Error)
+                }
+                _ => {
+                    self.infer_expr(index, &Expectation::None);
+                    self.push_diag(TyDiagnosticData::InvalidIndexTarget {
+                        ty: base_ty.clone(),
+                    });
+                    Ty::Error
+                }
+            },
             Ty::String => {
                 self.infer_expr(index, &Expectation::Has(Ty::Int));
                 Ty::Char

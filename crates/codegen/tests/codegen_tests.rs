@@ -255,11 +255,11 @@ fn test_recursive_like_chain() {
 fn test_adt_construct_and_match() {
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               match (Some(42)) {\n\
-                 Some(x) => x\n\
-                 None => 0\n\
+               match (Just(42)) {\n\
+                 Just(x) => x\n\
+                 Nothing => 0\n\
                }\n\
              }"
         ),
@@ -271,11 +271,11 @@ fn test_adt_construct_and_match() {
 fn test_adt_match_none() {
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               match (None) {\n\
-                 Some(x) => x\n\
-                 None => -1\n\
+               match (Nothing) {\n\
+                 Just(x) => x\n\
+                 Nothing => -1\n\
                }\n\
              }"
         ),
@@ -581,11 +581,11 @@ fn test_if_else_in_let() {
 fn test_match_with_complex_arm_body() {
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               match (Some(10)) {\n\
-                 Some(x) => x * 2 + 1\n\
-                 None => 0\n\
+               match (Just(10)) {\n\
+                 Just(x) => x * 2 + 1\n\
+                 Nothing => 0\n\
                }\n\
              }"
         ),
@@ -597,11 +597,11 @@ fn test_match_with_complex_arm_body() {
 fn test_if_inside_match_arm() {
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               match (Some(5)) {\n\
-                 Some(x) => if (x > 3) { x * 10 } else { x }\n\
-                 None => 0\n\
+               match (Just(5)) {\n\
+                 Just(x) => if (x > 3) { x * 10 } else { x }\n\
+                 Nothing => 0\n\
                }\n\
              }"
         ),
@@ -632,11 +632,11 @@ fn test_match_four_variants() {
 fn test_match_then_computation() {
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               let v = match (Some(6)) {\n\
-                 Some(x) => x\n\
-                 None => 0\n\
+               let v = match (Just(6)) {\n\
+                 Just(x) => x\n\
+                 Nothing => 0\n\
                }\n\
                v * 3 + 1\n\
              }"
@@ -711,17 +711,17 @@ fn test_record_field_ordering() {
 fn test_multiple_adt_allocations() {
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               let a = Some(10)\n\
-               let b = Some(20)\n\
+               let a = Just(10)\n\
+               let b = Just(20)\n\
                let x = match (a) {\n\
-                 Some(v) => v\n\
-                 None => 0\n\
+                 Just(v) => v\n\
+                 Nothing => 0\n\
                }\n\
                let y = match (b) {\n\
-                 Some(v) => v\n\
-                 None => 0\n\
+                 Just(v) => v\n\
+                 Nothing => 0\n\
                }\n\
                x + y\n\
              }"
@@ -734,11 +734,11 @@ fn test_multiple_adt_allocations() {
 fn test_adt_field_in_computation() {
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               let v = match (Some(5)) {\n\
-                 Some(x) => x\n\
-                 None => 0\n\
+               let v = match (Just(5)) {\n\
+                 Just(x) => x\n\
+                 Nothing => 0\n\
                }\n\
                v * 3 + 2\n\
              }"
@@ -885,12 +885,12 @@ fn test_let_complex_chain() {
 fn test_let_adt_then_match() {
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               let x = Some(7)\n\
+               let x = Just(7)\n\
                match (x) {\n\
-                 Some(v) => v\n\
-                 None => 0\n\
+                 Just(v) => v\n\
+                 Nothing => 0\n\
                }\n\
              }"
         ),
@@ -932,13 +932,13 @@ fn test_let_if_result() {
 fn test_adt_construction_in_if_arms() {
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
                let x = 5\n\
-               let opt = if (x > 3) { Some(x) } else { None }\n\
+               let opt = if (x > 3) { Just(x) } else { Nothing }\n\
                match (opt) {\n\
-                 Some(v) => v\n\
-                 None => 0\n\
+                 Just(v) => v\n\
+                 Nothing => 0\n\
                }\n\
              }"
         ),
@@ -950,12 +950,12 @@ fn test_adt_construction_in_if_arms() {
 fn test_record_creation_in_match_arm() {
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              type Pair = { x: Int, y: Int }\n\
              fn main() -> Int {\n\
-               let r = match (Some(10)) {\n\
-                 Some(v) => Pair { x: v, y: v * 2 }\n\
-                 None => Pair { x: 0, y: 0 }\n\
+               let r = match (Just(10)) {\n\
+                 Just(v) => Pair { x: v, y: v * 2 }\n\
+                 Nothing => Pair { x: 0, y: 0 }\n\
                }\n\
                r.x + r.y\n\
              }"
@@ -968,14 +968,14 @@ fn test_record_creation_in_match_arm() {
 fn test_function_call_with_adt_arg() {
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              fn unwrap_or(o: Opt, default: Int) -> Int {\n\
                match (o) {\n\
-                 Some(v) => v\n\
-                 None => default\n\
+                 Just(v) => v\n\
+                 Nothing => default\n\
                }\n\
              }\n\
-             fn main() -> Int { unwrap_or(Some(42), 0) }"
+             fn main() -> Int { unwrap_or(Just(42), 0) }"
         ),
         42
     );
@@ -985,14 +985,14 @@ fn test_function_call_with_adt_arg() {
 fn test_function_call_with_adt_arg_none() {
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              fn unwrap_or(o: Opt, default: Int) -> Int {\n\
                match (o) {\n\
-                 Some(v) => v\n\
-                 None => default\n\
+                 Just(v) => v\n\
+                 Nothing => default\n\
                }\n\
              }\n\
-             fn main() -> Int { unwrap_or(None, 99) }"
+             fn main() -> Int { unwrap_or(Nothing, 99) }"
         ),
         99
     );
@@ -1014,12 +1014,12 @@ fn test_function_call_with_record_arg() {
 fn test_function_returning_adt() {
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
-             fn make_some(x: Int) -> Opt { Some(x) }\n\
+            "type Opt = Just(Int) | Nothing\n\
+             fn make_some(x: Int) -> Opt { Just(x) }\n\
              fn main() -> Int {\n\
                match (make_some(42)) {\n\
-                 Some(v) => v\n\
-                 None => 0\n\
+                 Just(v) => v\n\
+                 Nothing => 0\n\
                }\n\
              }"
         ),
@@ -1189,14 +1189,14 @@ fn test_multiple_adt_in_same_if_arm() {
     // leave the value stack clean.
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
                let x = 5\n\
                let pair = if (x > 0) {\n\
-                 let a = Some(x)\n\
-                 let b = Some(x * 2)\n\
-                 let va = match (a) { Some(v) => v\n None => 0 }\n\
-                 let vb = match (b) { Some(v) => v\n None => 0 }\n\
+                 let a = Just(x)\n\
+                 let b = Just(x * 2)\n\
+                 let va = match (a) { Just(v) => v\n Nothing => 0 }\n\
+                 let vb = match (b) { Just(v) => v\n Nothing => 0 }\n\
                  va + vb\n\
                } else { 0 }\n\
                pair\n\
@@ -1211,15 +1211,15 @@ fn test_adt_in_deeply_nested_if() {
     // ADT construction at the bottom of 3 levels of if/else nesting.
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
                let x = 5\n\
                let opt = if (x > 0) {\n\
                  if (x > 3) {\n\
-                   if (x > 4) { Some(x) } else { None }\n\
-                 } else { None }\n\
-               } else { None }\n\
-               match (opt) { Some(v) => v\n None => -1 }\n\
+                   if (x > 4) { Just(x) } else { Nothing }\n\
+                 } else { Nothing }\n\
+               } else { Nothing }\n\
+               match (opt) { Just(v) => v\n Nothing => -1 }\n\
              }"
         ),
         5
@@ -1232,17 +1232,17 @@ fn test_adt_in_nested_match_arms() {
     assert_eq!(
         run_main_i64(
             "type AB = A | B\n\
-             type Opt = Some(Int) | None\n\
+             type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
                let x = A\n\
                let opt = match (x) {\n\
                  A => match (B) {\n\
-                   A => Some(1)\n\
-                   B => Some(2)\n\
+                   A => Just(1)\n\
+                   B => Just(2)\n\
                  }\n\
-                 B => None\n\
+                 B => Nothing\n\
                }\n\
-               match (opt) { Some(v) => v\n None => 0 }\n\
+               match (opt) { Just(v) => v\n Nothing => 0 }\n\
              }"
         ),
         2
@@ -1270,14 +1270,14 @@ fn test_mixed_adt_and_record_in_scope() {
     // ADT and record allocations interleaved in the same block.
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              type Pair = { x: Int, y: Int }\n\
              fn main() -> Int {\n\
-               let a = Some(10)\n\
+               let a = Just(10)\n\
                let r = Pair { x: 20, y: 30 }\n\
-               let b = Some(40)\n\
-               let va = match (a) { Some(v) => v\n None => 0 }\n\
-               let vb = match (b) { Some(v) => v\n None => 0 }\n\
+               let b = Just(40)\n\
+               let va = match (a) { Just(v) => v\n Nothing => 0 }\n\
+               let vb = match (b) { Just(v) => v\n Nothing => 0 }\n\
                va + r.x + r.y + vb\n\
              }"
         ),
@@ -1290,16 +1290,16 @@ fn test_record_in_match_arm_with_if() {
     // Record construction inside an if/else that's inside a match arm.
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              type Pair = { x: Int, y: Int }\n\
              fn main() -> Int {\n\
-               let r = match (Some(5)) {\n\
-                 Some(v) => if (v > 3) {\n\
+               let r = match (Just(5)) {\n\
+                 Just(v) => if (v > 3) {\n\
                    Pair { x: v, y: v * 10 }\n\
                  } else {\n\
                    Pair { x: 0, y: 0 }\n\
                  }\n\
-                 None => Pair { x: -1, y: -1 }\n\
+                 Nothing => Pair { x: -1, y: -1 }\n\
                }\n\
                r.x + r.y\n\
              }"
@@ -1315,14 +1315,14 @@ fn test_match_all_arms_return() {
     // Every arm uses explicit return — no merge block exists.
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              fn extract(o: Opt) -> Int {\n\
                match (o) {\n\
-                 Some(x) => return x\n\
-                 None => return -1\n\
+                 Just(x) => return x\n\
+                 Nothing => return -1\n\
                }\n\
              }\n\
-             fn main() -> Int { extract(Some(42)) }"
+             fn main() -> Int { extract(Just(42)) }"
         ),
         42
     );
@@ -1330,17 +1330,17 @@ fn test_match_all_arms_return() {
 
 #[test]
 fn test_match_all_arms_return_default() {
-    // Same but hits the None arm.
+    // Same but hits the Nothing arm.
     assert_eq!(
         run_main_i64(
-            "type Opt = Some(Int) | None\n\
+            "type Opt = Just(Int) | Nothing\n\
              fn extract(o: Opt) -> Int {\n\
                match (o) {\n\
-                 Some(x) => return x\n\
-                 None => return -1\n\
+                 Just(x) => return x\n\
+                 Nothing => return -1\n\
                }\n\
              }\n\
-             fn main() -> Int { extract(None) }"
+             fn main() -> Int { extract(Nothing) }"
         ),
         -1
     );
