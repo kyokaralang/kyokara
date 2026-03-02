@@ -4,10 +4,11 @@
 //! accessors returning typed wrappers or tokens.
 
 use kyokara_parser::SyntaxKind;
+use std::marker::PhantomData;
 
 use crate::ast::traits::{HasName, HasTypeParams, HasVisibility};
 use crate::ast::{AstNode, support};
-use crate::language::{SyntaxNode, SyntaxToken};
+use crate::language::{KyokaraLanguage, SyntaxNode, SyntaxToken};
 
 // ── Macro ──────────────────────────────────────────────────────────
 
@@ -76,6 +77,35 @@ impl Item {
             SyntaxKind::LetBinding => LetBinding::cast(node).map(Item::LetBinding),
             _ => None,
         }
+    }
+}
+
+#[derive(Debug)]
+struct ChildNodeIter<N> {
+    children: Option<rowan::SyntaxNodeChildren<KyokaraLanguage>>,
+    _marker: PhantomData<N>,
+}
+
+impl<N> ChildNodeIter<N> {
+    fn from_parent(parent: Option<SyntaxNode>) -> Self {
+        Self {
+            children: parent.map(|node| node.children()),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<N: AstNode> Iterator for ChildNodeIter<N> {
+    type Item = N;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let children = self.children.as_mut()?;
+        for node in children {
+            if let Some(cast) = N::cast(node) {
+                return Some(cast);
+            }
+        }
+        None
     }
 }
 
@@ -172,24 +202,15 @@ impl FnDef {
     }
 
     pub fn requires_clauses(&self) -> impl Iterator<Item = RequiresClause> + '_ {
-        self.contract_section()
-            .map(|c| c.requires_clauses().collect::<Vec<_>>())
-            .unwrap_or_default()
-            .into_iter()
+        ChildNodeIter::from_parent(self.contract_section().map(|c| c.syntax))
     }
 
     pub fn ensures_clauses(&self) -> impl Iterator<Item = EnsuresClause> + '_ {
-        self.contract_section()
-            .map(|c| c.ensures_clauses().collect::<Vec<_>>())
-            .unwrap_or_default()
-            .into_iter()
+        ChildNodeIter::from_parent(self.contract_section().map(|c| c.syntax))
     }
 
     pub fn invariant_clauses(&self) -> impl Iterator<Item = InvariantClause> + '_ {
-        self.contract_section()
-            .map(|c| c.invariant_clauses().collect::<Vec<_>>())
-            .unwrap_or_default()
-            .into_iter()
+        ChildNodeIter::from_parent(self.contract_section().map(|c| c.syntax))
     }
 
     pub fn requires_clause(&self) -> Option<RequiresClause> {
