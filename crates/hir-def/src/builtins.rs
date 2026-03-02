@@ -321,6 +321,9 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("set_len", "Set", "len"),
         ("set_is_empty", "Set", "is_empty"),
         ("set_values", "Set", "values"),
+        // Result methods
+        ("result_unwrap_or", "Result", "unwrap_or"),
+        ("result_map_or", "Result", "map_or"),
         // Int methods
         ("int_to_string", "Int", "to_string"),
         ("int_to_float", "Int", "to_float"),
@@ -604,6 +607,7 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
     // Type parameter names.
     let t_name = Name::new(interner, "T");
     let u_name = Name::new(interner, "U");
+    let e_name = Name::new(interner, "E");
     let k_name = Name::new(interner, "K");
     let v_name = Name::new(interner, "V");
 
@@ -614,6 +618,10 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
     };
     let u_ref = TypeRef::Path {
         path: Path::single(u_name),
+        args: Vec::new(),
+    };
+    let e_ref = TypeRef::Path {
+        path: Path::single(e_name),
         args: Vec::new(),
     };
     let k_ref = TypeRef::Path {
@@ -689,6 +697,10 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
     let option_t = TypeRef::Path {
         path: Path::single(Name::new(interner, "Option")),
         args: vec![t_ref.clone()],
+    };
+    let result_te = TypeRef::Path {
+        path: Path::single(Name::new(interner, "Result")),
+        args: vec![t_ref.clone(), e_ref.clone()],
     };
     let option_v = TypeRef::Path {
         path: Path::single(Name::new(interner, "Option")),
@@ -1005,6 +1017,26 @@ fn intrinsic_signatures(interner: &mut Interner) -> Vec<(Name, FnItem)> {
             vec![t_name],
             vec![("s", set_t.clone())],
             list_t.clone(),
+        ),
+        // result_unwrap_or<T, E>(r: Result<T, E>, fallback: T) -> T
+        mk_intrinsic(
+            interner,
+            "result_unwrap_or",
+            vec![t_name, e_name],
+            vec![("r", result_te.clone()), ("fallback", t_ref.clone())],
+            t_ref.clone(),
+        ),
+        // result_map_or<T, E, U>(r: Result<T, E>, fallback: U, f: fn(T) -> U) -> U
+        mk_intrinsic(
+            interner,
+            "result_map_or",
+            vec![t_name, e_name, u_name],
+            vec![
+                ("r", result_te),
+                ("fallback", u_ref.clone()),
+                ("f", fn_t_to_u.clone()),
+            ],
+            u_ref.clone(),
         ),
         // ── String ops ──────────────────────────────────────────
         // string_len(s: String) -> Int

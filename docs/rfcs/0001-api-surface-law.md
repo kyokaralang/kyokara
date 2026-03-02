@@ -3,7 +3,7 @@
 - Status: Draft
 - Owner: Language Design
 - Tracking issue: [#243](https://github.com/kyokaralang/kyokara/issues/243)
-- Last updated: 2026-03-01
+- Last updated: 2026-03-02
 
 ## Summary
 
@@ -112,6 +112,9 @@ Canonical parsing forms for numeric text:
 
 - `s.parse_int() -> Result[Int, ParseError]`
 - `s.parse_float() -> Result[Float, ParseError]`
+- canonical fallback/composition on `Result`:
+  - `s.parse_int().unwrap_or(0)`
+  - `s.parse_int().map_or(0, fn(n: Int) => n + 1)`
 
 Non-canonical aliases must not be introduced as parallel public APIs:
 

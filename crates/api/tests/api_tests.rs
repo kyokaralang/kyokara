@@ -4004,6 +4004,36 @@ fn check_iteration_ergonomics_chains_from_map_set_string_have_no_diagnostics() {
 }
 
 #[test]
+fn check_result_ergonomics_canonical_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"fn main() -> Int {
+            let a = "42".parse_int().unwrap_or(0)
+            let b = "oops".parse_int().map_or(7, fn(n: Int) => n + 1)
+            a + b
+        }"#,
+        "result ergonomics canonical surface",
+    );
+}
+
+#[test]
+fn check_result_map_or_wrong_mapper_type_reports_type_mismatch() {
+    let output = check(
+        r#"fn main() -> Int {
+            "42".parse_int().map_or(0, fn(n: Int) => "x")
+        }"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0001" && d.message.contains("type mismatch")),
+        "expected E0001 type mismatch for result map_or mapper result type, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_non_canonical_free_range_function_reports_unresolved_name() {
     let output = check("fn main() -> Int { range(0, 3).len() }", "test.ky");
     assert!(
