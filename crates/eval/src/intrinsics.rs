@@ -284,7 +284,11 @@ impl IntrinsicFn {
                 if start >= end {
                     return Ok(Value::list(Vec::new()));
                 }
-                let values: Vec<Value> = (*start..*end).map(Value::Int).collect();
+                let range_len = usize::try_from(i128::from(*end) - i128::from(*start)).unwrap_or(0);
+                let mut values = Vec::with_capacity(range_len);
+                for value in *start..*end {
+                    values.push(Value::Int(value));
+                }
                 Ok(Value::list(values))
             }
             IntrinsicFn::ListChunks => {
@@ -302,12 +306,10 @@ impl IntrinsicFn {
                     ));
                 }
                 let chunk_size = *n as usize;
-                let mut chunks = Vec::new();
-                let mut i = 0usize;
-                while i < xs.len() {
-                    let end = usize::min(i + chunk_size, xs.len());
-                    chunks.push(Value::list(xs[i..end].to_vec()));
-                    i += chunk_size;
+                let chunk_count = xs.len().div_ceil(chunk_size);
+                let mut chunks = Vec::with_capacity(chunk_count);
+                for chunk in xs.chunks(chunk_size) {
+                    chunks.push(Value::list(chunk.to_vec()));
                 }
                 Ok(Value::list(chunks))
             }
@@ -332,8 +334,8 @@ impl IntrinsicFn {
                     return Ok(Value::list(Vec::new()));
                 }
                 let mut windows = Vec::with_capacity(xs.len() - window_size + 1);
-                for i in 0..=(xs.len() - window_size) {
-                    windows.push(Value::list(xs[i..(i + window_size)].to_vec()));
+                for window in xs.windows(window_size) {
+                    windows.push(Value::list(window.to_vec()));
                 }
                 Ok(Value::list(windows))
             }
@@ -1552,5 +1554,55 @@ mod tests {
             Rc::ptr_eq(alias_entries, removed_entries),
             "set_remove missing value should not detach shared storage"
         );
+    }
+
+    #[test]
+    fn list_chunks_preallocates_outer_capacity() {
+        let input = Value::list((0..5).map(Value::Int).collect());
+        let chunks = IntrinsicFn::ListChunks
+            .call(smallvec![input, Value::Int(2)])
+            .expect("list_chunks should succeed");
+
+        let Value::List(chunk_values) = chunks else {
+            panic!("expected outer list");
+        };
+        assert_eq!(chunk_values.len(), 3);
+        assert_eq!(
+            chunk_values.capacity(),
+            3,
+            "list_chunks should reserve exactly the derived chunk count"
+        );
+    }
+
+    #[test]
+    fn list_builders_handle_large_inputs() {
+        let range = IntrinsicFn::ListRange
+            .call(smallvec![Value::Int(0), Value::Int(8_192)])
+            .expect("list_range should succeed");
+        let Value::List(range_values) = range else {
+            panic!("expected range list");
+        };
+        assert_eq!(range_values.len(), 8_192);
+        assert_eq!(range_values.first(), Some(&Value::Int(0)));
+        assert_eq!(range_values.last(), Some(&Value::Int(8_191)));
+
+        let chunks = IntrinsicFn::ListChunks
+            .call(smallvec![
+                Value::List(range_values.clone()),
+                Value::Int(128)
+            ])
+            .expect("list_chunks should succeed");
+        let Value::List(chunk_values) = chunks else {
+            panic!("expected chunk list");
+        };
+        assert_eq!(chunk_values.len(), 64);
+
+        let windows = IntrinsicFn::ListWindows
+            .call(smallvec![Value::List(range_values), Value::Int(64)])
+            .expect("list_windows should succeed");
+        let Value::List(window_values) = windows else {
+            panic!("expected window list");
+        };
+        assert_eq!(window_values.len(), 8_129);
     }
 }
