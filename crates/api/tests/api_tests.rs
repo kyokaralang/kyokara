@@ -170,13 +170,125 @@ fn check_parse_damaged_function_reports_parse_only_diagnostics() {
         output
             .diagnostics
             .iter()
-            .any(|d| d.code == "E0100" && d.message.contains("match scrutinee must be parenthesized")),
+            .any(|d| d.code == "E0100"
+                && d.message.contains("match scrutinee must be parenthesized")),
         "expected targeted match parse diagnostic, got: {:?}",
         output.diagnostics
     );
     assert!(
         output.diagnostics.iter().all(|d| d.code == "E0100"),
         "parse-damaged function should report parse-only diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_if_record_like_head_near_miss_reports_targeted_parse_without_cascade_noise() {
+    let src = "fn main() -> Int { let x = if Point { x: 1 } == Point { x: 1 } { 1 } else { 0 } x }";
+    let output = check(src, "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0100" && d.message.contains("if condition must be parenthesized")),
+        "expected targeted if parse diagnostic, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        output.diagnostics.iter().all(|d| d.code == "E0100"),
+        "expected parse-only diagnostics for damaged function, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        output.diagnostics.iter().all(|d| {
+            !d.message.contains("expected item")
+                && !d.message.contains("expected RBrace")
+                && !d.message.contains("expected FatArrow")
+        }),
+        "did not expect cascade-style parser noise, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_match_record_like_head_near_miss_reports_targeted_parse_without_cascade_noise() {
+    let src = "fn main() -> Int { let x = match Point { x: 1 } { _ => 0 } x }";
+    let output = check(src, "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0100"
+                && d.message.contains("match scrutinee must be parenthesized")),
+        "expected targeted match parse diagnostic, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        output.diagnostics.iter().all(|d| d.code == "E0100"),
+        "expected parse-only diagnostics for damaged function, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        output.diagnostics.iter().all(|d| {
+            !d.message.contains("expected item")
+                && !d.message.contains("expected RBrace")
+                && !d.message.contains("expected FatArrow")
+        }),
+        "did not expect cascade-style parser noise, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_requires_record_like_head_near_miss_reports_targeted_parse_without_cascade_noise() {
+    let src = "fn main() -> Int requires Point { x: 1 } { 1 }";
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.iter().any(|d| d.code == "E0100"
+            && d.message
+                .contains("requires clause expression must be parenthesized")),
+        "expected targeted requires parse diagnostic, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        output.diagnostics.iter().all(|d| d.code == "E0100"),
+        "expected parse-only diagnostics for damaged function, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        output.diagnostics.iter().all(|d| {
+            !d.message.contains("expected item")
+                && !d.message.contains("expected RBrace")
+                && !d.message.contains("expected FatArrow")
+        }),
+        "did not expect cascade-style parser noise, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_where_record_like_head_near_miss_reports_targeted_parse_without_cascade_noise() {
+    let src = "property p(x: Int <- Gen.auto()) where Point { x: 1 } { true }";
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.iter().any(|d| d.code == "E0100"
+            && d.message
+                .contains("where clause expression must be parenthesized")),
+        "expected targeted where parse diagnostic, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        output.diagnostics.iter().all(|d| d.code == "E0100"),
+        "expected parse-only diagnostics for damaged property, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        output.diagnostics.iter().all(|d| {
+            !d.message.contains("expected item")
+                && !d.message.contains("expected RBrace")
+                && !d.message.contains("expected FatArrow")
+        }),
+        "did not expect cascade-style parser noise, got: {:?}",
         output.diagnostics
     );
 }
@@ -199,7 +311,8 @@ fn typed_bad() -> Int {
         output
             .diagnostics
             .iter()
-            .any(|d| d.code == "E0100" && d.message.contains("match scrutinee must be parenthesized")),
+            .any(|d| d.code == "E0100"
+                && d.message.contains("match scrutinee must be parenthesized")),
         "expected parse diagnostic for broken fn, got: {:?}",
         output.diagnostics
     );

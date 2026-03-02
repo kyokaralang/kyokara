@@ -182,7 +182,7 @@ fn if_expr(p: &mut Parser<'_>) -> CompletedMarker {
         expr(p);
         p.expect(RParen);
     } else {
-        p.error_recover_until("if condition must be parenthesized", IF_HEAD_RECOVERY);
+        p.error_recover_parenthesized_head("if condition must be parenthesized", IF_HEAD_RECOVERY);
     }
     if p.at(LBrace) {
         block_expr(p);
@@ -209,7 +209,10 @@ fn match_expr(p: &mut Parser<'_>) -> CompletedMarker {
         expr(p);
         p.expect(RParen);
     } else {
-        p.error_recover_until("match scrutinee must be parenthesized", MATCH_HEAD_RECOVERY);
+        p.error_recover_parenthesized_head(
+            "match scrutinee must be parenthesized",
+            MATCH_HEAD_RECOVERY,
+        );
     }
     match_arm_list(p);
     m.complete(p, MatchExpr)
