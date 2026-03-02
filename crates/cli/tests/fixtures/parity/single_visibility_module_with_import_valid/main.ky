@@ -1,0 +1,5 @@
+import math
+
+fn main() -> Int {
+  math.min(7, 3) + math.max(1, 4)
+}

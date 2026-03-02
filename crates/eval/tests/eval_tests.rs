@@ -1600,6 +1600,36 @@ fn eval_max() {
     assert!(matches!(val, Value::Int(7)));
 }
 
+#[test]
+fn eval_gcd() {
+    let val = run_ok("import math\nfn main() -> Int { math.gcd(54, 24) }");
+    assert!(matches!(val, Value::Int(6)));
+}
+
+#[test]
+fn eval_gcd_zero_and_negative_inputs() {
+    let val = run_ok("import math\nfn main() -> Int { math.gcd(-54, 24) + math.gcd(0, 0) }");
+    assert!(matches!(val, Value::Int(6)));
+}
+
+#[test]
+fn eval_lcm() {
+    let val = run_ok("import math\nfn main() -> Int { math.lcm(6, 8) }");
+    assert!(matches!(val, Value::Int(24)));
+}
+
+#[test]
+fn eval_lcm_zero_and_negative_inputs() {
+    let val = run_ok("import math\nfn main() -> Int { math.lcm(0, 5) + math.lcm(-3, 4) }");
+    assert!(matches!(val, Value::Int(12)));
+}
+
+#[test]
+fn eval_lcm_overflow_is_runtime_error() {
+    let err = run_err("import math\nfn main() -> Int { math.lcm(9223372036854775807, 2) }");
+    assert!(err.contains("integer overflow"), "got: {err}");
+}
+
 // ── import enforcement tests ────────────────────────────────────────
 // Synthetic modules require explicit `import` even in single-file mode.
 
@@ -4670,6 +4700,45 @@ fn eval_list_sort_unsortable() {
     assert!(
         err.contains("cannot be sorted"),
         "expected compile-time sort rejection, got: {err}"
+    );
+}
+
+#[test]
+fn eval_list_binary_search_found_and_insertion_point() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs = List.new().push(1).push(3).push(5).push(7)
+            let found = xs.binary_search(5)
+            let missing = xs.binary_search(6)
+            found * 100 + missing
+        }",
+    );
+    assert_eq!(val, Value::Int(196));
+}
+
+#[test]
+fn eval_list_binary_search_empty_returns_negative_one() {
+    let val = run_ok(
+        "fn main() -> Int {
+            let xs: List<Int> = List.new()
+            xs.binary_search(10)
+        }",
+    );
+    assert_eq!(val, Value::Int(-1));
+}
+
+#[test]
+fn eval_list_binary_search_unsortable() {
+    let err = run_err(
+        "fn main() -> Int {
+            let needle = List.new().push(1)
+            let xs = List.new().push(needle)
+            xs.binary_search(needle)
+        }",
+    );
+    assert!(
+        err.contains("cannot be sorted"),
+        "expected compile-time binary_search rejection, got: {err}"
     );
 }
 

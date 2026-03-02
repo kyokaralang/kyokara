@@ -1457,8 +1457,12 @@ impl<'a> InferenceCtx<'a> {
                 }
             }
 
-            // Check List.sort() element type: only naturally orderable types allowed.
-            if type_name == "List" && !args.is_empty() && method_str == "list_sort" {
+            // Check List.sort()/List.binary_search() element type: only naturally
+            // orderable types allowed.
+            if type_name == "List"
+                && !args.is_empty()
+                && matches!(method_str, "list_sort" | "list_binary_search")
+            {
                 let elem_ty = self.table.resolve_deep(&args[0]);
                 if !elem_ty.is_sortable() {
                     self.push_diag(TyDiagnosticData::UnsortableElement { ty: elem_ty });

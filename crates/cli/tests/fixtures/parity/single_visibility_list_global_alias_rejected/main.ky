@@ -1,0 +1,4 @@
+fn main() -> Int {
+  let xs = list_new().push(1)
+  xs.len()
+}

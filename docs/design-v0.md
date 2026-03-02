@@ -524,6 +524,12 @@ v0 stdlib is implemented via intrinsic functions in the eval crate, exposed thro
 a canonical API surface: method calls for value-owned behavior, module-qualified calls
 for no-owner utilities and effects, and type-namespaced constructors.
 
+Canonical visibility matrix:
+* Prelude builtin value types (no import): `List.new()`, `Map.new()`, `Set.new()`, value methods.
+* Pure no-owner utilities (imported module): `math.*`
+* Effectful utilities (imported capability modules): `io.*`, `fs.*`
+* Internal intrinsic IDs (`list_new`, `map_insert`, etc.) are implementation detail only.
+
 Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
 injected as synthetic types before type-checking. Synthetic modules (`io`, `math`, `fs`)
 require explicit `import io` / `import math` / `import fs` in all modes.
@@ -540,6 +546,10 @@ while `io`/`fs` are module namespaces for no-owner/effectful operations.
   * Constructor: `List.new()`
   * Methods: `xs.push(v)`, `xs.len()`, `xs.get(i)` → `Option<T>`, `xs.head()` → `Option<T>`, `xs.tail()`, `xs.is_empty()`, `xs.reverse()`, `xs.concat(ys)`
   * Higher-order: `xs.map(f)`, `xs.filter(f)`, `xs.fold(init, f)`, `xs.sort()`, `xs.sort_by(f)`
+  * Search helper: `xs.binary_search(x)` → `Int` with Rust/Java-style insertion contract:
+    found index returns `>= 0`; missing element returns `-(insertion_point + 1)`.
+    `insertion_point` is where `x` would be inserted to keep sorted order.
+    Only naturally orderable element types are allowed (same as `xs.sort()`).
 * `Map<K, V>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<IndexMap<MapKey, Value>>`, insertion-order-preserving hash map, O(1) lookup). Keys must be hashable types (Int, String, Char, Bool, Unit); invalid key types are rejected at compile time for typed map operations (E0024). `m.keys()` and `m.values()` return deterministic insertion order. ✓
   * Constructor: `Map.new()`
   * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()` → `List<K>`, `m.values()` → `List<V>`, `m.is_empty()`
@@ -550,7 +560,7 @@ while `io`/`fs` are module namespaces for no-owner/effectful operations.
 * Char methods ✓ — `c.to_string()`
 * Int methods ✓ — `n.abs()`, `n.to_string()`, `n.to_float()`
 * Float methods ✓ — `f.abs()`, `f.to_int()`
-* Module-qualified math ✓ — `math.min(a, b)`, `math.max(a, b)`, `math.fmin(a, b)`, `math.fmax(a, b)`
+* Module-qualified math ✓ — `math.min(a, b)`, `math.max(a, b)`, `math.gcd(a, b)`, `math.lcm(a, b)`, `math.fmin(a, b)`, `math.fmax(a, b)`
 * Module-qualified I/O ✓ — `io.print(s)`, `io.println(s)`, `io.read_line()`, `io.read_stdin()` (require `io` capability)
 * Module-qualified filesystem ✓ — `fs.read_file(path)` (requires `fs` capability)
 

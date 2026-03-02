@@ -71,6 +71,8 @@ pub enum IntrinsicFn {
     Abs,
     Min,
     Max,
+    Gcd,
+    Lcm,
     FloatAbs,
     FloatMin,
     FloatMax,
@@ -93,6 +95,7 @@ pub enum IntrinsicFn {
     // Sorting
     ListSort,
     ListSortBy,
+    ListBinarySearch,
 }
 
 impl IntrinsicFn {
@@ -529,6 +532,39 @@ impl IntrinsicFn {
                 };
                 Ok(Value::Int(*a.max(b)))
             }
+            IntrinsicFn::Gcd => {
+                let Value::Int(a) = &args[0] else {
+                    return Err(RuntimeError::TypeError("gcd expects Int arguments".into()));
+                };
+                let Value::Int(b) = &args[1] else {
+                    return Err(RuntimeError::TypeError("gcd expects Int arguments".into()));
+                };
+                let g = gcd_u64(a.unsigned_abs(), b.unsigned_abs());
+                let g = i64::try_from(g).map_err(|_| RuntimeError::IntegerOverflow)?;
+                Ok(Value::Int(g))
+            }
+            IntrinsicFn::Lcm => {
+                let Value::Int(a) = &args[0] else {
+                    return Err(RuntimeError::TypeError("lcm expects Int arguments".into()));
+                };
+                let Value::Int(b) = &args[1] else {
+                    return Err(RuntimeError::TypeError("lcm expects Int arguments".into()));
+                };
+                if *a == 0 || *b == 0 {
+                    return Ok(Value::Int(0));
+                }
+                let abs_a = a.unsigned_abs();
+                let abs_b = b.unsigned_abs();
+                let g = gcd_u64(abs_a, abs_b);
+                let lhs = abs_a / g;
+                let lcm = u128::from(lhs)
+                    .checked_mul(u128::from(abs_b))
+                    .ok_or(RuntimeError::IntegerOverflow)?;
+                if lcm > i64::MAX as u128 {
+                    return Err(RuntimeError::IntegerOverflow);
+                }
+                Ok(Value::Int(lcm as i64))
+            }
             IntrinsicFn::FloatAbs => {
                 let Value::Float(f) = &args[0] else {
                     return Err(RuntimeError::TypeError("float_abs expects a Float".into()));
@@ -718,6 +754,107 @@ impl IntrinsicFn {
                     )),
                 }
             }
+            IntrinsicFn::ListBinarySearch => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "list_binary_search expects a List".into(),
+                    ));
+                };
+                let needle = &args[1];
+                if xs.is_empty() {
+                    return Ok(Value::Int(-1));
+                }
+                match &xs[0] {
+                    Value::Int(_) => {
+                        let Value::Int(needle) = needle else {
+                            return Err(RuntimeError::TypeError(
+                                "list_binary_search: mixed types in list".into(),
+                            ));
+                        };
+                        let mut ints = Vec::with_capacity(xs.len());
+                        for v in xs.iter() {
+                            let Value::Int(n) = v else {
+                                return Err(RuntimeError::TypeError(
+                                    "list_binary_search: mixed types in list".into(),
+                                ));
+                            };
+                            ints.push(*n);
+                        }
+                        encode_binary_search(ints.binary_search(needle))
+                    }
+                    Value::Float(_) => {
+                        let Value::Float(needle) = needle else {
+                            return Err(RuntimeError::TypeError(
+                                "list_binary_search: mixed types in list".into(),
+                            ));
+                        };
+                        let mut floats = Vec::with_capacity(xs.len());
+                        for v in xs.iter() {
+                            let Value::Float(f) = v else {
+                                return Err(RuntimeError::TypeError(
+                                    "list_binary_search: mixed types in list".into(),
+                                ));
+                            };
+                            floats.push(*f);
+                        }
+                        encode_binary_search(floats.binary_search_by(|x| x.total_cmp(needle)))
+                    }
+                    Value::String(_) => {
+                        let Value::String(needle) = needle else {
+                            return Err(RuntimeError::TypeError(
+                                "list_binary_search: mixed types in list".into(),
+                            ));
+                        };
+                        let mut strings = Vec::with_capacity(xs.len());
+                        for v in xs.iter() {
+                            let Value::String(s) = v else {
+                                return Err(RuntimeError::TypeError(
+                                    "list_binary_search: mixed types in list".into(),
+                                ));
+                            };
+                            strings.push(s.clone());
+                        }
+                        encode_binary_search(strings.binary_search(needle))
+                    }
+                    Value::Char(_) => {
+                        let Value::Char(needle) = needle else {
+                            return Err(RuntimeError::TypeError(
+                                "list_binary_search: mixed types in list".into(),
+                            ));
+                        };
+                        let mut chars = Vec::with_capacity(xs.len());
+                        for v in xs.iter() {
+                            let Value::Char(c) = v else {
+                                return Err(RuntimeError::TypeError(
+                                    "list_binary_search: mixed types in list".into(),
+                                ));
+                            };
+                            chars.push(*c);
+                        }
+                        encode_binary_search(chars.binary_search(needle))
+                    }
+                    Value::Bool(_) => {
+                        let Value::Bool(needle) = needle else {
+                            return Err(RuntimeError::TypeError(
+                                "list_binary_search: mixed types in list".into(),
+                            ));
+                        };
+                        let mut bools = Vec::with_capacity(xs.len());
+                        for v in xs.iter() {
+                            let Value::Bool(b) = v else {
+                                return Err(RuntimeError::TypeError(
+                                    "list_binary_search: mixed types in list".into(),
+                                ));
+                            };
+                            bools.push(*b);
+                        }
+                        encode_binary_search(bools.binary_search(needle))
+                    }
+                    _ => Err(RuntimeError::TypeError(
+                        "list_binary_search: unsortable element type".into(),
+                    )),
+                }
+            }
 
             // ── Complex (intercepted by interpreter) ─────────────
             IntrinsicFn::ListGet
@@ -830,6 +967,8 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (Name::new(interner, "abs"), IntrinsicFn::Abs),
         (Name::new(interner, "min"), IntrinsicFn::Min),
         (Name::new(interner, "max"), IntrinsicFn::Max),
+        (Name::new(interner, "gcd"), IntrinsicFn::Gcd),
+        (Name::new(interner, "lcm"), IntrinsicFn::Lcm),
         (Name::new(interner, "float_abs"), IntrinsicFn::FloatAbs),
         (Name::new(interner, "float_min"), IntrinsicFn::FloatMin),
         (Name::new(interner, "float_max"), IntrinsicFn::FloatMax),
@@ -854,7 +993,38 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         // Sorting
         (Name::new(interner, "list_sort"), IntrinsicFn::ListSort),
         (Name::new(interner, "list_sort_by"), IntrinsicFn::ListSortBy),
+        (
+            Name::new(interner, "list_binary_search"),
+            IntrinsicFn::ListBinarySearch,
+        ),
     ]
+}
+
+fn gcd_u64(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        let r = a % b;
+        a = b;
+        b = r;
+    }
+    a
+}
+
+fn encode_binary_search(result: Result<usize, usize>) -> Result<Value, RuntimeError> {
+    match result {
+        Ok(idx) => {
+            let idx = i64::try_from(idx).map_err(|_| RuntimeError::IntegerOverflow)?;
+            Ok(Value::Int(idx))
+        }
+        Err(insertion_point) => {
+            let insertion_point =
+                i64::try_from(insertion_point).map_err(|_| RuntimeError::IntegerOverflow)?;
+            let encoded = insertion_point
+                .checked_add(1)
+                .and_then(|n| n.checked_neg())
+                .ok_or(RuntimeError::IntegerOverflow)?;
+            Ok(Value::Int(encoded))
+        }
+    }
 }
 
 #[cfg(test)]
