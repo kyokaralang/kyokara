@@ -329,7 +329,7 @@ fn eval_negate_int() {
 #[test]
 fn eval_adt_nullary_constructor() {
     let val = run_ok(
-        "type Color = | Red | Green | Blue
+        "type Color = Red | Green | Blue
          fn main() -> Color { Red }",
     );
     assert!(matches!(val, Value::Adt { variant: 0, .. }));
@@ -338,7 +338,7 @@ fn eval_adt_nullary_constructor() {
 #[test]
 fn eval_adt_constructor_call() {
     let val = run_ok(
-        "type Option<T> = | Some(T) | None
+        "type Option<T> = Some(T) | None
          fn main() -> Option<Int> { Some(42) }",
     );
     match val {
@@ -358,7 +358,7 @@ fn eval_adt_constructor_call() {
 #[test]
 fn eval_pattern_match_nullary() {
     let val = run_ok(
-        "type Bool2 = | True | False
+        "type Bool2 = True | False
          fn to_int(x: Bool2) -> Int {
            match x {
              True => 1
@@ -373,7 +373,7 @@ fn eval_pattern_match_nullary() {
 #[test]
 fn eval_pattern_match_with_bind() {
     let val = run_ok(
-        "type Option<T> = | Some(T) | None
+        "type Option<T> = Some(T) | None
          fn unwrap(x: Option<Int>) -> Int {
            match x {
              Some(v) => v
@@ -388,7 +388,7 @@ fn eval_pattern_match_with_bind() {
 #[test]
 fn eval_pattern_match_wildcard() {
     let val = run_ok(
-        "type Color = | Red | Green | Blue
+        "type Color = Red | Green | Blue
          fn is_red(c: Color) -> Int {
            match c {
              Red => 1
@@ -421,7 +421,7 @@ fn eval_record_literal_not_confused_with_adt_constructor() {
     // record value (not an ADT), and field access on it must work.
     let val = run_ok(
         "type Point = { x: Int }
-         type Wrap = | Point(Int)
+         type Wrap = Point(Int)
          fn main() -> Int {
            let p = Point { x: 1 }
            p.x
@@ -533,7 +533,7 @@ fn eval_hole_error() {
 #[test]
 fn eval_adt_option_program() {
     let val = run_ok(
-        "type Option<T> = | Some(T) | None
+        "type Option<T> = Some(T) | None
 
          fn unwrap_or(opt: Option<Int>, default: Int) -> Int {
            match opt {
@@ -1176,7 +1176,7 @@ fn eval_invariant_error_names_function() {
 #[test]
 fn eval_user_option_overrides_builtin() {
     let val = run_ok(
-        "type Option<T> = | Some(T) | None
+        "type Option<T> = Some(T) | None
          fn main() -> Int {
            match Some(7) {
              Some(x) => x
@@ -2144,7 +2144,7 @@ fn run_project_rejects_body_lowering_error_in_sibling_module() {
 fn run_rejects_duplicate_binding_in_pattern() {
     // Bug test: duplicate binding in constructor pattern must be rejected.
     let src = r#"
-type Pair = | Pair(Int, Int)
+type Pair = Pair(Int, Int)
 fn main() -> Int {
   let Pair(x, x) = Pair(1, 2)
   x
@@ -2161,7 +2161,7 @@ fn main() -> Int {
 fn run_accepts_distinct_bindings_in_pattern() {
     // Guard test: distinct bindings in constructor pattern should work fine.
     let src = r#"
-type Pair = | Pair(Int, Int)
+type Pair = Pair(Int, Int)
 fn main() -> Int {
   let Pair(a, b) = Pair(1, 2)
   a + b
@@ -2175,7 +2175,7 @@ fn main() -> Int {
 fn run_rejects_duplicate_binding_in_match_arm() {
     // Edge case: duplicate binding in match arm pattern.
     let src = r#"
-type Pair = | Pair(Int, Int)
+type Pair = Pair(Int, Int)
 fn main() -> Int {
   match Pair(1, 2) {
     Pair(x, x) => x,
@@ -2204,6 +2204,26 @@ fn run_rejects_compile_invalid_programs_detected_by_check() {
             run_fragment: "parse errors:",
         },
         Case {
+            name: "legacy leading-pipe type variant syntax",
+            src: "type Option = | Some(Int) | None\nfn main() -> Int { 1 }",
+            run_fragment: "leading `|` is not allowed in type variants",
+        },
+        Case {
+            name: "legacy leading-pipe match arm syntax",
+            src: "fn main() -> Int { match 1 { | _ => 0 } }",
+            run_fragment: "match arms do not use a leading `|`",
+        },
+        Case {
+            name: "pub property item is invalid",
+            src: "pub property p(x: Int <- Gen.int()) { true }\nfn main() -> Int { 1 }",
+            run_fragment: "expected item",
+        },
+        Case {
+            name: "pub let item is invalid",
+            src: "pub let x = 1\nfn main() -> Int { 1 }",
+            run_fragment: "expected item",
+        },
+        Case {
             name: "unresolved name",
             src: "fn main() -> Int { unknown_name }",
             run_fragment: "lowering errors:",
@@ -2220,7 +2240,7 @@ fn run_rejects_compile_invalid_programs_detected_by_check() {
         },
         Case {
             name: "duplicate pattern binding",
-            src: "type Pair = | Pair(Int, Int)\nfn main() -> Int {\n  let Pair(x, x) = Pair(1, 2)\n  x\n}",
+            src: "type Pair = Pair(Int, Int)\nfn main() -> Int {\n  let Pair(x, x) = Pair(1, 2)\n  x\n}",
             run_fragment: "duplicate binding",
         },
         Case {
@@ -3264,7 +3284,7 @@ fn eval_path_record_lit_non_record_type_rejected() {
 #[test]
 fn eval_path_record_lit_user_adt_rejected() {
     assert!(check_has_compile_errors(
-        "type Foo = | A | B\nfn main() -> Int { let r = Foo { x: 1 }\n0 }"
+        "type Foo = A | B\nfn main() -> Int { let r = Foo { x: 1 }\n0 }"
     ));
 }
 
@@ -4256,7 +4276,7 @@ fn eval_parse_float_error_carries_message() {
 #[test]
 fn eval_parse_int_user_defined_parse_error_missing_variant_reports_runtime_error_not_panic() {
     let err = run_err(
-        r#"type ParseError = | Oops
+        r#"type ParseError = Oops
            fn main() -> Bool {
              match "abc".parse_int() {
                Ok(_) => false
@@ -4273,7 +4293,7 @@ fn eval_parse_int_user_defined_parse_error_missing_variant_reports_runtime_error
 #[test]
 fn eval_parse_float_user_defined_parse_error_missing_variant_reports_runtime_error_not_panic() {
     let err = run_err(
-        r#"type ParseError = | Oops
+        r#"type ParseError = Oops
            fn main() -> Bool {
              match "abc".parse_float() {
                Ok(_) => false
@@ -4290,7 +4310,7 @@ fn eval_parse_float_user_defined_parse_error_missing_variant_reports_runtime_err
 #[test]
 fn eval_parse_int_user_defined_parse_error_wrong_payload_type_reports_runtime_error() {
     let err = run_err(
-        r#"type ParseError = | InvalidInt(Int) | InvalidFloat(Int)
+        r#"type ParseError = InvalidInt(Int) | InvalidFloat(Int)
            fn main() -> Bool {
              match "abc".parse_int() {
                Ok(_) => false
@@ -4307,7 +4327,7 @@ fn eval_parse_int_user_defined_parse_error_wrong_payload_type_reports_runtime_er
 #[test]
 fn eval_parse_float_user_defined_parse_error_wrong_payload_type_reports_runtime_error() {
     let err = run_err(
-        r#"type ParseError = | InvalidInt(Int) | InvalidFloat(Int)
+        r#"type ParseError = InvalidInt(Int) | InvalidFloat(Int)
            fn main() -> Bool {
              match "abc".parse_float() {
                Ok(_) => false
@@ -5525,7 +5545,7 @@ fn eval_user_method_chaining() {
 fn eval_user_method_on_adt() {
     let val = run_ok(
         r#"
-        type Shape = | Circle(Int) | Rect(Int, Int)
+        type Shape = Circle(Int) | Rect(Int, Int)
 
         fn Shape.area(self) -> Int {
             match self {
@@ -5674,7 +5694,7 @@ fn eval_user_method_self_explicit_type_annotation() {
 fn eval_user_method_on_adt_circle() {
     let val = run_ok(
         r#"
-        type Shape = | Circle(Int) | Rect(Int, Int)
+        type Shape = Circle(Int) | Rect(Int, Int)
 
         fn Shape.describe(self) -> String {
             match self {

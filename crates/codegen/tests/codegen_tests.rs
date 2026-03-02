@@ -255,7 +255,7 @@ fn test_recursive_like_chain() {
 fn test_adt_construct_and_match() {
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                match Some(42) {\n\
                  Some(x) => x\n\
@@ -271,7 +271,7 @@ fn test_adt_construct_and_match() {
 fn test_adt_match_none() {
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                match None {\n\
                  Some(x) => x\n\
@@ -287,7 +287,7 @@ fn test_adt_match_none() {
 fn test_adt_three_variants() {
     assert_eq!(
         run_main_i64(
-            "type Color = | Red | Green | Blue\n\
+            "type Color = Red | Green | Blue\n\
              fn to_int(c: Color) -> Int {\n\
                match c {\n\
                  Red => 1\n\
@@ -581,7 +581,7 @@ fn test_if_else_in_let() {
 fn test_match_with_complex_arm_body() {
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                match Some(10) {\n\
                  Some(x) => x * 2 + 1\n\
@@ -597,7 +597,7 @@ fn test_match_with_complex_arm_body() {
 fn test_if_inside_match_arm() {
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                match Some(5) {\n\
                  Some(x) => if x > 3 { x * 10 } else { x }\n\
@@ -613,7 +613,7 @@ fn test_if_inside_match_arm() {
 fn test_match_four_variants() {
     assert_eq!(
         run_main_i64(
-            "type Dir = | North | South | East | West\n\
+            "type Dir = North | South | East | West\n\
              fn to_int(d: Dir) -> Int {\n\
                match d {\n\
                  North => 1\n\
@@ -632,7 +632,7 @@ fn test_match_four_variants() {
 fn test_match_then_computation() {
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                let v = match Some(6) {\n\
                  Some(x) => x\n\
@@ -651,7 +651,7 @@ fn test_match_then_computation() {
 fn test_adt_two_fields() {
     assert_eq!(
         run_main_i64(
-            "type Pair = | Pair(Int, Int)\n\
+            "type Pair = Pair(Int, Int)\n\
              fn main() -> Int {\n\
                match Pair(10, 20) {\n\
                  Pair(a, b) => a + b\n\
@@ -666,7 +666,7 @@ fn test_adt_two_fields() {
 fn test_adt_three_fields() {
     assert_eq!(
         run_main_i64(
-            "type Triple = | Triple(Int, Int, Int)\n\
+            "type Triple = Triple(Int, Int, Int)\n\
              fn main() -> Int {\n\
                match Triple(1, 2, 3) {\n\
                  Triple(a, b, c) => a + b + c\n\
@@ -711,7 +711,7 @@ fn test_record_field_ordering() {
 fn test_multiple_adt_allocations() {
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                let a = Some(10)\n\
                let b = Some(20)\n\
@@ -734,7 +734,7 @@ fn test_multiple_adt_allocations() {
 fn test_adt_field_in_computation() {
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                let v = match Some(5) {\n\
                  Some(x) => x\n\
@@ -885,7 +885,7 @@ fn test_let_complex_chain() {
 fn test_let_adt_then_match() {
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                let x = Some(7)\n\
                match x {\n\
@@ -932,7 +932,7 @@ fn test_let_if_result() {
 fn test_adt_construction_in_if_arms() {
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                let x = 5\n\
                let opt = if x > 3 { Some(x) } else { None }\n\
@@ -950,7 +950,7 @@ fn test_adt_construction_in_if_arms() {
 fn test_record_creation_in_match_arm() {
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              type Pair = { x: Int, y: Int }\n\
              fn main() -> Int {\n\
                let r = match Some(10) {\n\
@@ -968,7 +968,7 @@ fn test_record_creation_in_match_arm() {
 fn test_function_call_with_adt_arg() {
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              fn unwrap_or(o: Opt, default: Int) -> Int {\n\
                match o {\n\
                  Some(v) => v\n\
@@ -985,7 +985,7 @@ fn test_function_call_with_adt_arg() {
 fn test_function_call_with_adt_arg_none() {
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              fn unwrap_or(o: Opt, default: Int) -> Int {\n\
                match o {\n\
                  Some(v) => v\n\
@@ -1014,7 +1014,7 @@ fn test_function_call_with_record_arg() {
 fn test_function_returning_adt() {
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              fn make_some(x: Int) -> Opt { Some(x) }\n\
              fn main() -> Int {\n\
                match make_some(42) {\n\
@@ -1046,8 +1046,8 @@ fn test_function_returning_record() {
 fn test_nested_match_in_match() {
     assert_eq!(
         run_main_i64(
-            "type Outer = | A(Int) | B\n\
-             type Inner = | X(Int) | Y\n\
+            "type Outer = A(Int) | B\n\
+             type Inner = X(Int) | Y\n\
              fn main() -> Int {\n\
                let o = A(1)\n\
                match o {\n\
@@ -1189,7 +1189,7 @@ fn test_multiple_adt_in_same_if_arm() {
     // leave the value stack clean.
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                let x = 5\n\
                let pair = if x > 0 {\n\
@@ -1211,7 +1211,7 @@ fn test_adt_in_deeply_nested_if() {
     // ADT construction at the bottom of 3 levels of if/else nesting.
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                let x = 5\n\
                let opt = if x > 0 {\n\
@@ -1231,8 +1231,8 @@ fn test_adt_in_nested_match_arms() {
     // ADT construction in both arms of a match that's inside another match.
     assert_eq!(
         run_main_i64(
-            "type AB = | A | B\n\
-             type Opt = | Some(Int) | None\n\
+            "type AB = A | B\n\
+             type Opt = Some(Int) | None\n\
              fn main() -> Int {\n\
                let x = A\n\
                let opt = match x {\n\
@@ -1270,7 +1270,7 @@ fn test_mixed_adt_and_record_in_scope() {
     // ADT and record allocations interleaved in the same block.
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              type Pair = { x: Int, y: Int }\n\
              fn main() -> Int {\n\
                let a = Some(10)\n\
@@ -1290,7 +1290,7 @@ fn test_record_in_match_arm_with_if() {
     // Record construction inside an if/else that's inside a match arm.
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              type Pair = { x: Int, y: Int }\n\
              fn main() -> Int {\n\
                let r = match Some(5) {\n\
@@ -1315,7 +1315,7 @@ fn test_match_all_arms_return() {
     // Every arm uses explicit return — no merge block exists.
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              fn extract(o: Opt) -> Int {\n\
                match o {\n\
                  Some(x) => return x\n\
@@ -1333,7 +1333,7 @@ fn test_match_all_arms_return_default() {
     // Same but hits the None arm.
     assert_eq!(
         run_main_i64(
-            "type Opt = | Some(Int) | None\n\
+            "type Opt = Some(Int) | None\n\
              fn extract(o: Opt) -> Int {\n\
                match o {\n\
                  Some(x) => return x\n\
@@ -1365,8 +1365,8 @@ fn test_match_mixed_branch_and_switch_arms() {
     // One arm has if/else (Branch), another has nested match (Switch).
     assert_eq!(
         run_main_i64(
-            "type Outer = | A(Int) | B(Int)\n\
-             type Inner = | X(Int) | Y\n\
+            "type Outer = A(Int) | B(Int)\n\
+             type Inner = X(Int) | Y\n\
              fn main() -> Int {\n\
                let o = A(5)\n\
                match o {\n\
@@ -1387,8 +1387,8 @@ fn test_match_mixed_branch_and_switch_arms_other() {
     // Same structure but hits the B arm (nested Switch path).
     assert_eq!(
         run_main_i64(
-            "type Outer = | A(Int) | B(Int)\n\
-             type Inner = | X(Int) | Y\n\
+            "type Outer = A(Int) | B(Int)\n\
+             type Inner = X(Int) | Y\n\
              fn main() -> Int {\n\
                let o = B(7)\n\
                match o {\n\
@@ -1409,7 +1409,7 @@ fn test_single_variant_match() {
     // Single-variant ADT — br_table with one entry.
     assert_eq!(
         run_main_i64(
-            "type Wrap = | Wrap(Int)\n\
+            "type Wrap = Wrap(Int)\n\
              fn main() -> Int {\n\
                match Wrap(42) {\n\
                  Wrap(x) => x\n\

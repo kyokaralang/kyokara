@@ -107,7 +107,7 @@ fn fmt_type_alias() {
 #[test]
 fn fmt_type_adt() {
     assert_fmt(
-        "type Option = | Some(Int) | None",
+        "type Option = Some(Int) | None",
         "type Option =\n  | Some(Int)\n  | None\n",
     );
 }
@@ -115,7 +115,7 @@ fn fmt_type_adt() {
 #[test]
 fn fmt_type_adt_multiple_fields() {
     assert_fmt(
-        "type Result = | Ok(Int) | Err(String)",
+        "type Result = Ok(Int) | Err(String)",
         "type Result =\n  | Ok(Int)\n  | Err(String)\n",
     );
 }
@@ -341,7 +341,7 @@ fn fmt_idempotency_full_program() {
 import Std.IO
 import Std.Collections
 
-type Option = | Some(Int) | None
+type Option = Some(Int) | None
 
 fn add(x:Int,y:Int) -> Int { x + y }
 

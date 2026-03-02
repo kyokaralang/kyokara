@@ -31,7 +31,7 @@ pub fn register_builtin_types(
     register_parse_error(tree, scope, interner);
 }
 
-/// `type Option<T> = | Some(T) | None`
+/// `type Option<T> = Some(T) | None`
 fn register_option(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
     let option_name = Name::new(interner, "Option");
 
@@ -127,7 +127,7 @@ fn register_set(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Int
     scope.types.insert(set_name, idx);
 }
 
-/// `type Result<T, E> = | Ok(T) | Err(E)`
+/// `type Result<T, E> = Ok(T) | Err(E)`
 fn register_result(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
     let result_name = Name::new(interner, "Result");
 
@@ -178,7 +178,7 @@ fn register_result(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut 
         e.insert((idx, 1));
     }
 }
-/// `type ParseError = | InvalidInt(String) | InvalidFloat(String)`
+/// `type ParseError = InvalidInt(String) | InvalidFloat(String)`
 fn register_parse_error(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
     let parse_error_name = Name::new(interner, "ParseError");
 

@@ -358,7 +358,7 @@ fn err_negation_on_bool() {
 #[test]
 fn infer_adt_constructor_call() {
     check_ok(
-        "type Option<T> = | Some(T) | None
+        "type Option<T> = Some(T) | None
          fn foo() -> Option<Int> { Some(42) }",
     );
 }
@@ -366,7 +366,7 @@ fn infer_adt_constructor_call() {
 #[test]
 fn infer_adt_nullary_constructor() {
     check_ok(
-        "type Option<T> = | Some(T) | None
+        "type Option<T> = Some(T) | None
          fn foo() -> Option<Int> { None }",
     );
 }
@@ -374,7 +374,7 @@ fn infer_adt_nullary_constructor() {
 #[test]
 fn infer_match_basic() {
     check_ok(
-        "type Bool2 = | True | False
+        "type Bool2 = True | False
          fn foo(x: Bool2) -> Int {
              match x {
                  True => 1
@@ -387,7 +387,7 @@ fn infer_match_basic() {
 #[test]
 fn infer_match_with_bind() {
     check_ok(
-        "type Option<T> = | Some(T) | None
+        "type Option<T> = Some(T) | None
          fn foo(x: Option<Int>) -> Int {
              match x {
                  Some(v) => v
@@ -402,7 +402,7 @@ fn infer_match_with_bind() {
 #[test]
 fn err_non_exhaustive_match() {
     check_err(
-        "type Color = | Red | Green | Blue
+        "type Color = Red | Green | Blue
          fn foo(c: Color) -> Int {
              match c {
                  Red => 1
@@ -416,7 +416,7 @@ fn err_non_exhaustive_match() {
 #[test]
 fn exhaustive_with_wildcard() {
     check_ok(
-        "type Color = | Red | Green | Blue
+        "type Color = Red | Green | Blue
          fn foo(c: Color) -> Int {
              match c {
                  Red => 1
@@ -429,7 +429,7 @@ fn exhaustive_with_wildcard() {
 #[test]
 fn err_redundant_arm() {
     check_err(
-        "type Bool2 = | True | False
+        "type Bool2 = True | False
          fn foo(x: Bool2) -> Int {
              match x {
                  True => 1
@@ -444,7 +444,7 @@ fn err_redundant_arm() {
 #[test]
 fn err_redundant_arm_after_wildcard() {
     check_err(
-        "type Bool2 = | True | False
+        "type Bool2 = True | False
          fn foo(x: Bool2) -> Int {
              match x {
                  _ => 0
@@ -663,7 +663,7 @@ fn nested_shadowing_resolves_correctly() {
 fn match_arm_scope_isolation() {
     // Bindings in one match arm must not leak to the next arm or after the match.
     check_ok(
-        "type Option<T> = | Some(T) | None
+        "type Option<T> = Some(T) | None
          fn foo(o: Option<Int>) -> Int {
              let result = match o {
                  Some(v) => v
@@ -947,7 +947,7 @@ fn named_args_positional_after_named_is_diagnostic() {
 fn path_record_lit_non_record_type_is_error() {
     // Foo is an ADT (enum), not a record type — should emit a diagnostic.
     check_err(
-        "type Foo = | A | B
+        "type Foo = A | B
          fn main() -> Int {
            let r = Foo { x: 1 }
            0

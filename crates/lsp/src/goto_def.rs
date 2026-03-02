@@ -376,7 +376,7 @@ mod tests {
 
     #[test]
     fn goto_local_definition_constructor_pattern_binding() {
-        let source = "type Pair = | Pair(Int, Int)\n\
+        let source = "type Pair = Pair(Int, Int)\n\
                       fn main() -> Int {\n\
                         let Pair(x, y) = Pair(1, 2)\n\
                         x + y\n\

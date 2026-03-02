@@ -54,6 +54,27 @@ fn import_decl() {
     assert!(has_node(&events, ImportAlias));
 }
 
+#[test]
+fn source_file_recovers_from_pub_property_without_hanging() {
+    // pub property p() {}
+    let (_events, errors) =
+        parse_tokens(&[PubKw, PropertyKw, Ident, LParen, RParen, LBrace, RBrace]);
+    assert!(
+        errors.iter().any(|e| e.message.contains("expected item")),
+        "expected pub property parse error, got: {errors:?}"
+    );
+}
+
+#[test]
+fn source_file_recovers_from_pub_let_without_hanging() {
+    // pub let x = 1
+    let (_events, errors) = parse_tokens(&[PubKw, LetKw, Ident, Eq, IntLiteral]);
+    assert!(
+        errors.iter().any(|e| e.message.contains("expected item")),
+        "expected pub let parse error, got: {errors:?}"
+    );
+}
+
 // ── Let binding ─────────────────────────────────────────────────────
 
 #[test]
@@ -87,10 +108,9 @@ fn type_alias() {
 
 #[test]
 fn type_with_variants() {
-    // type Option = | Some(Int) | None
-    let (events, errors) = parse_tokens(&[
-        TypeKw, Ident, Eq, Pipe, Ident, LParen, Ident, RParen, Pipe, Ident,
-    ]);
+    // type Option = Some(Int) | None
+    let (events, errors) =
+        parse_tokens(&[TypeKw, Ident, Eq, Ident, LParen, Ident, RParen, Pipe, Ident]);
     assert!(has_no_errors(&errors));
     assert!(has_node(&events, TypeDef));
     assert!(has_node(&events, VariantList));
@@ -99,12 +119,36 @@ fn type_with_variants() {
 
 #[test]
 fn type_with_generics() {
-    // type Option<T> = | Some(T) | None
+    // type Option<T> = Some(T) | None
     let (events, errors) = parse_tokens(&[
-        TypeKw, Ident, Lt, Ident, Gt, Eq, Pipe, Ident, LParen, Ident, RParen, Pipe, Ident,
+        TypeKw, Ident, Lt, Ident, Gt, Eq, Ident, LParen, Ident, RParen, Pipe, Ident,
     ]);
     assert!(has_no_errors(&errors));
     assert!(has_node(&events, TypeParamList));
+}
+
+#[test]
+fn type_with_single_payload_variant() {
+    // type Boxed = Boxed(Int)
+    let (events, errors) = parse_tokens(&[TypeKw, Ident, Eq, Ident, LParen, Ident, RParen]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, VariantList));
+    assert_eq!(count_start_nodes(&events, Variant), 1);
+}
+
+#[test]
+fn type_with_leading_pipe_is_rejected() {
+    // type Option = | Some(Int) | None
+    let (events, errors) = parse_tokens(&[
+        TypeKw, Ident, Eq, Pipe, Ident, LParen, Ident, RParen, Pipe, Ident,
+    ]);
+    assert!(
+        errors.iter().any(|e| e
+            .message
+            .contains("leading `|` is not allowed in type variants")),
+        "expected leading-pipe rejection, got: {errors:?}"
+    );
+    assert!(has_node(&events, VariantList));
 }
 
 // ── Function definitions ────────────────────────────────────────────
@@ -147,8 +191,19 @@ fn fn_def_with_contract() {
 fn fn_def_contract_requires_then_invariant_is_allowed() {
     // fn f() -> Int requires x invariant y { 1 }
     let (events, errors) = parse_tokens(&[
-        FnKw, Ident, LParen, RParen, Arrow, Ident, RequiresKw, Ident, InvariantKw, Ident, LBrace,
-        IntLiteral, RBrace,
+        FnKw,
+        Ident,
+        LParen,
+        RParen,
+        Arrow,
+        Ident,
+        RequiresKw,
+        Ident,
+        InvariantKw,
+        Ident,
+        LBrace,
+        IntLiteral,
+        RBrace,
     ]);
     assert!(
         has_no_errors(&errors),
@@ -162,8 +217,19 @@ fn fn_def_contract_requires_then_invariant_is_allowed() {
 fn fn_def_contract_ensures_then_invariant_is_allowed() {
     // fn f() -> Int ensures x invariant y { 1 }
     let (events, errors) = parse_tokens(&[
-        FnKw, Ident, LParen, RParen, Arrow, Ident, EnsuresKw, Ident, InvariantKw, Ident, LBrace,
-        IntLiteral, RBrace,
+        FnKw,
+        Ident,
+        LParen,
+        RParen,
+        Arrow,
+        Ident,
+        EnsuresKw,
+        Ident,
+        InvariantKw,
+        Ident,
+        LBrace,
+        IntLiteral,
+        RBrace,
     ]);
     assert!(
         has_no_errors(&errors),
@@ -200,16 +266,21 @@ fn fn_def_contract_requires_after_ensures_reports_order_error() {
 fn top_level_fn_def_without_body_reports_error() {
     // fn foo() -> Int
     let (events, errors) = parse_tokens(&[FnKw, Ident, LParen, RParen, Arrow, Ident]);
-    assert!(!errors.is_empty(), "expected parse error for missing fn body");
+    assert!(
+        !errors.is_empty(),
+        "expected parse error for missing fn body"
+    );
     assert!(has_node(&events, FnDef));
 }
 
 #[test]
 fn pub_top_level_fn_def_without_body_reports_error() {
     // pub fn foo() -> Int
-    let (events, errors) =
-        parse_tokens(&[PubKw, FnKw, Ident, LParen, RParen, Arrow, Ident]);
-    assert!(!errors.is_empty(), "expected parse error for missing pub fn body");
+    let (events, errors) = parse_tokens(&[PubKw, FnKw, Ident, LParen, RParen, Arrow, Ident]);
+    assert!(
+        !errors.is_empty(),
+        "expected parse error for missing pub fn body"
+    );
     assert!(has_node(&events, FnDef));
 }
 
@@ -229,9 +300,8 @@ fn method_def_without_body_reports_error() {
 #[test]
 fn fn_def_empty_body_is_allowed() {
     // fn noop() -> Unit {}
-    let (events, errors) = parse_tokens(&[
-        FnKw, Ident, LParen, RParen, Arrow, Ident, LBrace, RBrace,
-    ]);
+    let (events, errors) =
+        parse_tokens(&[FnKw, Ident, LParen, RParen, Arrow, Ident, LBrace, RBrace]);
     assert!(
         has_no_errors(&errors),
         "empty function body should parse: {errors:?}"
@@ -330,6 +400,42 @@ fn match_expr() {
     assert!(has_node(&events, MatchExpr));
     assert!(has_node(&events, MatchArmList));
     assert_eq!(count_start_nodes(&events, MatchArm), 2);
+}
+
+#[test]
+fn match_expr_leading_pipe_arm_reports_targeted_error() {
+    // let x = match y { | _ => 0 }
+    let (_events, errors) = parse_tokens(&[
+        LetKw, Ident, Eq, MatchKw, Ident, LBrace, Pipe, Underscore, FatArrow, IntLiteral, RBrace,
+    ]);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message.contains("match arms do not use a leading `|`")),
+        "expected leading-pipe match-arm diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn match_expr_multiple_leading_pipes_recovers_without_hanging() {
+    // let x = match y { | | 1 => 2, _ => 3 }
+    let (events, errors) = parse_tokens(&[
+        LetKw, Ident, Eq, MatchKw, Ident, LBrace, Pipe, Pipe, IntLiteral, FatArrow, IntLiteral,
+        Comma, Underscore, FatArrow, IntLiteral, RBrace,
+    ]);
+    assert!(
+        errors
+            .iter()
+            .filter(|e| e.message.contains("match arms do not use a leading `|`"))
+            .count()
+            >= 2,
+        "expected two leading-pipe diagnostics, got: {errors:?}"
+    );
+    assert_eq!(
+        count_start_nodes(&events, MatchArm),
+        2,
+        "parser should recover and parse both valid arms"
+    );
 }
 
 #[test]

@@ -58,7 +58,7 @@ fn collect_type_alias() {
 
 #[test]
 fn collect_adt_with_constructors() {
-    let root = parse_source("type Option<T> = | Some(T) | None");
+    let root = parse_source("type Option<T> = Some(T) | None");
     let sf = SourceFile::cast(root).unwrap();
     let mut interner = Interner::new();
     let result = collect_item_tree(&sf, file_id(), &mut interner);
@@ -231,7 +231,7 @@ fn lower_if_expr() {
 #[test]
 fn lower_match_expr() {
     let src = r#"
-type Bool = | True | False
+type Bool = True | False
 fn foo(x: Bool) {
     match x {
         True => 1
@@ -562,7 +562,7 @@ fn desugar_pipeline_bare_fn() {
 fn desugar_propagation_to_match() {
     // e? → Match with Ok/Err arms
     let (body, _, interner) =
-        lower_fn_body("type Result<T> = | Ok(T) | Err(T)\nfn foo(e: Result<Int>) { e? }");
+        lower_fn_body("type Result<T> = Ok(T) | Err(T)\nfn foo(e: Result<Int>) { e? }");
     match &body.exprs[body.root] {
         Expr::Block {
             tail: Some(tail), ..
@@ -616,7 +616,7 @@ fn pat_bind_introduces_scope_entry() {
 #[test]
 fn match_arm_introduces_scope() {
     let src = r#"
-type Option<T> = | Some(T) | None
+type Option<T> = Some(T) | None
 fn foo(x: Option<Int>) {
     match x {
         Some(v) => v

@@ -165,6 +165,70 @@ fn check_parse_error_code() {
 }
 
 #[test]
+fn check_rejects_leading_pipe_type_variant_syntax() {
+    let src = "type Option = | Some(Int) | None\nfn main() -> Int { 1 }";
+    let output = check(src, "test.ky");
+    let parse_diags: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0100")
+        .collect();
+    assert!(
+        parse_diags.iter().any(|d| d
+            .message
+            .contains("leading `|` is not allowed in type variants")),
+        "expected targeted leading-pipe parse diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_rejects_leading_pipe_match_arm_syntax() {
+    let src = "fn main() -> Int { match 1 { | _ => 0 } }";
+    let output = check(src, "test.ky");
+    let parse_diags: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0100")
+        .collect();
+    assert!(
+        parse_diags
+            .iter()
+            .any(|d| d.message.contains("match arms do not use a leading `|`")),
+        "expected targeted leading-pipe match-arm diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_rejects_pub_property_without_hanging() {
+    let src = "pub property p(x: Int <- Gen.int()) { true }\nfn main() -> Int { 1 }";
+    let output = check(src, "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0100" && d.message.contains("expected item")),
+        "expected parse diagnostic for pub property, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_rejects_pub_let_without_hanging() {
+    let src = "pub let x = 1\nfn main() -> Int { 1 }";
+    let output = check(src, "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0100" && d.message.contains("expected item")),
+        "expected parse diagnostic for pub let, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_rejects_top_level_bodyless_fn_declaration() {
     let src = "fn foo() -> Int\nfn main() -> Int { foo() }";
     let output = check(src, "test.ky");
@@ -318,7 +382,7 @@ fn symbol_graph_contains_functions() {
 
 #[test]
 fn symbol_graph_contains_types() {
-    let src = "type Color = | Red | Green | Blue
+    let src = "type Color = Red | Green | Blue
         fn id(x: Int) -> Int { x }";
     let output = check(src, "test.ky");
     // 7 types: Color (user-defined) + Option + Result + List + Map + Set + ParseError (builtins)
@@ -459,7 +523,7 @@ fn symbol_graph_effect_annotations() {
 
 #[test]
 fn patch_missing_match_arm() {
-    let src = "type Color = | Red | Green | Blue
+    let src = "type Color = Red | Green | Blue
         fn describe(c: Color) -> Int {
             match c {
                 Red => 1
@@ -512,7 +576,7 @@ fn patch_effect_violation() {
 #[test]
 fn patch_apply_missing_arm_fixes_error() {
     // Source with all arms present should have no E0009 errors.
-    let src = "type Color = | Red | Green | Blue
+    let src = "type Color = Red | Green | Blue
         fn describe(c: Color) -> Int {
             match c {
                 Red => 1
@@ -628,7 +692,7 @@ fn stable_id_fn_nodes_have_ids() {
 
 #[test]
 fn stable_id_type_nodes_have_ids() {
-    let src = "type Color = | Red | Green\nfn id(x: Int) -> Int { x }";
+    let src = "type Color = Red | Green\nfn id(x: Int) -> Int { x }";
     let output = check(src, "test.ky");
     for t in &output.symbol_graph.types {
         assert!(
@@ -641,7 +705,7 @@ fn stable_id_type_nodes_have_ids() {
 
 #[test]
 fn stable_id_variant_nodes_have_ids() {
-    let src = "type Color = | Red | Green | Blue\nfn id(x: Int) -> Int { x }";
+    let src = "type Color = Red | Green | Blue\nfn id(x: Int) -> Int { x }";
     let output = check(src, "test.ky");
     let color = output
         .symbol_graph
@@ -719,7 +783,7 @@ fn stable_id_call_edges_use_fn_ids() {
 #[test]
 fn stable_id_uniqueness() {
     let src = r#"
-        type Color = | Red | Green | Blue
+        type Color = Red | Green | Blue
         cap IO {
             fn read() -> String
         }
@@ -766,7 +830,7 @@ fn stable_id_fn_format() {
 
 #[test]
 fn stable_id_variant_format() {
-    let src = "type Color = | Red | Green | Blue\nfn id(x: Int) -> Int { x }";
+    let src = "type Color = Red | Green | Blue\nfn id(x: Int) -> Int { x }";
     let output = check(src, "test.ky");
     let color = output
         .symbol_graph
@@ -1106,7 +1170,7 @@ fn project_symbol_id_uniqueness() {
     let output = check_project_from_files(&[
         (
             "main.ky",
-            "type Color = | Red | Green\ncap IO { fn read() -> String }\nfn foo() -> Int { 1 }",
+            "type Color = Red | Green\ncap IO { fn read() -> String }\nfn foo() -> Int { 1 }",
         ),
         (
             "math.ky",
@@ -1230,7 +1294,7 @@ fn project_root_module_uses_bare_ids() {
 fn project_variant_ids_are_module_qualified() {
     let output = check_project_from_files(&[
         ("main.ky", "fn foo() -> Int { 1 }"),
-        ("math.ky", "pub type Color = | Red | Green"),
+        ("math.ky", "pub type Color = Red | Green"),
     ]);
     let color = output
         .symbol_graph
@@ -1624,11 +1688,11 @@ fn api_refactor_project_quickfix_with_target_file() {
     let (_dir, main_path) = write_project(&[
         (
             "main.ky",
-            "type A = | X | Y\nfn check_a(a: A) -> Int {\n    match a {\n        X => 1\n    }\n}",
+            "type A = X | Y\nfn check_a(a: A) -> Int {\n    match a {\n        X => 1\n    }\n}",
         ),
         (
             "math.ky",
-            "pub type B = | P | Q\npub fn check_b(b: B) -> Int {\n    match b {\n        P => 1\n    }\n}",
+            "pub type B = P | Q\npub fn check_b(b: B) -> Int {\n    match b {\n        P => 1\n    }\n}",
         ),
     ]);
 
@@ -1667,7 +1731,7 @@ fn api_refactor_project_quickfix_wrong_target_file_gives_error() {
     let (_dir, main_path) = write_project(&[
         (
             "main.ky",
-            "type A = | X | Y\nfn check_a(a: A) -> Int {\n    match a {\n        X => 1\n    }\n}",
+            "type A = X | Y\nfn check_a(a: A) -> Int {\n    match a {\n        X => 1\n    }\n}",
         ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
     ]);
@@ -2312,7 +2376,7 @@ fn capitalized_unknown_pattern_produces_diagnostic() {
 
 #[test]
 fn duplicate_bindings_in_constructor_pattern_produce_diagnostic() {
-    let src = "type Pair = | Pair(Int, Int)\nfn f(p: Pair) -> Int { match p { Pair(x, x) => x } }\nfn main() -> Int { f(Pair(1, 2)) }";
+    let src = "type Pair = Pair(Int, Int)\nfn f(p: Pair) -> Int { match p { Pair(x, x) => x } }\nfn main() -> Int { f(Pair(1, 2)) }";
     let output = check(src, "test.ky");
     let dups: Vec<_> = output
         .diagnostics
@@ -2332,7 +2396,7 @@ fn duplicate_bindings_in_constructor_pattern_produce_diagnostic() {
 
 #[test]
 fn duplicate_binding_detection_is_local_to_each_match_arm_pattern() {
-    let src = "type Pair = | Pair(Int, Int)\nfn f(p: Pair) -> Int { match p { Pair(x, x) => x, Pair(x, y) => x } }\nfn main() -> Int { f(Pair(1, 2)) }";
+    let src = "type Pair = Pair(Int, Int)\nfn f(p: Pair) -> Int { match p { Pair(x, x) => x, Pair(x, y) => x } }\nfn main() -> Int { f(Pair(1, 2)) }";
     let output = check(src, "test.ky");
     let dup_binding_diags: Vec<_> = output
         .diagnostics
@@ -2352,7 +2416,7 @@ fn duplicate_binding_detection_is_local_to_each_match_arm_pattern() {
 
 #[test]
 fn duplicate_binding_detection_is_local_to_each_let_pattern() {
-    let src = "type Pair = | Pair(Int, Int)\nfn main() -> Int { let Pair(x, x) = Pair(1, 2)\n let Pair(x, y) = Pair(3, 4)\n x + y }";
+    let src = "type Pair = Pair(Int, Int)\nfn main() -> Int { let Pair(x, x) = Pair(1, 2)\n let Pair(x, y) = Pair(3, 4)\n x + y }";
     let output = check(src, "test.ky");
     let dup_binding_diags: Vec<_> = output
         .diagnostics
@@ -3601,14 +3665,14 @@ fn project_metamorphic_lambda_param_rename_preserves_edges_and_diagnostics() {
 #[test]
 fn diagnostic_delta_duplicate_pattern_binding_adds_one_e0102() {
     let original = r#"
-type Pair = | Pair(Int, Int)
+type Pair = Pair(Int, Int)
 fn main() -> Int {
   let Pair(a, b) = Pair(1, 2)
   a + b
 }
 "#;
     let transformed = r#"
-type Pair = | Pair(Int, Int)
+type Pair = Pair(Int, Int)
 fn main() -> Int {
   let Pair(x, x) = Pair(1, 2)
   x

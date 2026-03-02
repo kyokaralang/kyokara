@@ -233,13 +233,13 @@ fn test_direct_call() {
 
 #[test]
 fn test_constructor_call() {
-    let out = lower_and_display("type Foo = | Bar(Int)\nfn main() -> Foo { Bar(42) }");
+    let out = lower_and_display("type Foo = Bar(Int)\nfn main() -> Foo { Bar(42) }");
     assert!(out.contains("adt_construct Bar("), "output:\n{out}");
 }
 
 #[test]
 fn test_nullary_constructor() {
-    let out = lower_and_display("type Opt = | Yes | No\nfn main() -> Opt { No }");
+    let out = lower_and_display("type Opt = Yes | No\nfn main() -> Opt { No }");
     assert!(out.contains("adt_construct No()"), "output:\n{out}");
 }
 
@@ -339,7 +339,7 @@ fn test_if_in_let() {
 #[test]
 fn test_adt_match_switch() {
     let out = lower_and_display(
-        "type Wrap<T> = | Val(T) | Empty
+        "type Wrap<T> = Val(T) | Empty
          fn f(x: Wrap<Int>) -> Int {
            match x {
              Val(n) => n
@@ -371,7 +371,7 @@ fn test_literal_match() {
 #[test]
 fn test_wildcard_match() {
     let out = lower_and_display(
-        "type Wrap<T> = | Val(T) | Empty
+        "type Wrap<T> = Val(T) | Empty
          fn f(x: Wrap<Int>) -> Int {
            match x {
              Val(n) => n
@@ -386,7 +386,7 @@ fn test_wildcard_match() {
 #[test]
 fn test_bind_pattern_match() {
     let out = lower_and_display(
-        "type Wrap<T> = | Val(T) | Empty
+        "type Wrap<T> = Val(T) | Empty
          fn f(x: Wrap<Int>) -> Int {
            match x {
              Val(n) => n
@@ -400,7 +400,7 @@ fn test_bind_pattern_match() {
 #[test]
 fn test_nested_constructor() {
     let out = lower_and_display(
-        "type Wrap<T> = | Val(T) | Empty
+        "type Wrap<T> = Val(T) | Empty
          fn f(x: Wrap<Int>) -> Int {
            match x {
              Val(n) => n + 1
@@ -415,7 +415,7 @@ fn test_nested_constructor() {
 #[test]
 fn test_multiple_arms() {
     let out = lower_and_display(
-        "type Color = | Red | Green | Blue
+        "type Color = Red | Green | Blue
          fn f(c: Color) -> Int {
            match c {
              Red => 1
@@ -486,7 +486,7 @@ fn test_return_unit() {
 #[test]
 fn test_return_in_match_arm() {
     let out = lower_and_display(
-        "type Wrap<T> = | Val(T) | Empty
+        "type Wrap<T> = Val(T) | Empty
          fn f(x: Wrap<Int>) -> Int {
            match x {
              Val(n) => return n
@@ -631,7 +631,7 @@ fn test_regression_record_pattern_field_type() {
 #[test]
 fn test_nested_control_flow() {
     let source = "
-        type Wrap<T> = | Val(T) | Empty
+        type Wrap<T> = Val(T) | Empty
         fn f(x: Wrap<Int>) -> Int {
             match x {
                 Val(n) => if n > 0 { n } else { 0 }
@@ -729,7 +729,7 @@ fn test_sequential_match_record_pattern() {
 #[test]
 fn test_sequential_match_constructor_pattern() {
     let out = lower_and_display(
-        "type Wrap<T> = | Val(T) | Empty
+        "type Wrap<T> = Val(T) | Empty
          fn f(x: Int) -> Int {
            match x {
              0 => 100
@@ -802,7 +802,7 @@ fn test_ensures_implicit_return_recorded_in_contracts() {
 #[test]
 fn test_constructor_in_if_branches() {
     let source = "
-        type Wrap<T> = | Val(T) | Empty
+        type Wrap<T> = Val(T) | Empty
         fn f(x: Int) -> Wrap<Int> {
             if x > 0 {
                 Val(x)
@@ -886,7 +886,7 @@ fn test_adt_switch_default_uses_first_catchall() {
     // Bug: lower_match_adt overwrites default_target for every wildcard/bind
     // arm, so the last catch-all wins instead of the first.
     let result = check_file(
-        "type W = | A | B
+        "type W = A | B
          fn f(x: W) -> Int {
            match x {
              A => 1
@@ -943,7 +943,7 @@ fn test_adt_switch_default_uses_first_catchall() {
 fn test_adt_switch_single_catchall_still_works() {
     // Guard: single catch-all arm should work as before.
     let out = lower_and_display(
-        "type W = | A | B
+        "type W = A | B
          fn f(x: W) -> Int {
            match x {
              A => 1
@@ -962,7 +962,7 @@ fn test_adt_switch_no_cases_after_catchall() {
     // Bug: constructor arms after a catch-all still get added to the switch,
     // so `A` values branch to the later arm instead of the catch-all.
     let result = check_file(
-        "type W = | A | B
+        "type W = A | B
          fn f(x: W) -> Int {
            match x {
              other => 1
@@ -1010,7 +1010,7 @@ fn test_adt_switch_no_cases_after_catchall() {
 fn test_adt_switch_constructor_before_catchall_still_works() {
     // Guard: constructor arms BEFORE a catch-all should still be cases.
     let out = lower_and_display(
-        "type W = | A | B
+        "type W = A | B
          fn f(x: W) -> Int {
            match x {
              A => 1
@@ -1029,7 +1029,7 @@ fn test_adt_switch_constructor_before_catchall_still_works() {
 fn test_adt_switch_no_duplicate_cases() {
     // Bug: redundant constructor arms emit duplicate SwitchCase entries.
     let result = check_file(
-        "type W = | A | B
+        "type W = A | B
          fn f(x: W) -> Int {
            match x {
              A => 1
@@ -1079,7 +1079,7 @@ fn test_adt_switch_no_duplicate_cases() {
 fn test_adt_switch_first_dup_case_wins() {
     // Guard: when deduplicating, the first constructor arm should win.
     let result = check_file(
-        "type W = | A | B
+        "type W = A | B
          fn f(x: W) -> Int {
            match x {
              A => 10
@@ -1203,7 +1203,7 @@ fn test_validator_rejects_duplicate_switch_cases() {
 fn test_validator_accepts_unique_switch_cases() {
     // Guard: unique switch cases should pass validation.
     let out = lower_and_display(
-        "type W = | A | B
+        "type W = A | B
          fn f(x: W) -> Int {
            match x {
              A => 1
@@ -1414,7 +1414,7 @@ fn test_adt_match_nested_literal_check() {
     // Bug: ADT switch dispatches on outer constructor but doesn't emit
     // equality checks for nested literal subpatterns like `Some(1)`.
     let out = lower_and_display(
-        "type O = | Some(Int) | None
+        "type O = Some(Int) | None
          fn f(x: O) -> Int {
            match x {
              Some(1) => 10
@@ -1433,7 +1433,7 @@ fn test_adt_match_nested_literal_check() {
 fn test_adt_match_nested_bind_still_works() {
     // Guard: nested bind patterns (no literal) should NOT produce eq checks.
     let out = lower_and_display(
-        "type O = | Some(Int) | None
+        "type O = Some(Int) | None
          fn f(x: O) -> Int {
            match x {
              Some(n) => n
@@ -1565,7 +1565,7 @@ fn test_adt_match_unsupported_pattern_falls_back_to_sequential() {
     // handles it, so both arms produce code.
     //
     // This source has a type error (literal on ADT) but lowering runs anyway.
-    let source = "type O = | Some(Int) | None
+    let source = "type O = Some(Int) | None
          fn f(x: O) -> Int {
            match x {
              1 => 1
@@ -1599,7 +1599,7 @@ fn test_adt_match_all_supported_still_uses_switch() {
     // Guard: a normal ADT match with only constructor/wildcard/bind should
     // still use the switch-based lowering path.
     let out = lower_and_display(
-        "type O = | Some(Int) | None
+        "type O = Some(Int) | None
          fn f(x: O) -> Int {
            match x {
              Some(n) => n

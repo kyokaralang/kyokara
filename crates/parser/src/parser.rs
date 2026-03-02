@@ -84,6 +84,11 @@ impl<'i> Parser<'i> {
         self.pos >= self.input.len()
     }
 
+    /// Current non-trivia token position.
+    pub fn token_pos(&self) -> usize {
+        self.pos
+    }
+
     // ── Token consumption ───────────────────────────────────────────
 
     /// Advance past the current token, emitting a `Token` event.

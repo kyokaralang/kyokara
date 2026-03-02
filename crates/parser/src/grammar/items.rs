@@ -96,31 +96,46 @@ fn type_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
 
 /// `VariantList / TypeExpr`
 fn type_body(p: &mut Parser<'_>) {
+    // Canonical ADT syntax does not use a leading `|` before the first variant.
+    // We still consume a stray leading pipe for recovery, but report it as invalid.
     if p.at(Pipe) {
+        p.error("leading `|` is not allowed in type variants");
+        p.bump();
+    }
+
+    if starts_variant_list(p) {
         variant_list(p);
     } else {
         super::types::type_expr(p);
     }
 }
 
-/// `('|' Variant)+`
+/// `Variant ('|' Variant)*`
 fn variant_list(p: &mut Parser<'_>) {
     let m = p.open();
-    while p.at(Pipe) {
+    variant(p);
+    while p.eat(Pipe) {
+        if p.at(Pipe) {
+            p.error("expected variant after `|`");
+            break;
+        }
         variant(p);
     }
     m.complete(p, VariantList);
 }
 
-/// `'|' Ident VariantFieldList?`
+/// `Ident VariantFieldList?`
 fn variant(p: &mut Parser<'_>) {
     let m = p.open();
-    p.bump(); // |
     p.expect(Ident);
     if p.at(LParen) {
         variant_field_list(p);
     }
     m.complete(p, Variant);
+}
+
+fn starts_variant_list(p: &Parser<'_>) -> bool {
+    p.at(Ident) && matches!(p.nth(1), Pipe | LParen)
 }
 
 /// `'(' TypeExpr (',' TypeExpr)* ','? ')'`
@@ -151,11 +166,7 @@ fn variant_field_list(p: &mut Parser<'_>) {
 ///
 /// Capability member signatures are the only bodyless `fn` forms currently
 /// allowed (`allow_bodyless = true`).
-pub(super) fn fn_def(
-    p: &mut Parser<'_>,
-    is_pub: bool,
-    allow_bodyless: bool,
-) -> CompletedMarker {
+pub(super) fn fn_def(p: &mut Parser<'_>, is_pub: bool, allow_bodyless: bool) -> CompletedMarker {
     let m = p.open();
     if is_pub {
         p.bump(); // pub

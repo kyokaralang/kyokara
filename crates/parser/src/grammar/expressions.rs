@@ -223,12 +223,19 @@ fn match_arm_list(p: &mut Parser<'_>) {
     let m = p.open();
     p.expect(LBrace);
     while !p.at(RBrace) && !p.at_eof() {
+        let start_pos = p.token_pos();
         if super::patterns::PATTERN_START.contains(p.current()) {
             match_arm(p);
             // Optional comma between arms
             p.eat(Comma);
+        } else if p.eat(Pipe) {
+            p.error("match arms do not use a leading `|`");
         } else {
-            p.error_recover("expected match arm", TokenSet::new(&[RBrace, Pipe]));
+            p.error_recover("expected match arm", TokenSet::new(&[RBrace, Comma]));
+        }
+
+        if p.token_pos() == start_pos && !p.at_eof() {
+            p.bump();
         }
     }
     p.expect(RBrace);

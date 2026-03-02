@@ -84,7 +84,7 @@ pub enum TypeDefKind {
     Alias(TypeRef),
     /// Record: `type Foo = { x: Int, y: Int }`.
     Record { fields: Vec<(Name, TypeRef)> },
-    /// ADT with variants: `type Foo = | A(Int) | B`.
+    /// ADT with variants: `type Foo = A(Int) | B`.
     Adt { variants: Vec<VariantDef> },
 }
 

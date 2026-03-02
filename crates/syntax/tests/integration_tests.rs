@@ -109,7 +109,7 @@ fn parse_misordered_contract_clause_reports_specific_error() {
 
 #[test]
 fn roundtrip_type_def_variants() {
-    let src = "type Option = | Some(Int) | None";
+    let src = "type Option = Some(Int) | None";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
 }
@@ -133,6 +133,38 @@ fn roundtrip_match() {
     let src = "let x = match y { 1 => 2, _ => 3 }";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn parse_match_with_leading_pipe_arm_reports_targeted_error() {
+    let src = "let x = match y { | _ => 0 }";
+    let result = parse(src);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("match arms do not use a leading `|`")),
+        "expected leading-pipe match-arm diagnostic, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
+fn parse_match_with_repeated_leading_pipes_reports_each() {
+    let src = "let x = match y { | | 1 => 2, _ => 3 }";
+    let result = parse(src);
+    assert!(
+        result
+            .errors
+            .iter()
+            .filter(|e| e.message.contains("match arms do not use a leading `|`"))
+            .count()
+            >= 2,
+        "expected repeated leading-pipe diagnostics, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
 }
 
 #[test]
@@ -193,9 +225,53 @@ fn roundtrip_with_comments() {
 
 #[test]
 fn roundtrip_generics() {
-    let src = "type Option<T> = | Some(T) | None";
+    let src = "type Option<T> = Some(T) | None";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn parse_type_variant_leading_pipe_reports_error() {
+    let src = "type Option = | Some(Int) | None";
+    let result = parse(src);
+    assert!(
+        result.errors.iter().any(|e| e
+            .message
+            .contains("leading `|` is not allowed in type variants")),
+        "expected leading-pipe rejection, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
+fn parse_pub_property_reports_error_and_recovers() {
+    let src = "pub property p(x: Int <- Gen.int()) { true }\nfn ok() { 1 }";
+    let result = parse(src);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("expected item")),
+        "expected pub property error, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
+fn parse_pub_let_reports_error_and_recovers() {
+    let src = "pub let x = 1\nfn ok() { 1 }";
+    let result = parse(src);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("expected item")),
+        "expected pub let error, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
 }
 
 #[test]
@@ -317,7 +393,7 @@ fn roundtrip_full_program() {
 import Std.IO as IO
 
 type Option<T> =
-    | Some(T)
+    Some(T)
     | None
 
 fn map<T, U>(opt: Option<T>, f: fn(T) -> U) -> Option<U> {

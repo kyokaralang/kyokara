@@ -32,12 +32,10 @@ pub(crate) fn source_file(p: &mut Parser<'_>) {
 
     // Items until EOF.
     while !p.at_eof() {
-        if items::item(p).is_none() {
-            // item() already did error recovery, but if we're stuck
-            // on the same token, bump to avoid an infinite loop.
-            if !p.at_eof() && !items::ITEM_RECOVERY.contains(p.current()) {
-                p.bump();
-            }
+        let start_pos = p.token_pos();
+        let _ = items::item(p);
+        if p.token_pos() == start_pos && !p.at_eof() {
+            p.bump();
         }
     }
 
