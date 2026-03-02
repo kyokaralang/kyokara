@@ -59,6 +59,9 @@ pub enum IntrinsicFn {
     SetLen,
     SetIsEmpty,
     SetValues,
+    // Result<T, E>
+    ResultUnwrapOr,
+    ResultMapOr,
 
     // String ops
     StringLen,
@@ -133,6 +136,8 @@ impl IntrinsicFn {
                 | IntrinsicFn::ListZip
                 | IntrinsicFn::MapGet
                 | IntrinsicFn::ListSortBy
+                | IntrinsicFn::ResultUnwrapOr
+                | IntrinsicFn::ResultMapOr
                 | IntrinsicFn::ParseInt
                 | IntrinsicFn::ParseFloat
         )
@@ -689,8 +694,11 @@ impl IntrinsicFn {
             }
 
             // ── Parsing (now complex — needs interpreter for Result construction) ──
-            IntrinsicFn::ParseInt | IntrinsicFn::ParseFloat => Err(RuntimeError::TypeError(
-                "parse intrinsics need interpreter context for Result construction".into(),
+            IntrinsicFn::ResultUnwrapOr
+            | IntrinsicFn::ResultMapOr
+            | IntrinsicFn::ParseInt
+            | IntrinsicFn::ParseFloat => Err(RuntimeError::TypeError(
+                "intrinsic needs interpreter context".into(),
             )),
 
             // ── String decomposition ──────────────────────────────
@@ -1015,6 +1023,11 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (Name::new(interner, "set_len"), IntrinsicFn::SetLen),
         (Name::new(interner, "set_is_empty"), IntrinsicFn::SetIsEmpty),
         (Name::new(interner, "set_values"), IntrinsicFn::SetValues),
+        (
+            Name::new(interner, "result_unwrap_or"),
+            IntrinsicFn::ResultUnwrapOr,
+        ),
+        (Name::new(interner, "result_map_or"), IntrinsicFn::ResultMapOr),
         // String
         (Name::new(interner, "string_len"), IntrinsicFn::StringLen),
         (

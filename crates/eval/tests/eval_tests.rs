@@ -4089,6 +4089,38 @@ fn eval_parse_int_overflow_fails() {
     assert_eq!(val, Value::Bool(true));
 }
 
+#[test]
+fn eval_parse_int_unwrap_or_ok_returns_inner_value() {
+    let val = run_ok(r#"fn main() -> Int { "42".parse_int().unwrap_or(0) }"#);
+    assert_eq!(val, Value::Int(42));
+}
+
+#[test]
+fn eval_parse_int_unwrap_or_err_returns_default() {
+    let val = run_ok(r#"fn main() -> Int { "oops".parse_int().unwrap_or(7) }"#);
+    assert_eq!(val, Value::Int(7));
+}
+
+#[test]
+fn eval_parse_int_map_or_ok_applies_mapper() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            "41".parse_int().map_or(0, fn(n: Int) => n + 1)
+        }"#,
+    );
+    assert_eq!(val, Value::Int(42));
+}
+
+#[test]
+fn eval_parse_int_map_or_err_returns_default() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            "oops".parse_int().map_or(9, fn(n: Int) => n + 1)
+        }"#,
+    );
+    assert_eq!(val, Value::Int(9));
+}
+
 // ── parse_float tests ───────────────────────────────────────────────
 // parse_float returns Result<Float, ParseError>.
 

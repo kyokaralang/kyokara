@@ -1400,6 +1400,62 @@ impl Interpreter {
         }
     }
 
+    /// Decode a `Result` value into `Some(ok_payload)` for `Ok`, `None` for `Err`.
+    ///
+    /// We resolve by type/variant names (`Result`, `Ok`, `Err`) so user shadowing
+    /// cannot silently reinterpret non-result ADTs.
+    fn decode_result_ok_payload(
+        &mut self,
+        value: &Value,
+        intrinsic_name: &str,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let Value::Adt {
+            type_idx,
+            variant,
+            fields,
+        } = value
+        else {
+            return Err(RuntimeError::TypeError(format!(
+                "{intrinsic_name} expects a Result value"
+            )));
+        };
+
+        let result_name = Name::new(&mut self.interner, "Result");
+        if self.item_tree.types[*type_idx].name != result_name {
+            return Err(RuntimeError::TypeError(format!(
+                "{intrinsic_name} expects a Result value"
+            )));
+        }
+
+        let TypeDefKind::Adt { variants } = &self.item_tree.types[*type_idx].kind else {
+            return Err(RuntimeError::TypeError(format!(
+                "{intrinsic_name} expects a Result ADT"
+            )));
+        };
+        let Some(variant_def) = variants.get(*variant) else {
+            return Err(RuntimeError::TypeError(format!(
+                "{intrinsic_name} received invalid Result variant index"
+            )));
+        };
+
+        let ok_name = Name::new(&mut self.interner, "Ok");
+        let err_name = Name::new(&mut self.interner, "Err");
+        if variant_def.name == ok_name {
+            if fields.len() != 1 {
+                return Err(RuntimeError::TypeError(format!(
+                    "{intrinsic_name} expects Result::Ok to carry one value"
+                )));
+            }
+            Ok(Some(fields[0].clone()))
+        } else if variant_def.name == err_name {
+            Ok(None)
+        } else {
+            Err(RuntimeError::TypeError(format!(
+                "{intrinsic_name} expects Result::Ok/Err variants"
+            )))
+        }
+    }
+
     fn make_invalid_int(&self, msg: String) -> Result<Value, RuntimeError> {
         let Some((type_idx, variant)) = self.parse_error_invalid_int else {
             return Err(RuntimeError::TypeError(
@@ -1592,6 +1648,21 @@ impl Interpreter {
                     }
                 }
                 Ok(Value::list(items))
+            }
+            IntrinsicFn::ResultUnwrapOr => {
+                let fallback = args[1].clone();
+                match self.decode_result_ok_payload(&args[0], "result_unwrap_or")? {
+                    Some(v) => Ok(v),
+                    None => Ok(fallback),
+                }
+            }
+            IntrinsicFn::ResultMapOr => {
+                let fallback = args[1].clone();
+                let mapper = args[2].clone();
+                match self.decode_result_ok_payload(&args[0], "result_map_or")? {
+                    Some(v) => self.call_value(mapper, smallvec::smallvec![v]),
+                    None => Ok(fallback),
+                }
             }
             IntrinsicFn::ParseInt => {
                 let Value::String(s) = &args[0] else {

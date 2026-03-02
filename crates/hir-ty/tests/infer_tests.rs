@@ -667,6 +667,70 @@ fn infer_iteration_ergonomics_happy_paths() {
 }
 
 #[test]
+fn infer_result_ergonomics_happy_paths() {
+    let cases = [
+        "fn main() -> Int { \"42\".parse_int().unwrap_or(0) }",
+        "fn main() -> Int { \"42\".parse_int().map_or(0, fn(n: Int) => n + 1) }",
+        "fn main() -> Int { \"abc\".parse_int().map_or(7, fn(n: Int) => n + 1) }",
+    ];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected no diagnostics, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn err_result_ergonomics_wrong_types_or_arity() {
+    struct Case<'a> {
+        src: &'a str,
+        expected_fragment: &'a str,
+    }
+
+    let cases = [
+        Case {
+            src: "fn main() -> Int { \"42\".parse_int().unwrap_or(\"x\") }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "fn main() -> Int { \"42\".parse_int().map_or(0) }",
+            expected_fragment: "expected 2 argument(s)",
+        },
+        Case {
+            src: "fn main() -> Int { \"42\".parse_int().map_or(0, fn(n: Int) => \"x\") }",
+            expected_fragment: "type mismatch",
+        },
+    ];
+
+    for case in cases {
+        let (result, _) = check(case.src);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains(case.expected_fragment)),
+            "expected diagnostic containing `{}`; got: {:?}\nsource:\n{}",
+            case.expected_fragment,
+            result.diagnostics,
+            case.src
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|d| !d.message.contains("unresolved name")),
+            "expected canonical surface to resolve names; got unresolved-name diagnostics: {:?}\nsource:\n{}",
+            result.diagnostics,
+            case.src
+        );
+    }
+}
+
+#[test]
 fn err_iteration_ergonomics_wrong_arity_or_type() {
     struct Case<'a> {
         src: &'a str,
