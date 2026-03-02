@@ -29,7 +29,7 @@ pub fn completions(
 
     let mut items = Vec::new();
 
-    // Module scope: functions, types, caps, constructors, synthetic modules.
+    // Module scope: functions, types, effects, constructors, synthetic modules.
     add_module_scope_completions(analysis, &mut items);
 
     // Builtin types.
@@ -211,7 +211,7 @@ fn add_module_scope_completions(analysis: &FileAnalysis, items: &mut Vec<Complet
     }
 
     // Capabilities.
-    for name in scope.caps.keys() {
+    for name in scope.effects.keys() {
         items.push(CompletionItem {
             label: name.resolve(interner).to_string(),
             kind: Some(CompletionItemKind::INTERFACE),

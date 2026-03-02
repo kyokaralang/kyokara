@@ -61,7 +61,7 @@ impl SourceFile {
 pub enum Item {
     TypeDef(TypeDef),
     FnDef(FnDef),
-    CapDef(CapDef),
+    EffectDef(EffectDef),
     PropertyDef(PropertyDef),
     LetBinding(LetBinding),
 }
@@ -71,7 +71,7 @@ impl Item {
         match node.kind() {
             SyntaxKind::TypeDef => TypeDef::cast(node).map(Item::TypeDef),
             SyntaxKind::FnDef => FnDef::cast(node).map(Item::FnDef),
-            SyntaxKind::CapDef => CapDef::cast(node).map(Item::CapDef),
+            SyntaxKind::EffectDef => EffectDef::cast(node).map(Item::EffectDef),
             SyntaxKind::PropertyDef => PropertyDef::cast(node).map(Item::PropertyDef),
             SyntaxKind::LetBinding => LetBinding::cast(node).map(Item::LetBinding),
             _ => None,
@@ -219,11 +219,11 @@ impl FnDef {
     }
 }
 
-define_ast_node!(CapDef, CapDef);
+define_ast_node!(EffectDef, EffectDef);
 
-impl HasName for CapDef {}
-impl HasTypeParams for CapDef {}
-impl HasVisibility for CapDef {}
+impl HasName for EffectDef {}
+impl HasTypeParams for EffectDef {}
+impl HasVisibility for EffectDef {}
 
 define_ast_node!(PropertyDef, PropertyDef);
 

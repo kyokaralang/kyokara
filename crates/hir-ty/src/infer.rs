@@ -187,12 +187,13 @@ pub fn infer_body(
         .unwrap_or(Ty::Unit);
 
     // Build caller effect set.
-    let caller_effects = EffectSet::from_with_caps(&fn_item.with_caps, &env, &mut table, interner);
+    let caller_effects =
+        EffectSet::from_with_effects(&fn_item.with_effects, &env, &mut table, interner);
 
     // Validate capability names.
     let mut diags: Vec<(TyDiagnosticData, DiagLoc)> = Vec::new();
-    for cap_name in &caller_effects.caps {
-        if !module_scope.caps.contains_key(cap_name) {
+    for cap_name in &caller_effects.effects {
+        if !module_scope.effects.contains_key(cap_name) {
             diags.push((
                 TyDiagnosticData::UnresolvedType {
                     name: cap_name.resolve(interner).to_owned(),

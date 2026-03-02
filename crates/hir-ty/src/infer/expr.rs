@@ -226,7 +226,7 @@ impl<'a> InferenceCtx<'a> {
                         self.non_value_name_in_expr("type", name)
                     }
                 }
-                ScopeDef::Cap(_) => self.non_value_name_in_expr("capability", name),
+                ScopeDef::Effect(_) => self.non_value_name_in_expr("capability", name),
                 ScopeDef::Import(_) => self.non_value_name_in_expr("import", name),
             },
 
@@ -256,7 +256,7 @@ impl<'a> InferenceCtx<'a> {
                     self.non_value_name_in_expr("type", name)
                 }
             }
-            Some(ResolvedName::Cap(_)) => self.non_value_name_in_expr("capability", name),
+            Some(ResolvedName::Effect(_)) => self.non_value_name_in_expr("capability", name),
             Some(ResolvedName::Import(_)) => self.non_value_name_in_expr("import", name),
 
             // Module names (io, math, fs) are not values — they're only valid
@@ -701,8 +701,8 @@ impl<'a> InferenceCtx<'a> {
                 self.interner,
                 &self.type_params,
             );
-            let callee_effects = effects::EffectSet::from_with_caps(
-                &fn_item.with_caps,
+            let callee_effects = effects::EffectSet::from_with_effects(
+                &fn_item.with_effects,
                 &env,
                 &mut self.table,
                 self.interner,

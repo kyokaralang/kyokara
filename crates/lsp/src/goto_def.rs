@@ -6,7 +6,7 @@ use kyokara_parser::SyntaxKind;
 use kyokara_syntax::SyntaxNode;
 use kyokara_syntax::SyntaxToken;
 use kyokara_syntax::ast::AstNode;
-use kyokara_syntax::ast::nodes::{CapDef, FnDef, LetBinding, Param, Pat, TypeDef};
+use kyokara_syntax::ast::nodes::{EffectDef, FnDef, LetBinding, Param, Pat, TypeDef};
 use kyokara_syntax::ast::traits::HasName;
 use text_size::TextSize;
 use tower_lsp::lsp_types::{Location, Url};
@@ -67,10 +67,10 @@ fn find_type_def(root: &SyntaxNode, name: &str, source: &str, uri: &Url) -> Opti
 
 fn find_cap_def(root: &SyntaxNode, name: &str, source: &str, uri: &Url) -> Option<Location> {
     for node in root.descendants() {
-        if let Some(cap_def) = CapDef::cast(node)
-            && cap_def.name_token().is_some_and(|t| t.text() == name)
+        if let Some(effect_def) = EffectDef::cast(node)
+            && effect_def.name_token().is_some_and(|t| t.text() == name)
         {
-            let range = text_range_to_lsp_range(cap_def.syntax().text_range(), source);
+            let range = text_range_to_lsp_range(effect_def.syntax().text_range(), source);
             return Some(Location::new(uri.clone(), range));
         }
     }

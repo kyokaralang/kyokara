@@ -277,9 +277,9 @@ fn fn_def_contract_unparenthesized_requires_reports_targeted_error() {
         FnKw, Ident, LParen, RParen, Arrow, Ident, RequiresKw, Ident, LBrace, IntLiteral, RBrace,
     ]);
     assert!(
-        errors
-            .iter()
-            .any(|e| e.message.contains("requires clause expression must be parenthesized")),
+        errors.iter().any(|e| e
+            .message
+            .contains("requires clause expression must be parenthesized")),
         "expected parenthesized-requires diagnostic, got: {errors:?}"
     );
 }
@@ -645,7 +645,7 @@ fn effect_def() {
     // effect IO
     let (events, errors) = parse_tokens(&[EffectKw, Ident]);
     assert!(has_no_errors(&errors));
-    assert!(has_node(&events, CapDef));
+    assert!(has_node(&events, EffectDef));
     assert_eq!(
         count_start_nodes(&events, FnDef),
         0,
@@ -964,9 +964,9 @@ fn property_where_unparenthesized_reports_targeted_error() {
         RParen, RParen, WhereKw, Ident, Gt, IntLiteral,
     ]);
     assert!(
-        errors
-            .iter()
-            .any(|e| e.message.contains("where clause expression must be parenthesized")),
+        errors.iter().any(|e| e
+            .message
+            .contains("where clause expression must be parenthesized")),
         "expected parenthesized-where diagnostic, got: {errors:?}"
     );
 }

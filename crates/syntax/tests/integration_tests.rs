@@ -415,10 +415,9 @@ fn parse_requires_without_parenthesized_expr_reports_targeted_error() {
     let src = "fn f(x: Int) -> Int requires x > 0 { x }";
     let result = parse(src);
     assert!(
-        result
-            .errors
-            .iter()
-            .any(|e| e.message.contains("requires clause expression must be parenthesized")),
+        result.errors.iter().any(|e| e
+            .message
+            .contains("requires clause expression must be parenthesized")),
         "expected parenthesized-requires diagnostic, got: {:?}",
         result.errors
     );
@@ -430,10 +429,9 @@ fn parse_where_without_parenthesized_expr_reports_targeted_error() {
     let src = "property p(x: Int <- Gen.auto()) where x > 0 { x > 0 }";
     let result = parse(src);
     assert!(
-        result
-            .errors
-            .iter()
-            .any(|e| e.message.contains("where clause expression must be parenthesized")),
+        result.errors.iter().any(|e| e
+            .message
+            .contains("where clause expression must be parenthesized")),
         "expected parenthesized-where diagnostic, got: {:?}",
         result.errors
     );

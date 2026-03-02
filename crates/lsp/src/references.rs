@@ -116,7 +116,7 @@ fn should_include_token(parent: &SyntaxNode, kind: SymbolKind) -> bool {
     match kind {
         SymbolKind::Function if parent_kind == SyntaxKind::FnDef => return true,
         SymbolKind::Type if parent_kind == SyntaxKind::TypeDef => return true,
-        SymbolKind::Capability if parent_kind == SyntaxKind::CapDef => return true,
+        SymbolKind::Capability if parent_kind == SyntaxKind::EffectDef => return true,
         SymbolKind::Variant if parent_kind == SyntaxKind::Variant => return true,
         _ => {}
     }
@@ -165,7 +165,7 @@ fn is_definition_site(parent: &SyntaxNode, kind: SymbolKind) -> bool {
     match kind {
         SymbolKind::Function => parent.kind() == SyntaxKind::FnDef,
         SymbolKind::Type => parent.kind() == SyntaxKind::TypeDef,
-        SymbolKind::Capability => parent.kind() == SyntaxKind::CapDef,
+        SymbolKind::Capability => parent.kind() == SyntaxKind::EffectDef,
         SymbolKind::Variant => parent.kind() == SyntaxKind::Variant,
     }
 }

@@ -15,7 +15,7 @@ pub use kyokara_hir_def::builtins::register_static_methods;
 pub use kyokara_hir_def::builtins::register_synthetic_modules;
 pub use kyokara_hir_def::item_tree::lower::collect_item_tree;
 pub use kyokara_hir_def::item_tree::{
-    CapItem, FnItem, FnParam, ItemTree, PropertyItem, PropertyItemIdx, TypeDefKind, TypeItem,
+    EffectItem, FnItem, FnParam, ItemTree, PropertyItem, PropertyItemIdx, TypeDefKind, TypeItem,
     VariantDef,
 };
 pub use kyokara_hir_def::module_graph::{ModuleGraph, ModuleInfo, ModulePath, discover_modules};
@@ -485,9 +485,9 @@ fn resolve_project_imports(
                         }
                     }
                 }
-                PubData::Cap(cap_item) => {
+                PubData::Effect(cap_item) => {
                     let name = cap_item.name;
-                    if importing_info.scope.caps.contains_key(&name) {
+                    if importing_info.scope.effects.contains_key(&name) {
                         let name_str = name.resolve(interner);
                         diagnostics.push(kyokara_diagnostics::Diagnostic::error(
                             format!("conflicting import: `{name_str}` is already defined"),
@@ -497,8 +497,8 @@ fn resolve_project_imports(
                             },
                         ));
                     } else {
-                        let idx = importing_info.item_tree.caps.alloc(cap_item);
-                        importing_info.scope.caps.insert(name, idx);
+                        let idx = importing_info.item_tree.effects.alloc(cap_item);
+                        importing_info.scope.effects.insert(name, idx);
                     }
                 }
             }
@@ -510,7 +510,7 @@ fn resolve_project_imports(
 enum PubData {
     Fn(FnItem),
     Type(TypeItem),
-    Cap(CapItem),
+    Effect(EffectItem),
 }
 
 fn module_path_label(path: &ModulePath, interner: &Interner) -> String {
@@ -541,9 +541,9 @@ fn collect_pub_data(item_tree: &ItemTree) -> Vec<PubData> {
         }
     }
 
-    for (_, cap_item) in item_tree.caps.iter() {
+    for (_, cap_item) in item_tree.effects.iter() {
         if cap_item.is_pub {
-            items.push(PubData::Cap(cap_item.clone()));
+            items.push(PubData::Effect(cap_item.clone()));
         }
     }
 

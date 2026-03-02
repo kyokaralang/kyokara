@@ -30,7 +30,7 @@ pub(super) fn item(p: &mut Parser<'_>) -> Option<CompletedMarker> {
             p.bump();
             return None;
         }
-        EffectKw => cap_def(p, is_pub),
+        EffectKw => effect_def(p, is_pub),
         PropertyKw => {
             if is_pub {
                 p.error_recover("expected item", ITEM_RECOVERY);
@@ -356,7 +356,7 @@ fn invariant_clause(p: &mut Parser<'_>) {
 // ── Effect Definition ───────────────────────────────────────────────
 
 /// `pub? effect Ident`
-fn cap_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
+fn effect_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
     let m = p.open();
     if is_pub {
         p.bump(); // pub
@@ -379,7 +379,7 @@ fn cap_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
         p.expect(RBrace);
         err.complete(p, ErrorNode);
     }
-    m.complete(p, CapDef)
+    m.complete(p, EffectDef)
 }
 
 // ── Property Definition ─────────────────────────────────────────────

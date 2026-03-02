@@ -83,17 +83,17 @@ fn render_fn_signature(item: &FnItem, interner: &Interner, tree: &ItemTree) -> S
         .as_ref()
         .map(|t| format!(" -> {}", display_ty_ref(t, interner, tree)))
         .unwrap_or_default();
-    let caps = if item.with_caps.is_empty() {
+    let effects = if item.with_effects.is_empty() {
         String::new()
     } else {
-        let caps: Vec<String> = item
-            .with_caps
+        let effects: Vec<String> = item
+            .with_effects
             .iter()
             .map(|c| display_ty_ref(c, interner, tree))
             .collect();
-        format!(" with {}", caps.join(", "))
+        format!(" with {}", effects.join(", "))
     };
-    format!("fn {name}({params_str}){ret}{caps}")
+    format!("fn {name}({params_str}){ret}{effects}")
 }
 
 fn display_ty_ref(ty_ref: &kyokara_hir::TypeRef, interner: &Interner, tree: &ItemTree) -> String {

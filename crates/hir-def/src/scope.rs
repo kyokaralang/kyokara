@@ -7,7 +7,7 @@ use kyokara_stdx::FxHashMap;
 use la_arena::{Arena, Idx};
 
 use crate::expr::{ExprIdx, PatIdx};
-use crate::item_tree::{CapItemIdx, FnItemIdx, TypeItemIdx};
+use crate::item_tree::{EffectItemIdx, FnItemIdx, TypeItemIdx};
 use crate::name::Name;
 
 /// Index into the scope arena.
@@ -100,7 +100,7 @@ pub enum ScopeDef {
     /// A type item.
     Type(TypeItemIdx),
     /// A capability item.
-    Cap(CapItemIdx),
+    Effect(EffectItemIdx),
     /// An ADT constructor.
     Constructor {
         type_idx: TypeItemIdx,
