@@ -35,6 +35,11 @@ pub enum IntrinsicFn {
     ListMap,
     ListFilter,
     ListFold,
+    ListRange,
+    ListEnumerate,
+    ListZip,
+    ListChunks,
+    ListWindows,
 
     // Map<K,V>
     MapNew,
@@ -124,6 +129,8 @@ impl IntrinsicFn {
                 | IntrinsicFn::ListMap
                 | IntrinsicFn::ListFilter
                 | IntrinsicFn::ListFold
+                | IntrinsicFn::ListEnumerate
+                | IntrinsicFn::ListZip
                 | IntrinsicFn::MapGet
                 | IntrinsicFn::ListSortBy
                 | IntrinsicFn::ParseInt
@@ -242,6 +249,73 @@ impl IntrinsicFn {
                 let mut result = a.as_ref().clone();
                 result.extend(b.iter().cloned());
                 Ok(Value::list(result))
+            }
+            IntrinsicFn::ListRange => {
+                let Value::Int(start) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "list_range expects Int arguments".into(),
+                    ));
+                };
+                let Value::Int(end) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "list_range expects Int arguments".into(),
+                    ));
+                };
+                if start >= end {
+                    return Ok(Value::list(Vec::new()));
+                }
+                let values: Vec<Value> = (*start..*end).map(Value::Int).collect();
+                Ok(Value::list(values))
+            }
+            IntrinsicFn::ListChunks => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError("list_chunks expects a List".into()));
+                };
+                let Value::Int(n) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "list_chunks expects an Int chunk size".into(),
+                    ));
+                };
+                if *n <= 0 {
+                    return Err(RuntimeError::TypeError(
+                        "list_chunks: chunk size must be > 0".into(),
+                    ));
+                }
+                let chunk_size = *n as usize;
+                let mut chunks = Vec::new();
+                let mut i = 0usize;
+                while i < xs.len() {
+                    let end = usize::min(i + chunk_size, xs.len());
+                    chunks.push(Value::list(xs[i..end].to_vec()));
+                    i += chunk_size;
+                }
+                Ok(Value::list(chunks))
+            }
+            IntrinsicFn::ListWindows => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "list_windows expects a List".into(),
+                    ));
+                };
+                let Value::Int(n) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "list_windows expects an Int window size".into(),
+                    ));
+                };
+                if *n <= 0 {
+                    return Err(RuntimeError::TypeError(
+                        "list_windows: window size must be > 0".into(),
+                    ));
+                }
+                let window_size = *n as usize;
+                if window_size > xs.len() {
+                    return Ok(Value::list(Vec::new()));
+                }
+                let mut windows = Vec::with_capacity(xs.len() - window_size + 1);
+                for i in 0..=(xs.len() - window_size) {
+                    windows.push(Value::list(xs[i..(i + window_size)].to_vec()));
+                }
+                Ok(Value::list(windows))
             }
 
             // ── Map (simple) ─────────────────────────────────────
@@ -862,6 +936,8 @@ impl IntrinsicFn {
             | IntrinsicFn::ListMap
             | IntrinsicFn::ListFilter
             | IntrinsicFn::ListFold
+            | IntrinsicFn::ListEnumerate
+            | IntrinsicFn::ListZip
             | IntrinsicFn::MapGet
             | IntrinsicFn::ListSortBy => Err(RuntimeError::TypeError(
                 "complex intrinsic called without interpreter context".into(),
@@ -904,6 +980,17 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (Name::new(interner, "list_map"), IntrinsicFn::ListMap),
         (Name::new(interner, "list_filter"), IntrinsicFn::ListFilter),
         (Name::new(interner, "list_fold"), IntrinsicFn::ListFold),
+        (Name::new(interner, "list_range"), IntrinsicFn::ListRange),
+        (
+            Name::new(interner, "list_enumerate"),
+            IntrinsicFn::ListEnumerate,
+        ),
+        (Name::new(interner, "list_zip"), IntrinsicFn::ListZip),
+        (Name::new(interner, "list_chunks"), IntrinsicFn::ListChunks),
+        (
+            Name::new(interner, "list_windows"),
+            IntrinsicFn::ListWindows,
+        ),
         // Map
         (Name::new(interner, "map_new"), IntrinsicFn::MapNew),
         (Name::new(interner, "map_insert"), IntrinsicFn::MapInsert),

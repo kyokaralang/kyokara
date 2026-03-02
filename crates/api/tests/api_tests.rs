@@ -3965,6 +3965,57 @@ fn check_list_binary_search_sortable_elements_have_no_e0025() {
     );
 }
 
+// ── Iteration ergonomics API checks (#259) ─────────────────────────
+
+#[test]
+fn check_iteration_ergonomics_canonical_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"fn main() -> Bool {
+            let xs = List.range(0, 5)
+            let e = xs.enumerate()
+            let z = xs.zip(List.new().push(10).push(20))
+            let c = xs.chunks(2)
+            let w = xs.windows(3)
+            e[0].index == 0 && e[0].value == 0 && z.len() == 2 && c.len() == 3 && w.len() == 3
+        }"#,
+        "iteration canonical surface",
+    );
+}
+
+#[test]
+fn check_iteration_ergonomics_chains_from_map_set_string_have_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"fn main() -> Bool {
+            let m = Map.new().insert("x", 1).insert("y", 2)
+            let km = m.keys().enumerate()
+            let map_ok = km.len() == 2 && km[0].index == 0
+
+            let s = Set.new().insert("a").insert("b").insert("c")
+            let sc = s.values().chunks(2)
+            let set_ok = sc.len() == 2 && sc[1].len() == 1
+
+            let p = "abc".chars().zip(List.new().push(1).push(2))
+            let str_ok = p.len() == 2 && p[0].left == 'a' && p[1].right == 2
+
+            map_ok && set_ok && str_ok
+        }"#,
+        "iteration chaining from map/set/string",
+    );
+}
+
+#[test]
+fn check_non_canonical_free_range_function_reports_unresolved_name() {
+    let output = check("fn main() -> Int { range(0, 3).len() }", "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("unresolved name")),
+        "expected unresolved-name diagnostic for free `range`, got: {:?}",
+        output.diagnostics
+    );
+}
+
 // ── math.gcd/math.lcm type diagnostics (E0001) ──────────────────────
 
 #[test]

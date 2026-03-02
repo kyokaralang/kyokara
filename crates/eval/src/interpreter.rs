@@ -1519,6 +1519,46 @@ impl Interpreter {
                 }
                 Ok(acc)
             }
+            IntrinsicFn::ListEnumerate => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "list_enumerate expects a List".into(),
+                    ));
+                };
+                let index_name = Name::new(&mut self.interner, "index");
+                let value_name = Name::new(&mut self.interner, "value");
+                let mut result = Vec::with_capacity(xs.len());
+                for (idx, value) in xs.iter().cloned().enumerate() {
+                    let idx = i64::try_from(idx).map_err(|_| RuntimeError::IntegerOverflow)?;
+                    result.push(Value::Record {
+                        fields: vec![(index_name, Value::Int(idx)), (value_name, value)],
+                        type_idx: None,
+                    });
+                }
+                Ok(Value::list(result))
+            }
+            IntrinsicFn::ListZip => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "list_zip expects List arguments".into(),
+                    ));
+                };
+                let Value::List(ys) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "list_zip expects List arguments".into(),
+                    ));
+                };
+                let left_name = Name::new(&mut self.interner, "left");
+                let right_name = Name::new(&mut self.interner, "right");
+                let mut result = Vec::with_capacity(usize::min(xs.len(), ys.len()));
+                for (left, right) in xs.iter().cloned().zip(ys.iter().cloned()) {
+                    result.push(Value::Record {
+                        fields: vec![(left_name, left), (right_name, right)],
+                        type_idx: None,
+                    });
+                }
+                Ok(Value::list(result))
+            }
             IntrinsicFn::ListSortBy => {
                 let Value::List(xs) = &args[0] else {
                     return Err(RuntimeError::TypeError(
