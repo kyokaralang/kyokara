@@ -169,19 +169,86 @@ impl<'i> Parser<'i> {
         m.complete(self, SyntaxKind::ErrorNode);
     }
 
-    /// Skip tokens wrapping them in an ErrorNode until we hit something
-    /// in `recovery` or EOF.
-    pub fn error_recover_until(&mut self, message: &str, recovery: TokenSet) {
-        if self.at_eof() || recovery.contains(self.current()) {
-            self.error(message);
+    /// Recovery for missing-parenthesis head-expression sites (`if`, `match`,
+    /// and contract/where clauses).
+    ///
+    /// This behaves like `error_recover_until`, but treats `{ ... }` immediately
+    /// following an identifier as record-literal-shaped head content when it
+    /// starts with `Ident ':'`, so we skip that brace group instead of stopping
+    /// at the first `{`.
+    pub fn error_recover_parenthesized_head(&mut self, message: &str, recovery: TokenSet) {
+        self.error(message);
+        if self.at_eof() {
             return;
         }
+
         let m = self.open();
-        self.error(message);
-        while !self.at_eof() && !recovery.contains(self.current()) {
+        let mut consumed_any = false;
+        let mut prev_kind: Option<SyntaxKind> = None;
+
+        while !self.at_eof() {
+            let current = self.current();
+            if recovery.contains(current) {
+                if current == SyntaxKind::LBrace
+                    && prev_kind == Some(SyntaxKind::Ident)
+                    && self.looks_like_record_literal_brace()
+                {
+                    self.skip_balanced_braces();
+                    consumed_any = true;
+                    prev_kind = Some(SyntaxKind::RBrace);
+                    continue;
+                }
+                break;
+            }
+
+            let before = self.pos;
+            prev_kind = Some(current);
             self.bump();
+            consumed_any = true;
+            if self.pos == before {
+                break;
+            }
         }
-        m.complete(self, SyntaxKind::ErrorNode);
+
+        if consumed_any {
+            m.complete(self, SyntaxKind::ErrorNode);
+        } else {
+            m.abandon(self);
+        }
+    }
+
+    fn looks_like_record_literal_brace(&self) -> bool {
+        self.at(SyntaxKind::LBrace)
+            && self.nth(1) == SyntaxKind::Ident
+            && self.nth(2) == SyntaxKind::Colon
+    }
+
+    fn skip_balanced_braces(&mut self) {
+        if !self.at(SyntaxKind::LBrace) {
+            return;
+        }
+
+        let mut depth = 0usize;
+        while !self.at_eof() {
+            let before = self.pos;
+            match self.current() {
+                SyntaxKind::LBrace => {
+                    depth += 1;
+                    self.bump();
+                }
+                SyntaxKind::RBrace => {
+                    depth = depth.saturating_sub(1);
+                    self.bump();
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => self.bump(),
+            }
+            if self.pos == before {
+                break;
+            }
+        }
     }
 }
 

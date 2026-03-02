@@ -401,8 +401,48 @@ fn parse_if_without_parenthesized_condition_reports_targeted_error() {
 }
 
 #[test]
+fn parse_if_without_parenthesized_record_like_condition_reports_single_targeted_error() {
+    let src = "let x = if Point { x: 1 } == Point { x: 1 } { 1 } else { 0 }";
+    let result = parse(src);
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one targeted if parse error, got: {:?}",
+        result.errors
+    );
+    assert!(
+        result.errors[0]
+            .message
+            .contains("if condition must be parenthesized"),
+        "expected parenthesized-if diagnostic, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
 fn parse_match_without_parenthesized_scrutinee_reports_targeted_error() {
     let src = "let x = match y { 1 => 2, _ => 3 }";
+    let result = parse(src);
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one targeted match parse error, got: {:?}",
+        result.errors
+    );
+    assert!(
+        result.errors[0]
+            .message
+            .contains("match scrutinee must be parenthesized"),
+        "expected parenthesized-match diagnostic, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
+fn parse_match_without_parenthesized_record_like_scrutinee_reports_single_targeted_error() {
+    let src = "let x = match Point { x: 1 } { _ => 0 }";
     let result = parse(src);
     assert_eq!(
         result.errors.len(),
@@ -441,8 +481,88 @@ fn parse_requires_without_parenthesized_expr_reports_targeted_error() {
 }
 
 #[test]
+fn parse_requires_without_parenthesized_record_like_expr_reports_single_targeted_error() {
+    let src = "fn f() -> Int requires Point { x: 1 } { 1 }";
+    let result = parse(src);
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one targeted requires parse error, got: {:?}",
+        result.errors
+    );
+    assert!(
+        result.errors[0]
+            .message
+            .contains("requires clause expression must be parenthesized"),
+        "expected parenthesized-requires diagnostic, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
+fn parse_ensures_without_parenthesized_record_like_expr_reports_single_targeted_error() {
+    let src = "fn f() -> Int ensures Point { x: 1 } { 1 }";
+    let result = parse(src);
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one targeted ensures parse error, got: {:?}",
+        result.errors
+    );
+    assert!(
+        result.errors[0]
+            .message
+            .contains("ensures clause expression must be parenthesized"),
+        "expected parenthesized-ensures diagnostic, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
+fn parse_invariant_without_parenthesized_record_like_expr_reports_single_targeted_error() {
+    let src = "fn f() -> Int invariant Point { x: 1 } { 1 }";
+    let result = parse(src);
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one targeted invariant parse error, got: {:?}",
+        result.errors
+    );
+    assert!(
+        result.errors[0]
+            .message
+            .contains("invariant clause expression must be parenthesized"),
+        "expected parenthesized-invariant diagnostic, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
 fn parse_where_without_parenthesized_expr_reports_targeted_error() {
     let src = "property p(x: Int <- Gen.auto()) where x > 0 { x > 0 }";
+    let result = parse(src);
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one targeted where parse error, got: {:?}",
+        result.errors
+    );
+    assert!(
+        result.errors[0]
+            .message
+            .contains("where clause expression must be parenthesized"),
+        "expected parenthesized-where diagnostic, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
+fn parse_where_without_parenthesized_record_like_expr_reports_single_targeted_error() {
+    let src = "property p(x: Int <- Gen.auto()) where Point { x: 1 } { true }";
     let result = parse(src);
     assert_eq!(
         result.errors.len(),

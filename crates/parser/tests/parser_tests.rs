@@ -290,6 +290,80 @@ fn fn_def_contract_unparenthesized_requires_reports_targeted_error() {
 }
 
 #[test]
+fn fn_def_contract_requires_unparenthesized_record_like_expr_reports_single_targeted_error() {
+    // fn f() -> Int requires Point { x: 1 } { 1 }
+    let (_events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, RequiresKw, Ident, LBrace, Ident, Colon,
+        IntLiteral, RBrace, LBrace, IntLiteral, RBrace,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted requires error, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("requires clause expression must be parenthesized"),
+        "expected parenthesized-requires diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn fn_def_contract_ensures_unparenthesized_record_like_expr_reports_single_targeted_error() {
+    // fn f() -> Int ensures Point { x: 1 } { 1 }
+    let (_events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, EnsuresKw, Ident, LBrace, Ident, Colon,
+        IntLiteral, RBrace, LBrace, IntLiteral, RBrace,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted ensures error, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("ensures clause expression must be parenthesized"),
+        "expected parenthesized-ensures diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn fn_def_contract_invariant_unparenthesized_record_like_expr_reports_single_targeted_error() {
+    // fn f() -> Int invariant Point { x: 1 } { 1 }
+    let (_events, errors) = parse_tokens(&[
+        FnKw,
+        Ident,
+        LParen,
+        RParen,
+        Arrow,
+        Ident,
+        InvariantKw,
+        Ident,
+        LBrace,
+        Ident,
+        Colon,
+        IntLiteral,
+        RBrace,
+        LBrace,
+        IntLiteral,
+        RBrace,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted invariant error, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("invariant clause expression must be parenthesized"),
+        "expected parenthesized-invariant diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
 fn top_level_fn_def_without_body_reports_error() {
     // fn foo() -> Int
     let (events, errors) = parse_tokens(&[FnKw, Ident, LParen, RParen, Arrow, Ident]);
@@ -437,6 +511,27 @@ fn if_expr_unparenthesized_condition_reports_targeted_error() {
 }
 
 #[test]
+fn if_expr_unparenthesized_record_like_condition_reports_single_targeted_error() {
+    // let x = if Point { x: 1 } == Point { x: 1 } { 1 } else { 0 }
+    let (_events, errors) = parse_tokens(&[
+        LetKw, Ident, Eq, IfKw, Ident, LBrace, Ident, Colon, IntLiteral, RBrace, EqEq, Ident,
+        LBrace, Ident, Colon, IntLiteral, RBrace, LBrace, IntLiteral, RBrace, ElseKw, LBrace,
+        IntLiteral, RBrace,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted if error, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("if condition must be parenthesized"),
+        "expected parenthesized-if diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
 fn match_expr() {
     // let x = match (y) { 1 => 2, _ => 3 }
     let (events, errors) = parse_tokens(&[
@@ -454,6 +549,26 @@ fn match_expr_unparenthesized_scrutinee_reports_targeted_error() {
     // let x = match y { 1 => 2, _ => 3 }
     let (_events, errors) = parse_tokens(&[
         LetKw, Ident, Eq, MatchKw, Ident, LBrace, IntLiteral, FatArrow, IntLiteral, Comma,
+        Underscore, FatArrow, IntLiteral, RBrace,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted match error, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("match scrutinee must be parenthesized"),
+        "expected parenthesized-match diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn match_expr_unparenthesized_record_like_scrutinee_reports_single_targeted_error() {
+    // let x = match Point { x: 1 } { _ => 0 }
+    let (_events, errors) = parse_tokens(&[
+        LetKw, Ident, Eq, MatchKw, Ident, LBrace, Ident, Colon, IntLiteral, RBrace, LBrace,
         Underscore, FatArrow, IntLiteral, RBrace,
     ]);
     assert_eq!(
@@ -977,6 +1092,27 @@ fn property_where_unparenthesized_reports_targeted_error() {
     let (_events, errors) = parse_tokens(&[
         PropertyKw, Ident, LParen, Ident, Colon, Ident, LeftArrow, Ident, Dot, Ident, LParen,
         RParen, RParen, WhereKw, Ident, Gt, IntLiteral,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted where error, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("where clause expression must be parenthesized"),
+        "expected parenthesized-where diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn property_where_unparenthesized_record_like_expr_reports_single_targeted_error() {
+    // property p(x: Int <- Gen.auto()) where Point { x: 1 } { true }
+    let (_events, errors) = parse_tokens(&[
+        PropertyKw, Ident, LParen, Ident, Colon, Ident, LeftArrow, Ident, Dot, Ident, LParen,
+        RParen, RParen, WhereKw, Ident, LBrace, Ident, Colon, IntLiteral, RBrace, LBrace, TrueKw,
+        RBrace,
     ]);
     assert_eq!(
         errors.len(),
