@@ -118,7 +118,7 @@ pub fn symbol_at_offset(root: &SyntaxNode, offset: TextSize) -> SymbolAtPosition
                 is_definition: true,
             };
         }
-        SyntaxKind::CapDef => {
+        SyntaxKind::EffectDef => {
             return SymbolAtPosition::Capability {
                 name,
                 is_definition: true,

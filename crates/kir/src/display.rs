@@ -98,7 +98,7 @@ pub fn display_module(module: &KirModule, ctx: &DisplayCtx<'_>) -> String {
 
 /// Format a single function.
 pub fn display_function(func: &KirFunction, ctx: &DisplayCtx<'_>, out: &mut String) -> fmt::Result {
-    // Header: fn @name(params) -> ret_ty effects {caps} {
+    // Header: fn @name(params) -> ret_ty effects {effects} {
     write!(out, "fn @{}(", ctx.fmt_name(func.name))?;
     for (i, (name, ty)) in func.params.iter().enumerate() {
         if i > 0 {
@@ -108,10 +108,15 @@ pub fn display_function(func: &KirFunction, ctx: &DisplayCtx<'_>, out: &mut Stri
     }
     write!(out, ") -> {} effects {{", ctx.fmt_ty(&func.ret_ty))?;
 
-    let mut caps: Vec<_> = func.effects.caps.iter().map(|c| ctx.fmt_name(*c)).collect();
-    caps.sort();
-    if !caps.is_empty() {
-        write!(out, "{}", caps.join(", "))?;
+    let mut effects: Vec<_> = func
+        .effects
+        .effects
+        .iter()
+        .map(|c| ctx.fmt_name(*c))
+        .collect();
+    effects.sort();
+    if !effects.is_empty() {
+        write!(out, "{}", effects.join(", "))?;
     }
     writeln!(out, "}} {{")?;
 

@@ -189,7 +189,7 @@ fn is_locally_defined(root: &SyntaxNode, name: &str, kind: SymbolKind) -> bool {
         let is_def = match kind {
             SymbolKind::Function => pk == SyntaxKind::FnDef,
             SymbolKind::Type => pk == SyntaxKind::TypeDef,
-            SymbolKind::Capability => pk == SyntaxKind::CapDef,
+            SymbolKind::Capability => pk == SyntaxKind::EffectDef,
             SymbolKind::Variant => pk == SyntaxKind::Variant,
         };
         if is_def {
@@ -246,7 +246,7 @@ fn name_exists_in_scope(
     match kind {
         SymbolKind::Function => scope.functions.keys().any(|n| n.resolve(interner) == name),
         SymbolKind::Type => scope.types.keys().any(|n| n.resolve(interner) == name),
-        SymbolKind::Capability => scope.caps.keys().any(|n| n.resolve(interner) == name),
+        SymbolKind::Capability => scope.effects.keys().any(|n| n.resolve(interner) == name),
         SymbolKind::Variant => scope
             .constructors
             .keys()
@@ -277,7 +277,11 @@ fn validate_new_name(
             existing_kind: SymbolKind::Type,
         });
     }
-    if scope.caps.keys().any(|n| n.resolve(interner) == new_name) {
+    if scope
+        .effects
+        .keys()
+        .any(|n| n.resolve(interner) == new_name)
+    {
         return Err(RefactorError::NameConflict {
             name: new_name.to_string(),
             existing_kind: SymbolKind::Capability,
@@ -349,7 +353,7 @@ pub fn should_rename_token(parent: &SyntaxNode, kind: SymbolKind) -> bool {
     match kind {
         SymbolKind::Function if parent_kind == SyntaxKind::FnDef => return true,
         SymbolKind::Type if parent_kind == SyntaxKind::TypeDef => return true,
-        SymbolKind::Capability if parent_kind == SyntaxKind::CapDef => return true,
+        SymbolKind::Capability if parent_kind == SyntaxKind::EffectDef => return true,
         SymbolKind::Variant if parent_kind == SyntaxKind::Variant => return true,
         _ => {}
     }
@@ -381,7 +385,7 @@ pub fn is_usage_site(gp_kind: SyntaxKind, kind: SymbolKind, grandparent: &Syntax
             {
                 return matches!(ggp.kind(), SyntaxKind::WithClause | SyntaxKind::PipeClause);
             }
-            // Also match CapDef name position (handled above as definition site).
+            // Also match EffectDef name position (handled above as definition site).
             false
         }
         SymbolKind::Variant => {

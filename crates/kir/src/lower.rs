@@ -254,7 +254,7 @@ pub fn lower_function(
 
     ctx.pop_scope();
 
-    // Build effects from with_caps.
+    // Build effects from with_effects.
     let effects = build_effects(fn_item);
 
     // Use the declared/inferred return type, not the root expression type
@@ -297,13 +297,13 @@ fn resolve_param_types(
 }
 
 fn build_effects(fn_item: &kyokara_hir_def::item_tree::FnItem) -> EffectSet {
-    let mut caps = FxHashSet::default();
-    for cap_ref in &fn_item.with_caps {
+    let mut effects = FxHashSet::default();
+    for cap_ref in &fn_item.with_effects {
         if let TypeRef::Path { path, .. } = cap_ref
             && let Some(name) = path.last()
         {
-            caps.insert(name);
+            effects.insert(name);
         }
     }
-    EffectSet { caps }
+    EffectSet { effects }
 }

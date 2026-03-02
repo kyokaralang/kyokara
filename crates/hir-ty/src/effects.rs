@@ -14,39 +14,39 @@ use crate::unify::UnificationTable;
 /// A set of capability/effect names.
 #[derive(Debug, Clone, Default)]
 pub struct EffectSet {
-    pub caps: FxHashSet<Name>,
+    pub effects: FxHashSet<Name>,
 }
 
 impl EffectSet {
-    /// Build an effect set from `with_caps` TypeRefs on a function signature.
-    pub(crate) fn from_with_caps(
-        with_caps: &[TypeRef],
+    /// Build an effect set from `with_effects` TypeRefs on a function signature.
+    pub(crate) fn from_with_effects(
+        with_effects: &[TypeRef],
         _env: &TyResolutionEnv<'_>,
         _table: &mut UnificationTable,
         interner: &Interner,
     ) -> Self {
-        let mut caps = FxHashSet::default();
-        for cap_ref in with_caps {
+        let mut effects = FxHashSet::default();
+        for cap_ref in with_effects {
             if let TypeRef::Path { path, .. } = cap_ref
                 && let Some(name) = path.last()
             {
                 let _ = name.resolve(interner); // validate it's interned
-                caps.insert(name);
+                effects.insert(name);
             }
         }
-        EffectSet { caps }
+        EffectSet { effects }
     }
 
     /// Return capabilities that are in `self` but not in `allowed`.
     pub fn missing_from(&self, allowed: &EffectSet) -> Vec<Name> {
-        self.caps
+        self.effects
             .iter()
-            .filter(|c| !allowed.caps.contains(c))
+            .filter(|c| !allowed.effects.contains(c))
             .copied()
             .collect()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.caps.is_empty()
+        self.effects.is_empty()
     }
 }

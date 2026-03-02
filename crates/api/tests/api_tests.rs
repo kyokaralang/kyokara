@@ -279,8 +279,7 @@ fn check_rejects_empty_non_unit_body() {
 
 #[test]
 fn check_misordered_contract_clause_reports_targeted_parse_error() {
-    let src =
-        "fn inc(x: Int) -> Int ensures (result > x) requires (x >= 0) { x + 1 }\nfn main() -> Int { inc(1) }";
+    let src = "fn inc(x: Int) -> Int ensures (result > x) requires (x >= 0) { x + 1 }\nfn main() -> Int { inc(1) }";
     let output = check(src, "test.ky");
     let parse_diags: Vec<_> = output
         .diagnostics

@@ -35,7 +35,7 @@ fn format_node_inner(node: &SyntaxNode) -> Doc {
         // Items
         SyntaxKind::TypeDef => format_type_def(node),
         SyntaxKind::FnDef => format_fn_def(node),
-        SyntaxKind::CapDef => format_cap_def(node),
+        SyntaxKind::EffectDef => format_cap_def(node),
         SyntaxKind::PropertyDef => format_property_def(node),
         SyntaxKind::LetBinding => format_let_binding(node),
 
@@ -164,7 +164,7 @@ fn format_source_file(node: &SyntaxNode) -> Doc {
                 | SyntaxKind::ImportDecl
                 | SyntaxKind::TypeDef
                 | SyntaxKind::FnDef
-                | SyntaxKind::CapDef
+                | SyntaxKind::EffectDef
                 | SyntaxKind::PropertyDef
                 | SyntaxKind::LetBinding
                 | SyntaxKind::ErrorNode
@@ -1027,11 +1027,7 @@ fn format_match_expr(node: &SyntaxNode) -> Doc {
     let scrutinee = node.children().find(|c| is_expr(c.kind()));
     let arm_list = find_child_node(node, SyntaxKind::MatchArmList);
 
-    let mut parts = vec![
-        Doc::text("match"),
-        Doc::text(" "),
-        Doc::text("("),
-    ];
+    let mut parts = vec![Doc::text("match"), Doc::text(" "), Doc::text("(")];
     if let Some(s) = scrutinee {
         parts.push(format_node(&s));
     }

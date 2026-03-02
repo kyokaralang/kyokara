@@ -375,7 +375,8 @@ fn refined_unsatisfiable_reported() {
 #[test]
 fn where_constrained_type_check() {
     // Valid where-constrained property: should have no type errors.
-    let result = kyokara_hir::check_file("property p(x: Int <- Gen.auto()) where (x > 0) { x > 0 }");
+    let result =
+        kyokara_hir::check_file("property p(x: Int <- Gen.auto()) where (x > 0) { x > 0 }");
     let all_diags: Vec<_> = result
         .type_check
         .raw_diagnostics
@@ -581,8 +582,9 @@ fn property_bare_param_parse_error() {
 #[test]
 fn property_where_unresolved_name() {
     // Where clause referencing a nonexistent variable.
-    let result =
-        kyokara_hir::check_file("property p(x: Int <- Gen.auto()) where (nonexistent > 0) { x > 0 }");
+    let result = kyokara_hir::check_file(
+        "property p(x: Int <- Gen.auto()) where (nonexistent > 0) { x > 0 }",
+    );
     // Unresolved names surface in body_lowering_diagnostics or diagnostics.
     let all_diags: Vec<String> = result
         .type_check

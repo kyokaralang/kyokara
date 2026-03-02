@@ -550,7 +550,7 @@ fn convert_hole(
 
     let effects: Vec<String> = hole
         .effect_constraints
-        .caps
+        .effects
         .iter()
         .map(|n| n.resolve(interner).to_owned())
         .collect();
@@ -640,7 +640,7 @@ fn build_module_symbol_graph(
     // from the flat function list (they belong under their cap node).
     let cap_member_fns: std::collections::HashSet<kyokara_hir_def::item_tree::FnItemIdx> =
         item_tree
-            .caps
+            .effects
             .iter()
             .flat_map(|(_, cap)| cap.functions.iter().copied())
             .collect();
@@ -668,7 +668,7 @@ fn build_module_symbol_graph(
             .as_ref()
             .map(|t| kyokara_hir::display_type_ref(t, interner));
         let effects: Vec<String> = fn_item
-            .with_caps
+            .with_effects
             .iter()
             .filter_map(|tr| type_ref_name(tr, interner))
             .collect();
@@ -763,7 +763,7 @@ fn build_module_symbol_graph(
     // Capabilities — also emit member functions as fn nodes with cap-qualified IDs.
     let mut cap_member_fn_nodes: Vec<FnNodeDto> = Vec::new();
     let capabilities: Vec<CapNodeDto> = item_tree
-        .caps
+        .effects
         .iter()
         .map(|(_, cap_item)| {
             let name = cap_item.name.resolve(interner).to_owned();

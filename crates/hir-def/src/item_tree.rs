@@ -17,7 +17,7 @@ pub type FnItemIdx = Idx<FnItem>;
 /// Index into the type arena.
 pub type TypeItemIdx = Idx<TypeItem>;
 /// Index into the capability arena.
-pub type CapItemIdx = Idx<CapItem>;
+pub type EffectItemIdx = Idx<EffectItem>;
 /// Index into the property arena.
 pub type PropertyItemIdx = Idx<PropertyItem>;
 /// Index into the let-binding arena.
@@ -30,7 +30,7 @@ pub struct ItemTree {
     pub imports: Vec<Import>,
     pub functions: Arena<FnItem>,
     pub types: Arena<TypeItem>,
-    pub caps: Arena<CapItem>,
+    pub effects: Arena<EffectItem>,
     pub properties: Arena<PropertyItem>,
     pub lets: Arena<LetItem>,
 }
@@ -51,8 +51,8 @@ pub struct FnItem {
     pub type_params: Vec<Name>,
     pub params: Vec<FnParam>,
     pub ret_type: Option<TypeRef>,
-    pub with_caps: Vec<TypeRef>,
-    pub pipe_caps: Vec<TypeRef>,
+    pub with_effects: Vec<TypeRef>,
+    pub pipe_effects: Vec<TypeRef>,
     pub has_body: bool,
     /// Source range of the CST `FnDef` node (for matching back to syntax).
     pub source_range: Option<TextRange>,
@@ -97,7 +97,7 @@ pub struct VariantDef {
 
 /// A capability definition.
 #[derive(Debug, Clone)]
-pub struct CapItem {
+pub struct EffectItem {
     pub name: Name,
     pub is_pub: bool,
     pub type_params: Vec<Name>,

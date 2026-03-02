@@ -723,8 +723,8 @@ effect Console
     let mut interner = Interner::new();
     let result = collect_item_tree(&sf, file_id(), &mut interner);
 
-    assert_eq!(result.tree.caps.len(), 1);
-    let cap = &result.tree.caps[result.tree.caps.iter().next().unwrap().0];
+    assert_eq!(result.tree.effects.len(), 1);
+    let cap = &result.tree.effects[result.tree.effects.iter().next().unwrap().0];
     assert_eq!(cap.name.resolve(&interner), "Console");
     assert_eq!(cap.functions.len(), 0);
 }
@@ -1166,5 +1166,5 @@ fn collect_with_clause() {
     let result = collect_item_tree(&sf, file_id(), &mut interner);
 
     let f = &result.tree.functions[result.tree.functions.iter().next().unwrap().0];
-    assert_eq!(f.with_caps.len(), 1);
+    assert_eq!(f.with_effects.len(), 1);
 }

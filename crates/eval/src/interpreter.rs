@@ -1343,11 +1343,11 @@ impl Interpreter {
             return Ok(());
         };
 
-        if fn_item.with_caps.is_empty() {
+        if fn_item.with_effects.is_empty() {
             return Ok(());
         }
 
-        for cap_ref in &fn_item.with_caps {
+        for cap_ref in &fn_item.with_effects {
             if let TypeRef::Path { path, .. } = cap_ref
                 && let Some(name) = path.last()
             {

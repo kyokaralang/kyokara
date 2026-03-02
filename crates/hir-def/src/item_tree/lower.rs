@@ -114,7 +114,7 @@ impl ItemTreeCtx<'_> {
                 self.lower_fn_def(&f, false);
             }
             Item::TypeDef(t) => self.lower_type_def(&t),
-            Item::CapDef(c) => self.lower_cap_def(&c),
+            Item::EffectDef(c) => self.lower_cap_def(&c),
             Item::PropertyDef(p) => self.lower_property_def(&p),
             Item::LetBinding(l) => self.lower_let_binding(&l),
         }
@@ -194,12 +194,12 @@ impl ItemTreeCtx<'_> {
             .and_then(|rt| rt.type_expr())
             .map(|t| self.lower_type_ref(&t));
 
-        let with_caps = f
+        let with_effects = f
             .with_clause()
             .map(|wc| wc.types().map(|t| self.lower_type_ref(&t)).collect())
             .unwrap_or_default();
 
-        let pipe_caps = f
+        let pipe_effects = f
             .pipe_clause()
             .map(|pc| pc.types().map(|t| self.lower_type_ref(&t)).collect())
             .unwrap_or_default();
@@ -213,8 +213,8 @@ impl ItemTreeCtx<'_> {
             type_params,
             params,
             ret_type,
-            with_caps,
-            pipe_caps,
+            with_effects,
+            pipe_effects,
             has_body,
             source_range: Some(f.syntax().text_range()),
             receiver_type,
@@ -332,20 +332,21 @@ impl ItemTreeCtx<'_> {
         }
     }
 
-    fn lower_cap_def(&mut self, c: &CapDef) {
+    fn lower_cap_def(&mut self, c: &EffectDef) {
         let name = self.name_of(c);
         let type_params = Vec::new();
         let functions = Vec::new();
 
         let is_pub = c.is_pub();
-        let idx = self.tree.caps.alloc(CapItem {
+        let idx = self.tree.effects.alloc(EffectItem {
             name,
             is_pub,
             type_params,
             functions,
         });
 
-        if let std::collections::hash_map::Entry::Vacant(e) = self.module_scope.caps.entry(name) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.module_scope.effects.entry(name)
+        {
             e.insert(idx);
         } else {
             let span = self.node_span(c.syntax());
@@ -439,8 +440,8 @@ impl ItemTreeCtx<'_> {
                     path: bool_path,
                     args: vec![],
                 }),
-                with_caps: vec![],
-                pipe_caps: vec![],
+                with_effects: vec![],
+                pipe_effects: vec![],
                 has_body: true,
                 source_range,
                 receiver_type: None,
