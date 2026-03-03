@@ -3,7 +3,7 @@
   "entry": "main.ky",
   "check": {
     "ok": false,
-    "codes_all": ["E0026"],
+    "codes_all": ["E0028"],
     "messages_all": ["cannot be used as a set element"]
   },
   "run": {
