@@ -56,6 +56,7 @@ impl<'a> InferenceCtx<'a> {
                     return;
                 }
                 let name = path.segments[0];
+                let args = args.clone();
 
                 // Prefer owner-type resolution when expected type is known.
                 // This avoids constructor-name collisions across unrelated ADTs.
@@ -86,7 +87,7 @@ impl<'a> InferenceCtx<'a> {
                             },
                         );
                         for sub in args {
-                            self.infer_pat(*sub, &Ty::Error);
+                            self.infer_pat(sub, &Ty::Error);
                         }
                     } else {
                         for (sub, field_ty) in args.iter().zip(field_tys.iter()) {
@@ -117,7 +118,7 @@ impl<'a> InferenceCtx<'a> {
                             },
                         );
                         for sub in args {
-                            self.infer_pat(*sub, &Ty::Error);
+                            self.infer_pat(sub, &Ty::Error);
                         }
                     } else {
                         for (sub, field_ty) in args.iter().zip(field_tys.iter()) {
@@ -133,7 +134,7 @@ impl<'a> InferenceCtx<'a> {
                         },
                     );
                     for sub in args {
-                        self.infer_pat(*sub, &Ty::Error);
+                        self.infer_pat(sub, &Ty::Error);
                     }
                     Ty::Error
                 }
