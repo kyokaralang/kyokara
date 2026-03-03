@@ -56,6 +56,7 @@ impl<'a> InferenceCtx<'a> {
                     return;
                 }
                 let name = path.segments[0];
+                let args = args.clone();
 
                 // Prefer owner-type resolution when expected type is known.
                 // This avoids constructor-name collisions across unrelated ADTs.

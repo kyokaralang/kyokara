@@ -95,6 +95,45 @@ fn check_err(src: &str, needle: &str) {
     );
 }
 
+#[test]
+fn infer_expr_hot_paths_do_not_clone_whole_expr_nodes() {
+    let src = include_str!("../src/infer/expr.rs");
+    assert!(
+        !src.contains("let expr = self.body.exprs[idx].clone();"),
+        "infer_expr_inner must borrow Expr nodes instead of cloning whole nodes"
+    );
+    assert!(
+        !src.contains("self.body.exprs[callee].clone()"),
+        "infer_call hot path must avoid whole Expr clones for field-call dispatch"
+    );
+}
+
+#[test]
+fn infer_pattern_hot_paths_do_not_clone_whole_pattern_nodes() {
+    let expr_src = include_str!("../src/infer/expr.rs");
+    let pat_src = include_str!("../src/infer/pat.rs");
+    assert!(
+        !expr_src.contains("self.body.pats[pat_idx].clone()"),
+        "irrefutable-let pattern checks must borrow patterns"
+    );
+    assert!(
+        !pat_src.contains("let pat = self.body.pats[pat_idx].clone();"),
+        "infer_pat must borrow pattern nodes instead of cloning whole nodes"
+    );
+}
+
+#[test]
+fn infer_large_body_stress_parity() {
+    let mut src = String::from("fn foo() -> Int {\n");
+    src.push_str("  let seed = 0\n");
+    for i in 0..300 {
+        src.push_str(&format!("  let v{i} = seed + {i}\n"));
+    }
+    src.push_str("  seed\n");
+    src.push('}');
+    check_ok(&src);
+}
+
 // ── Basic inference tests ────────────────────────────────────────────
 
 #[test]

@@ -532,10 +532,15 @@ impl<'a> InferenceCtx<'a> {
     }
 
     fn infer_call(&mut self, callee: ExprIdx, args: &[CallArg]) -> Ty {
+        let field_callee = match &self.body.exprs[callee] {
+            Expr::Field { base, field } => Some((*base, *field)),
+            _ => None,
+        };
+
         // ── Module-qualified and static method call resolution ───────
         // Before method call resolution, check if callee is `module.fn()`
         // or `Type.static_method()` (e.g., `io.println(s)`, `List.new()`).
-        if let Expr::Field { base, field } = self.body.exprs[callee].clone()
+        if let Some((base, field)) = field_callee
             && let Some(result) = self.try_infer_qualified_call(callee, base, field, args)
         {
             return result;
@@ -544,7 +549,7 @@ impl<'a> InferenceCtx<'a> {
         // ── Method call resolution ──────────────────────────────────
         // If the callee is `expr.field(args)`, try resolving as a method
         // call before falling through to normal field-access + call.
-        if let Expr::Field { base, field } = self.body.exprs[callee].clone()
+        if let Some((base, field)) = field_callee
             && let Some(result) = self.try_infer_method_call(callee, base, field, args)
         {
             return result;
@@ -962,6 +967,7 @@ impl<'a> InferenceCtx<'a> {
                 let (field_tys, _adt_ty) =
                     instantiate_constructor(type_idx, variant_idx, &env, &mut self.table);
 
+                let args = args.clone();
                 if args.len() != field_tys.len() {
                     return false;
                 }
