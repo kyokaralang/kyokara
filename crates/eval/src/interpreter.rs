@@ -70,6 +70,51 @@ enum SeqEmitControl {
     Break,
 }
 
+enum SeqIterState {
+    Source(SeqSourceIter),
+    Map {
+        input: Box<SeqIterState>,
+        f: Value,
+    },
+    Filter {
+        input: Box<SeqIterState>,
+        f: Value,
+    },
+    Enumerate {
+        input: Box<SeqIterState>,
+        idx: i64,
+        index_name: Name,
+        value_name: Name,
+    },
+    Zip {
+        left: Box<SeqIterState>,
+        right: Box<SeqIterState>,
+        left_name: Name,
+        right_name: Name,
+    },
+    Chunks {
+        input: Box<SeqIterState>,
+        n: usize,
+    },
+    Windows {
+        input: Box<SeqIterState>,
+        n: usize,
+        window: VecDeque<Value>,
+        primed: bool,
+    },
+}
+
+enum SeqSourceIter {
+    Range { current: i64, end: i64 },
+    FromList { items: Rc<Vec<Value>>, idx: usize },
+    StringSplit { parts: Vec<String>, idx: usize },
+    StringLines { lines: Vec<String>, idx: usize },
+    StringChars { chars: Vec<char>, idx: usize },
+    MapKeys { keys: Vec<MapKey>, idx: usize },
+    MapValues { values: Vec<Value>, idx: usize },
+    SetValues { values: Vec<MapKey>, idx: usize },
+}
+
 fn stable_merge_sort_by<T: Clone, E, F>(items: &[T], cmp: &mut F) -> Result<Vec<T>, E>
 where
     F: FnMut(&T, &T) -> Result<Ordering, E>,
@@ -1719,6 +1764,250 @@ impl Interpreter {
         Ok(plan.clone())
     }
 
+    fn seq_iter_from_plan(&mut self, plan: &SeqPlan) -> Result<SeqIterState, RuntimeError> {
+        match plan {
+            SeqPlan::Source(source) => {
+                let state = match source {
+                    SeqSource::Range { start, end } => SeqSourceIter::Range {
+                        current: *start,
+                        end: *end,
+                    },
+                    SeqSource::FromList(xs) => SeqSourceIter::FromList {
+                        items: xs.clone(),
+                        idx: 0,
+                    },
+                    SeqSource::StringSplit { s, delim } => SeqSourceIter::StringSplit {
+                        parts: s.split(delim.as_str()).map(str::to_owned).collect(),
+                        idx: 0,
+                    },
+                    SeqSource::StringLines { s } => SeqSourceIter::StringLines {
+                        lines: s.lines().map(str::to_owned).collect(),
+                        idx: 0,
+                    },
+                    SeqSource::StringChars { s } => SeqSourceIter::StringChars {
+                        chars: s.chars().collect(),
+                        idx: 0,
+                    },
+                    SeqSource::MapKeys(entries) => SeqSourceIter::MapKeys {
+                        keys: entries.keys().cloned().collect(),
+                        idx: 0,
+                    },
+                    SeqSource::MapValues(entries) => SeqSourceIter::MapValues {
+                        values: entries.values().cloned().collect(),
+                        idx: 0,
+                    },
+                    SeqSource::SetValues(entries) => SeqSourceIter::SetValues {
+                        values: entries.iter().cloned().collect(),
+                        idx: 0,
+                    },
+                };
+                Ok(SeqIterState::Source(state))
+            }
+            SeqPlan::Map { input, f } => Ok(SeqIterState::Map {
+                input: Box::new(self.seq_iter_from_plan(input)?),
+                f: f.clone(),
+            }),
+            SeqPlan::Filter { input, f } => Ok(SeqIterState::Filter {
+                input: Box::new(self.seq_iter_from_plan(input)?),
+                f: f.clone(),
+            }),
+            SeqPlan::Enumerate { input } => Ok(SeqIterState::Enumerate {
+                input: Box::new(self.seq_iter_from_plan(input)?),
+                idx: 0,
+                index_name: Name::new(&mut self.interner, "index"),
+                value_name: Name::new(&mut self.interner, "value"),
+            }),
+            SeqPlan::Zip { left, right } => Ok(SeqIterState::Zip {
+                left: Box::new(self.seq_iter_from_plan(left)?),
+                right: Box::new(self.seq_iter_from_plan(right)?),
+                left_name: Name::new(&mut self.interner, "left"),
+                right_name: Name::new(&mut self.interner, "right"),
+            }),
+            SeqPlan::Chunks { input, n } => {
+                let chunk_size = usize::try_from(*n).ok().filter(|&size| size > 0).ok_or(
+                    RuntimeError::TypeError("seq_chunks: chunk size must be > 0".into()),
+                )?;
+                Ok(SeqIterState::Chunks {
+                    input: Box::new(self.seq_iter_from_plan(input)?),
+                    n: chunk_size,
+                })
+            }
+            SeqPlan::Windows { input, n } => {
+                let window_size = usize::try_from(*n).ok().filter(|&size| size > 0).ok_or(
+                    RuntimeError::TypeError("seq_windows: window size must be > 0".into()),
+                )?;
+                Ok(SeqIterState::Windows {
+                    input: Box::new(self.seq_iter_from_plan(input)?),
+                    n: window_size,
+                    window: VecDeque::with_capacity(window_size),
+                    primed: false,
+                })
+            }
+        }
+    }
+
+    fn seq_source_iter_next(source: &mut SeqSourceIter) -> Option<Value> {
+        match source {
+            SeqSourceIter::Range { current, end } => {
+                if current >= end {
+                    None
+                } else {
+                    let out = Value::Int(*current);
+                    *current += 1;
+                    Some(out)
+                }
+            }
+            SeqSourceIter::FromList { items, idx } => {
+                let out = items.get(*idx).cloned();
+                if out.is_some() {
+                    *idx += 1;
+                }
+                out
+            }
+            SeqSourceIter::StringSplit { parts, idx } => {
+                let out = parts.get(*idx).cloned().map(Value::String);
+                if out.is_some() {
+                    *idx += 1;
+                }
+                out
+            }
+            SeqSourceIter::StringLines { lines, idx } => {
+                let out = lines.get(*idx).cloned().map(Value::String);
+                if out.is_some() {
+                    *idx += 1;
+                }
+                out
+            }
+            SeqSourceIter::StringChars { chars, idx } => {
+                let out = chars.get(*idx).copied().map(Value::Char);
+                if out.is_some() {
+                    *idx += 1;
+                }
+                out
+            }
+            SeqSourceIter::MapKeys { keys, idx } => {
+                let out = keys.get(*idx).map(MapKey::to_value);
+                if out.is_some() {
+                    *idx += 1;
+                }
+                out
+            }
+            SeqSourceIter::MapValues { values, idx } => {
+                let out = values.get(*idx).cloned();
+                if out.is_some() {
+                    *idx += 1;
+                }
+                out
+            }
+            SeqSourceIter::SetValues { values, idx } => {
+                let out = values.get(*idx).map(MapKey::to_value);
+                if out.is_some() {
+                    *idx += 1;
+                }
+                out
+            }
+        }
+    }
+
+    fn seq_iter_next(&mut self, state: &mut SeqIterState) -> Result<Option<Value>, RuntimeError> {
+        match state {
+            SeqIterState::Source(source) => Ok(Self::seq_source_iter_next(source)),
+            SeqIterState::Map { input, f } => {
+                let Some(item) = self.seq_iter_next(input)? else {
+                    return Ok(None);
+                };
+                let mapped = self.call_value(f.clone(), smallvec::smallvec![item])?;
+                Ok(Some(mapped))
+            }
+            SeqIterState::Filter { input, f } => loop {
+                let Some(item) = self.seq_iter_next(input)? else {
+                    return Ok(None);
+                };
+                let keep = self.call_value(f.clone(), smallvec::smallvec![item.clone()])?;
+                match keep {
+                    Value::Bool(true) => return Ok(Some(item)),
+                    Value::Bool(false) => {}
+                    _ => {
+                        return Err(RuntimeError::TypeError(
+                            "seq_filter: predicate must return Bool".into(),
+                        ));
+                    }
+                }
+            },
+            SeqIterState::Enumerate {
+                input,
+                idx,
+                index_name,
+                value_name,
+            } => {
+                let Some(item) = self.seq_iter_next(input)? else {
+                    return Ok(None);
+                };
+                let current = *idx;
+                *idx = idx.checked_add(1).ok_or(RuntimeError::IntegerOverflow)?;
+                Ok(Some(Value::Record {
+                    fields: vec![(*index_name, Value::Int(current)), (*value_name, item)],
+                    type_idx: None,
+                }))
+            }
+            SeqIterState::Zip {
+                left,
+                right,
+                left_name,
+                right_name,
+            } => {
+                let Some(l) = self.seq_iter_next(left)? else {
+                    return Ok(None);
+                };
+                let Some(r) = self.seq_iter_next(right)? else {
+                    return Ok(None);
+                };
+                Ok(Some(Value::Record {
+                    fields: vec![(*left_name, l), (*right_name, r)],
+                    type_idx: None,
+                }))
+            }
+            SeqIterState::Chunks { input, n } => {
+                let mut chunk = Vec::with_capacity(*n);
+                for _ in 0..*n {
+                    let Some(item) = self.seq_iter_next(input)? else {
+                        break;
+                    };
+                    chunk.push(item);
+                }
+                if chunk.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(Value::list(chunk)))
+                }
+            }
+            SeqIterState::Windows {
+                input,
+                n,
+                window,
+                primed,
+            } => {
+                if !*primed {
+                    while window.len() < *n {
+                        let Some(item) = self.seq_iter_next(input)? else {
+                            return Ok(None);
+                        };
+                        window.push_back(item);
+                    }
+                    *primed = true;
+                    return Ok(Some(Value::list(window.iter().cloned().collect())));
+                }
+
+                let Some(next_item) = self.seq_iter_next(input)? else {
+                    return Ok(None);
+                };
+                window.pop_front();
+                window.push_back(next_item);
+                Ok(Some(Value::list(window.iter().cloned().collect())))
+            }
+        }
+    }
+
     fn seq_for_each_control(
         &mut self,
         plan: &SeqPlan,
@@ -1844,56 +2133,26 @@ impl Interpreter {
             SeqPlan::Zip { left, right } => {
                 let left_name = Name::new(&mut self.interner, "left");
                 let right_name = Name::new(&mut self.interner, "right");
-                let left_len = self.seq_exact_len(left);
-                let right_len = self.seq_exact_len(right);
+                let mut left_state = self.seq_iter_from_plan(left)?;
+                let mut right_state = self.seq_iter_from_plan(right)?;
 
-                let materialize_left = match (left_len, right_len) {
-                    (Some(l), Some(r)) => l <= r,
-                    (Some(_), None) => true,
-                    (None, Some(_)) => false,
-                    (None, None) => true,
-                };
-
-                if materialize_left {
-                    let left_items = self.eval_seq_to_vec(left)?;
-                    if left_items.is_empty() {
+                loop {
+                    let Some(l) = self.seq_iter_next(&mut left_state)? else {
                         return Ok(());
-                    }
-                    let mut idx: usize = 0;
-                    self.seq_for_each_control(right, &mut |interp, r| {
-                        if idx >= left_items.len() {
-                            return Ok(Break);
-                        }
-                        let l = left_items[idx].clone();
-                        idx += 1;
-                        emit(
-                            interp,
-                            Value::Record {
-                                fields: vec![(left_name, l), (right_name, r)],
-                                type_idx: None,
-                            },
-                        )
-                    })
-                } else {
-                    let right_items = self.eval_seq_to_vec(right)?;
-                    if right_items.is_empty() {
+                    };
+                    let Some(r) = self.seq_iter_next(&mut right_state)? else {
                         return Ok(());
+                    };
+                    match emit(
+                        self,
+                        Value::Record {
+                            fields: vec![(left_name, l), (right_name, r)],
+                            type_idx: None,
+                        },
+                    )? {
+                        Continue => {}
+                        Break => return Ok(()),
                     }
-                    let mut idx: usize = 0;
-                    self.seq_for_each_control(left, &mut |interp, l| {
-                        if idx >= right_items.len() {
-                            return Ok(Break);
-                        }
-                        let r = right_items[idx].clone();
-                        idx += 1;
-                        emit(
-                            interp,
-                            Value::Record {
-                                fields: vec![(left_name, l), (right_name, r)],
-                                type_idx: None,
-                            },
-                        )
-                    })
                 }
             }
             SeqPlan::Chunks { input, n } => {
@@ -1972,48 +2231,6 @@ impl Interpreter {
             Ok(())
         })?;
         Ok(out)
-    }
-
-    fn seq_exact_len(&self, plan: &SeqPlan) -> Option<usize> {
-        match plan {
-            SeqPlan::Source(source) => match source {
-                SeqSource::Range { start, end } => {
-                    if start >= end {
-                        Some(0)
-                    } else {
-                        usize::try_from(end.checked_sub(*start)?).ok()
-                    }
-                }
-                SeqSource::FromList(xs) => Some(xs.len()),
-                SeqSource::StringSplit { s, delim } => Some(s.split(delim.as_str()).count()),
-                SeqSource::StringLines { s } => Some(s.lines().count()),
-                SeqSource::StringChars { s } => Some(s.chars().count()),
-                SeqSource::MapKeys(entries) => Some(entries.len()),
-                SeqSource::MapValues(entries) => Some(entries.len()),
-                SeqSource::SetValues(entries) => Some(entries.len()),
-            },
-            SeqPlan::Map { input, .. } | SeqPlan::Enumerate { input } => self.seq_exact_len(input),
-            SeqPlan::Filter { .. } => None,
-            SeqPlan::Zip { left, right } => Some(std::cmp::min(
-                self.seq_exact_len(left)?,
-                self.seq_exact_len(right)?,
-            )),
-            SeqPlan::Chunks { input, n } => {
-                if *n <= 0 {
-                    return None;
-                }
-                let n = usize::try_from(*n).ok()?;
-                Some(self.seq_exact_len(input)?.div_ceil(n))
-            }
-            SeqPlan::Windows { input, n } => {
-                if *n <= 0 {
-                    return None;
-                }
-                let n = usize::try_from(*n).ok()?;
-                let len = self.seq_exact_len(input)?;
-                if n > len { Some(0) } else { Some(len - n + 1) }
-            }
-        }
     }
 
     fn check_intrinsic_cap(&self, intr: IntrinsicFn) -> Result<(), RuntimeError> {
