@@ -109,7 +109,7 @@ fn primary(p: &mut Parser<'_>) -> Option<CompletedMarker> {
         TrueKw | FalseKw => literal_expr(p),
         Underscore => hole_expr(p),
         LParen => paren_expr(p),
-        LBrace => block_expr(p),
+        LBrace => brace_expr(p),
         IfKw => if_expr(p),
         MatchKw => match_expr(p),
         ReturnKw => return_expr(p),
@@ -131,6 +131,16 @@ fn primary(p: &mut Parser<'_>) -> Option<CompletedMarker> {
         }
     };
     Some(cm)
+}
+
+fn brace_expr(p: &mut Parser<'_>) -> CompletedMarker {
+    if p.nth(1) == Ident && p.nth(2) == Colon {
+        let m = p.open();
+        record_expr_field_list(p);
+        m.complete(p, RecordExpr)
+    } else {
+        block_expr(p)
+    }
 }
 
 fn literal_expr(p: &mut Parser<'_>) -> CompletedMarker {

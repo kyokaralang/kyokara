@@ -580,8 +580,8 @@ while `io`/`fs` are module namespaces for no-owner/effectful operations.
     `insertion_point` is where `x` would be inserted to keep sorted order.
     Only naturally orderable element types are allowed (same as `xs.sort()`).
 * `Seq<T>` — opaque builtin traversal type (lazy, re-iterable) ✓
-  * Static helper: `Seq.range(start, end)` returns half-open ascending range `[start, end)` (empty when `start >= end`)
-  * Transforms: `s.map(f)`, `s.filter(f)`, `s.enumerate()` → `Seq<{ index: Int, value: T }>`, `s.zip(other)` → `Seq<{ left: T, right: U }>`, `s.chunks(n)` → `Seq<List<T>>`, `s.windows(n)` → `Seq<List<T>>` (`chunks/windows` require `n > 0`)
+  * Static helpers: `Seq.range(start, end)` returns half-open ascending range `[start, end)` (empty when `start >= end`); `Seq.unfold(seed, step)` builds a sequence from `step: fn(S) -> Option<{ value: T, state: S }>`
+  * Transforms: `s.map(f)`, `s.filter(f)`, `s.scan(init, f)` (includes `init` as first emitted element), `s.enumerate()` → `Seq<{ index: Int, value: T }>`, `s.zip(other)` → `Seq<{ left: T, right: U }>`, `s.chunks(n)` → `Seq<List<T>>`, `s.windows(n)` → `Seq<List<T>>` (`chunks/windows` require `n > 0`)
   * Terminals: `s.fold(init, f)`, `s.count()`, `s.any(f)`, `s.all(f)`, `s.find(f)` → `Option<T>`, `s.to_list()`
   * Guidance: for predicate/search traversal, default to `s.any(f)`, `s.all(f)`, `s.find(f)`; reserve `s.fold(...)` for true accumulation/reduction
   * Evaluation model: each terminal re-runs the pipeline from source (no single-use consumption state)
@@ -593,7 +593,7 @@ while `io`/`fs` are module namespaces for no-owner/effectful operations.
   * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()` → `Seq<T>`
 * String methods ✓ — `s.len()` (char count), `s.contains(t)`, `s.starts_with(t)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)` → `Seq<String>`, `s.substring(a, b)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()` → `Seq<String>`, `s.chars()` → `Seq<Char>`, `s.parse_int()` → `Result<Int, ParseError>`, `s.parse_float()` → `Result<Float, ParseError>`
 * Char methods ✓ — `c.to_string()`
-* Int methods ✓ — `n.abs()`, `n.to_string()`, `n.to_float()`
+* Int methods ✓ — `n.abs()`, `n.pow(exp)` (`exp >= 0`, overflow checked), `n.to_string()`, `n.to_float()`
 * Float methods ✓ — `f.abs()`, `f.to_int()`
 * Module-qualified math ✓ — `math.min(a, b)`, `math.max(a, b)`, `math.gcd(a, b)`, `math.lcm(a, b)`, `math.fmin(a, b)`, `math.fmax(a, b)`
 * Module-qualified I/O ✓ — `io.print(s)`, `io.println(s)`, `io.read_line()`, `io.read_stdin()` (require `io` capability)

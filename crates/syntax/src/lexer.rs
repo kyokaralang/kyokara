@@ -311,7 +311,9 @@ mod tests {
     #[test]
     fn keyword_vs_ident() {
         // Prefixes/suffixes of keywords are identifiers, not keywords.
-        let idents = ["modules", "letx", "fns", "iff", "returned", "trueish", "all"];
+        let idents = [
+            "modules", "letx", "fns", "iff", "returned", "trueish", "all",
+        ];
         for text in idents {
             let tokens = lex_kinds(text);
             assert_eq!(tokens, [(Ident, text)], "should be ident: {text}");

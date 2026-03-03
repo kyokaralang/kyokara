@@ -80,6 +80,16 @@ enum SeqIterState {
         input: Box<SeqIterState>,
         f: Value,
     },
+    Scan {
+        input: Box<SeqIterState>,
+        acc: Value,
+        f: Value,
+        emitted_init: bool,
+    },
+    Unfold {
+        state: Option<Value>,
+        step: Value,
+    },
     Enumerate {
         input: Box<SeqIterState>,
         idx: i64,
@@ -1639,6 +1649,51 @@ impl Interpreter {
         }
     }
 
+    fn decode_unfold_step_payload(
+        &mut self,
+        payload: Value,
+    ) -> Result<(Value, Value), RuntimeError> {
+        let Value::Record { fields, .. } = payload else {
+            return Err(RuntimeError::TypeError(
+                "seq_unfold: step must return Option<{ value: T, state: S }>".into(),
+            ));
+        };
+
+        let value_name = Name::new(&mut self.interner, "value");
+        let state_name = Name::new(&mut self.interner, "state");
+
+        let mut value: Option<Value> = None;
+        let mut state: Option<Value> = None;
+        for (field_name, field_value) in fields {
+            if field_name == value_name {
+                if value.is_some() {
+                    return Err(RuntimeError::TypeError(
+                        "seq_unfold: step must return Option<{ value: T, state: S }>".into(),
+                    ));
+                }
+                value = Some(field_value);
+            } else if field_name == state_name {
+                if state.is_some() {
+                    return Err(RuntimeError::TypeError(
+                        "seq_unfold: step must return Option<{ value: T, state: S }>".into(),
+                    ));
+                }
+                state = Some(field_value);
+            } else {
+                return Err(RuntimeError::TypeError(
+                    "seq_unfold: step must return Option<{ value: T, state: S }>".into(),
+                ));
+            }
+        }
+
+        match (value, state) {
+            (Some(value), Some(state)) => Ok((value, state)),
+            _ => Err(RuntimeError::TypeError(
+                "seq_unfold: step must return Option<{ value: T, state: S }>".into(),
+            )),
+        }
+    }
+
     /// Decode a `Result` value into `(is_ok, payload)`.
     ///
     /// Resolve by core type identity so user shadowing cannot reinterpret ADTs.
@@ -1811,6 +1866,16 @@ impl Interpreter {
                 input: Box::new(self.seq_iter_from_plan(input)?),
                 f: f.clone(),
             }),
+            SeqPlan::Scan { input, init, f } => Ok(SeqIterState::Scan {
+                input: Box::new(self.seq_iter_from_plan(input)?),
+                acc: init.clone(),
+                f: f.clone(),
+                emitted_init: false,
+            }),
+            SeqPlan::Unfold { seed, step } => Ok(SeqIterState::Unfold {
+                state: Some(seed.clone()),
+                step: step.clone(),
+            }),
             SeqPlan::Enumerate { input } => Ok(SeqIterState::Enumerate {
                 input: Box::new(self.seq_iter_from_plan(input)?),
                 idx: 0,
@@ -1934,6 +1999,41 @@ impl Interpreter {
                     }
                 }
             },
+            SeqIterState::Scan {
+                input,
+                acc,
+                f,
+                emitted_init,
+            } => {
+                if !*emitted_init {
+                    *emitted_init = true;
+                    return Ok(Some(acc.clone()));
+                }
+
+                let Some(item) = self.seq_iter_next(input)? else {
+                    return Ok(None);
+                };
+
+                let next_acc =
+                    self.call_value(f.clone(), smallvec::smallvec![acc.clone(), item])?;
+                *acc = next_acc.clone();
+                Ok(Some(next_acc))
+            }
+            SeqIterState::Unfold { state, step } => {
+                let Some(current_state) = state.take() else {
+                    return Ok(None);
+                };
+
+                let step_out = self.call_value(step.clone(), smallvec::smallvec![current_state])?;
+                match self.decode_option_some_payload(&step_out, "seq_unfold")? {
+                    Some(payload) => {
+                        let (value, next_state) = self.decode_unfold_step_payload(payload)?;
+                        *state = Some(next_state);
+                        Ok(Some(value))
+                    }
+                    None => Ok(None),
+                }
+            }
             SeqIterState::Enumerate {
                 input,
                 idx,
@@ -2113,6 +2213,42 @@ impl Interpreter {
                         )),
                     }
                 })
+            }
+            SeqPlan::Scan { input, init, f } => {
+                let mut acc = init.clone();
+                match emit(self, acc.clone())? {
+                    Continue => {}
+                    Break => return Ok(()),
+                }
+
+                let folder = f.clone();
+                self.seq_for_each_control(input, &mut |interp, item| {
+                    acc = interp
+                        .call_value(folder.clone(), smallvec::smallvec![acc.clone(), item])?;
+                    emit(interp, acc.clone())
+                })
+            }
+            SeqPlan::Unfold { seed, step } => {
+                let mut state = Some(seed.clone());
+                let step_fn = step.clone();
+                loop {
+                    let Some(current_state) = state.take() else {
+                        return Ok(());
+                    };
+
+                    let step_out =
+                        self.call_value(step_fn.clone(), smallvec::smallvec![current_state])?;
+                    let maybe_payload = self.decode_option_some_payload(&step_out, "seq_unfold")?;
+                    let Some(payload) = maybe_payload else {
+                        return Ok(());
+                    };
+                    let (value, next_state) = self.decode_unfold_step_payload(payload)?;
+                    state = Some(next_state);
+                    match emit(self, value)? {
+                        Continue => {}
+                        Break => return Ok(()),
+                    }
+                }
             }
             SeqPlan::Enumerate { input } => {
                 let index_name = Name::new(&mut self.interner, "index");
@@ -2314,6 +2450,18 @@ impl Interpreter {
                 })?;
                 Ok(acc)
             }
+            IntrinsicFn::SeqScan => {
+                let input = self.require_seq_plan(&args[0], "seq_scan")?;
+                Ok(Value::seq_plan(SeqPlan::Scan {
+                    input,
+                    init: args[1].clone(),
+                    f: args[2].clone(),
+                }))
+            }
+            IntrinsicFn::SeqUnfold => Ok(Value::seq_plan(SeqPlan::Unfold {
+                seed: args[0].clone(),
+                step: args[1].clone(),
+            })),
             IntrinsicFn::SeqEnumerate => {
                 let plan = self.require_seq_plan(&args[0], "seq_enumerate")?;
                 Ok(Value::seq_plan(SeqPlan::Enumerate { input: plan }))

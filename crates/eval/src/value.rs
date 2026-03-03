@@ -131,6 +131,15 @@ pub enum SeqPlan {
         input: Rc<SeqPlan>,
         f: Value,
     },
+    Scan {
+        input: Rc<SeqPlan>,
+        init: Value,
+        f: Value,
+    },
+    Unfold {
+        seed: Value,
+        step: Value,
+    },
     Enumerate {
         input: Rc<SeqPlan>,
     },
