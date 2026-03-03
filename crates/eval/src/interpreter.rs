@@ -2414,6 +2414,28 @@ impl Interpreter {
                     self.make_none()
                 }
             }
+            IntrinsicFn::ListUpdate => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError("list_update expects a List".into()));
+                };
+                let Value::Int(i) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "list_update expects an Int index".into(),
+                    ));
+                };
+                if *i < 0 || *i as usize >= xs.len() {
+                    return Err(RuntimeError::TypeError(format!(
+                        "list_update: index out of bounds: index {i}, length {}",
+                        xs.len()
+                    )));
+                }
+                let idx = *i as usize;
+                let updater = args[2].clone();
+                let updated = self.call_value(updater, smallvec::smallvec![xs[idx].clone()])?;
+                let mut out = xs.clone();
+                Rc::make_mut(&mut out)[idx] = updated;
+                Ok(Value::List(out))
+            }
             IntrinsicFn::MapGet => {
                 let Value::Map(entries) = &args[0] else {
                     return Err(RuntimeError::TypeError("map_get expects a Map".into()));
@@ -2574,6 +2596,27 @@ impl Interpreter {
             IntrinsicFn::SeqToList => {
                 let plan = self.require_seq_plan(&args[0], "seq_to_list")?;
                 Ok(Value::list(self.eval_seq_to_vec(&plan)?))
+            }
+            IntrinsicFn::DequePopFront => {
+                let Value::Deque(q) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "deque_pop_front expects a Deque".into(),
+                    ));
+                };
+                let mut rest = q.as_ref().clone();
+                let Some(value) = rest.pop_front() else {
+                    return self.make_none();
+                };
+                let value_name = Name::new(&mut self.interner, "value");
+                let rest_name = Name::new(&mut self.interner, "rest");
+                let payload = Value::Record {
+                    fields: vec![
+                        (value_name, value),
+                        (rest_name, Value::Deque(Rc::new(rest))),
+                    ],
+                    type_idx: None,
+                };
+                self.make_some(payload)
             }
             IntrinsicFn::ListSortBy => {
                 let Value::List(xs) = &args[0] else {
@@ -2758,6 +2801,11 @@ impl Interpreter {
                 .core_types
                 .get(CoreType::List)
                 .map(|_| ReceiverKey::Core(CoreType::List)),
+            Value::Deque(_) => self
+                .module_scope
+                .core_types
+                .get(CoreType::Deque)
+                .map(|_| ReceiverKey::Core(CoreType::Deque)),
             Value::Seq(_) => self
                 .module_scope
                 .core_types

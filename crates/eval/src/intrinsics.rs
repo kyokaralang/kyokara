@@ -1,5 +1,6 @@
 //! Built-in functions available to Kyokara programs.
 
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use indexmap::{IndexMap, IndexSet};
@@ -33,6 +34,14 @@ pub enum IntrinsicFn {
     ListReverse,
     ListConcat,
     ListSeq,
+    ListSet,
+    ListUpdate,
+    DequeNew,
+    DequePushFront,
+    DequePushBack,
+    DequePopFront,
+    DequeLen,
+    DequeIsEmpty,
     SeqRange,
     SeqMap,
     SeqFilter,
@@ -146,6 +155,8 @@ impl IntrinsicFn {
             self,
             IntrinsicFn::ListGet
                 | IntrinsicFn::ListHead
+                | IntrinsicFn::ListUpdate
+                | IntrinsicFn::DequePopFront
                 | IntrinsicFn::SeqMap
                 | IntrinsicFn::SeqFilter
                 | IntrinsicFn::SeqFold
@@ -293,6 +304,83 @@ impl IntrinsicFn {
                     return Err(RuntimeError::TypeError("list_seq expects a List".into()));
                 };
                 Ok(Value::seq_source(SeqSource::FromList(xs.clone())))
+            }
+            IntrinsicFn::ListSet => {
+                let mut args = args;
+                let val = args.pop().ok_or(RuntimeError::TypeError(
+                    "list_set: missing value argument".into(),
+                ))?;
+                let Value::Int(i) = args.pop().ok_or(RuntimeError::TypeError(
+                    "list_set: missing index argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "list_set expects an Int index".into(),
+                    ));
+                };
+                let Value::List(mut xs) = args.pop().ok_or(RuntimeError::TypeError(
+                    "list_set: missing list argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError("list_set expects a List".into()));
+                };
+
+                if i < 0 || i as usize >= xs.len() {
+                    return Err(RuntimeError::TypeError(format!(
+                        "list_set: index out of bounds: index {i}, length {}",
+                        xs.len()
+                    )));
+                }
+
+                Rc::make_mut(&mut xs)[i as usize] = val;
+                Ok(Value::List(xs))
+            }
+            IntrinsicFn::DequeNew => Ok(Value::deque(VecDeque::new())),
+            IntrinsicFn::DequePushFront => {
+                let mut args = args;
+                let val = args.pop().ok_or(RuntimeError::TypeError(
+                    "deque_push_front: missing value argument".into(),
+                ))?;
+                let Value::Deque(mut q) = args.pop().ok_or(RuntimeError::TypeError(
+                    "deque_push_front: missing deque argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "deque_push_front expects a Deque".into(),
+                    ));
+                };
+                Rc::make_mut(&mut q).push_front(val);
+                Ok(Value::Deque(q))
+            }
+            IntrinsicFn::DequePushBack => {
+                let mut args = args;
+                let val = args.pop().ok_or(RuntimeError::TypeError(
+                    "deque_push_back: missing value argument".into(),
+                ))?;
+                let Value::Deque(mut q) = args.pop().ok_or(RuntimeError::TypeError(
+                    "deque_push_back: missing deque argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "deque_push_back expects a Deque".into(),
+                    ));
+                };
+                Rc::make_mut(&mut q).push_back(val);
+                Ok(Value::Deque(q))
+            }
+            IntrinsicFn::DequeLen => {
+                let Value::Deque(q) = &args[0] else {
+                    return Err(RuntimeError::TypeError("deque_len expects a Deque".into()));
+                };
+                Ok(Value::Int(q.len() as i64))
+            }
+            IntrinsicFn::DequeIsEmpty => {
+                let Value::Deque(q) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "deque_is_empty expects a Deque".into(),
+                    ));
+                };
+                Ok(Value::Bool(q.is_empty()))
             }
             IntrinsicFn::SeqRange => {
                 let Value::Int(start) = &args[0] else {
@@ -986,6 +1074,8 @@ impl IntrinsicFn {
             | IntrinsicFn::SeqFind
             | IntrinsicFn::SeqToList
             | IntrinsicFn::MapGet
+            | IntrinsicFn::ListUpdate
+            | IntrinsicFn::DequePopFront
             | IntrinsicFn::ListSortBy => Err(RuntimeError::TypeError(
                 "complex intrinsic called without interpreter context".into(),
             )),
@@ -1025,6 +1115,27 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         ),
         (Name::new(interner, "list_concat"), IntrinsicFn::ListConcat),
         (Name::new(interner, "list_seq"), IntrinsicFn::ListSeq),
+        (Name::new(interner, "list_set"), IntrinsicFn::ListSet),
+        (Name::new(interner, "list_update"), IntrinsicFn::ListUpdate),
+        // Deque
+        (Name::new(interner, "deque_new"), IntrinsicFn::DequeNew),
+        (
+            Name::new(interner, "deque_push_front"),
+            IntrinsicFn::DequePushFront,
+        ),
+        (
+            Name::new(interner, "deque_push_back"),
+            IntrinsicFn::DequePushBack,
+        ),
+        (
+            Name::new(interner, "deque_pop_front"),
+            IntrinsicFn::DequePopFront,
+        ),
+        (Name::new(interner, "deque_len"), IntrinsicFn::DequeLen),
+        (
+            Name::new(interner, "deque_is_empty"),
+            IntrinsicFn::DequeIsEmpty,
+        ),
         // Seq
         (Name::new(interner, "seq_range"), IntrinsicFn::SeqRange),
         (Name::new(interner, "seq_map"), IntrinsicFn::SeqMap),
