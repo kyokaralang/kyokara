@@ -110,8 +110,8 @@ Principle:
 
 Canonical parsing forms for numeric text:
 
-- `s.parse_int() -> Result[Int, ParseError]`
-- `s.parse_float() -> Result[Float, ParseError]`
+- `s.parse_int() -> Result<Int, ParseError>`
+- `s.parse_float() -> Result<Float, ParseError>`
 - canonical fallback/composition on `Result`:
   - `s.parse_int().unwrap_or(0)`
   - `s.parse_int().map_or(0, fn(n: Int) => n + 1)`

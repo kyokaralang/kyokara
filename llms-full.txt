@@ -60,7 +60,7 @@ ADTs (tagged unions):
 
 ```kyokara
 type Currency =
-  | USD
+  USD
   | IDR
   | EUR
 
@@ -80,20 +80,21 @@ No `null` in the language — use `Option<T>`.
 Functions are pure by default:
 
 ```kyokara
-fn add_fee(x: Money, fee_bps: Int) -> Money =
-  let fee = { amount = x.amount * fee_bps / 10_000, currency = x.currency }
-  { amount = x.amount + fee.amount, currency = x.currency }
+fn add_fee(x: Money, fee_bps: Int) -> Money {
+  let fee = x.amount * fee_bps / 10_000
+  Money { amount: x.amount + fee, currency: x.currency }
+}
 ```
 
 ### Capabilities and Effects
 
-Declare capabilities:
+Declare effects:
 
 ```kyokara
-cap Net
-cap Clock
-cap Db
-cap Secrets
+effect Net
+effect Clock
+effect Db
+effect Secrets
 ```
 
 Annotate effect requirements:
@@ -145,7 +146,7 @@ Legacy direct-clause form (without `contract`) is invalid in v0.
 
 ```kyokara
 property sort_idempotent(xs: List<Int> <- Gen.auto()) {
-  List.sort(List.sort(xs)) == List.sort(xs)
+  xs.sort().sort() == xs.sort()
 }
 ```
 
@@ -167,8 +168,8 @@ The `where` expression is lowered as a precondition. Candidates violating the co
 
 ```kyokara
 fn normalize_email(s: String) -> String {
-  let trimmed = String.trim(s)
-  let lowered = lowercase(trimmed)
+  let trimmed = s.trim()
+  let lowered = _   // expression hole
   lowered
 }
 ```
@@ -178,19 +179,21 @@ Holes carry an expected type from context. The compiler emits machine-readable h
 ### Pipeline Operator
 
 ```kyokara
-x |> f(a=1, b=2)
+x |> f(a: 1, b: 2)
 ```
 
-Desugars to `f(x, a=1, b=2)`. Pipeline feeds the first parameter positionally. Argument expressions are evaluated left-to-right in source order before slot binding, and positional arguments must come before named arguments. Functions can declare an explicit pipe parameter:
+Desugars to `f(x, a: 1, b: 2)`. Pipeline feeds the first parameter positionally. Argument expressions are evaluated left-to-right in source order before slot binding, and positional arguments must come before named arguments. Functions can declare an explicit pipe parameter:
 
 ```kyokara
-fn split(text: String, sep: String) -> List<String> pipe text = ...
+fn split(text: String, sep: String) -> List<String> pipe text {
+  text.split(sep)
+}
 ```
 
 ### Error Propagation
 
 ```kyokara
-let body = Http.get(url=...)?
+let body = Http.get(url: "...")?
 ```
 
 `?` postfix desugars to a `match` returning early on `Err`.
@@ -369,16 +372,17 @@ cli             (depends: api, refactor, eval, pbt, fmt, hir, lsp, syntax, diagn
 - tracing 0.1: structured logging
 - text-size 1.1: TextRange/TextSize
 
-## Standard Library (Planned)
+## Core Standard Library (Implemented Surface)
 
-- `std.option` — `Option<T>` and combinators
-- `std.result` — `Result<T, E>` and combinators
-- `std.list` — `List<T>` (immutable linked list)
-- `std.map` — `Map[K, V]` (immutable ordered map)
-- `std.string` — string operations
-- `std.int` / `std.float` — numeric operations
-- `std.io` — basic text I/O (requires `IO` cap)
-- `std.test` — property test generators and assertions
+- Prelude value types: `Option<T>`, `Result<T, E>`, `List<T>`, `Seq<T>`, `Map<K, V>`, `Set<T>`, `ParseError`
+- Constructors: `List.new()`, `Seq.range(start, end)`, `Map.new()`, `Set.new()`
+- List storage methods: `push/len/get/head/tail/is_empty/reverse/concat/sort/sort_by/binary_search/seq`
+- Seq traversal methods: `map/filter/fold/enumerate/zip/chunks/windows/count/to_list`
+- Map methods: `insert/get/contains/remove/len/keys/values/is_empty`
+- Set methods: `insert/contains/remove/len/is_empty/values`
+- String methods: `len/contains/starts_with/ends_with/trim/split/substring/to_upper/to_lower/concat/lines/chars/parse_int/parse_float`
+- Capability modules (explicit import + manifest enforcement): `io.*`, `fs.*`
+- Pure utility module (explicit import): `math.*`
 
 ## Roadmap
 
