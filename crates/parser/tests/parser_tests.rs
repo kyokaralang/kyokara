@@ -128,6 +128,21 @@ fn type_with_generics() {
 }
 
 #[test]
+fn nested_type_args_accept_gtgt_token() {
+    // fn f(xs: List<List<Int>>) -> Int { 0 }
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, Ident, Colon, Ident, Lt, Ident, Lt, Ident, GtGt, RParen, Arrow, Ident,
+        LBrace, IntLiteral, RBrace,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "nested type args should parse: {errors:?}"
+    );
+    assert!(has_node(&events, NameType));
+    assert_eq!(count_start_nodes(&events, TypeArgList), 2);
+}
+
+#[test]
 fn type_with_single_payload_variant() {
     // type Boxed = Boxed(Int)
     let (events, errors) = parse_tokens(&[TypeKw, Ident, Eq, Ident, LParen, Ident, RParen]);

@@ -4046,6 +4046,24 @@ fn check_seq_scan_unfold_int_pow_canonical_surface_has_no_diagnostics() {
 }
 
 #[test]
+fn check_seq_unfold_accepts_named_record_alias_payload() {
+    assert_check_no_diagnostics(
+        r#"type PickStep = { value: Int, state: Int }
+
+        fn main() -> Int {
+            Seq.unfold(0, fn(state: Int) =>
+                if (state < 3) {
+                    Some(PickStep { value: state + 1, state: state + 1 })
+                } else {
+                    None
+                }
+            ).count()
+        }"#,
+        "seq unfold accepts named record payload alias",
+    );
+}
+
+#[test]
 fn check_non_canonical_free_scan_unfold_pow_int_report_unresolved_name() {
     let output = check(
         r#"fn main() -> Int {

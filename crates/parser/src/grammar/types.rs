@@ -115,11 +115,11 @@ pub(super) fn type_arg_list(p: &mut Parser<'_>) {
     p.bump(); // <
     type_expr(p);
     while p.eat(Comma) {
-        if p.at(Gt) {
+        if p.at(Gt) || p.at(GtGt) {
             break;
         }
         type_expr(p);
     }
-    p.expect(Gt);
+    p.expect_type_arg_rangle();
     m.complete(p, TypeArgList);
 }

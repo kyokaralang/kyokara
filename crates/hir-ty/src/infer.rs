@@ -9,7 +9,7 @@ mod pat;
 use kyokara_diagnostics::Diagnostic;
 use kyokara_hir_def::body::{Body, LocalBindingOrigin};
 use kyokara_hir_def::expr::ExprIdx;
-use kyokara_hir_def::item_tree::{FnItem, FnItemIdx, ItemTree};
+use kyokara_hir_def::item_tree::{FnItem, FnItemIdx, ItemTree, TypeDefKind, TypeItemIdx};
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::resolver::ModuleScope;
@@ -119,11 +119,14 @@ impl<'a> InferenceCtx<'a> {
     /// Unify two types, emitting a type mismatch diagnostic on failure.
     /// Returns the unified type (or Error on failure).
     pub(crate) fn unify_or_err(&mut self, expected: &Ty, actual: &Ty) -> Ty {
-        if self.table.unify(expected, actual) {
-            self.table.resolve_deep(expected)
+        let expected_norm = self.normalize_record_aliases_for_unify(expected);
+        let actual_norm = self.normalize_record_aliases_for_unify(actual);
+
+        if self.table.unify(&expected_norm, &actual_norm) {
+            self.table.resolve_deep(&expected_norm)
         } else {
-            let expected = self.table.resolve_deep(expected);
-            let actual = self.table.resolve_deep(actual);
+            let expected = self.table.resolve_deep(&expected_norm);
+            let actual = self.table.resolve_deep(&actual_norm);
             if !expected.is_poison() && !actual.is_poison() {
                 self.push_diag(TyDiagnosticData::TypeMismatch {
                     expected: expected.clone(),
@@ -132,6 +135,87 @@ impl<'a> InferenceCtx<'a> {
             }
             Ty::Error
         }
+    }
+
+    /// Expand record aliases into structural records for unification-only paths.
+    ///
+    /// We keep alias-to-record values as `Ty::Adt` elsewhere for method
+    /// dispatch identity, but expectation unification should accept structurally
+    /// equivalent shapes (e.g., `Option<PickStep>` vs `Option<{ value, state }>`).
+    fn normalize_record_aliases_for_unify(&mut self, ty: &Ty) -> Ty {
+        let resolved = self.table.resolve_deep(ty);
+        self.normalize_record_aliases_inner(resolved)
+    }
+
+    fn normalize_record_aliases_inner(&mut self, ty: Ty) -> Ty {
+        match ty {
+            Ty::Adt { def, args } => {
+                if let Some(fields) = self.expand_record_alias(def, &args) {
+                    return Ty::Record { fields };
+                }
+                Ty::Adt {
+                    def,
+                    args: args
+                        .into_iter()
+                        .map(|arg| self.normalize_record_aliases_inner(arg))
+                        .collect(),
+                }
+            }
+            Ty::Record { fields } => Ty::Record {
+                fields: fields
+                    .into_iter()
+                    .map(|(name, field_ty)| (name, self.normalize_record_aliases_inner(field_ty)))
+                    .collect(),
+            },
+            Ty::Fn { params, ret } => Ty::Fn {
+                params: params
+                    .into_iter()
+                    .map(|param| self.normalize_record_aliases_inner(param))
+                    .collect(),
+                ret: Box::new(self.normalize_record_aliases_inner(*ret)),
+            },
+            other => other,
+        }
+    }
+
+    fn expand_record_alias(
+        &mut self,
+        type_idx: TypeItemIdx,
+        args: &[Ty],
+    ) -> Option<Vec<(Name, Ty)>> {
+        let type_item = &self.item_tree.types[type_idx];
+        let TypeDefKind::Alias(TypeRef::Record { fields }) = &type_item.kind else {
+            return None;
+        };
+
+        let mut type_params = self.type_params.clone();
+        for (i, &param_name) in type_item.type_params.iter().enumerate() {
+            let arg = args
+                .get(i)
+                .cloned()
+                .unwrap_or_else(|| self.table.fresh_var());
+            type_params.push((param_name, arg));
+        }
+
+        let env = TyResolutionEnv {
+            item_tree: self.item_tree,
+            module_scope: self.module_scope,
+            interner: self.interner,
+            type_params,
+            resolving_aliases: vec![type_idx],
+        };
+
+        let resolved_fields = fields
+            .iter()
+            .map(|(field_name, field_ty_ref)| {
+                let resolved = env.resolve_type_ref(field_ty_ref, &mut self.table);
+                (
+                    *field_name,
+                    self.normalize_record_aliases_for_unify(&resolved),
+                )
+            })
+            .collect();
+        Some(resolved_fields)
     }
 
     /// Build a `TyResolutionEnv` from non-table fields.
