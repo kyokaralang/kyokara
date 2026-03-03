@@ -87,7 +87,7 @@ impl<'a> InferenceCtx<'a> {
                             },
                         );
                         for sub in args {
-                            self.infer_pat(*sub, &Ty::Error);
+                            self.infer_pat(sub, &Ty::Error);
                         }
                     } else {
                         for (sub, field_ty) in args.iter().zip(field_tys.iter()) {
@@ -118,7 +118,7 @@ impl<'a> InferenceCtx<'a> {
                             },
                         );
                         for sub in args {
-                            self.infer_pat(*sub, &Ty::Error);
+                            self.infer_pat(sub, &Ty::Error);
                         }
                     } else {
                         for (sub, field_ty) in args.iter().zip(field_tys.iter()) {
@@ -134,7 +134,7 @@ impl<'a> InferenceCtx<'a> {
                         },
                     );
                     for sub in args {
-                        self.infer_pat(*sub, &Ty::Error);
+                        self.infer_pat(sub, &Ty::Error);
                     }
                     Ty::Error
                 }
