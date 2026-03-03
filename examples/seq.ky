@@ -1,0 +1,78 @@
+// Seq usage catalog: lazy traversal, producer interop, and List bridge.
+
+fn seq_range_count() -> Int {
+  Seq.range(0, 10).count()
+}
+
+fn seq_map_filter_fold() -> Int {
+  Seq.range(0, 10)
+    .map(fn(n: Int) => n + 1)
+    .filter(fn(n: Int) => n % 2 == 0)
+    .fold(0, fn(acc: Int, n: Int) => acc + n)
+}
+
+fn seq_from_list_bridge() -> Int {
+  let xs = List.new().push(3).push(1).push(4).push(1).push(5)
+  xs.seq()
+    .map(fn(n: Int) => n + 1)
+    .filter(fn(n: Int) => n > 3)
+    .fold(0, fn(acc: Int, n: Int) => acc + n)
+}
+
+fn seq_enumerate_example() -> Int {
+  let es = Seq.range(5, 8).enumerate().to_list()
+  es.len() * 100 + es[1].index * 10 + es[1].value
+}
+
+fn seq_zip_example() -> Int {
+  let left = Seq.range(1, 4)
+  let right = List.new().push(10).push(20).push(30).push(40).seq()
+  let zs = left.zip(right).to_list()
+  zs.len() * 100 + zs[0].left + zs[0].right + zs[2].right
+}
+
+fn seq_chunks_and_windows_example() -> Int {
+  let base = Seq.range(1, 7)
+  let cs = base.chunks(4).to_list()
+  let ws = base.windows(3).to_list()
+  cs.len() * 100 + cs[1].len() * 10 + ws.len() + ws[3][0]
+}
+
+fn seq_string_producers_example() -> Int {
+  let split_count = "a,b,c,d".split(",").count()
+  let lines_count = "x\ny\nz\n".lines().count()
+  let chars_count = "ab\nc".chars().count()
+  let token_len_sum =
+    "aa,bbb,cccc".split(",").fold(0, fn(acc: Int, s: String) => acc + s.len())
+
+  split_count + lines_count + chars_count + token_len_sum
+}
+
+fn seq_map_set_producers_example() -> Int {
+  let m = Map.new().insert("k1", 3).insert("k2", 5)
+  let s = Set.new().insert("a").insert("b").insert("a")
+  let key_count = m.keys().count()
+  let value_sum = m.values().fold(0, fn(acc: Int, n: Int) => acc + n)
+  let set_count = s.values().count()
+  key_count + value_sum + set_count
+}
+
+fn seq_reiterable_example() -> Int {
+  let s = Seq.range(0, 4).map(fn(n: Int) => n + 1)
+  let a = s.count()
+  let b = s.to_list().len()
+  let c = s.fold(0, fn(acc: Int, n: Int) => acc + n)
+  a * 100 + b * 10 + c
+}
+
+fn main() -> Int {
+  seq_range_count()
+    + seq_map_filter_fold()
+    + seq_from_list_bridge()
+    + seq_enumerate_example()
+    + seq_zip_example()
+    + seq_chunks_and_windows_example()
+    + seq_string_producers_example()
+    + seq_map_set_producers_example()
+    + seq_reiterable_example()
+}

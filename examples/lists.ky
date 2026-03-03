@@ -1,4 +1,4 @@
-// List operations: creation, map/filter/fold pipeline.
+// List storage + Seq traversal bridge.
 
 fn double(x: Int) -> Int { x * 2 }
 
@@ -6,16 +6,18 @@ fn main() -> Int {
   // Build a list [1, 2, 3, 4, 5]
   let xs = List.new().push(1).push(2).push(3).push(4).push(5)
 
-  // Map: [2, 4, 6, 8, 10]
-  let doubled = xs.map(double)
+  // Traverse via Seq bridge.
+  let seq = xs.seq()
 
-  // Filter: [6, 8, 10]
-  let big = doubled.filter(fn(x: Int) => x > 4)
+  // Map: [2, 4, 6, 8, 10]
+  let doubled = seq.map(double)
 
   // Fold: 6 + 8 + 10 = 24
-  let total = big.fold(0, fn(acc: Int, x: Int) => acc + x)
+  let total = doubled
+    .filter(fn(x: Int) => x > 4)
+    .fold(0, fn(acc: Int, x: Int) => acc + x)
 
-  // Verify other operations
+  // Verify storage operations stay on List.
   let rev = xs.reverse()
   let combined = xs.concat(rev)
 

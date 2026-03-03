@@ -250,6 +250,9 @@ cargo run -p kyokara-cli -- run <file.ky>
 # Run a multi-file project (auto-detected when sibling .ky files exist)
 cargo run -p kyokara-cli -- run examples/modules/main.ky
 
+# Run the Seq usage catalog example
+cargo run -p kyokara-cli -- run examples/seq.ky
+
 # Format a file (writes back)
 cargo run -p kyokara-cli -- fmt <file.ky>
 
