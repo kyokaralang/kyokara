@@ -4028,6 +4028,45 @@ fn check_seq_any_all_find_canonical_surface_has_no_diagnostics() {
 }
 
 #[test]
+fn check_seq_scan_unfold_int_pow_canonical_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"fn main() -> Int {
+            let a = Seq.range(1, 4).scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
+            let b = Seq.unfold(0, fn(state: Int) =>
+                if (state < 3) {
+                    Some({ value: state + 1, state: state + 1 })
+                } else {
+                    None
+                }
+            ).to_list()
+            a.len() + b.len() + 2.pow(10)
+        }"#,
+        "seq scan/unfold + int.pow canonical surface",
+    );
+}
+
+#[test]
+fn check_non_canonical_free_scan_unfold_pow_int_report_unresolved_name() {
+    let output = check(
+        r#"fn main() -> Int {
+            let a = scan(Seq.range(0, 3), 0, fn(acc: Int, n: Int) => acc + n)
+            let b = unfold(0, fn(state: Int) => None)
+            let c = pow_int(2, 10)
+            a.count() + b.count() + c
+        }"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("unresolved name")),
+        "expected unresolved-name diagnostics for free scan/unfold/pow_int, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_non_canonical_free_any_all_find_functions_report_unresolved_name() {
     let output = check(
         r#"fn main() -> Int {

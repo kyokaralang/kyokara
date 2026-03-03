@@ -407,6 +407,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_map", ReceiverKey::Core(CoreType::Seq), "map"),
         ("seq_filter", ReceiverKey::Core(CoreType::Seq), "filter"),
         ("seq_fold", ReceiverKey::Core(CoreType::Seq), "fold"),
+        ("seq_scan", ReceiverKey::Core(CoreType::Seq), "scan"),
         (
             "seq_enumerate",
             ReceiverKey::Core(CoreType::Seq),
@@ -486,6 +487,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             ReceiverKey::Primitive(PrimitiveType::Int),
             "to_float",
         ),
+        ("int_pow", ReceiverKey::Primitive(PrimitiveType::Int), "pow"),
         ("abs", ReceiverKey::Primitive(PrimitiveType::Int), "abs"),
         // Float methods
         (
@@ -698,6 +700,7 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     let mappings: &[(&str, StaticOwnerKey, &str)] = &[
         ("list_new", StaticOwnerKey::Core(CoreType::List), "new"),
         ("seq_range", StaticOwnerKey::Core(CoreType::Seq), "range"),
+        ("seq_unfold", StaticOwnerKey::Core(CoreType::Seq), "unfold"),
         ("map_new", StaticOwnerKey::Core(CoreType::Map), "new"),
         ("set_new", StaticOwnerKey::Core(CoreType::Set), "new"),
     ];
@@ -815,6 +818,7 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     let e_name = Name::new(interner, "E");
     let k_name = Name::new(interner, "K");
     let v_name = Name::new(interner, "V");
+    let s_name = Name::new(interner, "S");
 
     // Generic type refs.
     let t_ref = TypeRef::Path {
@@ -835,6 +839,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     };
     let v_ref = TypeRef::Path {
         path: Path::single(v_name),
+        args: Vec::new(),
+    };
+    let s_ref = TypeRef::Path {
+        path: Path::single(s_name),
         args: Vec::new(),
     };
 
@@ -927,6 +935,16 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         path: Path::single(option_core_name),
         args: vec![v_ref.clone()],
     };
+    let unfold_step_record = TypeRef::Record {
+        fields: vec![
+            (Name::new(interner, "value"), t_ref.clone()),
+            (Name::new(interner, "state"), s_ref.clone()),
+        ],
+    };
+    let option_unfold_step = TypeRef::Path {
+        path: Path::single(option_core_name),
+        args: vec![unfold_step_record],
+    };
 
     // Function type refs for higher-order intrinsics.
     let fn_t_to_u = TypeRef::Fn {
@@ -956,6 +974,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     let fn_tt_to_int = TypeRef::Fn {
         params: vec![t_ref.clone(), t_ref.clone()],
         ret: Box::new(int_ty.clone()),
+    };
+    let fn_s_to_option_unfold_step = TypeRef::Fn {
+        params: vec![s_ref.clone()],
+        ret: Box::new(option_unfold_step),
     };
 
     vec![
@@ -1091,6 +1113,18 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             ],
             u_ref.clone(),
         ),
+        // seq_scan<T, U>(s: Seq<T>, init: U, f: fn(U, T) -> U) -> Seq<U>
+        mk_intrinsic(
+            interner,
+            "seq_scan",
+            vec![t_name, u_name],
+            vec![
+                ("s", seq_t.clone()),
+                ("init", u_ref.clone()),
+                ("f", fn_ut_to_u.clone()),
+            ],
+            seq_u.clone(),
+        ),
         // seq_range(start: Int, end: Int) -> Seq<Int>
         mk_intrinsic(
             interner,
@@ -1098,6 +1132,17 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![],
             vec![("start", int_ty.clone()), ("end", int_ty.clone())],
             seq_int,
+        ),
+        // seq_unfold<S, T>(seed: S, step: fn(S) -> Option<{ value: T, state: S }>) -> Seq<T>
+        mk_intrinsic(
+            interner,
+            "seq_unfold",
+            vec![s_name, t_name],
+            vec![
+                ("seed", s_ref.clone()),
+                ("step", fn_s_to_option_unfold_step.clone()),
+            ],
+            seq_t.clone(),
         ),
         // seq_enumerate<T>(s: Seq<T>) -> Seq<{ index: Int, value: T }>
         mk_intrinsic(
@@ -1471,6 +1516,14 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             "abs",
             vec![],
             vec![("n", int_ty.clone())],
+            int_ty.clone(),
+        ),
+        // int_pow(base: Int, exp: Int) -> Int
+        mk_intrinsic(
+            interner,
+            "int_pow",
+            vec![],
+            vec![("base", int_ty.clone()), ("exp", int_ty.clone())],
             int_ty.clone(),
         ),
         // min(a: Int, b: Int) -> Int

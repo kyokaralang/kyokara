@@ -158,7 +158,7 @@ fn main() -> Int {
 }
 ```
 
-Pure by default. Private by default — use `pub` to export. No null — use `Option<T>`. No exceptions — use `Result<T, E>`. Exhaustive pattern matching enforced by the compiler. Pipeline operator (`|>`) and error propagation (`?`) for clean data flow. Convention-based modules — file path determines module path, `import` brings public names into scope. For `Seq` predicate/search traversal, default to `any`/`all`/`find` (short-circuit) and reserve `fold` for true accumulation/reduction.
+Pure by default. Private by default — use `pub` to export. No null — use `Option<T>`. No exceptions — use `Result<T, E>`. Exhaustive pattern matching enforced by the compiler. Pipeline operator (`|>`) and error propagation (`?`) for clean data flow. Convention-based modules — file path determines module path, `import` brings public names into scope. `Seq` supports `range` and `unfold` sources plus `scan`; for predicate/search traversal, default to `any`/`all`/`find` (short-circuit) and reserve `fold` for true accumulation/reduction. `Int` includes `pow` as the canonical integer exponentiation method.
 
 ## Architecture
 

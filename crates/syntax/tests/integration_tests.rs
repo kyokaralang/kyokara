@@ -690,6 +690,13 @@ fn roundtrip_record_expr() {
 }
 
 #[test]
+fn roundtrip_structural_record_expr() {
+    let src = "let s = Some({ value: 1, state: 2 })";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
 fn roundtrip_full_program() {
     let src = r#"module Main
 

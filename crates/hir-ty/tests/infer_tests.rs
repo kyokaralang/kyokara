@@ -574,9 +574,7 @@ fn infer_record_literal() {
 
 #[test]
 fn infer_structural_record() {
-    // Structural record without a named type — just returns Unit (since
-    // we can't express the return type for anonymous records yet).
-    check_ok("fn foo() { let r = { x: 1, y: 2 }\n r }");
+    check_ok("fn foo() -> { x: Int, y: Int } { let r = { x: 1, y: 2 }\n r }");
 }
 
 // ── Lambda tests ─────────────────────────────────────────────────────
@@ -703,6 +701,31 @@ fn infer_seq_any_all_find_happy_paths() {
 }
 
 #[test]
+fn infer_seq_scan_unfold_int_pow_happy_paths() {
+    let cases = [r#"fn main() -> Int {
+            let scanned = Seq.range(1, 4).scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
+            let unfolded = Seq.unfold(0, fn(state: Int) =>
+                if (state < 3) {
+                    Some({ value: state + 1, state: state + 1 })
+                } else {
+                    None
+                }
+            ).to_list()
+            let p = 2.pow(10)
+            scanned.len() + unfolded.len() + p
+        }"#];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected no diagnostics, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
 fn infer_result_ergonomics_happy_paths() {
     let cases = [
         "fn main() -> Int { \"42\".parse_int().unwrap_or(0) }",
@@ -765,6 +788,60 @@ fn err_seq_any_all_find_wrong_arity_or_predicate_type() {
         },
         Case {
             src: "fn main() -> Int { Seq.range(0, 3).find(fn(n: Int) => n + 1).unwrap_or(0) }",
+            expected_fragment: "type mismatch",
+        },
+    ];
+
+    for case in cases {
+        let (result, _) = check(case.src);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains(case.expected_fragment)),
+            "expected diagnostic containing `{}`; got: {:?}\nsource:\n{}",
+            case.expected_fragment,
+            result.diagnostics,
+            case.src
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|d| !d.message.contains("unresolved name")),
+            "expected canonical surface to resolve names; got unresolved-name diagnostics: {:?}\nsource:\n{}",
+            result.diagnostics,
+            case.src
+        );
+    }
+}
+
+#[test]
+fn err_seq_scan_unfold_int_pow_wrong_arity_or_types() {
+    struct Case<'a> {
+        src: &'a str,
+        expected_fragment: &'a str,
+    }
+
+    let cases = [
+        Case {
+            src: "fn main() -> Int { Seq.range(0, 3).scan(0, fn(acc: Int) => acc).count() }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "fn main() -> Int { Seq.unfold(0, fn(state: Int) => state + 1).count() }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "fn main() -> Int { Seq.unfold(0, fn(state: Int) => Some({ value: state + 1 })).count() }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "fn main() -> Int { 2.pow() }",
+            expected_fragment: "expected 1 argument(s)",
+        },
+        Case {
+            src: "fn main() -> Int { 2.pow(true) }",
             expected_fragment: "type mismatch",
         },
     ];

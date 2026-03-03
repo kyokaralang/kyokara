@@ -37,6 +37,8 @@ pub enum IntrinsicFn {
     SeqMap,
     SeqFilter,
     SeqFold,
+    SeqScan,
+    SeqUnfold,
     SeqEnumerate,
     SeqZip,
     SeqChunks,
@@ -91,6 +93,7 @@ pub enum IntrinsicFn {
 
     // Int/Float math
     Abs,
+    IntPow,
     Min,
     Max,
     Gcd,
@@ -146,6 +149,8 @@ impl IntrinsicFn {
                 | IntrinsicFn::SeqMap
                 | IntrinsicFn::SeqFilter
                 | IntrinsicFn::SeqFold
+                | IntrinsicFn::SeqScan
+                | IntrinsicFn::SeqUnfold
                 | IntrinsicFn::SeqEnumerate
                 | IntrinsicFn::SeqZip
                 | IntrinsicFn::SeqChunks
@@ -575,6 +580,44 @@ impl IntrinsicFn {
                     .map(Value::Int)
                     .ok_or(RuntimeError::IntegerOverflow)
             }
+            IntrinsicFn::IntPow => {
+                let Value::Int(base) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "int_pow expects Int arguments".into(),
+                    ));
+                };
+                let Value::Int(exp) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "int_pow expects Int arguments".into(),
+                    ));
+                };
+                if *exp < 0 {
+                    return Err(RuntimeError::TypeError(
+                        "int_pow: exponent must be >= 0".into(),
+                    ));
+                }
+
+                let mut result: i64 = 1;
+                let mut factor = *base;
+                let mut power = u64::try_from(*exp).map_err(|_| {
+                    RuntimeError::TypeError("int_pow: exponent must be >= 0".into())
+                })?;
+                while power > 0 {
+                    if power & 1 == 1 {
+                        result = result
+                            .checked_mul(factor)
+                            .ok_or(RuntimeError::IntegerOverflow)?;
+                    }
+                    power >>= 1;
+                    if power > 0 {
+                        factor = factor
+                            .checked_mul(factor)
+                            .ok_or(RuntimeError::IntegerOverflow)?;
+                    }
+                }
+
+                Ok(Value::Int(result))
+            }
             IntrinsicFn::Min => {
                 let Value::Int(a) = &args[0] else {
                     return Err(RuntimeError::TypeError("min expects Int arguments".into()));
@@ -931,6 +974,8 @@ impl IntrinsicFn {
             | IntrinsicFn::SeqMap
             | IntrinsicFn::SeqFilter
             | IntrinsicFn::SeqFold
+            | IntrinsicFn::SeqScan
+            | IntrinsicFn::SeqUnfold
             | IntrinsicFn::SeqEnumerate
             | IntrinsicFn::SeqZip
             | IntrinsicFn::SeqChunks
@@ -985,6 +1030,8 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (Name::new(interner, "seq_map"), IntrinsicFn::SeqMap),
         (Name::new(interner, "seq_filter"), IntrinsicFn::SeqFilter),
         (Name::new(interner, "seq_fold"), IntrinsicFn::SeqFold),
+        (Name::new(interner, "seq_scan"), IntrinsicFn::SeqScan),
+        (Name::new(interner, "seq_unfold"), IntrinsicFn::SeqUnfold),
         (
             Name::new(interner, "seq_enumerate"),
             IntrinsicFn::SeqEnumerate,
@@ -1088,6 +1135,7 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         ),
         // Int/Float
         (Name::new(interner, "abs"), IntrinsicFn::Abs),
+        (Name::new(interner, "int_pow"), IntrinsicFn::IntPow),
         (Name::new(interner, "min"), IntrinsicFn::Min),
         (Name::new(interner, "max"), IntrinsicFn::Max),
         (Name::new(interner, "gcd"), IntrinsicFn::Gcd),

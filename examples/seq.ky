@@ -11,6 +11,22 @@ fn seq_map_filter_fold() -> Int {
     .fold(0, fn(acc: Int, n: Int) => acc + n)
 }
 
+fn seq_scan_example() -> Int {
+  let ps = Seq.range(1, 4).scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
+  ps[0] * 100 + ps[3]
+}
+
+fn seq_unfold_example() -> Int {
+  let xs = Seq.unfold(0, fn(state: Int) =>
+    if (state < 3) {
+      Some({ value: state + 1, state: state + 1 })
+    } else {
+      None
+    }
+  ).to_list()
+  xs.len() * 10 + xs[2]
+}
+
 fn seq_from_list_bridge() -> Int {
   let xs = List.new().push(3).push(1).push(4).push(1).push(5)
   xs.seq()
@@ -65,9 +81,15 @@ fn seq_reiterable_example() -> Int {
   a * 100 + b * 10 + c
 }
 
+fn int_pow_example() -> Int {
+  2.pow(10) + 5.pow(0) + 0.pow(0)
+}
+
 fn main() -> Int {
   seq_range_count()
     + seq_map_filter_fold()
+    + seq_scan_example()
+    + seq_unfold_example()
     + seq_from_list_bridge()
     + seq_enumerate_example()
     + seq_zip_example()
@@ -75,4 +97,5 @@ fn main() -> Int {
     + seq_string_producers_example()
     + seq_map_set_producers_example()
     + seq_reiterable_example()
+    + int_pow_example()
 }

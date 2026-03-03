@@ -761,6 +761,17 @@ fn if_expr_parenthesized_record_condition() {
 }
 
 #[test]
+fn anonymous_record_expr_in_call_arg() {
+    // let x = Some({ value: 1, state: 2 })
+    let (events, errors) = parse_tokens(&[
+        LetKw, Ident, Eq, Ident, LParen, LBrace, Ident, Colon, IntLiteral, Comma, Ident, Colon,
+        IntLiteral, RBrace, RParen,
+    ]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, RecordExpr));
+}
+
+#[test]
 fn return_expr() {
     // fn foo() { return 42 }
     let (events, errors) = parse_tokens(&[

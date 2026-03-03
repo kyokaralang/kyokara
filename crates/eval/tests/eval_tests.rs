@@ -5465,6 +5465,113 @@ fn eval_seq_any_all_find_short_circuit_regression() {
 }
 
 #[test]
+fn eval_seq_scan_include_init_semantics() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let xs = Seq.range(1, 4).scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
+            xs.len() * 1000 + xs[0] * 100 + xs[1] * 10 + xs[3]
+        }"#,
+    );
+    assert_eq!(val, Value::Int(4016));
+}
+
+#[test]
+fn eval_seq_scan_empty_input_emits_init_once() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let xs = Seq.range(0, 0).scan(42, fn(acc: Int, _n: Int) => acc + 1).to_list()
+            xs.len() * 100 + xs[0]
+        }"#,
+    );
+    assert_eq!(val, Value::Int(142));
+}
+
+#[test]
+fn eval_seq_unfold_semantics_matrix() {
+    struct Case<'a> {
+        name: &'a str,
+        src: &'a str,
+        expected: Value,
+    }
+
+    let cases = [
+        Case {
+            name: "unfold bounded emits values",
+            src: r#"fn main() -> Int {
+                let xs = Seq.unfold(0, fn(state: Int) =>
+                    if (state < 4) {
+                        Some({ value: state * 2, state: state + 1 })
+                    } else {
+                        None
+                    }
+                ).to_list()
+                xs.len() * 100 + xs[0] * 10 + xs[3]
+            }"#,
+            expected: Value::Int(406),
+        },
+        Case {
+            name: "unfold immediate none is empty",
+            src: r#"fn main() -> Int {
+                Seq.unfold(0, fn(_state: Int) => None).count()
+            }"#,
+            expected: Value::Int(0),
+        },
+    ];
+
+    for case in cases {
+        let got = run_ok(case.src);
+        assert_eq!(got, case.expected, "case `{}` failed", case.name);
+    }
+}
+
+#[test]
+fn eval_int_pow_semantics_matrix() {
+    struct Case<'a> {
+        name: &'a str,
+        src: &'a str,
+        expected: Value,
+    }
+
+    let cases = [
+        Case {
+            name: "pow positive exponent",
+            src: "fn main() -> Int { 2.pow(10) }",
+            expected: Value::Int(1024),
+        },
+        Case {
+            name: "pow zero exponent",
+            src: "fn main() -> Int { 5.pow(0) }",
+            expected: Value::Int(1),
+        },
+        Case {
+            name: "pow zero to zero",
+            src: "fn main() -> Int { 0.pow(0) }",
+            expected: Value::Int(1),
+        },
+    ];
+
+    for case in cases {
+        let got = run_ok(case.src);
+        assert_eq!(got, case.expected, "case `{}` failed", case.name);
+    }
+}
+
+#[test]
+fn eval_int_pow_errors_negative_exponent_and_overflow() {
+    let neg = run_err("fn main() -> Int { 2.pow(-1) }");
+    assert!(
+        neg.contains("int_pow: exponent must be >= 0"),
+        "unexpected negative-exponent error: {neg}"
+    );
+
+    let overflow = run_err("fn main() -> Int { 2.pow(63) }");
+    assert!(
+        overflow.contains("integer overflow"),
+        "unexpected overflow error: {overflow}"
+    );
+}
+
+#[test]
 fn eval_seq_invalid_sizes_and_removed_list_surface() {
     let err_chunks = run_err(
         r#"fn main() -> Int {
