@@ -45,11 +45,10 @@ impl<'a> InferenceCtx<'a> {
     }
 
     fn infer_expr_inner(&mut self, idx: ExprIdx, expected: &Expectation) -> Ty {
-        let expr = self.body.exprs[idx].clone();
-        match expr {
+        match &self.body.exprs[idx] {
             Expr::Missing => Ty::Error,
 
-            Expr::Literal(lit) => self.infer_literal(&lit),
+            Expr::Literal(lit) => self.infer_literal(lit),
 
             Expr::Path(path) => {
                 if !path.is_single() {
@@ -67,41 +66,29 @@ impl<'a> InferenceCtx<'a> {
                 self.infer_name(name, idx)
             }
 
-            Expr::Binary { op, lhs, rhs } => self.infer_binary(op, lhs, rhs),
+            Expr::Binary { op, lhs, rhs } => self.infer_binary(*op, *lhs, *rhs),
 
-            Expr::Unary { op, operand } => self.infer_unary(op, operand),
+            Expr::Unary { op, operand } => self.infer_unary(*op, *operand),
 
-            Expr::Call { callee, ref args } => {
-                let args = args.clone();
-                self.infer_call(callee, &args)
-            }
+            Expr::Call { callee, args } => self.infer_call(*callee, args),
 
-            Expr::Field { base, field } => self.infer_field(base, field),
+            Expr::Field { base, field } => self.infer_field(*base, *field),
 
-            Expr::Index { base, index } => self.infer_index(base, index),
+            Expr::Index { base, index } => self.infer_index(*base, *index),
 
             Expr::If {
                 condition,
                 then_branch,
                 else_branch,
-            } => self.infer_if(condition, then_branch, else_branch, expected),
+            } => self.infer_if(*condition, *then_branch, *else_branch, expected),
 
-            Expr::Match {
-                scrutinee,
-                ref arms,
-            } => {
-                let arms = arms.clone();
-                self.infer_match(idx, scrutinee, &arms, expected)
-            }
+            Expr::Match { scrutinee, arms } => self.infer_match(idx, *scrutinee, arms, expected),
 
-            Expr::Block { ref stmts, tail } => {
-                let stmts = stmts.clone();
-                self.infer_block(&stmts, tail, expected)
-            }
+            Expr::Block { stmts, tail } => self.infer_block(stmts, *tail, expected),
 
             Expr::Return(val) => {
                 let ret = self.ret_ty.clone();
-                if let Some(val_idx) = val {
+                if let Some(val_idx) = *val {
                     self.infer_expr(val_idx, &Expectation::Has(ret));
                 } else {
                     self.unify_or_err(&ret, &Ty::Unit);
@@ -109,24 +96,11 @@ impl<'a> InferenceCtx<'a> {
                 Ty::Never
             }
 
-            Expr::RecordLit {
-                ref path,
-                ref fields,
-            } => {
-                let path = path.clone();
-                let fields = fields.clone();
-                self.infer_record_lit(path.as_ref(), &fields)
-            }
+            Expr::RecordLit { path, fields } => self.infer_record_lit(path.as_ref(), fields),
 
-            Expr::Lambda {
-                ref params,
-                body: body_expr,
-            } => {
-                let params = params.clone();
-                self.infer_lambda(&params, body_expr, expected)
-            }
+            Expr::Lambda { params, body } => self.infer_lambda(params, *body, expected),
 
-            Expr::Old(inner) => self.infer_expr(inner, expected),
+            Expr::Old(inner) => self.infer_expr(*inner, expected),
 
             Expr::Hole => {
                 let expected_ty = expected.ty().cloned();
@@ -926,7 +900,7 @@ impl<'a> InferenceCtx<'a> {
             return true;
         }
 
-        match self.body.pats[pat_idx].clone() {
+        match &self.body.pats[pat_idx] {
             Pat::Missing | Pat::Wildcard | Pat::Bind { .. } => true,
             Pat::Literal(_) => false,
             Pat::Record { fields, .. } => match expected {
