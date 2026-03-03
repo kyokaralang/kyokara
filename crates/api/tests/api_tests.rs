@@ -3406,6 +3406,41 @@ fn project_symbol_graph_pre_post_shadow_with_imported_function() {
     );
 }
 
+#[test]
+fn project_symbol_graph_conflicting_import_keeps_local_call_edge() {
+    // When an import conflicts with a local function of the same name,
+    // call-edge rewriting must not rebind local bare calls to imported IDs.
+    let output = check_project_from_files(&[
+        (
+            "main.ky",
+            "import math\nfn add(x: Int, y: Int) -> Int { x - y }\nfn caller() -> Int { add(5, 3) }\n",
+        ),
+        ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
+    ]);
+
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0101" && d.message.contains("conflicting import")),
+        "expected conflicting import diagnostic, got: {:?}",
+        output.diagnostics
+    );
+
+    let caller = output
+        .symbol_graph
+        .functions
+        .iter()
+        .find(|f| f.name == "caller")
+        .expect("should have caller function");
+
+    assert_eq!(
+        sorted_calls(caller),
+        vec!["fn::add".to_string()],
+        "local call edge should stay bound to local add under import conflict"
+    );
+}
+
 // ── Symbol graph call-edge invariants harness (#171) ───────────────
 
 #[test]
