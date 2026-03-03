@@ -592,8 +592,8 @@ fn symbol_graph_contains_types() {
     let src = "type Color = Red | Green | Blue
         fn id(x: Int) -> Int { x }";
     let output = check(src, "test.ky");
-    // 8 types: Color (user-defined) + Option + Result + List + Seq + Map + Set + ParseError
-    assert_eq!(output.symbol_graph.types.len(), 8);
+    // 9 types: Color (user-defined) + Option + Result + List + Deque + Seq + Map + Set + ParseError
+    assert_eq!(output.symbol_graph.types.len(), 9);
     let color = output
         .symbol_graph
         .types
@@ -4316,6 +4316,64 @@ fn check_removed_list_traversal_surface_reports_diagnostics() {
             .iter()
             .any(|d| d.message.contains("no method") || d.message.contains("unresolved name")),
         "expected removed-surface diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_deque_and_list_index_update_canonical_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"fn main() -> Int {
+            let q0 = Deque.new().push_back(1).push_back(2).push_front(0)
+            let q1 = match (q0.pop_front()) {
+                Some(p) => p.rest.push_back(p.value + 10)
+                None => q0
+            }
+
+            let xs = List.new().push(10).push(20).set(1, 99)
+            let ys = xs.update(0, fn(n: Int) => n + 1)
+            ys.get(0).unwrap_or(0) + ys.get(1).unwrap_or(0) + q1.len()
+        }"#,
+        "deque + list set/update canonical surface",
+    );
+}
+
+#[test]
+fn check_non_canonical_free_deque_list_set_update_functions_report_unresolved_name() {
+    let output = check(
+        r#"fn main() -> Int {
+            let q = deque_new()
+            let q = deque_push_back(q, 1)
+            let xs = list_set(List.new().push(1), 0, 2)
+            let ys = list_update(xs, 0, fn(n: Int) => n + 1)
+            q.len() + ys.len()
+        }"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("unresolved name")),
+        "expected unresolved-name diagnostics for free deque/list_set/list_update APIs, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_list_update_wrong_mapper_type_reports_type_mismatch() {
+    let output = check(
+        r#"fn main() -> Int {
+            List.new().push(1).update(0, fn(n: Int) => "x").len()
+        }"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0001" && d.message.contains("type mismatch")),
+        "expected E0001 type mismatch for list update mapper result type, got: {:?}",
         output.diagnostics
     );
 }

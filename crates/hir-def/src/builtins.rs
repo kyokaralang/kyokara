@@ -29,6 +29,7 @@ fn core_hidden_type_name(interner: &mut Interner, core: CoreType) -> Name {
         CoreType::Option => "$core_Option",
         CoreType::Result => "$core_Result",
         CoreType::List => "$core_List",
+        CoreType::Deque => "$core_Deque",
         CoreType::Seq => "$core_Seq",
         CoreType::Map => "$core_Map",
         CoreType::Set => "$core_Set",
@@ -42,6 +43,7 @@ fn core_public_type_name(interner: &mut Interner, core: CoreType) -> Name {
         CoreType::Option => "Option",
         CoreType::Result => "Result",
         CoreType::List => "List",
+        CoreType::Deque => "Deque",
         CoreType::Seq => "Seq",
         CoreType::Map => "Map",
         CoreType::Set => "Set",
@@ -84,7 +86,7 @@ fn register_core_type_item(
     (idx, type_name)
 }
 
-/// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `Seq<T>`, `Map<K,V>`, `Set<T>`, and
+/// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `Deque<T>`, `Seq<T>`, `Map<K,V>`, `Set<T>`, and
 /// `ParseError` into the item tree
 /// and module scope.
 ///
@@ -99,6 +101,7 @@ pub fn register_builtin_types(
     register_option(tree, scope, interner);
     register_result(tree, scope, interner);
     register_list(tree, scope, interner);
+    register_deque(tree, scope, interner);
     register_seq(tree, scope, interner);
     register_map(tree, scope, interner);
     register_set(tree, scope, interner);
@@ -148,6 +151,19 @@ fn register_list(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut In
         scope,
         interner,
         CoreType::List,
+        vec![t_name],
+        TypeDefKind::Adt { variants: vec![] },
+    );
+}
+
+/// `Deque<T>` — opaque builtin type (no variants, no pattern matching).
+fn register_deque(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
+    let t_name = Name::new(interner, "T");
+    let _ = register_core_type_item(
+        tree,
+        scope,
+        interner,
+        CoreType::Deque,
         vec![t_name],
         TypeDefKind::Adt { variants: vec![] },
     );
@@ -304,6 +320,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         bool_: Some(Name::new(interner, "Bool")),
         char_: Some(Name::new(interner, "Char")),
         list: scope.core_types.get(CoreType::List).map(|t| t.type_name),
+        deque: scope.core_types.get(CoreType::Deque).map(|t| t.type_name),
         seq: scope.core_types.get(CoreType::Seq).map(|t| t.type_name),
         map: scope.core_types.get(CoreType::Map).map(|t| t.type_name),
         set: scope.core_types.get(CoreType::Set).map(|t| t.type_name),
@@ -396,12 +413,36 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("list_reverse", ReceiverKey::Core(CoreType::List), "reverse"),
         ("list_concat", ReceiverKey::Core(CoreType::List), "concat"),
         ("list_seq", ReceiverKey::Core(CoreType::List), "seq"),
+        ("list_set", ReceiverKey::Core(CoreType::List), "set"),
+        ("list_update", ReceiverKey::Core(CoreType::List), "update"),
         ("list_sort", ReceiverKey::Core(CoreType::List), "sort"),
         ("list_sort_by", ReceiverKey::Core(CoreType::List), "sort_by"),
         (
             "list_binary_search",
             ReceiverKey::Core(CoreType::List),
             "binary_search",
+        ),
+        // Deque methods
+        (
+            "deque_push_front",
+            ReceiverKey::Core(CoreType::Deque),
+            "push_front",
+        ),
+        (
+            "deque_push_back",
+            ReceiverKey::Core(CoreType::Deque),
+            "push_back",
+        ),
+        (
+            "deque_pop_front",
+            ReceiverKey::Core(CoreType::Deque),
+            "pop_front",
+        ),
+        ("deque_len", ReceiverKey::Core(CoreType::Deque), "len"),
+        (
+            "deque_is_empty",
+            ReceiverKey::Core(CoreType::Deque),
+            "is_empty",
         ),
         // Seq methods
         ("seq_map", ReceiverKey::Core(CoreType::Seq), "map"),
@@ -690,7 +731,7 @@ fn mk_module_intrinsic(
     }
 }
 
-/// Register static methods (`List.new()`, `Map.new()`, `Set.new()`) in
+/// Register static methods (`List.new()`, `Deque.new()`, `Map.new()`, `Set.new()`) in
 /// `scope.static_methods`.
 ///
 /// Static methods are always available (no import needed) since the types they
@@ -699,6 +740,7 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     // (intrinsic_fn_name, owner_key, static_method_name)
     let mappings: &[(&str, StaticOwnerKey, &str)] = &[
         ("list_new", StaticOwnerKey::Core(CoreType::List), "new"),
+        ("deque_new", StaticOwnerKey::Core(CoreType::Deque), "new"),
         ("seq_range", StaticOwnerKey::Core(CoreType::Seq), "range"),
         ("seq_unfold", StaticOwnerKey::Core(CoreType::Seq), "unfold"),
         ("map_new", StaticOwnerKey::Core(CoreType::Map), "new"),
@@ -781,6 +823,11 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         .get(CoreType::List)
         .map(|info| info.type_name)
         .unwrap_or_else(|| Name::new(interner, "List"));
+    let deque_core_name = scope
+        .core_types
+        .get(CoreType::Deque)
+        .map(|info| info.type_name)
+        .unwrap_or_else(|| Name::new(interner, "Deque"));
     let seq_core_name = scope
         .core_types
         .get(CoreType::Seq)
@@ -851,6 +898,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         path: Path::single(list_core_name),
         args: vec![t_ref.clone()],
     };
+    let deque_t = TypeRef::Path {
+        path: Path::single(deque_core_name),
+        args: vec![t_ref.clone()],
+    };
     let seq_t = TypeRef::Path {
         path: Path::single(seq_core_name),
         args: vec![t_ref.clone()],
@@ -915,6 +966,16 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         path: Path::single(option_core_name),
         args: vec![t_ref.clone()],
     };
+    let deque_pop_t = TypeRef::Record {
+        fields: vec![
+            (Name::new(interner, "value"), t_ref.clone()),
+            (Name::new(interner, "rest"), deque_t.clone()),
+        ],
+    };
+    let option_deque_pop_t = TypeRef::Path {
+        path: Path::single(option_core_name),
+        args: vec![deque_pop_t],
+    };
     let option_u = TypeRef::Path {
         path: Path::single(option_core_name),
         args: vec![u_ref.clone()],
@@ -966,6 +1027,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     let fn_t_to_bool = TypeRef::Fn {
         params: vec![t_ref.clone()],
         ret: Box::new(bool_ty.clone()),
+    };
+    let fn_t_to_t = TypeRef::Fn {
+        params: vec![t_ref.clone()],
+        ret: Box::new(t_ref.clone()),
     };
     let fn_ut_to_u = TypeRef::Fn {
         params: vec![u_ref.clone(), t_ref.clone()],
@@ -1084,6 +1149,72 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![t_name],
             vec![("xs", list_t.clone())],
             seq_t.clone(),
+        ),
+        // list_set<T>(xs: List<T>, i: Int, x: T) -> List<T>
+        mk_intrinsic(
+            interner,
+            "list_set",
+            vec![t_name],
+            vec![
+                ("xs", list_t.clone()),
+                ("i", int_ty.clone()),
+                ("x", t_ref.clone()),
+            ],
+            list_t.clone(),
+        ),
+        // list_update<T>(xs: List<T>, i: Int, f: fn(T) -> T) -> List<T>
+        mk_intrinsic(
+            interner,
+            "list_update",
+            vec![t_name],
+            vec![
+                ("xs", list_t.clone()),
+                ("i", int_ty.clone()),
+                ("f", fn_t_to_t),
+            ],
+            list_t.clone(),
+        ),
+        // deque_new<T>() -> Deque<T>
+        mk_intrinsic(interner, "deque_new", vec![t_name], vec![], deque_t.clone()),
+        // deque_push_front<T>(q: Deque<T>, x: T) -> Deque<T>
+        mk_intrinsic(
+            interner,
+            "deque_push_front",
+            vec![t_name],
+            vec![("q", deque_t.clone()), ("x", t_ref.clone())],
+            deque_t.clone(),
+        ),
+        // deque_push_back<T>(q: Deque<T>, x: T) -> Deque<T>
+        mk_intrinsic(
+            interner,
+            "deque_push_back",
+            vec![t_name],
+            vec![("q", deque_t.clone()), ("x", t_ref.clone())],
+            deque_t.clone(),
+        ),
+        // deque_pop_front<T>(q: Deque<T>) -> Option<{ value: T, rest: Deque<T> }>
+        mk_intrinsic(
+            interner,
+            "deque_pop_front",
+            vec![t_name],
+            vec![("q", deque_t.clone())],
+            option_deque_pop_t,
+        ),
+        // deque_len<T>(q: Deque<T>) -> Int
+        mk_intrinsic(
+            interner,
+            "deque_len",
+            vec![t_name],
+            vec![("q", deque_t.clone())],
+            int_ty.clone(),
+        ),
+        // deque_is_empty<T>(q: Deque<T>) -> Bool
+        mk_intrinsic(
+            interner,
+            "deque_is_empty",
+            vec![t_name],
+            vec![("q", deque_t.clone())],
+            bool_ty.clone(),
         ),
         // seq_map<T, U>(s: Seq<T>, f: fn(T) -> U) -> Seq<U>
         mk_intrinsic(

@@ -1102,6 +1102,88 @@ fn err_iteration_ergonomics_wrong_arity_or_type() {
     }
 }
 
+#[test]
+fn infer_deque_and_list_index_update_happy_paths() {
+    let cases = [r#"fn main() -> Int {
+            let q0 = Deque.new().push_back(1).push_back(2).push_front(0)
+            let q1 = match (q0.pop_front()) {
+                Some(p) => p.rest.push_back(p.value + 10)
+                None => q0
+            }
+
+            let xs = List.new().push(10).push(20).set(1, 99)
+            let ys = xs.update(0, fn(n: Int) => n + 1)
+            ys.get(0).unwrap_or(0) + ys.get(1).unwrap_or(0) + q1.len()
+        }"#];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected no diagnostics, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn err_deque_and_list_index_update_wrong_arity_or_type() {
+    struct Case<'a> {
+        src: &'a str,
+        expected_fragment: &'a str,
+    }
+
+    let cases = [
+        Case {
+            src: "fn main() -> Int { Deque.new(1).len() }",
+            expected_fragment: "expected 0 argument(s)",
+        },
+        Case {
+            src: "fn main() -> Int { Deque.new().push_back().len() }",
+            expected_fragment: "expected 1 argument(s)",
+        },
+        Case {
+            src: "fn main() -> Int { List.new().push(1).set(true, 2).len() }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "fn main() -> Int { List.new().push(1).set(0, \"x\").len() }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "fn main() -> Int { List.new().push(1).update(0, fn(n: Int) => \"x\").len() }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "fn main() -> Int { List.new().push(1).update(0).len() }",
+            expected_fragment: "expected 2 argument(s)",
+        },
+    ];
+
+    for case in cases {
+        let (result, _) = check(case.src);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains(case.expected_fragment)),
+            "expected diagnostic containing `{}`; got: {:?}\nsource:\n{}",
+            case.expected_fragment,
+            result.diagnostics,
+            case.src
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|d| !d.message.contains("unresolved name")),
+            "expected canonical surface to resolve names; got unresolved-name diagnostics: {:?}\nsource:\n{}",
+            result.diagnostics,
+            case.src
+        );
+    }
+}
+
 // ── Unresolved name tests ───────────────────────────────────────────
 
 #[test]

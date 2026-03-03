@@ -1,5 +1,6 @@
 //! Runtime value representation.
 
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use indexmap::{IndexMap, IndexSet};
@@ -81,6 +82,7 @@ pub enum Value {
         type_idx: Option<TypeItemIdx>,
     },
     List(Rc<Vec<Value>>),
+    Deque(Rc<VecDeque<Value>>),
     Seq(Rc<SeqPlan>),
     Map(Rc<IndexMap<MapKey, Value>>),
     Set(Rc<IndexSet<MapKey>>),
@@ -180,6 +182,7 @@ impl PartialEq for Value {
             ) => t1 == t2 && v1 == v2 && f1 == f2,
             (Value::Record { fields: f1, .. }, Value::Record { fields: f2, .. }) => f1 == f2,
             (Value::List(a), Value::List(b)) => a == b,
+            (Value::Deque(a), Value::Deque(b)) => a == b,
             // Sequences are lazy plans; do not force-evaluate for equality.
             (Value::Seq(_), Value::Seq(_)) => false,
             (Value::Map(a), Value::Map(b)) => a == b,
@@ -200,6 +203,10 @@ impl Value {
 
     pub fn seq_source(source: SeqSource) -> Self {
         Value::Seq(Rc::new(SeqPlan::Source(source)))
+    }
+
+    pub fn deque(items: VecDeque<Value>) -> Self {
+        Value::Deque(Rc::new(items))
     }
 
     pub fn seq_plan(plan: SeqPlan) -> Self {
@@ -242,6 +249,10 @@ impl Value {
             Value::List(items) => {
                 let fs: Vec<String> = items.iter().map(|v| v.display(interner)).collect();
                 format!("[{}]", fs.join(", "))
+            }
+            Value::Deque(items) => {
+                let fs: Vec<String> = items.iter().map(|v| v.display(interner)).collect();
+                format!("Deque([{}])", fs.join(", "))
             }
             Value::Seq(_) => "<seq>".to_string(),
             Value::Map(entries) => {
@@ -289,6 +300,22 @@ mod tests {
         assert!(
             Rc::ptr_eq(a, b),
             "map clone should share storage before mutation in COW model"
+        );
+    }
+
+    #[test]
+    fn deque_clone_shares_storage_for_cow() {
+        let mut q = VecDeque::new();
+        q.push_back(Value::Int(1));
+        q.push_back(Value::Int(2));
+        let original = Value::deque(q);
+        let cloned = original.clone();
+        let (Value::Deque(a), Value::Deque(b)) = (&original, &cloned) else {
+            panic!("expected deque values");
+        };
+        assert!(
+            Rc::ptr_eq(a, b),
+            "deque clone should share storage before mutation in COW model"
         );
     }
 

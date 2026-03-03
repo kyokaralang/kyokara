@@ -1456,6 +1456,106 @@ fn eval_list_fold_sum() {
     assert!(matches!(val, Value::Int(6)));
 }
 
+#[test]
+fn eval_list_set_basic() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let xs = List.new().push(10).push(20).set(1, 99)
+           xs.get(1).unwrap_or(0)
+         }",
+    );
+    assert!(matches!(val, Value::Int(99)));
+}
+
+#[test]
+fn eval_list_update_basic() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let xs = List.new().push(10).push(20)
+           let ys = xs.update(0, fn(n: Int) => n + 5)
+           ys.get(0).unwrap_or(0)
+         }",
+    );
+    assert!(matches!(val, Value::Int(15)));
+}
+
+#[test]
+fn eval_list_set_out_of_bounds_runtime_error() {
+    let err = run_err(
+        "fn main() -> Int {
+           List.new().push(10).set(9, 0).len()
+         }",
+    );
+    assert!(err.contains("list_set: index out of bounds"), "got: {err}");
+}
+
+#[test]
+fn eval_list_update_out_of_bounds_runtime_error() {
+    let err = run_err(
+        "fn main() -> Int {
+           List.new().push(10).update(3, fn(n: Int) => n + 1).len()
+         }",
+    );
+    assert!(
+        err.contains("list_update: index out of bounds"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn eval_list_set_negative_index_runtime_error() {
+    let err = run_err(
+        "fn main() -> Int {
+           List.new().push(10).set(0 - 1, 0).len()
+         }",
+    );
+    assert!(err.contains("list_set: index out of bounds"), "got: {err}");
+}
+
+// ── Deque tests ─────────────────────────────────────────────────────
+
+#[test]
+fn eval_deque_push_front_back_and_pop_front_fifo() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let q0 = Deque.new().push_back(1).push_back(2).push_front(0)
+           match (q0.pop_front()) {
+             Some(p1) => match (p1.rest.pop_front()) {
+               Some(p2) => p1.value * 100 + p2.value * 10 + p2.rest.len()
+               None => -1
+             }
+             None => -1
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(11)));
+}
+
+#[test]
+fn eval_deque_pop_front_empty_returns_none() {
+    let val = run_ok(
+        "fn main() -> Int {
+           match (Deque.new().pop_front()) {
+             Some(_p) => 0
+             None => 1
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_deque_is_empty_and_len() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let q0: Deque<Int> = Deque.new()
+           let q1 = q0.push_back(42)
+           if (q0.is_empty() && q1.is_empty() == false && q1.len() == 1) { 1 } else { 0 }
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
 // ── Map tests ───────────────────────────────────────────────────────
 
 #[test]
