@@ -1,5 +1,6 @@
 //! Core tree-walking interpreter.
 
+use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -67,6 +68,51 @@ enum LogicalEvalStep {
 enum SeqEmitControl {
     Continue,
     Break,
+}
+
+fn stable_merge_sort_by<T: Clone, E, F>(items: &[T], cmp: &mut F) -> Result<Vec<T>, E>
+where
+    F: FnMut(&T, &T) -> Result<Ordering, E>,
+{
+    if items.len() <= 1 {
+        return Ok(items.to_vec());
+    }
+
+    let mid = items.len() / 2;
+    let left = stable_merge_sort_by(&items[..mid], cmp)?;
+    let right = stable_merge_sort_by(&items[mid..], cmp)?;
+    merge_sorted_runs(left, right, cmp)
+}
+
+fn merge_sorted_runs<T: Clone, E, F>(left: Vec<T>, right: Vec<T>, cmp: &mut F) -> Result<Vec<T>, E>
+where
+    F: FnMut(&T, &T) -> Result<Ordering, E>,
+{
+    let mut merged = Vec::with_capacity(left.len() + right.len());
+    let mut i = 0;
+    let mut j = 0;
+
+    while i < left.len() && j < right.len() {
+        let ord = cmp(&left[i], &right[j])?;
+        if ord == Ordering::Greater {
+            merged.push(right[j].clone());
+            j += 1;
+        } else {
+            merged.push(left[i].clone());
+            i += 1;
+        }
+    }
+
+    while i < left.len() {
+        merged.push(left[i].clone());
+        i += 1;
+    }
+    while j < right.len() {
+        merged.push(right[j].clone());
+        j += 1;
+    }
+
+    Ok(merged)
 }
 
 impl ControlFlow {
@@ -2171,31 +2217,19 @@ impl Interpreter {
                     ));
                 };
                 let cmp_fn = args[1].clone();
-                let mut items = xs.as_ref().clone();
-                // Insertion sort: stable, simple, avoids &mut self borrow
-                // issues with Rust's sort_by.
-                let len = items.len();
-                for i in 1..len {
-                    let mut j = i;
-                    while j > 0 {
-                        let cmp_result = self.call_value(
-                            cmp_fn.clone(),
-                            smallvec::smallvec![items[j - 1].clone(), items[j].clone()],
-                        )?;
-                        match cmp_result {
-                            Value::Int(n) if n > 0 => {
-                                items.swap(j - 1, j);
-                                j -= 1;
-                            }
-                            Value::Int(_) => break,
-                            _ => {
-                                return Err(RuntimeError::TypeError(
-                                    "list_sort_by: comparator must return Int".into(),
-                                ));
-                            }
-                        }
+                let mut cmp = |a: &Value, b: &Value| {
+                    let cmp_result =
+                        self.call_value(cmp_fn.clone(), smallvec::smallvec![a.clone(), b.clone()])?;
+                    match cmp_result {
+                        Value::Int(n) if n > 0 => Ok(Ordering::Greater),
+                        Value::Int(n) if n < 0 => Ok(Ordering::Less),
+                        Value::Int(_) => Ok(Ordering::Equal),
+                        _ => Err(RuntimeError::TypeError(
+                            "list_sort_by: comparator must return Int".into(),
+                        )),
                     }
-                }
+                };
+                let items = stable_merge_sort_by(xs.as_ref(), &mut cmp)?;
                 Ok(Value::list(items))
             }
             IntrinsicFn::OptionUnwrapOr => {
@@ -3116,5 +3150,26 @@ mod tests {
             .expect_err("ensures expression should fail at runtime");
         assert!(matches!(err, RuntimeError::DivisionByZero));
         assert_no_leaked_call_state(&mut interp);
+    }
+
+    #[test]
+    fn stable_merge_sort_by_has_subquadratic_comparison_envelope() {
+        let input: Vec<i64> = (0..128).rev().collect();
+        let mut comparisons: usize = 0;
+        let sorted = stable_merge_sort_by(&input, &mut |a: &i64, b: &i64| {
+            comparisons += 1;
+            Ok::<_, RuntimeError>(a.cmp(b))
+        })
+        .expect("sort should succeed");
+
+        assert_eq!(sorted, (0..128).collect::<Vec<_>>());
+
+        let n = input.len();
+        let log2_n = usize::BITS as usize - n.leading_zeros() as usize;
+        let envelope = n * (log2_n + 2);
+        assert!(
+            comparisons <= envelope,
+            "expected O(n log n)-like comparator calls, got {comparisons} for n={n} (envelope={envelope})"
+        );
     }
 }
