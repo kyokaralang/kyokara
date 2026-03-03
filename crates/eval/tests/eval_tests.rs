@@ -273,6 +273,12 @@ fn eval_comparison_neq() {
 }
 
 #[test]
+fn eval_equality_on_list_is_compile_error() {
+    let err = run_err("fn main() -> Bool { List.new() == List.new() }");
+    assert!(err.contains("equality operator requires"), "got: {err}");
+}
+
+#[test]
 fn eval_comparison_lt() {
     let val = run_ok("fn main() -> Bool { 1 < 2 }");
     assert!(matches!(val, Value::Bool(true)));

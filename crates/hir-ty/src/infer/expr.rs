@@ -319,6 +319,13 @@ impl<'a> InferenceCtx<'a> {
                 lhs_ty
             }
             _ if op.is_equality() => {
+                let resolved = self.table.resolve_deep(&lhs_ty);
+                if !resolved.is_poison() && !resolved.is_equality_comparable() {
+                    self.push_diag(TyDiagnosticData::InvalidEqualityOperand {
+                        ty: resolved.clone(),
+                    });
+                    return Ty::Error;
+                }
                 self.unify_or_err(&lhs_ty, &rhs_ty);
                 Ty::Bool
             }
