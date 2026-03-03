@@ -98,7 +98,7 @@ impl TyDiagnosticData {
             TyDiagnosticData::InvalidIndexTarget { .. } => "E0022",
             TyDiagnosticData::NoSuchMethod { .. } => "E0023",
             TyDiagnosticData::InvalidMapKey { .. } => "E0024",
-            TyDiagnosticData::InvalidSetElement { .. } => "E0026",
+            TyDiagnosticData::InvalidSetElement { .. } => "E0028",
             TyDiagnosticData::UnsortableElement { .. } => "E0025",
         }
     }

@@ -3850,10 +3850,10 @@ fn diagnostic_delta_type_mismatch_adds_one_e0001() {
     assert_diagnostic_code_delta(original, transformed, &[("E0001", 1)]);
 }
 
-// ── Set element type diagnostics (E0026) ───────────────────────────
+// ── Set element type diagnostics (E0028) ───────────────────────────
 
 #[test]
-fn check_set_invalid_element_type_reports_e0026() {
+fn check_set_invalid_element_type_reports_e0028() {
     let output = check(
         r#"fn main() -> Int {
             let s = Set.new().insert(3.14)
@@ -3866,8 +3866,8 @@ fn check_set_invalid_element_type_reports_e0026() {
         output
             .diagnostics
             .iter()
-            .any(|d| d.code == "E0026" && d.message.contains("set element")),
-        "expected E0026 set element diagnostic, got: {:?}",
+            .any(|d| d.code == "E0028" && d.message.contains("set element")),
+        "expected E0028 set element diagnostic, got: {:?}",
         output.diagnostics
     );
 }
@@ -3886,8 +3886,8 @@ fn check_set_valid_element_types_have_no_set_diagnostic() {
     );
 
     assert!(
-        output.diagnostics.iter().all(|d| d.code != "E0026"),
-        "expected no E0026 diagnostics, got: {:?}",
+        output.diagnostics.iter().all(|d| d.code != "E0028"),
+        "expected no E0028 diagnostics, got: {:?}",
         output.diagnostics
     );
 }
