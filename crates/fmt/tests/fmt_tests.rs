@@ -437,6 +437,22 @@ fn fmt_lambda_expr() {
     );
 }
 
+#[test]
+fn fmt_lambda_with_if_body_uses_stable_multiline_layout() {
+    assert_fmt(
+        "fn main() -> Int { fn(acc: Int, n: Int) => if (n > 1) { acc + n } else { acc } }",
+        "fn main() -> Int {\n  fn(acc: Int, n: Int) =>\n    if (n > 1) {\n      acc + n\n    } else {\n      acc\n    }\n}\n",
+    );
+}
+
+#[test]
+fn fmt_fold_lambda_in_call_uses_stable_multiline_layout() {
+    assert_fmt(
+        "fn main() -> Int { Seq.range(0, 3).fold(0, fn(acc: Int, n: Int) => if (n > 1) { acc + n } else { acc }) }",
+        "fn main() -> Int {\n  Seq.range(0, 3).fold(0, fn(acc: Int, n: Int) =>\n      if (n > 1) {\n        acc + n\n      } else {\n        acc\n      })\n}\n",
+    );
+}
+
 // ── Empty match arm list ────────────────────────────────────────────
 
 #[test]
