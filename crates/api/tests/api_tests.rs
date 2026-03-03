@@ -697,6 +697,15 @@ fn symbol_graph_repeated_direct_calls_are_deduped() {
 }
 
 #[test]
+fn symbol_graph_call_rewrite_avoids_per_edge_qualified_vec_allocation() {
+    let src = include_str!("../src/lib.rs");
+    assert!(
+        !src.contains("let qualified: Vec<&String>"),
+        "call rewrite loop should not allocate per-edge qualified Vec"
+    );
+}
+
+#[test]
 fn symbol_graph_effect_annotations() {
     let src = r#"
         effect IO

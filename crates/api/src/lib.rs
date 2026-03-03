@@ -316,6 +316,34 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
         ids.dedup();
     }
 
+    #[derive(Clone, Debug)]
+    struct CallRewriteRule {
+        unique_target: Option<String>,
+        preferred_qualified_for_bare: Option<String>,
+    }
+
+    let mut rewrite_rules: std::collections::HashMap<String, CallRewriteRule> =
+        std::collections::HashMap::new();
+    for (name, candidates) in &fn_name_to_ids {
+        let unique_target = (candidates.len() == 1).then(|| candidates[0].clone());
+        let mut qualified_iter = candidates.iter().filter(|id| {
+            id.strip_prefix("fn::")
+                .map(|rest| rest.contains("::"))
+                .unwrap_or(false)
+        });
+        let preferred_qualified_for_bare = match (qualified_iter.next(), qualified_iter.next()) {
+            (Some(id), None) => Some(id.clone()),
+            _ => None,
+        };
+        rewrite_rules.insert(
+            name.clone(),
+            CallRewriteRule {
+                unique_target,
+                preferred_qualified_for_bare,
+            },
+        );
+    }
+
     for func in &mut all_functions {
         let mut rewritten_calls = Vec::with_capacity(func.calls.len());
         for call in &func.calls {
@@ -323,24 +351,15 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
             let callee_name = call.strip_prefix("fn::").unwrap_or(call);
             let bare_name = callee_name.rsplit("::").next().unwrap_or(callee_name);
 
-            let Some(candidates) = fn_name_to_ids.get(bare_name) else {
+            let Some(rule) = rewrite_rules.get(bare_name) else {
                 // Unknown callee in project graph.
                 continue;
             };
 
-            if candidates.len() == 1 {
-                rewritten_calls.push(candidates[0].clone());
+            if let Some(target) = &rule.unique_target {
+                rewritten_calls.push(target.clone());
                 continue;
             }
-
-            let qualified: Vec<&String> = candidates
-                .iter()
-                .filter(|id| {
-                    id.strip_prefix("fn::")
-                        .map(|rest| rest.contains("::"))
-                        .unwrap_or(false)
-                })
-                .collect();
 
             // If we have exactly one qualified target and the current edge is a
             // bare `fn::name` alias, prefer the qualified definition.
@@ -348,8 +367,8 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
                 .strip_prefix("fn::")
                 .map(|rest| !rest.contains("::"))
                 .unwrap_or(false);
-            if is_bare_fn_id && qualified.len() == 1 {
-                rewritten_calls.push(qualified[0].clone());
+            if is_bare_fn_id && let Some(target) = &rule.preferred_qualified_for_bare {
+                rewritten_calls.push(target.clone());
                 continue;
             }
 
