@@ -114,13 +114,34 @@ impl UnificationTable {
                 }
             }
 
-            // Structural record: same fields (order-sensitive for now).
+            // Structural record: same named fields, independent of declaration order.
             (Ty::Record { fields: f1 }, Ty::Record { fields: f2 }) => {
-                f1.len() == f2.len()
-                    && f1
-                        .iter()
-                        .zip(f2.iter())
-                        .all(|((n1, t1), (n2, t2))| n1 == n2 && self.unify(t1, t2))
+                if f1.len() != f2.len() {
+                    return false;
+                }
+
+                let mut used = vec![false; f2.len()];
+                for (n1, t1) in f1 {
+                    let mut match_idx = None;
+                    for (idx, (n2, _)) in f2.iter().enumerate() {
+                        if !used[idx] && n1 == n2 {
+                            match_idx = Some(idx);
+                            break;
+                        }
+                    }
+
+                    let Some(idx) = match_idx else {
+                        return false;
+                    };
+                    used[idx] = true;
+
+                    let t2 = &f2[idx].1;
+                    if !self.unify(t1, t2) {
+                        return false;
+                    }
+                }
+
+                true
             }
 
             // Function type: params + ret.

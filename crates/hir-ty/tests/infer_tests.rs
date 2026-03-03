@@ -616,6 +616,14 @@ fn infer_structural_record() {
     check_ok("fn foo() -> { x: Int, y: Int } { let r = { x: 1, y: 2 }\n r }");
 }
 
+#[test]
+fn infer_structural_record_field_order_is_irrelevant() {
+    check_ok(
+        "fn take(p: { x: Int, y: Int }) -> Int { p.x }
+         fn main() -> Int { take({ y: 2, x: 1 }) }",
+    );
+}
+
 // ── Lambda tests ─────────────────────────────────────────────────────
 
 #[test]

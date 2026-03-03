@@ -2227,6 +2227,20 @@ fn duplicate_record_field_in_type_alias_produces_diagnostic() {
 }
 
 #[test]
+fn structural_record_assignment_ignores_field_order() {
+    let src = r#"
+fn take(p: { x: Int, y: Int }) -> Int { p.x }
+fn main() -> Int { take({ y: 2, x: 1 }) }
+"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics for reordered structural-record fields, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn unknown_constructor_pattern_emits_diagnostic() {
     // `Nope` is not a constructor in scope — should produce E0013.
     let src = "fn main() -> Int { match (Some(1)) { Nope(x) => x, _ => 0 } }";
