@@ -57,8 +57,8 @@ contract
   requires (amt.amount > 0)
   requires (amt.currency == acct.balance.currency)
   ensures (match (result) {
-    Ok(a) => a.balance.amount == old(acct.balance.amount) - amt.amount,
-    Err(_) => true,
+    Ok(a) => a.balance.amount == old(acct.balance.amount) - amt.amount
+    Err(_) => true
   })
 {
   ...
@@ -69,7 +69,7 @@ Legacy direct-clause form (without `contract`) is invalid in v0.
 
 ```kyokara
 property sort_idempotent(xs: List<Int> <- Gen.auto()) {
-  List.sort(List.sort(xs)) == List.sort(xs)
+  xs.sort().sort() == xs.sort()
 }
 ```
 
@@ -83,7 +83,7 @@ Code doesn't have to be finished to be useful. Kyokara compiles incomplete progr
 
 ```kyokara
 fn normalize_email(s: String) -> String {
-  let trimmed = String.trim(s)
+  let trimmed = s.trim()
   let lowered = _   // hole: expects String, must be pure
   lowered
 }
@@ -153,7 +153,7 @@ pub fn currency_symbol(c: Currency) -> String {
 import math
 
 fn main() -> Int {
-  let result = math.add_fee(Money { amount: 1000, currency: USD }, 250)
+  let result = add_fee(Money { amount: 1000, currency: USD }, 250)
   result.amount
 }
 ```

@@ -36,7 +36,7 @@ Support "almost valid" programs:
 ### 1.2 Intent is explicit and checkable
 First-class specification:
 - preconditions/postconditions (`contract` section with `requires`/`ensures`/`invariant`)
-- property-based tests (`property name(x: T <- Gen.auto()) where pred { body }`)
+- property-based tests (`property name(x: T <- Gen.auto()) where (pred) { body }`)
 - optional refinement constraints (`type PositiveInt = Int where x>0`)
 
 ### 1.3 Determinism by default
@@ -138,8 +138,8 @@ Purity default:
 
 ```kyokara
 fn add_fee(x: Money, fee_bps: Int) -> Money {
-  let fee = Money { amount: x.amount * fee_bps / 10_000, currency: x.currency }
-  Money { amount: x.amount + fee.amount, currency: x.currency }
+  let fee = x.amount * fee_bps / 10_000
+  Money { amount: x.amount + fee, currency: x.currency }
 }
 ```
 
@@ -196,8 +196,8 @@ contract
   requires (amt.amount > 0)
   requires (amt.currency == acct.balance.currency)
   ensures (match (result) {
-    Ok(a2) => a2.balance.amount == old(acct.balance.amount) - amt.amount,
-    Err(_) => true,
+    Ok(a2) => a2.balance.amount == old(acct.balance.amount) - amt.amount
+    Err(_) => true
   })
 {
   ...
@@ -220,7 +220,7 @@ fn withdraw(acct: Account, amt: Money) -> Result<Account, WithdrawError>
 
 ```kyokara
 property sort_idempotent(xs: List<Int> <- Gen.auto()) {
-  List.sort(List.sort(xs)) == List.sort(xs)
+  xs.sort().sort() == xs.sort()
 }
 
 property add_commutative(a: Int <- Gen.auto(), b: Int <- Gen.auto()) {
@@ -250,8 +250,8 @@ Holes are legal syntax:
 
 ```kyokara
 fn normalize_email(s: String) -> String {
-  let trimmed = String.trim(s)
-  let lowered = lowercase(trimmed)
+  let trimmed = s.trim()
+  let lowered = _   // expression hole
   lowered
 }
 ```
@@ -270,13 +270,13 @@ Rules:
 Surface:
 
 ```kyokara
-x |> f(a=1, b=2)
+x |> f(a: 1, b: 2)
 ```
 
 Desugars to:
 
 ```kyokara
-f(x, a=1, b=2)
+f(x, a: 1, b: 2)
 ```
 
 Rules:
@@ -286,7 +286,9 @@ Rules:
 * optionally, function declarations can mark an explicit pipe parameter:
 
   ```kyokara
-  fn split(text: String, sep: String) -> List<String> pipe text = ...
+  fn split(text: String, sep: String) -> List<String> pipe text {
+    text.split(sep)
+  }
   ```
 
   then `|>` binds to that parameter.
@@ -296,7 +298,7 @@ Rules:
 Provide `?` postfix sugar to propagate `Err`:
 
 ```kyokara
-let body = Http.get(url=... )?
+let body = Http.get(url: "...")?
 ```
 
 Desugars to a `match` returning early on `Err`.
