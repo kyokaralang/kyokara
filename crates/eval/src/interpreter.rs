@@ -1,5 +1,6 @@
 //! Core tree-walking interpreter.
 
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use kyokara_hir_def::body::Body;
@@ -1795,23 +1796,59 @@ impl Interpreter {
                 })
             }
             SeqPlan::Zip { left, right } => {
-                let left_items = self.eval_seq_to_vec(left)?;
-                let right_items = self.eval_seq_to_vec(right)?;
                 let left_name = Name::new(&mut self.interner, "left");
                 let right_name = Name::new(&mut self.interner, "right");
-                for (l, r) in left_items.into_iter().zip(right_items.into_iter()) {
-                    match emit(
-                        self,
-                        Value::Record {
-                            fields: vec![(left_name, l), (right_name, r)],
-                            type_idx: None,
-                        },
-                    )? {
-                        Continue => {}
-                        Break => return Ok(()),
+                let left_len = self.seq_exact_len(left);
+                let right_len = self.seq_exact_len(right);
+
+                let materialize_left = match (left_len, right_len) {
+                    (Some(l), Some(r)) => l <= r,
+                    (Some(_), None) => true,
+                    (None, Some(_)) => false,
+                    (None, None) => true,
+                };
+
+                if materialize_left {
+                    let left_items = self.eval_seq_to_vec(left)?;
+                    if left_items.is_empty() {
+                        return Ok(());
                     }
+                    let mut idx: usize = 0;
+                    self.seq_for_each_control(right, &mut |interp, r| {
+                        if idx >= left_items.len() {
+                            return Ok(Break);
+                        }
+                        let l = left_items[idx].clone();
+                        idx += 1;
+                        emit(
+                            interp,
+                            Value::Record {
+                                fields: vec![(left_name, l), (right_name, r)],
+                                type_idx: None,
+                            },
+                        )
+                    })
+                } else {
+                    let right_items = self.eval_seq_to_vec(right)?;
+                    if right_items.is_empty() {
+                        return Ok(());
+                    }
+                    let mut idx: usize = 0;
+                    self.seq_for_each_control(left, &mut |interp, l| {
+                        if idx >= right_items.len() {
+                            return Ok(Break);
+                        }
+                        let r = right_items[idx].clone();
+                        idx += 1;
+                        emit(
+                            interp,
+                            Value::Record {
+                                fields: vec![(left_name, l), (right_name, r)],
+                                type_idx: None,
+                            },
+                        )
+                    })
                 }
-                Ok(())
             }
             SeqPlan::Chunks { input, n } => {
                 if *n <= 0 {
@@ -1819,12 +1856,27 @@ impl Interpreter {
                         "seq_chunks: chunk size must be > 0".into(),
                     ));
                 }
-                let items = self.eval_seq_to_vec(input)?;
                 let chunk_size = *n as usize;
-                for chunk in items.chunks(chunk_size) {
-                    match emit(self, Value::list(chunk.to_vec()))? {
-                        Continue => {}
-                        Break => return Ok(()),
+                let mut chunk = Vec::with_capacity(chunk_size);
+                let mut broke = false;
+                self.seq_for_each_control(input, &mut |interp, item| {
+                    chunk.push(item);
+                    if chunk.len() == chunk_size {
+                        let out = std::mem::take(&mut chunk);
+                        match emit(interp, Value::list(out))? {
+                            Continue => Ok(Continue),
+                            Break => {
+                                broke = true;
+                                Ok(Break)
+                            }
+                        }
+                    } else {
+                        Ok(Continue)
+                    }
+                })?;
+                if !broke && !chunk.is_empty() {
+                    match emit(self, Value::list(chunk))? {
+                        Continue | Break => {}
                     }
                 }
                 Ok(())
@@ -1835,18 +1887,23 @@ impl Interpreter {
                         "seq_windows: window size must be > 0".into(),
                     ));
                 }
-                let items = self.eval_seq_to_vec(input)?;
                 let window_size = *n as usize;
-                if window_size > items.len() {
-                    return Ok(());
-                }
-                for window in items.windows(window_size) {
-                    match emit(self, Value::list(window.to_vec()))? {
-                        Continue => {}
-                        Break => return Ok(()),
+                let mut window: VecDeque<Value> = VecDeque::with_capacity(window_size);
+                self.seq_for_each_control(input, &mut |interp, item| {
+                    window.push_back(item);
+                    if window.len() < window_size {
+                        return Ok(Continue);
                     }
-                }
-                Ok(())
+
+                    let out = window.iter().cloned().collect::<Vec<_>>();
+                    match emit(interp, Value::list(out))? {
+                        Continue => {
+                            window.pop_front();
+                            Ok(Continue)
+                        }
+                        Break => Ok(Break),
+                    }
+                })
             }
         }
     }
@@ -1869,6 +1926,48 @@ impl Interpreter {
             Ok(())
         })?;
         Ok(out)
+    }
+
+    fn seq_exact_len(&self, plan: &SeqPlan) -> Option<usize> {
+        match plan {
+            SeqPlan::Source(source) => match source {
+                SeqSource::Range { start, end } => {
+                    if start >= end {
+                        Some(0)
+                    } else {
+                        usize::try_from(end.checked_sub(*start)?).ok()
+                    }
+                }
+                SeqSource::FromList(xs) => Some(xs.len()),
+                SeqSource::StringSplit { s, delim } => Some(s.split(delim.as_str()).count()),
+                SeqSource::StringLines { s } => Some(s.lines().count()),
+                SeqSource::StringChars { s } => Some(s.chars().count()),
+                SeqSource::MapKeys(entries) => Some(entries.len()),
+                SeqSource::MapValues(entries) => Some(entries.len()),
+                SeqSource::SetValues(entries) => Some(entries.len()),
+            },
+            SeqPlan::Map { input, .. } | SeqPlan::Enumerate { input } => self.seq_exact_len(input),
+            SeqPlan::Filter { .. } => None,
+            SeqPlan::Zip { left, right } => Some(std::cmp::min(
+                self.seq_exact_len(left)?,
+                self.seq_exact_len(right)?,
+            )),
+            SeqPlan::Chunks { input, n } => {
+                if *n <= 0 {
+                    return None;
+                }
+                let n = usize::try_from(*n).ok()?;
+                Some(self.seq_exact_len(input)?.div_ceil(n))
+            }
+            SeqPlan::Windows { input, n } => {
+                if *n <= 0 {
+                    return None;
+                }
+                let n = usize::try_from(*n).ok()?;
+                let len = self.seq_exact_len(input)?;
+                if n > len { Some(0) } else { Some(len - n + 1) }
+            }
+        }
     }
 
     fn check_intrinsic_cap(&self, intr: IntrinsicFn) -> Result<(), RuntimeError> {
