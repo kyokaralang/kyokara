@@ -765,6 +765,29 @@ fn infer_seq_scan_unfold_int_pow_happy_paths() {
 }
 
 #[test]
+fn infer_seq_unfold_accepts_named_record_alias_payload() {
+    let src = r#"type PickStep = { value: Int, state: Int }
+
+fn main() -> Int {
+    let unfolded = Seq.unfold(0, fn(state: Int) =>
+        if (state < 3) {
+            Some(PickStep { value: state + 1, state: state + 1 })
+        } else {
+            None
+        }
+    ).to_list()
+    unfolded.len()
+}"#;
+
+    let (result, _) = check(src);
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}\nsource:\n{src}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn infer_result_ergonomics_happy_paths() {
     let cases = [
         "fn main() -> Int { \"42\".parse_int().unwrap_or(0) }",

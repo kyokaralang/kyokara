@@ -669,6 +669,13 @@ fn roundtrip_property_gen_list() {
 }
 
 #[test]
+fn roundtrip_nested_type_args_with_gtgt() {
+    let src = "fn main(xs: List<List<Int>>) -> Int { xs.len() }";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
 fn roundtrip_property_trailing_comma() {
     let src = "property p(x: Int <- Gen.auto(),) { true }";
     let green = parse_ok(src);

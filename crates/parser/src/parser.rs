@@ -26,6 +26,8 @@ pub struct Parser<'i> {
     input: &'i Input,
     /// Current non-trivia token index.
     pos: usize,
+    /// Virtual `>` token pending from splitting a `>>` token while parsing type args.
+    pending_virtual_gt: u8,
     /// Accumulated events.
     events: Vec<Event>,
     /// Accumulated errors.
@@ -37,6 +39,7 @@ impl<'i> Parser<'i> {
         Parser {
             input,
             pos: 0,
+            pending_virtual_gt: 0,
             events: Vec::new(),
             errors: Vec::new(),
         }
@@ -56,7 +59,15 @@ impl<'i> Parser<'i> {
 
     /// The kind of the non-trivia token `n` positions ahead.
     pub fn nth(&self, n: usize) -> SyntaxKind {
-        self.input.kind(self.pos + n)
+        if self.pending_virtual_gt > 0 {
+            if n == 0 {
+                SyntaxKind::Gt
+            } else {
+                self.input.kind(self.pos + n - 1)
+            }
+        } else {
+            self.input.kind(self.pos + n)
+        }
     }
 
     /// Returns `true` if the current token matches `kind`.
@@ -77,18 +88,26 @@ impl<'i> Parser<'i> {
 
     /// Returns `true` if we've reached the end of input.
     pub fn at_eof(&self) -> bool {
-        self.pos >= self.input.len()
+        self.pending_virtual_gt == 0 && self.pos >= self.input.len()
     }
 
     /// Current non-trivia token position.
     pub fn token_pos(&self) -> usize {
-        self.pos
+        if self.pending_virtual_gt > 0 {
+            self.pos.saturating_sub(1)
+        } else {
+            self.pos
+        }
     }
 
     // ── Token consumption ───────────────────────────────────────────
 
     /// Advance past the current token, emitting a `Token` event.
     pub fn bump(&mut self) {
+        if self.pending_virtual_gt > 0 {
+            self.pending_virtual_gt -= 1;
+            return;
+        }
         let kind = self.current();
         assert!(!self.at_eof(), "bump at EOF");
         self.do_bump(kind);
@@ -125,6 +144,32 @@ impl<'i> Parser<'i> {
             true
         } else {
             self.error_recover(&format!("expected {kind:?}"), TokenSet::EMPTY);
+            false
+        }
+    }
+
+    /// Consume one right-angle token for type-argument parsing.
+    ///
+    /// In type contexts, `>>` should be interpreted as two consecutive `>`
+    /// delimiters for nested generic closures.
+    pub fn eat_type_arg_rangle(&mut self) -> bool {
+        if self.eat(SyntaxKind::Gt) {
+            return true;
+        }
+        if self.at(SyntaxKind::GtGt) {
+            self.bump(); // consume raw `>>`
+            self.pending_virtual_gt = self.pending_virtual_gt.saturating_add(1);
+            return true;
+        }
+        false
+    }
+
+    /// Expect one right-angle token for type-argument parsing.
+    pub fn expect_type_arg_rangle(&mut self) -> bool {
+        if self.eat_type_arg_rangle() {
+            true
+        } else {
+            self.error_recover("expected Gt", TokenSet::EMPTY);
             false
         }
     }

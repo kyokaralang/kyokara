@@ -5525,6 +5525,25 @@ fn eval_seq_unfold_semantics_matrix() {
 }
 
 #[test]
+fn eval_seq_unfold_accepts_named_record_alias_payload() {
+    let val = run_ok(
+        r#"type PickStep = { value: Int, state: Int }
+
+        fn main() -> Int {
+            let xs = Seq.unfold(0, fn(state: Int) =>
+                if (state < 4) {
+                    Some(PickStep { value: state * 2, state: state + 1 })
+                } else {
+                    None
+                }
+            ).to_list()
+            xs.len() * 100 + xs[0] * 10 + xs[3]
+        }"#,
+    );
+    assert_eq!(val, Value::Int(406));
+}
+
+#[test]
 fn eval_int_pow_semantics_matrix() {
     struct Case<'a> {
         name: &'a str,
