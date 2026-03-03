@@ -63,6 +63,11 @@ enum LogicalEvalStep {
     NeedRhs,
 }
 
+enum SeqEmitControl {
+    Continue,
+    Break,
+}
+
 impl ControlFlow {
     fn into_value(self) -> Value {
         match self {
@@ -1667,11 +1672,13 @@ impl Interpreter {
         Ok(plan.clone())
     }
 
-    fn seq_for_each(
+    fn seq_for_each_control(
         &mut self,
         plan: &SeqPlan,
-        emit: &mut dyn FnMut(&mut Self, Value) -> Result<(), RuntimeError>,
+        emit: &mut dyn FnMut(&mut Self, Value) -> Result<SeqEmitControl, RuntimeError>,
     ) -> Result<(), RuntimeError> {
+        use SeqEmitControl::{Break, Continue};
+
         match plan {
             SeqPlan::Source(source) => match source {
                 SeqSource::Range { start, end } => {
@@ -1679,68 +1686,92 @@ impl Interpreter {
                         return Ok(());
                     }
                     for n in *start..*end {
-                        emit(self, Value::Int(n))?;
+                        match emit(self, Value::Int(n))? {
+                            Continue => {}
+                            Break => return Ok(()),
+                        }
                     }
                     Ok(())
                 }
                 SeqSource::FromList(xs) => {
                     for item in xs.iter().cloned() {
-                        emit(self, item)?;
+                        match emit(self, item)? {
+                            Continue => {}
+                            Break => return Ok(()),
+                        }
                     }
                     Ok(())
                 }
                 SeqSource::StringSplit { s, delim } => {
                     for part in s.split(delim.as_str()) {
-                        emit(self, Value::String(part.to_string()))?;
+                        match emit(self, Value::String(part.to_string()))? {
+                            Continue => {}
+                            Break => return Ok(()),
+                        }
                     }
                     Ok(())
                 }
                 SeqSource::StringLines { s } => {
                     for line in s.lines() {
-                        emit(self, Value::String(line.to_string()))?;
+                        match emit(self, Value::String(line.to_string()))? {
+                            Continue => {}
+                            Break => return Ok(()),
+                        }
                     }
                     Ok(())
                 }
                 SeqSource::StringChars { s } => {
                     for ch in s.chars() {
-                        emit(self, Value::Char(ch))?;
+                        match emit(self, Value::Char(ch))? {
+                            Continue => {}
+                            Break => return Ok(()),
+                        }
                     }
                     Ok(())
                 }
                 SeqSource::MapKeys(entries) => {
                     for key in entries.keys() {
-                        emit(self, key.to_value())?;
+                        match emit(self, key.to_value())? {
+                            Continue => {}
+                            Break => return Ok(()),
+                        }
                     }
                     Ok(())
                 }
                 SeqSource::MapValues(entries) => {
                     for value in entries.values().cloned() {
-                        emit(self, value)?;
+                        match emit(self, value)? {
+                            Continue => {}
+                            Break => return Ok(()),
+                        }
                     }
                     Ok(())
                 }
                 SeqSource::SetValues(entries) => {
                     for key in entries.iter() {
-                        emit(self, key.to_value())?;
+                        match emit(self, key.to_value())? {
+                            Continue => {}
+                            Break => return Ok(()),
+                        }
                     }
                     Ok(())
                 }
             },
             SeqPlan::Map { input, f } => {
                 let mapper = f.clone();
-                self.seq_for_each(input, &mut |interp, item| {
+                self.seq_for_each_control(input, &mut |interp, item| {
                     let mapped = interp.call_value(mapper.clone(), smallvec::smallvec![item])?;
                     emit(interp, mapped)
                 })
             }
             SeqPlan::Filter { input, f } => {
                 let predicate = f.clone();
-                self.seq_for_each(input, &mut |interp, item| {
+                self.seq_for_each_control(input, &mut |interp, item| {
                     let keep =
                         interp.call_value(predicate.clone(), smallvec::smallvec![item.clone()])?;
                     match keep {
                         Value::Bool(true) => emit(interp, item),
-                        Value::Bool(false) => Ok(()),
+                        Value::Bool(false) => Ok(Continue),
                         _ => Err(RuntimeError::TypeError(
                             "seq_filter: predicate must return Bool".into(),
                         )),
@@ -1751,7 +1782,7 @@ impl Interpreter {
                 let index_name = Name::new(&mut self.interner, "index");
                 let value_name = Name::new(&mut self.interner, "value");
                 let mut idx: i64 = 0;
-                self.seq_for_each(input, &mut |interp, item| {
+                self.seq_for_each_control(input, &mut |interp, item| {
                     let current = idx;
                     idx = idx.checked_add(1).ok_or(RuntimeError::IntegerOverflow)?;
                     emit(
@@ -1769,13 +1800,16 @@ impl Interpreter {
                 let left_name = Name::new(&mut self.interner, "left");
                 let right_name = Name::new(&mut self.interner, "right");
                 for (l, r) in left_items.into_iter().zip(right_items.into_iter()) {
-                    emit(
+                    match emit(
                         self,
                         Value::Record {
                             fields: vec![(left_name, l), (right_name, r)],
                             type_idx: None,
                         },
-                    )?;
+                    )? {
+                        Continue => {}
+                        Break => return Ok(()),
+                    }
                 }
                 Ok(())
             }
@@ -1788,7 +1822,10 @@ impl Interpreter {
                 let items = self.eval_seq_to_vec(input)?;
                 let chunk_size = *n as usize;
                 for chunk in items.chunks(chunk_size) {
-                    emit(self, Value::list(chunk.to_vec()))?;
+                    match emit(self, Value::list(chunk.to_vec()))? {
+                        Continue => {}
+                        Break => return Ok(()),
+                    }
                 }
                 Ok(())
             }
@@ -1804,11 +1841,25 @@ impl Interpreter {
                     return Ok(());
                 }
                 for window in items.windows(window_size) {
-                    emit(self, Value::list(window.to_vec()))?;
+                    match emit(self, Value::list(window.to_vec()))? {
+                        Continue => {}
+                        Break => return Ok(()),
+                    }
                 }
                 Ok(())
             }
         }
+    }
+
+    fn seq_for_each(
+        &mut self,
+        plan: &SeqPlan,
+        emit: &mut dyn FnMut(&mut Self, Value) -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        self.seq_for_each_control(plan, &mut |interp, item| {
+            emit(interp, item)?;
+            Ok(SeqEmitControl::Continue)
+        })
     }
 
     fn eval_seq_to_vec(&mut self, plan: &SeqPlan) -> Result<Vec<Value>, RuntimeError> {
@@ -1946,6 +1997,69 @@ impl Interpreter {
                     Ok(())
                 })?;
                 Ok(Value::Int(count))
+            }
+            IntrinsicFn::SeqAny => {
+                let plan = self.require_seq_plan(&args[0], "seq_any")?;
+                let predicate = args[1].clone();
+                let mut result = false;
+                self.seq_for_each_control(&plan, &mut |interp, item| {
+                    let keep = interp.call_value(predicate.clone(), smallvec::smallvec![item])?;
+                    match keep {
+                        Value::Bool(true) => {
+                            result = true;
+                            Ok(SeqEmitControl::Break)
+                        }
+                        Value::Bool(false) => Ok(SeqEmitControl::Continue),
+                        _ => Err(RuntimeError::TypeError(
+                            "seq_any: predicate must return Bool".into(),
+                        )),
+                    }
+                })?;
+                Ok(Value::Bool(result))
+            }
+            IntrinsicFn::SeqAll => {
+                let plan = self.require_seq_plan(&args[0], "seq_all")?;
+                let predicate = args[1].clone();
+                let mut result = true;
+                self.seq_for_each_control(&plan, &mut |interp, item| {
+                    let keep = interp.call_value(predicate.clone(), smallvec::smallvec![item])?;
+                    match keep {
+                        Value::Bool(true) => Ok(SeqEmitControl::Continue),
+                        Value::Bool(false) => {
+                            result = false;
+                            Ok(SeqEmitControl::Break)
+                        }
+                        _ => Err(RuntimeError::TypeError(
+                            "seq_all: predicate must return Bool".into(),
+                        )),
+                    }
+                })?;
+                Ok(Value::Bool(result))
+            }
+            IntrinsicFn::SeqFind => {
+                let plan = self.require_seq_plan(&args[0], "seq_find")?;
+                let predicate = args[1].clone();
+                let mut found: Option<Value> = None;
+                self.seq_for_each_control(&plan, &mut |interp, item| {
+                    let keep =
+                        interp.call_value(predicate.clone(), smallvec::smallvec![item.clone()])?;
+                    match keep {
+                        Value::Bool(true) => {
+                            found = Some(item);
+                            Ok(SeqEmitControl::Break)
+                        }
+                        Value::Bool(false) => Ok(SeqEmitControl::Continue),
+                        _ => Err(RuntimeError::TypeError(
+                            "seq_find: predicate must return Bool".into(),
+                        )),
+                    }
+                })?;
+
+                if let Some(value) = found {
+                    self.make_some(value)
+                } else {
+                    self.make_none()
+                }
             }
             IntrinsicFn::SeqToList => {
                 let plan = self.require_seq_plan(&args[0], "seq_to_list")?;

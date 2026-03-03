@@ -416,6 +416,9 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_chunks", ReceiverKey::Core(CoreType::Seq), "chunks"),
         ("seq_windows", ReceiverKey::Core(CoreType::Seq), "windows"),
         ("seq_count", ReceiverKey::Core(CoreType::Seq), "count"),
+        ("seq_any", ReceiverKey::Core(CoreType::Seq), "any"),
+        ("seq_all", ReceiverKey::Core(CoreType::Seq), "all"),
+        ("seq_find", ReceiverKey::Core(CoreType::Seq), "find"),
         ("seq_to_list", ReceiverKey::Core(CoreType::Seq), "to_list"),
         // Map methods
         ("map_insert", ReceiverKey::Core(CoreType::Map), "insert"),
@@ -1135,6 +1138,30 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![t_name],
             vec![("s", seq_t.clone())],
             int_ty.clone(),
+        ),
+        // seq_any<T>(s: Seq<T>, f: fn(T) -> Bool) -> Bool
+        mk_intrinsic(
+            interner,
+            "seq_any",
+            vec![t_name],
+            vec![("s", seq_t.clone()), ("f", fn_t_to_bool.clone())],
+            bool_ty.clone(),
+        ),
+        // seq_all<T>(s: Seq<T>, f: fn(T) -> Bool) -> Bool
+        mk_intrinsic(
+            interner,
+            "seq_all",
+            vec![t_name],
+            vec![("s", seq_t.clone()), ("f", fn_t_to_bool.clone())],
+            bool_ty.clone(),
+        ),
+        // seq_find<T>(s: Seq<T>, f: fn(T) -> Bool) -> Option<T>
+        mk_intrinsic(
+            interner,
+            "seq_find",
+            vec![t_name],
+            vec![("s", seq_t.clone()), ("f", fn_t_to_bool.clone())],
+            option_t.clone(),
         ),
         // seq_to_list<T>(s: Seq<T>) -> List<T>
         mk_intrinsic(

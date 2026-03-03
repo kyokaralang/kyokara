@@ -459,7 +459,6 @@ impl SyntaxKind {
             "contract" => Some(Self::ContractKw),
             "property" => Some(Self::PropertyKw),
             "for" => Some(Self::ForKw),
-            "all" => Some(Self::AllKw),
             "where" => Some(Self::WhereKw),
             "pipe" => Some(Self::PipeKw),
             "old" => Some(Self::OldKw),

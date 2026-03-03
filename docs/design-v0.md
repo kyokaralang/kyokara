@@ -582,7 +582,7 @@ while `io`/`fs` are module namespaces for no-owner/effectful operations.
 * `Seq<T>` — opaque builtin traversal type (lazy, re-iterable) ✓
   * Static helper: `Seq.range(start, end)` returns half-open ascending range `[start, end)` (empty when `start >= end`)
   * Transforms: `s.map(f)`, `s.filter(f)`, `s.enumerate()` → `Seq<{ index: Int, value: T }>`, `s.zip(other)` → `Seq<{ left: T, right: U }>`, `s.chunks(n)` → `Seq<List<T>>`, `s.windows(n)` → `Seq<List<T>>` (`chunks/windows` require `n > 0`)
-  * Terminals: `s.fold(init, f)`, `s.count()`, `s.to_list()`
+  * Terminals: `s.fold(init, f)`, `s.count()`, `s.any(f)`, `s.all(f)`, `s.find(f)` → `Option<T>`, `s.to_list()`
   * Evaluation model: each terminal re-runs the pipeline from source (no single-use consumption state)
 * `Map<K, V>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<IndexMap<MapKey, Value>>`, insertion-order-preserving hash map, O(1) lookup). Keys must be hashable types (Int, String, Char, Bool, Unit); invalid key types are rejected at compile time for typed map operations (E0024). `m.keys()` and `m.values()` return deterministic insertion order. ✓
   * Constructor: `Map.new()`
