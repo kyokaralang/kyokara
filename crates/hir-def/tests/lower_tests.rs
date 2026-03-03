@@ -115,6 +115,15 @@ fn duplicate_type_diagnostic() {
     assert!(result.diagnostics[0].message.contains("duplicate type"));
 }
 
+#[test]
+fn method_binding_finalization_does_not_clone_pending_queue() {
+    let src = include_str!("../src/item_tree/lower.rs");
+    assert!(
+        !src.contains("self.pending_methods.clone()"),
+        "finalize_method_bindings should consume pending queue without cloning"
+    );
+}
+
 // ── Body lowering tests ────────────────────────────────────────────
 
 fn lower_fn_body(

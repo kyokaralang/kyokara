@@ -375,7 +375,8 @@ impl ItemTreeCtx<'_> {
     }
 
     fn finalize_method_bindings(&mut self) {
-        for (recv_name, method_name, fn_idx, span) in self.pending_methods.clone() {
+        let pending_methods = std::mem::take(&mut self.pending_methods);
+        for (recv_name, method_name, fn_idx, span) in pending_methods {
             let Some(receiver_key) = self.receiver_key_for_name(recv_name) else {
                 self.diagnostics.push(Diagnostic::error(
                     format!(
