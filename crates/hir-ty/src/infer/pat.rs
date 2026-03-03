@@ -13,8 +13,7 @@ use super::InferenceCtx;
 impl<'a> InferenceCtx<'a> {
     /// Infer the type of a pattern against an expected scrutinee type.
     pub(crate) fn infer_pat(&mut self, pat_idx: la_arena::Idx<Pat>, expected: &Ty) {
-        let pat = self.body.pats[pat_idx].clone();
-        let ty = match pat {
+        let ty = match &self.body.pats[pat_idx] {
             Pat::Missing => Ty::Error,
 
             Pat::Wildcard => expected.clone(),
@@ -26,7 +25,7 @@ impl<'a> InferenceCtx<'a> {
             }
 
             Pat::Literal(lit) => {
-                let lit_ty = match &lit {
+                let lit_ty = match lit {
                     Literal::Int(_) => Ty::Int,
                     Literal::Float(_) => Ty::Float,
                     Literal::String(_) => Ty::String,
@@ -50,7 +49,7 @@ impl<'a> InferenceCtx<'a> {
                                 .join("."),
                         },
                     );
-                    for sub in &args {
+                    for sub in args {
                         self.infer_pat(*sub, &Ty::Error);
                     }
                     self.pat_types.insert(pat_idx, Ty::Error);
@@ -86,7 +85,7 @@ impl<'a> InferenceCtx<'a> {
                                 actual: args.len(),
                             },
                         );
-                        for sub in &args {
+                        for sub in args {
                             self.infer_pat(*sub, &Ty::Error);
                         }
                     } else {
@@ -117,7 +116,7 @@ impl<'a> InferenceCtx<'a> {
                                 actual: args.len(),
                             },
                         );
-                        for sub in &args {
+                        for sub in args {
                             self.infer_pat(*sub, &Ty::Error);
                         }
                     } else {
@@ -133,7 +132,7 @@ impl<'a> InferenceCtx<'a> {
                             name: name.resolve(self.interner).to_owned(),
                         },
                     );
-                    for sub in &args {
+                    for sub in args {
                         self.infer_pat(*sub, &Ty::Error);
                     }
                     Ty::Error
@@ -159,7 +158,7 @@ impl<'a> InferenceCtx<'a> {
                     Ty::Record {
                         fields: ref rec_fields,
                     } => {
-                        for field_name in &fields {
+                        for field_name in fields {
                             let field_str = field_name.resolve(self.interner);
                             if let Some((_, field_ty)) = rec_fields
                                 .iter()
@@ -205,7 +204,7 @@ impl<'a> InferenceCtx<'a> {
                                 type_params: tp_map,
                                 resolving_aliases: vec![],
                             };
-                            for field_name in &fields {
+                            for field_name in fields {
                                 let field_str = field_name.resolve(self.interner);
                                 if let Some((_, type_ref)) = def_fields
                                     .iter()
