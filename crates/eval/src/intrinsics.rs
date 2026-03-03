@@ -42,6 +42,9 @@ pub enum IntrinsicFn {
     SeqChunks,
     SeqWindows,
     SeqCount,
+    SeqAny,
+    SeqAll,
+    SeqFind,
     SeqToList,
 
     // Map<K,V>
@@ -148,6 +151,9 @@ impl IntrinsicFn {
                 | IntrinsicFn::SeqChunks
                 | IntrinsicFn::SeqWindows
                 | IntrinsicFn::SeqCount
+                | IntrinsicFn::SeqAny
+                | IntrinsicFn::SeqAll
+                | IntrinsicFn::SeqFind
                 | IntrinsicFn::SeqToList
                 | IntrinsicFn::MapGet
                 | IntrinsicFn::ListSortBy
@@ -930,6 +936,9 @@ impl IntrinsicFn {
             | IntrinsicFn::SeqChunks
             | IntrinsicFn::SeqWindows
             | IntrinsicFn::SeqCount
+            | IntrinsicFn::SeqAny
+            | IntrinsicFn::SeqAll
+            | IntrinsicFn::SeqFind
             | IntrinsicFn::SeqToList
             | IntrinsicFn::MapGet
             | IntrinsicFn::ListSortBy => Err(RuntimeError::TypeError(
@@ -984,6 +993,9 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (Name::new(interner, "seq_chunks"), IntrinsicFn::SeqChunks),
         (Name::new(interner, "seq_windows"), IntrinsicFn::SeqWindows),
         (Name::new(interner, "seq_count"), IntrinsicFn::SeqCount),
+        (Name::new(interner, "seq_any"), IntrinsicFn::SeqAny),
+        (Name::new(interner, "seq_all"), IntrinsicFn::SeqAll),
+        (Name::new(interner, "seq_find"), IntrinsicFn::SeqFind),
         (Name::new(interner, "seq_to_list"), IntrinsicFn::SeqToList),
         // Map
         (Name::new(interner, "map_new"), IntrinsicFn::MapNew),

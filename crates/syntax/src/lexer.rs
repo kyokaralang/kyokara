@@ -293,7 +293,6 @@ mod tests {
             ("invariant", InvariantKw),
             ("property", PropertyKw),
             ("for", ForKw),
-            ("all", AllKw),
             ("where", WhereKw),
             ("pipe", PipeKw),
             ("old", OldKw),
@@ -312,7 +311,7 @@ mod tests {
     #[test]
     fn keyword_vs_ident() {
         // Prefixes/suffixes of keywords are identifiers, not keywords.
-        let idents = ["modules", "letx", "fns", "iff", "returned", "trueish"];
+        let idents = ["modules", "letx", "fns", "iff", "returned", "trueish", "all"];
         for text in idents {
             let tokens = lex_kinds(text);
             assert_eq!(tokens, [(Ident, text)], "should be ident: {text}");

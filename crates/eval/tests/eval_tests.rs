@@ -5353,6 +5353,112 @@ fn eval_seq_surface_happy_paths() {
 }
 
 #[test]
+fn eval_seq_any_all_find_semantics_matrix() {
+    struct Case<'a> {
+        name: &'a str,
+        src: &'a str,
+        expected: Value,
+    }
+
+    let cases = [
+        Case {
+            name: "any empty is false",
+            src: r#"fn main() -> Bool {
+                Seq.range(0, 0).any(fn(_n: Int) => true)
+            }"#,
+            expected: Value::Bool(false),
+        },
+        Case {
+            name: "all empty is true",
+            src: r#"fn main() -> Bool {
+                Seq.range(0, 0).all(fn(_n: Int) => false)
+            }"#,
+            expected: Value::Bool(true),
+        },
+        Case {
+            name: "find empty is none",
+            src: r#"fn main() -> Int {
+                Seq.range(0, 0).find(fn(_n: Int) => true).unwrap_or(-1)
+            }"#,
+            expected: Value::Int(-1),
+        },
+        Case {
+            name: "any hit and all pass",
+            src: r#"fn main() -> Bool {
+                let xs = Seq.range(0, 5)
+                xs.any(fn(n: Int) => n == 3) && xs.all(fn(n: Int) => n < 5)
+            }"#,
+            expected: Value::Bool(true),
+        },
+        Case {
+            name: "find first match",
+            src: r#"fn main() -> Int {
+                Seq.range(0, 6).find(fn(n: Int) => n % 2 == 0 && n > 0).unwrap_or(-1)
+            }"#,
+            expected: Value::Int(2),
+        },
+        Case {
+            name: "find miss returns none",
+            src: r#"fn main() -> Int {
+                Seq.range(0, 5).find(fn(n: Int) => n == 9).unwrap_or(-1)
+            }"#,
+            expected: Value::Int(-1),
+        },
+    ];
+
+    for case in cases {
+        let got = run_ok(case.src);
+        assert_eq!(got, case.expected, "case `{}` failed", case.name);
+    }
+}
+
+#[test]
+fn eval_seq_any_all_find_short_circuit_regression() {
+    struct Case<'a> {
+        name: &'a str,
+        src: &'a str,
+        expected: Value,
+    }
+
+    let cases = [
+        Case {
+            name: "any short-circuits after first true",
+            src: r#"fn main() -> Bool {
+                List.new().push(1).push(0).seq().any(fn(n: Int) =>
+                    if (n == 1) { true } else { 10 / n > 0 }
+                )
+            }"#,
+            expected: Value::Bool(true),
+        },
+        Case {
+            name: "all short-circuits after first false",
+            src: r#"fn main() -> Bool {
+                List.new().push(0).push(1).seq().all(fn(n: Int) =>
+                    if (n == 0) { false } else { 10 / (n - 1) > 0 }
+                ) == false
+            }"#,
+            expected: Value::Bool(true),
+        },
+        Case {
+            name: "find short-circuits after first match",
+            src: r#"fn main() -> Int {
+                List.new().push(2).push(1).seq()
+                    .find(fn(n: Int) =>
+                        if (n == 2) { true } else { 10 / (n - 1) > 0 }
+                    )
+                    .unwrap_or(-1)
+            }"#,
+            expected: Value::Int(2),
+        },
+    ];
+
+    for case in cases {
+        let got = run_ok(case.src);
+        assert_eq!(got, case.expected, "case `{}` failed", case.name);
+    }
+}
+
+#[test]
 fn eval_seq_invalid_sizes_and_removed_list_surface() {
     let err_chunks = run_err(
         r#"fn main() -> Int {

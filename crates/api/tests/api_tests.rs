@@ -4004,6 +4004,64 @@ fn check_iteration_ergonomics_chains_from_map_set_string_have_no_diagnostics() {
 }
 
 #[test]
+fn check_seq_any_all_find_canonical_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"fn main() -> Int {
+            let xs = Seq.range(0, 6)
+            let a = xs.any(fn(n: Int) => n == 4)
+            let b = xs.all(fn(n: Int) => n < 6)
+            let c = xs.find(fn(n: Int) => n % 2 == 0).map_or(-1, fn(n: Int) => n)
+            let d = Seq.range(0, 0).find(fn(_n: Int) => true).unwrap_or(-7)
+            if (a && b && c == 0 && d == -7) { 1 } else { 0 }
+        }"#,
+        "seq any/all/find canonical surface",
+    );
+}
+
+#[test]
+fn check_non_canonical_free_any_all_find_functions_report_unresolved_name() {
+    let output = check(
+        r#"fn main() -> Int {
+            let a = any(Seq.range(0, 3), fn(n: Int) => n == 1)
+            let b = all(Seq.range(0, 3), fn(n: Int) => n < 3)
+            let c = find(Seq.range(0, 3), fn(n: Int) => n == 1)
+            if (a && b) { c.unwrap_or(0) } else { 0 }
+        }"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("unresolved name")),
+        "expected unresolved-name diagnostics for free any/all/find, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_seq_any_all_find_wrong_predicate_type_reports_type_mismatch() {
+    let output = check(
+        r#"fn main() -> Int {
+            let a = Seq.range(0, 3).any(fn(n: Int) => n)
+            let b = Seq.range(0, 3).all(fn(n: Int) => n + 1)
+            let c = Seq.range(0, 3).find(fn(n: Int) => n * 2)
+            if (a || b) { c.unwrap_or(0) } else { 0 }
+        }"#,
+        "test.ky",
+    );
+
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0001" && d.message.contains("type mismatch")),
+        "expected E0001 type mismatch for seq any/all/find predicate type, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_result_ergonomics_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
         r#"fn main() -> Int {
