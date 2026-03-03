@@ -154,6 +154,14 @@ fn non_trivia_tokens(node: &SyntaxNode) -> Vec<SyntaxToken> {
         .collect()
 }
 
+/// Complex lambda bodies are clearer in forced multiline layout.
+fn lambda_body_prefers_multiline(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::IfExpr | SyntaxKind::MatchExpr | SyntaxKind::BlockExpr
+    )
+}
+
 // ── Source file ─────────────────────────────────────────────────────
 
 fn format_source_file(node: &SyntaxNode) -> Doc {
@@ -1274,10 +1282,17 @@ fn format_lambda_expr(node: &SyntaxNode) -> Doc {
 
     let body = node.children().find(|c| is_expr(c.kind()));
     if let Some(b) = body {
-        parts.push(Doc::group(Doc::indent(
-            INDENT,
-            Doc::concat(vec![Doc::SoftLine, format_node(&b)]),
-        )));
+        if lambda_body_prefers_multiline(b.kind()) {
+            parts.push(Doc::indent(
+                INDENT,
+                Doc::concat(vec![Doc::HardLine, format_node(&b)]),
+            ));
+        } else {
+            parts.push(Doc::group(Doc::indent(
+                INDENT,
+                Doc::concat(vec![Doc::SoftLine, format_node(&b)]),
+            )));
+        }
     }
 
     Doc::concat(parts)
