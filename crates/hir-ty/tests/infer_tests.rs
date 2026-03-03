@@ -153,6 +153,14 @@ fn infer_binary_equality() {
 }
 
 #[test]
+fn infer_binary_equality_rejects_non_comparable_types() {
+    check_err(
+        "fn foo() -> Bool { List.new() == List.new() }",
+        "equality operator requires",
+    );
+}
+
+#[test]
 fn infer_unary_neg() {
     check_ok("fn foo() -> Int { -42 }");
 }

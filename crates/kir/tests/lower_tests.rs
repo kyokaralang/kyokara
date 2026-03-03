@@ -268,6 +268,24 @@ fn test_named_args_reordered_module_call() {
 }
 
 #[test]
+fn test_unimported_module_call_is_not_lowered_as_intrinsic() {
+    let result = check_file("fn main() -> Int { math.min(1, 2) }");
+    let mut interner = result.interner;
+    let module = lower_module(
+        &result.item_tree,
+        &result.module_scope,
+        &result.type_check,
+        &mut interner,
+    );
+    let ctx = DisplayCtx::new(&interner, &result.item_tree);
+    let out = display_module(&module, &ctx);
+    assert!(
+        !out.contains("call intrinsic:min"),
+        "unimported module call must not lower as intrinsic. output:\n{out}"
+    );
+}
+
+#[test]
 fn test_named_args_reordered_method_call() {
     let out = lower_and_display("fn main() -> String { \"abcd\".substring(end: 3, start: 1) }");
     assert!(

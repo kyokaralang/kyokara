@@ -83,6 +83,17 @@ impl Ty {
         )
     }
 
+    /// Returns `true` if this type supports `==` / `!=`.
+    ///
+    /// Equality is defined for the same primitive subset currently implemented
+    /// by the interpreter: Int, Float, String, Char, and Bool.
+    pub fn is_equality_comparable(&self) -> bool {
+        matches!(
+            self,
+            Ty::Int | Ty::Float | Ty::String | Ty::Char | Ty::Bool | Ty::Error | Ty::Var(_)
+        )
+    }
+
     /// Returns `true` if this type contains no inference variables.
     pub fn is_fully_resolved(&self) -> bool {
         match self {

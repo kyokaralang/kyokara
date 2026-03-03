@@ -338,7 +338,8 @@ impl<'a> LoweringCtx<'a> {
             let seg = path.segments[0];
 
             // Module-qualified call: io.println(s), math.min(a, b)
-            if let Some(mod_fns) = self.module_scope.synthetic_modules.get(&seg)
+            if self.module_scope.imported_modules.contains(&seg)
+                && let Some(mod_fns) = self.module_scope.synthetic_modules.get(&seg)
                 && let Some(&fn_idx) = mod_fns.get(&field)
             {
                 let param_names = self.param_names_for_fn_idx(fn_idx);

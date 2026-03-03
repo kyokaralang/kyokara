@@ -16,6 +16,8 @@ pub enum TyDiagnosticData {
     InvalidArithmeticOperand { ty: Ty },
     /// Comparison operator applied to non-comparable type.
     InvalidComparisonOperand { ty: Ty },
+    /// Equality operator applied to non-equality-comparable type.
+    InvalidEqualityOperand { ty: Ty },
     /// Negation applied to non-numeric type.
     InvalidNegationOperand { ty: Ty },
     /// Logical not applied to non-Bool type.
@@ -73,6 +75,7 @@ impl TyDiagnosticData {
             TyDiagnosticData::TypeMismatch { .. } => "E0001",
             TyDiagnosticData::InvalidArithmeticOperand { .. } => "E0002",
             TyDiagnosticData::InvalidComparisonOperand { .. } => "E0003",
+            TyDiagnosticData::InvalidEqualityOperand { .. } => "E0027",
             TyDiagnosticData::InvalidNegationOperand { .. } => "E0004",
             TyDiagnosticData::InvalidNotOperand { .. } => "E0005",
             TyDiagnosticData::NotAFunction { .. } => "E0006",
@@ -141,6 +144,12 @@ impl TyDiagnosticData {
             TyDiagnosticData::InvalidComparisonOperand { ty } => {
                 format!(
                     "comparison operator requires `Int` or `Float`, found `{}`",
+                    dt(ty),
+                )
+            }
+            TyDiagnosticData::InvalidEqualityOperand { ty } => {
+                format!(
+                    "equality operator requires `Int`, `Float`, `String`, `Char`, or `Bool`, found `{}`",
                     dt(ty),
                 )
             }

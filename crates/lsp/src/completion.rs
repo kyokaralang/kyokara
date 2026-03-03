@@ -70,6 +70,10 @@ fn dedup_completion_items(items: Vec<CompletionItem>) -> Vec<CompletionItem> {
 }
 
 fn should_replace_completion(existing: &CompletionItem, new_item: &CompletionItem) -> bool {
+    // Prefer richer metadata for duplicate labels (e.g., builtin type detail).
+    if existing.detail.is_none() && new_item.detail.is_some() {
+        return true;
+    }
     if existing.sort_text.is_none() && new_item.sort_text.is_some() {
         return true;
     }
@@ -258,7 +262,19 @@ fn add_module_scope_completions(analysis: &FileAnalysis, items: &mut Vec<Complet
 
 fn add_builtin_completions(items: &mut Vec<CompletionItem>) {
     for name in &[
-        "Int", "Float", "String", "Bool", "Char", "Unit", "Option", "Result", "List", "Seq", "Map",
+        "Int",
+        "Float",
+        "String",
+        "Bool",
+        "Char",
+        "Unit",
+        "Option",
+        "Result",
+        "List",
+        "Seq",
+        "Map",
+        "Set",
+        "ParseError",
     ] {
         items.push(CompletionItem {
             label: name.to_string(),
@@ -461,6 +477,16 @@ mod tests {
         let items = completion_items(&analysis, source, TextSize::from(0));
         assert!(items.iter().any(|i| i.label == "Int"));
         assert!(items.iter().any(|i| i.label == "Option"));
+        assert!(
+            items
+                .iter()
+                .any(|i| i.label == "Set" && i.detail.as_deref() == Some("builtin"))
+        );
+        assert!(
+            items
+                .iter()
+                .any(|i| i.label == "ParseError" && i.detail.as_deref() == Some("builtin"))
+        );
     }
 
     #[test]
