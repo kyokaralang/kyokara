@@ -37,6 +37,58 @@ use kyokara_hir_def::name::Name;
 use crate::diagnostics::TyDiagnosticData;
 use crate::infer::InferenceResult;
 
+struct BodyLookupIndex {
+    fn_by_range: FxHashMap<TextRange, FnDef>,
+    fn_by_name: FxHashMap<String, FnDef>,
+    prop_by_range: FxHashMap<TextRange, PropertyDef>,
+}
+
+fn build_body_lookup_index(fn_defs: &[FnDef], prop_defs: &[PropertyDef]) -> BodyLookupIndex {
+    let mut fn_by_range = FxHashMap::default();
+    let mut fn_by_name = FxHashMap::default();
+    let mut prop_by_range = FxHashMap::default();
+
+    for fd in fn_defs {
+        let range = fd.syntax().text_range();
+        fn_by_range.insert(range, fd.clone());
+        if let Some(name) = fd.name_token() {
+            fn_by_name
+                .entry(name.text().to_owned())
+                .or_insert_with(|| fd.clone());
+        }
+    }
+
+    for pd in prop_defs {
+        let range = pd.syntax().text_range();
+        prop_by_range.insert(range, pd.clone());
+    }
+
+    BodyLookupIndex {
+        fn_by_range,
+        fn_by_name,
+        prop_by_range,
+    }
+}
+
+fn lookup_fn_def<'a>(
+    index: &'a BodyLookupIndex,
+    source_range: Option<TextRange>,
+    fn_name: &str,
+) -> Option<&'a FnDef> {
+    if let Some(range) = source_range {
+        index.fn_by_range.get(&range)
+    } else {
+        index.fn_by_name.get(fn_name)
+    }
+}
+
+fn lookup_property_def(
+    index: &BodyLookupIndex,
+    source_range: Option<TextRange>,
+) -> Option<&PropertyDef> {
+    source_range.and_then(|range| index.prop_by_range.get(&range))
+}
+
 /// Result of type-checking an entire module.
 #[derive(Debug)]
 pub struct TypeCheckResult {
@@ -75,6 +127,7 @@ pub fn check_module(
 
     let fn_defs: Vec<FnDef> = root.descendants().filter_map(FnDef::cast).collect();
     let prop_defs: Vec<PropertyDef> = root.descendants().filter_map(PropertyDef::cast).collect();
+    let body_lookup = build_body_lookup_index(&fn_defs, &prop_defs);
 
     for (fn_idx, fn_item) in item_tree.functions.iter() {
         if !fn_item.has_body {
@@ -90,23 +143,13 @@ pub fn check_module(
         // Match by source range when available (exact CST node identity),
         // falling back to name-based matching for imported functions.
         let fn_name_str = fn_item.name.resolve(interner);
-        let fn_def = fn_defs.iter().find(|fd: &&FnDef| {
-            if let Some(range) = fn_item.source_range {
-                fd.syntax().text_range() == range
-            } else {
-                fd.name_token().is_some_and(|t| t.text() == fn_name_str)
-            }
-        });
+        let fn_def = lookup_fn_def(&body_lookup, fn_item.source_range, fn_name_str);
 
         // Try FnDef first; if not found, try PropertyDef (synthetic FnItems
         // created for properties point at PropertyDef source ranges).
         let body_result = if let Some(fd) = fn_def {
             lower_body(fd, module_scope, file_id, interner)
-        } else if let Some(pd) = prop_defs.iter().find(|pd| {
-            fn_item
-                .source_range
-                .is_some_and(|range| pd.syntax().text_range() == range)
-        }) {
+        } else if let Some(pd) = lookup_property_def(&body_lookup, fn_item.source_range) {
             lower_property_body(pd, module_scope, file_id, interner)
         } else {
             continue;
@@ -244,5 +287,55 @@ fn validate_type_arity(
             validate_type_arity(base, item_tree, module_scope, interner, span, diagnostics);
         }
         TypeRef::Error => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kyokara_syntax::ast::nodes::SourceFile;
+
+    #[test]
+    fn body_lookup_prefers_source_range_match() {
+        let parse = kyokara_syntax::parse(
+            r#"
+            fn alpha() -> Int { 1 }
+            fn beta() -> Int { 2 }
+            "#,
+        );
+        let root = SyntaxNode::new_root(parse.green);
+        let _source_file = SourceFile::cast(root.clone()).expect("source file");
+
+        let fn_defs: Vec<FnDef> = root.descendants().filter_map(FnDef::cast).collect();
+        let prop_defs: Vec<PropertyDef> =
+            root.descendants().filter_map(PropertyDef::cast).collect();
+        let index = build_body_lookup_index(&fn_defs, &prop_defs);
+
+        let beta = &fn_defs[1];
+        let beta_range = beta.syntax().text_range();
+        let by_range = lookup_fn_def(&index, Some(beta_range), "alpha")
+            .expect("range lookup should prefer exact node");
+        assert_eq!(by_range.syntax().text_range(), beta_range);
+    }
+
+    #[test]
+    fn body_lookup_uses_name_fallback_when_range_missing() {
+        let parse = kyokara_syntax::parse(
+            r#"
+            fn main() -> Int { helper() }
+            fn helper() -> Int { 7 }
+            "#,
+        );
+        let root = SyntaxNode::new_root(parse.green);
+        let _source_file = SourceFile::cast(root.clone()).expect("source file");
+
+        let fn_defs: Vec<FnDef> = root.descendants().filter_map(FnDef::cast).collect();
+        let prop_defs: Vec<PropertyDef> =
+            root.descendants().filter_map(PropertyDef::cast).collect();
+        let index = build_body_lookup_index(&fn_defs, &prop_defs);
+
+        let by_name =
+            lookup_fn_def(&index, None, "helper").expect("name fallback should resolve helper");
+        assert_eq!(by_name.name_token().expect("name token").text(), "helper");
     }
 }
