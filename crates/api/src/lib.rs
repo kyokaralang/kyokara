@@ -347,6 +347,13 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
     for func in &mut all_functions {
         let mut rewritten_calls = Vec::with_capacity(func.calls.len());
         for call in &func.calls {
+            // Preserve exact resolved targets already present in the emitted graph.
+            // This avoids rebinding local edges via name-only heuristics.
+            if emitted_fn_ids.contains(call) {
+                rewritten_calls.push(call.clone());
+                continue;
+            }
+
             // Extract bare callee name from IDs like `fn::foo` or `fn::m::foo`.
             let callee_name = call.strip_prefix("fn::").unwrap_or(call);
             let bare_name = callee_name.rsplit("::").next().unwrap_or(callee_name);
@@ -372,10 +379,7 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
                 continue;
             }
 
-            // Keep already-emitted IDs when no canonical rewrite is available.
-            if emitted_fn_ids.contains(call) {
-                rewritten_calls.push(call.clone());
-            }
+            // No safe rewrite available: drop unresolved/ambiguous edge.
         }
         func.calls = rewritten_calls;
         dedupe_call_ids(&mut func.calls);
