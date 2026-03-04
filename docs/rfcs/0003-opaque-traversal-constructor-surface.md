@@ -105,3 +105,45 @@ let ys = (0).unfold(step)
 2. Public `Seq.*` and `Seq<T>` are rejected.
 3. Existing traversal laziness and short-circuit behavior remain unchanged.
 4. Docs/examples/completions/diagnostics reflect the opaque traversal model.
+
+## Alternatives Considered
+
+### A1. Constructor namespace (`Iter.range`, `Iter.unfold`)
+
+Pros:
+
+1. Keeps constructors namespaced and explicit.
+2. Hides `Seq` from user surface.
+
+Cons:
+
+1. Adds another public surface symbol (`Iter`) with little additional power.
+2. Still forces constructor ownership vocabulary in simple range cases.
+
+Decision: rejected in favor of `start..<end` and universal `.unfold(step)`.
+
+### A2. Global free functions (`range`, `unfold`)
+
+Pros:
+
+1. Shortest spelling.
+
+Cons:
+
+1. Conflicts with API surface law direction (avoid free-function runtime APIs).
+2. Weak ownership/discoverability compared with method/syntax-based constructors.
+
+Decision: rejected.
+
+### A3. Keep `Seq.range` / `Seq.unfold` and `Seq<T>` public
+
+Pros:
+
+1. No churn.
+
+Cons:
+
+1. Preserves constructor/type leakage of internal traversal engine names.
+2. Keeps known AI pass@1 boundary confusion.
+
+Decision: rejected.
