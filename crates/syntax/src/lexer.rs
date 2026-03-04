@@ -87,6 +87,8 @@ enum Token {
     AmpAmp,
     #[token("||")]
     PipePipe,
+    #[token("..<")]
+    DotDotLt,
     #[token("|>")]
     PipeGt,
     #[token("->")]
@@ -181,6 +183,7 @@ impl Token {
             }
             Token::AmpAmp => SyntaxKind::AmpAmp,
             Token::PipePipe => SyntaxKind::PipePipe,
+            Token::DotDotLt => SyntaxKind::DotDotLt,
             Token::PipeGt => SyntaxKind::PipeGt,
             Token::Arrow => SyntaxKind::Arrow,
             Token::FatArrow => SyntaxKind::FatArrow,
@@ -365,6 +368,7 @@ mod tests {
             ("||", PipePipe),
             ("&", Amp),
             ("&&", AmpAmp),
+            ("..<", DotDotLt),
             ("^", Caret),
             ("~", Tilde),
             ("<<", LtLt),
@@ -399,6 +403,8 @@ mod tests {
         assert_eq!(lex_kinds("<="), [(LtEq, "<=")]);
         // `&&` should not be `&` + `&`
         assert_eq!(lex_kinds("&&"), [(AmpAmp, "&&")]);
+        // `..<` should not be `.` + `.` + `<`
+        assert_eq!(lex_kinds("..<"), [(DotDotLt, "..<")]);
         // `||` should not be `|` + `|`
         assert_eq!(lex_kinds("||"), [(PipePipe, "||")]);
         // `<<` should not be `<` + `<`

@@ -562,6 +562,52 @@ fn binary_expr_precedence() {
 }
 
 #[test]
+fn range_until_expr_compact_form_parses() {
+    // let x = 0..<5
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, IntLiteral, DotDotLt, IntLiteral]);
+    assert!(has_no_errors(&errors), "expected no parse errors: {errors:?}");
+    assert!(has_node(&events, BinaryExpr));
+}
+
+#[test]
+fn range_until_precedence_between_arithmetic_and_pipeline() {
+    // let x = 1 + 2..<10 |> f
+    let (events, errors) = parse_tokens(&[
+        LetKw, Ident, Eq, IntLiteral, Plus, IntLiteral, DotDotLt, IntLiteral, PipeGt, Ident,
+    ]);
+    assert!(has_no_errors(&errors), "expected no parse errors: {errors:?}");
+    assert_eq!(
+        count_start_nodes(&events, BinaryExpr),
+        2,
+        "expected add + range binary nodes"
+    );
+    assert_eq!(
+        count_start_nodes(&events, PipelineExpr),
+        1,
+        "expected one pipeline node"
+    );
+}
+
+#[test]
+fn malformed_range_until_reports_single_targeted_error() {
+    // let x = 0..< |> f
+    let (_events, errors) = parse_tokens(&[
+        LetKw, Ident, Eq, IntLiteral, DotDotLt, PipeGt, Ident,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted range parse error, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("expected expression after `..<`"),
+        "expected targeted range diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
 fn unary_expr() {
     // let x = !true
     let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, Bang, TrueKw]);

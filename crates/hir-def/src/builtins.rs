@@ -61,7 +61,7 @@ fn register_core_type_item(
     kind: TypeDefKind,
 ) -> (TypeItemIdx, Name) {
     let public_name = core_public_type_name(interner, core);
-    let type_name = if scope.types.contains_key(&public_name) {
+    let type_name = if core == CoreType::Seq || scope.types.contains_key(&public_name) {
         core_hidden_type_name(interner, core)
     } else {
         public_name
@@ -495,6 +495,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_all", ReceiverKey::Core(CoreType::Seq), "all"),
         ("seq_find", ReceiverKey::Core(CoreType::Seq), "find"),
         ("seq_to_list", ReceiverKey::Core(CoreType::Seq), "to_list"),
+        ("seq_unfold", ReceiverKey::Any, "unfold"),
         // Map methods
         ("map_insert", ReceiverKey::Core(CoreType::Map), "insert"),
         ("map_get", ReceiverKey::Core(CoreType::Map), "get"),
@@ -774,8 +775,6 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     let mappings: &[(&str, StaticOwnerKey, &str)] = &[
         ("list_new", StaticOwnerKey::Core(CoreType::List), "new"),
         ("deque_new", StaticOwnerKey::Core(CoreType::Deque), "new"),
-        ("seq_range", StaticOwnerKey::Core(CoreType::Seq), "range"),
-        ("seq_unfold", StaticOwnerKey::Core(CoreType::Seq), "unfold"),
         ("map_new", StaticOwnerKey::Core(CoreType::Map), "new"),
         ("set_new", StaticOwnerKey::Core(CoreType::Set), "new"),
     ];

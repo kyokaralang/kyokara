@@ -28,6 +28,15 @@ impl<'a> LoweringCtx<'a> {
             Expr::Path(path) => self.lower_path(path, ty),
             Expr::Binary { op, lhs, rhs } => match op {
                 BinaryOp::And | BinaryOp::Or => self.lower_logical_binary(op, lhs, rhs, ty),
+                BinaryOp::RangeUntil => {
+                    let lv = self.lower_expr(lhs);
+                    let rv = self.lower_expr(rhs);
+                    self.builder.push_call(
+                        CallTarget::Intrinsic("seq_range".to_string()),
+                        vec![lv, rv],
+                        ty,
+                    )
+                }
                 _ => {
                     let lv = self.lower_expr(lhs);
                     let rv = self.lower_expr(rhs);
@@ -374,10 +383,24 @@ impl<'a> LoweringCtx<'a> {
 
         if let Expr::Field { base, field } = callee_expr {
             let base_ty = self.expr_ty(base);
-            if !self.type_has_field_named(&base_ty, field)
-                && let Some(receiver_key) = self.receiver_key_for_ty(&base_ty)
-                && let Some(&fn_idx) = self.module_scope.methods.get(&(receiver_key, field))
-            {
+            let method_fn_idx = if self.type_has_field_named(&base_ty, field) {
+                None
+            } else {
+                self.receiver_key_for_ty(&base_ty)
+                    .and_then(|receiver_key| {
+                        self.module_scope
+                            .methods
+                            .get(&(receiver_key, field))
+                            .copied()
+                    })
+                    .or_else(|| {
+                        self.module_scope
+                            .methods
+                            .get(&(ReceiverKey::Any, field))
+                            .copied()
+                    })
+            };
+            if let Some(fn_idx) = method_fn_idx {
                 let base_val = self.lower_expr(base);
                 let full_param_names = self.param_names_for_fn_idx(fn_idx);
                 let method_param_names: Vec<Name> =

@@ -118,6 +118,8 @@ pub enum SyntaxKind {
     Dot,
 
     // ── Operators ────────────────────────────────────────────────────
+    /// `..<`
+    DotDotLt,
     /// `->`
     Arrow,
     /// `<-`
@@ -414,6 +416,7 @@ impl SyntaxKind {
                 | Self::Caret
                 | Self::LtLt
                 | Self::GtGt
+                | Self::DotDotLt
                 | Self::AmpAmp
                 | Self::PipePipe
         )
@@ -425,6 +428,7 @@ impl SyntaxKind {
     pub fn infix_binding_power(self) -> Option<(u8, u8)> {
         match self {
             Self::PipeGt => Some((1, 2)),
+            Self::DotDotLt => Some((2, 3)),
             Self::PipePipe => Some((3, 4)),
             Self::AmpAmp => Some((5, 6)),
             Self::EqEq | Self::BangEq => Some((7, 8)),
@@ -505,6 +509,7 @@ mod tests {
             SyntaxKind::Caret,
             SyntaxKind::LtLt,
             SyntaxKind::GtGt,
+            SyntaxKind::DotDotLt,
             SyntaxKind::AmpAmp,
             SyntaxKind::PipePipe,
         ] {
@@ -517,6 +522,7 @@ mod tests {
     #[test]
     fn infix_binding_power_matches_parser_contract() {
         assert_eq!(SyntaxKind::PipeGt.infix_binding_power(), Some((1, 2)));
+        assert_eq!(SyntaxKind::DotDotLt.infix_binding_power(), Some((2, 3)));
         assert_eq!(SyntaxKind::PipePipe.infix_binding_power(), Some((3, 4)));
         assert_eq!(SyntaxKind::AmpAmp.infix_binding_power(), Some((5, 6)));
         assert_eq!(SyntaxKind::Plus.infix_binding_power(), Some((19, 20)));

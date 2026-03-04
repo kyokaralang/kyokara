@@ -13,10 +13,10 @@ fn run_ok(source: &str) -> Value {
 fn eval_seq_zip_does_not_force_full_right_input_before_first_output() {
     let val = run_ok(
         r#"fn main() -> Int {
-            let rhs = Seq.range(0, 5).map(fn(n: Int) =>
+            let rhs = (0..<5).map(fn(n: Int) =>
                 if (n == 4) { 1 / 0 } else { n }
             )
-            let pairs = Seq.range(0, 1).zip(rhs).to_list()
+            let pairs = (0..<1).zip(rhs).to_list()
             pairs[0].right
         }"#,
     );
@@ -27,10 +27,10 @@ fn eval_seq_zip_does_not_force_full_right_input_before_first_output() {
 fn eval_seq_zip_does_not_force_full_left_input_before_first_output() {
     let val = run_ok(
         r#"fn main() -> Int {
-            let lhs = Seq.range(0, 5).map(fn(n: Int) =>
+            let lhs = (0..<5).map(fn(n: Int) =>
                 if (n == 4) { 1 / 0 } else { n }
             )
-            let pairs = lhs.zip(Seq.range(0, 1)).to_list()
+            let pairs = lhs.zip((0..<1)).to_list()
             pairs[0].left
         }"#,
     );
@@ -41,7 +41,7 @@ fn eval_seq_zip_does_not_force_full_left_input_before_first_output() {
 fn eval_seq_chunks_short_circuits_without_traversing_full_input() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            let xs = Seq.range(0, 5).map(fn(n: Int) =>
+            let xs = (0..<5).map(fn(n: Int) =>
                 if (n == 4) { 1 / 0 } else { n }
             )
             xs.chunks(2).any(fn(_chunk: List<Int>) => true)
@@ -54,7 +54,7 @@ fn eval_seq_chunks_short_circuits_without_traversing_full_input() {
 fn eval_seq_windows_short_circuits_without_traversing_full_input() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            let xs = Seq.range(0, 5).map(fn(n: Int) =>
+            let xs = (0..<5).map(fn(n: Int) =>
                 if (n == 4) { 1 / 0 } else { n }
             )
             xs.windows(2).any(fn(_window: List<Int>) => true)

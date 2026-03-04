@@ -281,6 +281,17 @@ impl<'a> InferenceCtx<'a> {
         let rhs_ty = self.infer_expr(rhs, &Expectation::Has(lhs_ty.clone()));
 
         match op {
+            BinaryOp::RangeUntil => {
+                self.unify_or_err(&Ty::Int, &lhs_ty);
+                self.unify_or_err(&Ty::Int, &rhs_ty);
+                let Some(seq_info) = self.module_scope.core_types.get(CoreType::Seq) else {
+                    return Ty::Error;
+                };
+                Ty::Adt {
+                    def: seq_info.type_idx,
+                    args: vec![Ty::Int],
+                }
+            }
             _ if op.is_numeric_arithmetic() => {
                 let resolved = self.table.resolve_deep(&lhs_ty);
                 if !resolved.is_poison() && !matches!(resolved, Ty::Int | Ty::Float | Ty::Var(_)) {
@@ -1384,13 +1395,21 @@ impl<'a> InferenceCtx<'a> {
             _ => {}
         }
 
-        // Look up method in the registry.
-        let receiver_key = self.receiver_key_for_ty(&base_ty_resolved)?;
+        // Look up method in the registry: exact receiver method first, Any fallback second.
         let fn_idx = match self
-            .module_scope
-            .methods
-            .get(&(receiver_key, field))
-            .copied()
+            .receiver_key_for_ty(&base_ty_resolved)
+            .and_then(|receiver_key| {
+                self.module_scope
+                    .methods
+                    .get(&(receiver_key, field))
+                    .copied()
+            })
+            .or_else(|| {
+                self.module_scope
+                    .methods
+                    .get(&(ReceiverKey::Any, field))
+                    .copied()
+            })
         {
             Some(idx) => idx,
             None => {

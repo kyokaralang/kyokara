@@ -278,10 +278,44 @@ fn roundtrip_binary_ops() {
 }
 
 #[test]
+fn roundtrip_range_until_compact_form() {
+    let src = "let x = 0..<5";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn roundtrip_range_until_spaced_form() {
+    let src = "let x = 0 ..< 5";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
 fn roundtrip_pipeline() {
     let src = "let x = a |> b |> c";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn parse_malformed_range_until_reports_single_targeted_error() {
+    let src = "let x = 0..< |> f";
+    let result = parse(src);
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one targeted range parse error, got: {:?}",
+        result.errors
+    );
+    assert!(
+        result.errors[0]
+            .message
+            .contains("expected expression after `..<`"),
+        "expected targeted range diagnostic, got: {:?}",
+        result.errors
+    );
+    assert_eq!(green_text(&result.green), src);
 }
 
 #[test]

@@ -210,7 +210,8 @@ Docs/examples/diagnostics must use collection-first canonical forms.
 
 Canonical consequences:
 
-- integer ranges remain `Seq.range(start, end)` (constructor surface)
+- integer ranges use `start..<end` (constructor surface)
+- stateful sources use `seed.unfold(step)` (constructor surface)
 - `List`/`Deque` expose storage methods and traversal methods directly
 - traversal transforms/terminals (`map/filter/enumerate/zip/chunks/windows/fold/count/to_list`) are callable on collection and producer values
 - producer traversal APIs stay traversal-capable (`String.split/lines/chars`, `Map.keys/values`, `Set.values`)

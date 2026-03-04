@@ -1262,9 +1262,9 @@ fn eval_list_new_and_push() {
     let val = run_ok(
         "fn main() -> Int {
            let xs = List.new()
-           let xs = xs.push(1)
-           let xs = xs.push(2)
-           xs.len()
+           let ys = xs.push(1)
+           let zs = ys.push(2)
+           zs.len()
          }",
     );
     assert!(matches!(val, Value::Int(2)));
@@ -1657,9 +1657,9 @@ fn eval_map_is_empty() {
 fn eval_map_insert_overwrite() {
     let val = run_ok(
         r#"fn main() -> Int {
-           let m = Map.new().insert("a", 1)
-           let m = m.insert("a", 99)
-           match (m.get("a")) {
+           let m0 = Map.new().insert("a", 1)
+           let m1 = m0.insert("a", 99)
+           match (m1.get("a")) {
              Some(x) => x
              None => 0
            }
@@ -5279,19 +5279,19 @@ fn eval_list_iteration_ergonomics_matrix() {
         Case {
             name: "range half-open",
             src: "fn main() -> Int {
-                let xs = Seq.range(0, 5).to_list()
+                let xs = ((0)..<5).to_list()
                 xs.len() * 100 + xs[0] * 10 + xs[4]
             }",
             expected: Value::Int(504),
         },
         Case {
             name: "range equal bounds empty",
-            src: "fn main() -> Int { Seq.range(3, 3).count() }",
+            src: "fn main() -> Int { ((3)..<3).count() }",
             expected: Value::Int(0),
         },
         Case {
             name: "range descending empty",
-            src: "fn main() -> Int { Seq.range(5, 2).count() }",
+            src: "fn main() -> Int { ((5)..<2).count() }",
             expected: Value::Int(0),
         },
         Case {
@@ -5372,22 +5372,22 @@ fn eval_list_chunks_windows_invalid_sizes_report_direct_errors() {
     let cases = [
         Case {
             name: "chunks zero",
-            src: "fn main() -> Int { Seq.range(0, 3).chunks(0).count() }",
+            src: "fn main() -> Int { ((0)..<3).chunks(0).count() }",
             expected_fragment: "seq_chunks: chunk size must be > 0",
         },
         Case {
             name: "chunks negative",
-            src: "fn main() -> Int { Seq.range(0, 3).chunks(-1).count() }",
+            src: "fn main() -> Int { ((0)..<3).chunks(-1).count() }",
             expected_fragment: "seq_chunks: chunk size must be > 0",
         },
         Case {
             name: "windows zero",
-            src: "fn main() -> Int { Seq.range(0, 3).windows(0).count() }",
+            src: "fn main() -> Int { ((0)..<3).windows(0).count() }",
             expected_fragment: "seq_windows: window size must be > 0",
         },
         Case {
             name: "windows negative",
-            src: "fn main() -> Int { Seq.range(0, 3).windows(-3).count() }",
+            src: "fn main() -> Int { ((0)..<3).windows(-3).count() }",
             expected_fragment: "seq_windows: window size must be > 0",
         },
     ];
@@ -5416,7 +5416,7 @@ fn eval_seq_surface_happy_paths() {
         Case {
             name: "seq range fold without list materialization",
             src: r#"fn main() -> Int {
-                Seq.range(0, 5).fold(0, fn(acc: Int, n: Int) => acc + n)
+                ((0)..<5).fold(0, fn(acc: Int, n: Int) => acc + n)
             }"#,
             expected: Value::Int(10),
         },
@@ -5443,7 +5443,7 @@ fn eval_seq_surface_happy_paths() {
         Case {
             name: "seq is re-iterable",
             src: r#"fn main() -> Int {
-                let xs = Seq.range(0, 3).map(fn(n: Int) => n + 1)
+                let xs = ((0)..<3).map(fn(n: Int) => n + 1)
                 xs.count() * 10 + xs.to_list().len()
             }"#,
             expected: Value::Int(33),
@@ -5467,8 +5467,8 @@ fn eval_collection_first_traversal_surface_semantics_rfc_0002() {
             let deque_count = Deque.new().push_back(1).push_back(2).push_back(3)
                 .map(fn(n: Int) => n * 2)
                 .count()
-            let z1 = List.new().push(1).push(2).zip(Seq.range(10, 13)).count()
-            let z2 = Seq.range(0, 3).zip(List.new().push(7).push(8)).count()
+            let z1 = List.new().push(1).push(2).zip(((10)..<13)).count()
+            let z2 = ((0)..<3).zip(List.new().push(7).push(8)).count()
             let z3 = Deque.new().push_back(1).push_back(2).zip(List.new().push(9)).count()
             list_count * 100 + deque_count * 10 + z1 + z2 + z3
         }"#,
@@ -5496,6 +5496,56 @@ fn eval_collection_first_any_all_find_short_circuit_rfc_0002() {
 }
 
 #[test]
+fn eval_opaque_traversal_surface_semantics_rfc_0003() {
+    let val = run_ok(
+        r#"type Seed = { x: Int }
+
+fn main() -> Int {
+    let a = (0..<5).count()
+    let b = (5..<5).count()
+    let c = (5..<2).count()
+    let d = (0).unfold(fn(state: Int) =>
+        if (state < 3) {
+            Some({ value: state + 1, state: state + 1 })
+        } else {
+            None
+        }
+    ).count()
+    let e = Seed { x: 0 }.unfold(fn(state: Seed) =>
+        if (state.x < 2) {
+            Some({ value: state.x, state: Seed { x: state.x + 1 } })
+        } else {
+            None
+        }
+    ).count()
+    a * 100 + b * 10 + c + d + e
+}"#,
+    );
+    assert_eq!(val, Value::Int(505));
+}
+
+#[test]
+fn eval_seq_surface_is_rejected_rfc_0003() {
+    let err_range = run_err("fn main() -> Int { Seq.range(0, 3).count() }");
+    assert!(
+        err_range.contains("no method") || err_range.contains("unresolved"),
+        "expected Seq.range rejection, got: {err_range}"
+    );
+
+    let err_unfold = run_err("fn main() -> Int { Seq.unfold(0, fn(state: Int) => None).count() }");
+    assert!(
+        err_unfold.contains("no method") || err_unfold.contains("unresolved"),
+        "expected Seq.unfold rejection, got: {err_unfold}"
+    );
+
+    let err_type = run_err("fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }\nfn main() -> Int { 0 }");
+    assert!(
+        err_type.contains("unresolved type") || err_type.contains("type mismatch"),
+        "expected Seq type rejection, got: {err_type}"
+    );
+}
+
+#[test]
 fn eval_list_seq_bridge_is_rejected_rfc_0002() {
     let err = run_err(
         r#"fn main() -> Int {
@@ -5520,28 +5570,28 @@ fn eval_seq_any_all_find_semantics_matrix() {
         Case {
             name: "any empty is false",
             src: r#"fn main() -> Bool {
-                Seq.range(0, 0).any(fn(_n: Int) => true)
+                ((0)..<0).any(fn(_n: Int) => true)
             }"#,
             expected: Value::Bool(false),
         },
         Case {
             name: "all empty is true",
             src: r#"fn main() -> Bool {
-                Seq.range(0, 0).all(fn(_n: Int) => false)
+                ((0)..<0).all(fn(_n: Int) => false)
             }"#,
             expected: Value::Bool(true),
         },
         Case {
             name: "find empty is none",
             src: r#"fn main() -> Int {
-                Seq.range(0, 0).find(fn(_n: Int) => true).unwrap_or(-1)
+                ((0)..<0).find(fn(_n: Int) => true).unwrap_or(-1)
             }"#,
             expected: Value::Int(-1),
         },
         Case {
             name: "any hit and all pass",
             src: r#"fn main() -> Bool {
-                let xs = Seq.range(0, 5)
+                let xs = ((0)..<5)
                 xs.any(fn(n: Int) => n == 3) && xs.all(fn(n: Int) => n < 5)
             }"#,
             expected: Value::Bool(true),
@@ -5549,14 +5599,14 @@ fn eval_seq_any_all_find_semantics_matrix() {
         Case {
             name: "find first match",
             src: r#"fn main() -> Int {
-                Seq.range(0, 6).find(fn(n: Int) => n % 2 == 0 && n > 0).unwrap_or(-1)
+                ((0)..<6).find(fn(n: Int) => n % 2 == 0 && n > 0).unwrap_or(-1)
             }"#,
             expected: Value::Int(2),
         },
         Case {
             name: "find miss returns none",
             src: r#"fn main() -> Int {
-                Seq.range(0, 5).find(fn(n: Int) => n == 9).unwrap_or(-1)
+                ((0)..<5).find(fn(n: Int) => n == 9).unwrap_or(-1)
             }"#,
             expected: Value::Int(-1),
         },
@@ -5618,7 +5668,7 @@ fn eval_seq_any_all_find_short_circuit_regression() {
 fn eval_seq_scan_include_init_semantics() {
     let val = run_ok(
         r#"fn main() -> Int {
-            let xs = Seq.range(1, 4).scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
+            let xs = ((1)..<4).scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
             xs.len() * 1000 + xs[0] * 100 + xs[1] * 10 + xs[3]
         }"#,
     );
@@ -5629,7 +5679,7 @@ fn eval_seq_scan_include_init_semantics() {
 fn eval_seq_scan_empty_input_emits_init_once() {
     let val = run_ok(
         r#"fn main() -> Int {
-            let xs = Seq.range(0, 0).scan(42, fn(acc: Int, _n: Int) => acc + 1).to_list()
+            let xs = ((0)..<0).scan(42, fn(acc: Int, _n: Int) => acc + 1).to_list()
             xs.len() * 100 + xs[0]
         }"#,
     );
@@ -5648,7 +5698,7 @@ fn eval_seq_unfold_semantics_matrix() {
         Case {
             name: "unfold bounded emits values",
             src: r#"fn main() -> Int {
-                let xs = Seq.unfold(0, fn(state: Int) =>
+                let xs = (0).unfold(fn(state: Int) =>
                     if (state < 4) {
                         Some({ value: state * 2, state: state + 1 })
                     } else {
@@ -5662,7 +5712,7 @@ fn eval_seq_unfold_semantics_matrix() {
         Case {
             name: "unfold immediate none is empty",
             src: r#"fn main() -> Int {
-                Seq.unfold(0, fn(_state: Int) => None).count()
+                (0).unfold(fn(_state: Int) => None).count()
             }"#,
             expected: Value::Int(0),
         },
@@ -5680,7 +5730,7 @@ fn eval_seq_unfold_accepts_named_record_alias_payload() {
         r#"type PickStep = { value: Int, state: Int }
 
         fn main() -> Int {
-            let xs = Seq.unfold(0, fn(state: Int) =>
+            let xs = (0).unfold(fn(state: Int) =>
                 if (state < 4) {
                     Some(PickStep { value: state * 2, state: state + 1 })
                 } else {
@@ -5744,14 +5794,14 @@ fn eval_int_pow_errors_negative_exponent_and_overflow() {
 fn eval_seq_invalid_sizes_and_removed_list_surface() {
     let err_chunks = run_err(
         r#"fn main() -> Int {
-            Seq.range(0, 3).chunks(0).count()
+            ((0)..<3).chunks(0).count()
         }"#,
     );
     assert!(err_chunks.contains("chunk size"), "got: {err_chunks}");
 
     let err_windows = run_err(
         r#"fn main() -> Int {
-            Seq.range(0, 3).windows(0).count()
+            ((0)..<3).windows(0).count()
         }"#,
     );
     assert!(err_windows.contains("window size"), "got: {err_windows}");

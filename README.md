@@ -158,7 +158,7 @@ fn main() -> Int {
 }
 ```
 
-Pure by default. Private by default — use `pub` to export. No null — use `Option<T>`. No exceptions — use `Result<T, E>`. Exhaustive pattern matching enforced by the compiler. Pipeline operator (`|>`) and error propagation (`?`) for clean data flow. Convention-based modules — file path determines module path, `import` brings public names into scope. `List` includes immutable index updates (`set`/`update`) and direct traversal (`map/filter/fold/...`), and `Deque` provides persistent queue-style operations (`push_front`/`push_back`/`pop_front`) plus the same traversal surface. `Seq` keeps `range` and `unfold` constructor helpers; canonical traversal style is collection-first (`xs.map(...).filter(...).count()`). For predicate/search traversal, default to `any`/`all`/`find` (short-circuit) and reserve `fold` for true accumulation/reduction. `Int` includes `pow` as the canonical integer exponentiation method.
+Pure by default. Private by default — use `pub` to export. No null — use `Option<T>`. No exceptions — use `Result<T, E>`. Exhaustive pattern matching enforced by the compiler. Pipeline operator (`|>`) and error propagation (`?`) for clean data flow. Convention-based modules — file path determines module path, `import` brings public names into scope. `List` includes immutable index updates (`set`/`update`) and direct traversal (`map/filter/fold/...`), and `Deque` provides persistent queue-style operations (`push_front`/`push_back`/`pop_front`) plus the same traversal surface. Traversal constructors are surface-level expressions: `start..<end` for half-open integer ranges and `seed.unfold(step)` for stateful generation. Canonical traversal style is collection-first (`xs.map(...).filter(...).count()`). For predicate/search traversal, default to `any`/`all`/`find` (short-circuit) and reserve `fold` for true accumulation/reduction. `Int` includes `pow` as the canonical integer exponentiation method.
 
 ## Architecture
 
@@ -201,12 +201,12 @@ crates/
 | Version | What ships | Status |
 |---------|-----------|--------|
 | **v0.0** | Parser ✓, name resolution ✓, CST→HIR lowering ✓, type checker ✓, effect checking ✓, typed holes ✓, structured diagnostics ✓, hole specs ✓, symbol graph ✓, patch suggestions ✓ | **Complete** |
-| **v0.1** | Tree-walking interpreter ✓, intrinsics ✓, builtin Option/Result types ✓, canonical formatter ✓, stable symbol IDs ✓, runtime contracts ✓, core stdlib (List/Seq, Map, Set, String, Int/Float) ✓ | **Complete** |
+| **v0.1** | Tree-walking interpreter ✓, intrinsics ✓, builtin Option/Result types ✓, canonical formatter ✓, stable symbol IDs ✓, runtime contracts ✓, core stdlib (List/Deque traversal, Map, Set, String, Int/Float) ✓ | **Complete** |
 | **v0.2** | Module system (convention-based layout, `pub` visibility, flat imports) ✓, refactor engine (rename, add missing match cases, add missing capability) ✓, refactor transactions (atomic verify-before-apply) ✓, capability enforcement (type-level E0011 + runtime manifest `--caps`) ✓, LSP server (diagnostics, hover, go-to-def, references, completion, code actions, formatting) ✓ | **Complete** |
 | **v0.3** | KyokaraIR data structures ✓, HIR→KIR lowering ✓, WASM codegen MVP (scalars, control flow, calls, ADTs, records) ✓, property-based testing (`kyokara test --explore`) ✓, SMT verification (restricted fragment), capability sandbox, deterministic replay | In progress |
 
 AI-special-feature status tracking (with completeness scores + issue links) lives in [docs/design-v0.md#16-ai-first-feature-tracker](docs/design-v0.md#16-ai-first-feature-tracker).
-API surface design rules live in [docs/rfcs/0001-api-surface-law.md](docs/rfcs/0001-api-surface-law.md).
+API surface design rules live in [docs/rfcs/0001-api-surface-law.md](docs/rfcs/0001-api-surface-law.md), with traversal-surface specifics in [docs/rfcs/0002-collection-first-traversal-surface.md](docs/rfcs/0002-collection-first-traversal-surface.md) and [docs/rfcs/0003-opaque-traversal-constructor-surface.md](docs/rfcs/0003-opaque-traversal-constructor-surface.md).
 Core dispatch shadow-safety and temporary constructor reservation are documented in [docs/design-v0.md#10-standard-library-v0-minimum](docs/design-v0.md#10-standard-library-v0-minimum) (qualified-constructor follow-up: [#293](https://github.com/kyokaralang/kyokara/issues/293)).
 Canonical documentation map lives in [docs/INDEX.md](docs/INDEX.md).
 
@@ -250,7 +250,7 @@ cargo run -p kyokara-cli -- run <file.ky>
 # Run a multi-file project (auto-detected when sibling .ky files exist)
 cargo run -p kyokara-cli -- run examples/modules/main.ky
 
-# Run the Seq usage catalog example
+# Run the traversal usage catalog example
 cargo run -p kyokara-cli -- run examples/seq.ky
 
 # Format a file (writes back)

@@ -151,7 +151,10 @@ fn try_dot_completion(
     let base_type_idx = scope
         .types
         .iter()
-        .find_map(|(ty_name, ty_idx)| (ty_name.resolve(interner) == base_name).then_some(*ty_idx));
+        .find_map(|(ty_name, ty_idx)| {
+            let resolved = ty_name.resolve(interner);
+            (!resolved.starts_with("$core_") && resolved == base_name).then_some(*ty_idx)
+        });
     if let Some(ty_idx) = base_type_idx {
         let owner_key = if let Some(core) = scope.core_types.kind_for_idx(ty_idx) {
             StaticOwnerKey::Core(core)
@@ -216,6 +219,9 @@ fn add_module_scope_completions(analysis: &FileAnalysis, items: &mut Vec<Complet
     // Types.
     for (name, idx) in &scope.types {
         let label = name.resolve(interner).to_string();
+        if label.starts_with("$core_") {
+            continue;
+        }
         let kind = match &tree.types[*idx].kind {
             TypeDefKind::Adt { .. } => CompletionItemKind::ENUM,
             TypeDefKind::Record { .. } => CompletionItemKind::STRUCT,
@@ -271,7 +277,6 @@ fn add_builtin_completions(items: &mut Vec<CompletionItem>) {
         "Option",
         "Result",
         "List",
-        "Seq",
         "Map",
         "Set",
         "ParseError",

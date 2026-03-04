@@ -592,8 +592,8 @@ fn symbol_graph_contains_types() {
     let src = "type Color = Red | Green | Blue
         fn id(x: Int) -> Int { x }";
     let output = check(src, "test.ky");
-    // 9 types: Color (user-defined) + Option + Result + List + Deque + Seq + Map + Set + ParseError
-    assert_eq!(output.symbol_graph.types.len(), 9);
+    // 8 types: Color (user-defined) + Option + Result + List + Deque + Map + Set + ParseError
+    assert_eq!(output.symbol_graph.types.len(), 8);
     let color = output
         .symbol_graph
         .types
@@ -4029,7 +4029,7 @@ fn check_list_binary_search_sortable_elements_have_no_e0025() {
 fn check_iteration_ergonomics_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
         r#"fn main() -> Bool {
-            let xs = Seq.range(0, 5)
+            let xs = (0..<5)
             let e = xs.enumerate().to_list()
             let z = xs.zip(List.new().push(10).push(20)).to_list()
             let c = xs.chunks(2).to_list()
@@ -4065,11 +4065,11 @@ fn check_iteration_ergonomics_chains_from_map_set_string_have_no_diagnostics() {
 fn check_seq_any_all_find_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
         r#"fn main() -> Int {
-            let xs = Seq.range(0, 6)
+            let xs = (0..<6)
             let a = xs.any(fn(n: Int) => n == 4)
             let b = xs.all(fn(n: Int) => n < 6)
             let c = xs.find(fn(n: Int) => n % 2 == 0).map_or(-1, fn(n: Int) => n)
-            let d = Seq.range(0, 0).find(fn(_n: Int) => true).unwrap_or(-7)
+            let d = (0..<0).find(fn(_n: Int) => true).unwrap_or(-7)
             if (a && b && c == 0 && d == -7) { 1 } else { 0 }
         }"#,
         "seq any/all/find canonical surface",
@@ -4080,8 +4080,8 @@ fn check_seq_any_all_find_canonical_surface_has_no_diagnostics() {
 fn check_seq_scan_unfold_int_pow_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
         r#"fn main() -> Int {
-            let a = Seq.range(1, 4).scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
-            let b = Seq.unfold(0, fn(state: Int) =>
+            let a = (1..<4).scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
+            let b = (0).unfold(fn(state: Int) =>
                 if (state < 3) {
                     Some({ value: state + 1, state: state + 1 })
                 } else {
@@ -4100,7 +4100,7 @@ fn check_seq_unfold_accepts_named_record_alias_payload() {
         r#"type PickStep = { value: Int, state: Int }
 
         fn main() -> Int {
-            Seq.unfold(0, fn(state: Int) =>
+            (0).unfold(fn(state: Int) =>
                 if (state < 3) {
                     Some(PickStep { value: state + 1, state: state + 1 })
                 } else {
@@ -4116,7 +4116,7 @@ fn check_seq_unfold_accepts_named_record_alias_payload() {
 fn check_non_canonical_free_scan_unfold_pow_int_report_unresolved_name() {
     let output = check(
         r#"fn main() -> Int {
-            let a = scan(Seq.range(0, 3), 0, fn(acc: Int, n: Int) => acc + n)
+            let a = scan((0..<3), 0, fn(acc: Int, n: Int) => acc + n)
             let b = unfold(0, fn(state: Int) => None)
             let c = pow_int(2, 10)
             a.count() + b.count() + c
@@ -4137,9 +4137,9 @@ fn check_non_canonical_free_scan_unfold_pow_int_report_unresolved_name() {
 fn check_non_canonical_free_any_all_find_functions_report_unresolved_name() {
     let output = check(
         r#"fn main() -> Int {
-            let a = any(Seq.range(0, 3), fn(n: Int) => n == 1)
-            let b = all(Seq.range(0, 3), fn(n: Int) => n < 3)
-            let c = find(Seq.range(0, 3), fn(n: Int) => n == 1)
+            let a = any((0..<3), fn(n: Int) => n == 1)
+            let b = all((0..<3), fn(n: Int) => n < 3)
+            let c = find((0..<3), fn(n: Int) => n == 1)
             if (a && b) { c.unwrap_or(0) } else { 0 }
         }"#,
         "test.ky",
@@ -4158,9 +4158,9 @@ fn check_non_canonical_free_any_all_find_functions_report_unresolved_name() {
 fn check_seq_any_all_find_wrong_predicate_type_reports_type_mismatch() {
     let output = check(
         r#"fn main() -> Int {
-            let a = Seq.range(0, 3).any(fn(n: Int) => n)
-            let b = Seq.range(0, 3).all(fn(n: Int) => n + 1)
-            let c = Seq.range(0, 3).find(fn(n: Int) => n * 2)
+            let a = (0..<3).any(fn(n: Int) => n)
+            let b = (0..<3).all(fn(n: Int) => n + 1)
+            let c = (0..<3).find(fn(n: Int) => n * 2)
             if (a || b) { c.unwrap_or(0) } else { 0 }
         }"#,
         "test.ky",
@@ -4282,7 +4282,7 @@ fn check_non_canonical_free_range_function_reports_unresolved_name() {
 fn check_seq_surface_canonical_has_no_diagnostics() {
     assert_check_no_diagnostics(
         r#"fn main() -> Int {
-            let xs = Seq.range(0, 5)
+            let xs = (0..<5)
                 .map(fn(n: Int) => n + 1)
                 .filter(fn(n: Int) => n > 2)
             let a = xs.count()
@@ -4331,12 +4331,72 @@ fn check_collection_first_traversal_surface_has_no_diagnostics_rfc_0002() {
             let deque_count = Deque.new().push_back(1).push_back(2).push_back(3)
                 .map(fn(n: Int) => n * 2)
                 .count()
-            let z1 = List.new().push(1).push(2).zip(Seq.range(10, 13)).count()
-            let z2 = Seq.range(0, 3).zip(List.new().push(7).push(8)).count()
+            let z1 = List.new().push(1).push(2).zip((10..<13)).count()
+            let z2 = (0..<3).zip(List.new().push(7).push(8)).count()
             let z3 = Deque.new().push_back(1).push_back(2).zip(List.new().push(9)).count()
             list_count + deque_count + z1 + z2 + z3
         }"#,
         "collection-first traversal canonical surface",
+    );
+}
+
+#[test]
+fn check_opaque_traversal_surface_has_no_diagnostics_rfc_0003() {
+    assert_check_no_diagnostics(
+        r#"type Seed = { x: Int }
+
+fn main() -> Int {
+    let a = (0..<5).count()
+    let b = (0).unfold(fn(state: Int) =>
+        if (state < 3) {
+            Some({ value: state + 1, state: state + 1 })
+        } else {
+            None
+        }
+    ).count()
+    let c = Seed { x: 0 }.unfold(fn(state: Seed) =>
+        if (state.x < 2) {
+            Some({ value: state.x, state: Seed { x: state.x + 1 } })
+        } else {
+            None
+        }
+    ).count()
+    a + b + c
+}"#,
+        "opaque traversal canonical surface",
+    );
+}
+
+#[test]
+fn check_seq_static_constructors_are_rejected_rfc_0003() {
+    let output = check(
+        r#"fn main() -> Int {
+    let a = Seq.range(0, 3).count()
+    let b = Seq.unfold(0, fn(state: Int) => None).count()
+    a + b
+}"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("no method") || d.message.contains("unresolved")),
+        "expected Seq constructor rejection diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_seq_type_annotation_is_rejected_rfc_0003() {
+    let output = check("fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }\nfn main() -> Int { 0 }", "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("unresolved type") || d.message.contains("type mismatch")),
+        "expected Seq type rejection diagnostics, got: {:?}",
+        output.diagnostics
     );
 }
 
@@ -4372,8 +4432,8 @@ fn main() -> Int {
         output
             .diagnostics
             .iter()
-            .any(|d| d.code == "E0001" && d.message.contains("type mismatch")),
-        "expected type mismatch for non-traversal Seq param, got: {:?}",
+            .any(|d| d.message.contains("unresolved type") || d.message.contains("no method")),
+        "expected Seq type-annotation rejection diagnostics, got: {:?}",
         output.diagnostics
     );
 }

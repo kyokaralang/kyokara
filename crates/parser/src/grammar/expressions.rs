@@ -25,6 +25,10 @@ const EXPR_RECOVERY: TokenSet = TokenSet::new(&[
 ]);
 const IF_HEAD_RECOVERY: TokenSet = TokenSet::new(&[LBrace, ElseKw, Semicolon, RBrace]);
 const MATCH_HEAD_RECOVERY: TokenSet = TokenSet::new(&[LBrace, Semicolon, RBrace]);
+const RANGE_RHS_RECOVERY: TokenSet = TokenSet::new(&[
+    LetKw, RBrace, Semicolon, RParen, Comma, FatArrow, TypeKw, FnKw, CapKw, PropertyKw, LeftArrow,
+    PipeGt,
+]);
 
 /// Entry point: parse an expression.
 pub(super) fn expr(p: &mut Parser<'_>) -> Option<CompletedMarker> {
@@ -83,7 +87,11 @@ fn expr_bp(p: &mut Parser<'_>, min_bp: u8) -> Option<CompletedMarker> {
 
         let m = lhs.precede(p);
         p.bump(); // operator
-        expr_bp(p, right_bp);
+        if current == DotDotLt && !can_start_expr(p.current()) {
+            p.error_recover("expected expression after `..<`", RANGE_RHS_RECOVERY);
+        } else {
+            expr_bp(p, right_bp);
+        }
         lhs = m.complete(p, op_kind);
     }
 

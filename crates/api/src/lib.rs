@@ -228,7 +228,6 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
         "Option",
         "Result",
         "List",
-        "Seq",
         "Map",
         "Set",
         "ParseError",
@@ -729,8 +728,11 @@ fn build_module_symbol_graph(
     let types: Vec<TypeNodeDto> = item_tree
         .types
         .iter()
-        .map(|(_, type_item)| {
+        .filter_map(|(_, type_item)| {
             let name = type_item.name.resolve(interner).to_owned();
+            if name.starts_with("$core_") {
+                return None;
+            }
             let type_params: Vec<String> = type_item
                 .type_params
                 .iter()
@@ -781,14 +783,14 @@ fn build_module_symbol_graph(
                 }
             };
             let id = symbol_id("type", &name, module_prefix);
-            TypeNodeDto {
+            Some(TypeNodeDto {
                 id,
                 name,
                 kind,
                 type_params,
                 fields,
                 variants,
-            }
+            })
         })
         .collect();
 

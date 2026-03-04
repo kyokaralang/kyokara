@@ -27,6 +27,8 @@ pub enum Literal {
 /// Binary operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BinaryOp {
+    /// Half-open ascending integer range: `start ..< end`.
+    RangeUntil,
     Add,
     Sub,
     Mul,
@@ -50,6 +52,7 @@ pub enum BinaryOp {
 impl BinaryOp {
     pub fn from_syntax_kind(kind: SyntaxKind) -> Option<Self> {
         match kind {
+            SyntaxKind::DotDotLt => Some(Self::RangeUntil),
             SyntaxKind::Plus => Some(Self::Add),
             SyntaxKind::Minus => Some(Self::Sub),
             SyntaxKind::Star => Some(Self::Mul),
@@ -291,6 +294,7 @@ mod tests {
     #[test]
     fn binary_op_from_syntax_kind_covers_all_supported_tokens() {
         for kind in [
+            SyntaxKind::DotDotLt,
             SyntaxKind::Plus,
             SyntaxKind::Minus,
             SyntaxKind::Star,

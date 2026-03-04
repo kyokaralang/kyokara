@@ -127,6 +127,13 @@ fn test_chained_ops() {
     );
 }
 
+#[test]
+fn test_range_until_lowers_via_seq_range_intrinsic_path_rfc_0003() {
+    let out = lower_and_display("fn f() -> Int { (0..<3).count() }");
+    assert!(out.contains("call intrinsic:seq_range("), "output:\n{out}");
+    assert!(out.contains("call intrinsic:seq_count("), "output:\n{out}");
+}
+
 // ── Unary ops ────────────────────────────────────────────────────
 
 #[test]

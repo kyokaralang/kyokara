@@ -546,12 +546,13 @@ a canonical API surface: method calls for value-owned behavior, module-qualified
 for no-owner utilities and effects, and type-namespaced constructors.
 
 Canonical visibility matrix:
-* Prelude builtin value types (no import): `List.new()`, `Deque.new()`, `Seq.range()`, `Map.new()`, `Set.new()`, value methods.
+* Prelude builtin value types (no import): `List.new()`, `Deque.new()`, `Map.new()`, `Set.new()`, value methods.
+* Prelude traversal constructors (no import): `start..<end`, `seed.unfold(step)`.
 * Pure no-owner utilities (imported module): `math.*`
 * Effectful utilities (imported capability modules): `io.*`, `fs.*`
 * Internal intrinsic IDs (`list_new`, `map_insert`, etc.) are implementation detail only.
 
-Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `Deque<T>`, `Seq<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
+Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `Deque<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
 injected as synthetic types before type-checking. Synthetic modules (`io`, `math`, `fs`)
 require explicit `import io` / `import math` / `import fs` in all modes.
 Zero intrinsic free functions exist in user scope.
@@ -585,19 +586,21 @@ while `io`/`fs` are module namespaces for no-owner/effectful operations.
   * Constructor: `Deque.new()`
   * Methods (queue/storage): `q.push_front(v)`, `q.push_back(v)`, `q.pop_front()` → `Option<{ value: T, rest: Deque<T> }>`, `q.len()`, `q.is_empty()`
   * Methods (traversal): `q.map(f)`, `q.filter(f)`, `q.scan(init, f)`, `q.enumerate()`, `q.zip(other)`, `q.chunks(n)`, `q.windows(n)`, `q.fold(init, f)`, `q.count()`, `q.any(f)`, `q.all(f)`, `q.find(f)`, `q.to_list()`
-* `Seq<T>` — opaque builtin traversal type (lazy, re-iterable) ✓
-  * Constructor helpers kept in v0: `Seq.range(start, end)` returns half-open ascending range `[start, end)` (empty when `start >= end`); `Seq.unfold(seed, step)` builds a sequence from `step: fn(S) -> Option<{ value: T, state: S }>`
-  * Traversal pipeline type is internal-facing; canonical user style is collection-first traversal (`xs.map(...).filter(...).count()`) on `List`, `Deque`, and producer values (`String.split/lines/chars`, `Map.keys/values`, `Set.values`, `Seq.range/unfold` outputs)
+* Traversal constructors and behavior (public surface) ✓
+  * Half-open range source: `start..<end` (ascending, empty when `start >= end`)
+  * Stateful source: `seed.unfold(step)` where `step: fn(S) -> Option<{ value: T, state: S }>`
+  * Canonical user style is collection-first traversal (`xs.map(...).filter(...).count()`) on `List`, `Deque`, and producer values (`String.split/lines/chars`, `Map.keys/values`, `Set.values`, ranges, unfolds)
   * Supports transforms (`map/filter/scan/enumerate/zip/chunks/windows`) and terminals (`fold/count/any/all/find/to_list`) with the same semantics as collection traversal
   * Guidance: for predicate/search traversal, default to `s.any(f)`, `s.all(f)`, `s.find(f)`; reserve `s.fold(...)` for true accumulation/reduction
-  * Evaluation model: each terminal re-runs the pipeline from source (no single-use consumption state)
-* `Map<K, V>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<IndexMap<MapKey, Value>>`, insertion-order-preserving hash map, O(1) lookup). Keys must be hashable types (Int, String, Char, Bool, Unit); invalid key types are rejected at compile time for typed map operations (E0024). `m.keys()` and `m.values()` return deterministic insertion order. ✓
+  * Evaluation model: each terminal re-runs the traversal pipeline from source (no single-use consumption state)
+  * Implementation note: traversal is backed by an internal runtime/compiler engine type and is not nameable in user code
+* `Map<K, V>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<IndexMap<MapKey, Value>>`, insertion-order-preserving hash map, O(1) lookup). Keys must be hashable types (Int, String, Char, Bool, Unit); invalid key types are rejected at compile time for typed map operations (E0024). `m.keys()` and `m.values()` return deterministic insertion order traversal values. ✓
   * Constructor: `Map.new()`
-  * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()` → `Seq<K>`, `m.values()` → `Seq<V>`, `m.is_empty()`
-* `Set<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<IndexSet<MapKey>>`, insertion-order-preserving hash set). Elements must be hashable types (Int, String, Char, Bool, Unit); invalid element types are rejected at compile time for typed set operations (E0028). `s.values()` returns deterministic insertion order. ✓
+  * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()`, `m.values()`, `m.is_empty()`
+* `Set<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<IndexSet<MapKey>>`, insertion-order-preserving hash set). Elements must be hashable types (Int, String, Char, Bool, Unit); invalid element types are rejected at compile time for typed set operations (E0028). `s.values()` returns deterministic insertion-order traversal values. ✓
   * Constructor: `Set.new()`
-  * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()` → `Seq<T>`
-* String methods ✓ — `s.len()` (char count), `s.contains(t)`, `s.starts_with(t)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)` → `Seq<String>`, `s.substring(a, b)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()` → `Seq<String>`, `s.chars()` → `Seq<Char>`, `s.parse_int()` → `Result<Int, ParseError>`, `s.parse_float()` → `Result<Float, ParseError>`
+  * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()`
+* String methods ✓ — `s.len()` (char count), `s.contains(t)`, `s.starts_with(t)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)`, `s.substring(a, b)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()`, `s.chars()`, `s.parse_int()` → `Result<Int, ParseError>`, `s.parse_float()` → `Result<Float, ParseError>`
 * Char methods ✓ — `c.to_string()`
 * Int methods ✓ — `n.abs()`, `n.pow(exp)` (`exp >= 0`, overflow checked), `n.to_string()`, `n.to_float()`
 * Float methods ✓ — `f.abs()`, `f.to_int()`

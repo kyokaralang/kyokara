@@ -13,10 +13,10 @@ fn run_ok(source: &str) -> Value {
 fn eval_seq_zip_does_not_force_full_left_when_lengths_unknown() {
     let val = run_ok(
         r#"fn main() -> Int {
-            let left = Seq.range(0, 5)
+            let left = (0..<5)
                 .filter(fn(_n: Int) => true)
                 .map(fn(n: Int) => if (n == 4) { 1 / 0 } else { n })
-            let right = Seq.range(0, 1).filter(fn(_n: Int) => true)
+            let right = (0..<1).filter(fn(_n: Int) => true)
             let pairs = left.zip(right).to_list()
             pairs[0].left
         }"#,
@@ -28,8 +28,8 @@ fn eval_seq_zip_does_not_force_full_left_when_lengths_unknown() {
 fn eval_seq_zip_does_not_force_full_right_when_lengths_unknown() {
     let val = run_ok(
         r#"fn main() -> Int {
-            let left = Seq.range(0, 1).filter(fn(_n: Int) => true)
-            let right = Seq.range(0, 5)
+            let left = (0..<1).filter(fn(_n: Int) => true)
+            let right = (0..<5)
                 .filter(fn(_n: Int) => true)
                 .map(fn(n: Int) => if (n == 4) { 1 / 0 } else { n })
             let pairs = left.zip(right).to_list()

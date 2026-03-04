@@ -397,6 +397,7 @@ fn display_constant(c: &Constant, out: &mut String) -> fmt::Result {
 
 fn binary_op_name(op: BinaryOp) -> &'static str {
     match op {
+        BinaryOp::RangeUntil => "range_until",
         BinaryOp::Add => "add",
         BinaryOp::Sub => "sub",
         BinaryOp::Mul => "mul",

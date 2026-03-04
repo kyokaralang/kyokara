@@ -64,12 +64,22 @@ pub fn lowering_diagnostic_code(diag: &Diagnostic) -> &'static str {
 
 /// Render a surface-level [`TypeRef`] as a human-readable string.
 pub fn display_type_ref(tr: &TypeRef, interner: &Interner) -> String {
+    fn surface_type_segment(raw: &str) -> String {
+        match raw {
+            "$core_Seq" => "<traversal>".to_string(),
+            _ => raw
+                .strip_prefix("$core_")
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| raw.to_string()),
+        }
+    }
+
     match tr {
         TypeRef::Path { path, args } => {
             let base: String = path
                 .segments
                 .iter()
-                .map(|s| s.resolve(interner))
+                .map(|s| surface_type_segment(s.resolve(interner)))
                 .collect::<Vec<_>>()
                 .join(".");
             if args.is_empty() {

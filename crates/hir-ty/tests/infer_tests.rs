@@ -701,7 +701,7 @@ fn comparison_returns_bool() {
 #[test]
 fn infer_iteration_ergonomics_happy_paths() {
     let cases = ["fn main() -> Bool {
-            let xs = Seq.range(0, 5)
+            let xs = (0..<5)
             let e = xs.enumerate().to_list()
             let z = xs.zip(List.new().push(10).push(20)).to_list()
             let c = xs.chunks(2).to_list()
@@ -722,13 +722,13 @@ fn infer_iteration_ergonomics_happy_paths() {
 #[test]
 fn infer_seq_any_all_find_happy_paths() {
     let cases = [r#"fn main() -> Int {
-            let xs = Seq.range(0, 5)
+            let xs = (0..<5)
             let has_three = xs.any(fn(n: Int) => n == 3)
             let all_small = xs.all(fn(n: Int) => n < 5)
             let first_even = xs.find(fn(n: Int) => n % 2 == 0).map_or(-1, fn(n: Int) => n)
-            let empty_any = Seq.range(0, 0).any(fn(_n: Int) => true)
-            let empty_all = Seq.range(0, 0).all(fn(_n: Int) => false)
-            let empty_find = Seq.range(0, 0).find(fn(_n: Int) => true).unwrap_or(-1)
+            let empty_any = (0..<0).any(fn(_n: Int) => true)
+            let empty_all = (0..<0).all(fn(_n: Int) => false)
+            let empty_find = (0..<0).find(fn(_n: Int) => true).unwrap_or(-1)
 
             if (has_three && all_small && empty_all && empty_find == -1 && empty_any == false && first_even == 0) {
                 1
@@ -750,8 +750,8 @@ fn infer_seq_any_all_find_happy_paths() {
 #[test]
 fn infer_seq_scan_unfold_int_pow_happy_paths() {
     let cases = [r#"fn main() -> Int {
-            let scanned = Seq.range(1, 4).scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
-            let unfolded = Seq.unfold(0, fn(state: Int) =>
+            let scanned = (1..<4).scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
+            let unfolded = (0).unfold(fn(state: Int) =>
                 if (state < 3) {
                     Some({ value: state + 1, state: state + 1 })
                 } else {
@@ -777,7 +777,7 @@ fn infer_seq_unfold_accepts_named_record_alias_payload() {
     let src = r#"type PickStep = { value: Int, state: Int }
 
 fn main() -> Int {
-    let unfolded = Seq.unfold(0, fn(state: Int) =>
+    let unfolded = (0).unfold(fn(state: Int) =>
         if (state < 3) {
             Some(PickStep { value: state + 1, state: state + 1 })
         } else {
@@ -849,15 +849,15 @@ fn err_seq_any_all_find_wrong_arity_or_predicate_type() {
 
     let cases = [
         Case {
-            src: "fn main() -> Bool { Seq.range(0, 3).any() }",
+            src: "fn main() -> Bool { (0..<3).any() }",
             expected_fragment: "expected 1 argument(s)",
         },
         Case {
-            src: "fn main() -> Bool { Seq.range(0, 3).all(fn(n: Int) => n) }",
+            src: "fn main() -> Bool { (0..<3).all(fn(n: Int) => n) }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { Seq.range(0, 3).find(fn(n: Int) => n + 1).unwrap_or(0) }",
+            src: "fn main() -> Int { (0..<3).find(fn(n: Int) => n + 1).unwrap_or(0) }",
             expected_fragment: "type mismatch",
         },
     ];
@@ -895,15 +895,15 @@ fn err_seq_scan_unfold_int_pow_wrong_arity_or_types() {
 
     let cases = [
         Case {
-            src: "fn main() -> Int { Seq.range(0, 3).scan(0, fn(acc: Int) => acc).count() }",
+            src: "fn main() -> Int { (0..<3).scan(0, fn(acc: Int) => acc).count() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { Seq.unfold(0, fn(state: Int) => state + 1).count() }",
+            src: "fn main() -> Int { (0).unfold(fn(state: Int) => state + 1).count() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { Seq.unfold(0, fn(state: Int) => Some({ value: state + 1 })).count() }",
+            src: "fn main() -> Int { (0).unfold(fn(state: Int) => Some({ value: state + 1 })).count() }",
             expected_fragment: "type mismatch",
         },
         Case {
@@ -1053,15 +1053,11 @@ fn err_iteration_ergonomics_wrong_arity_or_type() {
 
     let cases = [
         Case {
-            src: "fn main() -> Int { Seq.range(0) }",
-            expected_fragment: "expected 2 argument(s)",
+            src: "fn main() -> Int { (true..<3).count() }",
+            expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { Seq.range(0, 3, 5).count() }",
-            expected_fragment: "expected 2 argument(s)",
-        },
-        Case {
-            src: "fn main() -> Int { Seq.range(true, 3).count() }",
+            src: "fn main() -> Int { (0..<false).count() }",
             expected_fragment: "type mismatch",
         },
         Case {
@@ -1205,7 +1201,7 @@ fn err_non_canonical_free_range_function_is_unresolved() {
 fn infer_seq_surface_happy_paths() {
     let cases = [
         r#"fn main() -> Int {
-            let xs = Seq.range(0, 5)
+            let xs = (0..<5)
             xs.map(fn(n: Int) => n + 1)
                 .filter(fn(n: Int) => n > 2)
                 .count()
@@ -1267,8 +1263,8 @@ fn infer_collection_first_traversal_surface_happy_paths_rfc_0002() {
             xs.map(fn(n: Int) => n * 2).to_list().len()
         }"#,
         r#"fn main() -> Int {
-            let a = List.new().push(1).push(2).zip(Seq.range(10, 13)).count()
-            let b = Seq.range(0, 3).zip(List.new().push(7).push(8)).count()
+            let a = List.new().push(1).push(2).zip((10..<13)).count()
+            let b = (0..<3).zip(List.new().push(7).push(8)).count()
             let c = Deque.new().push_back(1).push_back(2).zip(List.new().push(9)).count()
             a + b + c
         }"#,
@@ -1282,6 +1278,82 @@ fn infer_collection_first_traversal_surface_happy_paths_rfc_0002() {
             result.diagnostics
         );
     }
+}
+
+#[test]
+fn infer_opaque_traversal_surface_happy_paths_rfc_0003() {
+    let cases = [
+        r#"fn main() -> Int {
+            let a = (0..<5).count()
+            let b = (5..<5).count()
+            let c = (5..<2).count()
+            a + b + c
+        }"#,
+        r#"fn main() -> Int {
+            let xs = (0).unfold(fn(state: Int) =>
+                if (state < 3) {
+                    Some({ value: state + 1, state: state + 1 })
+                } else {
+                    None
+                }
+            ).to_list()
+            xs.len() + xs[0]
+        }"#,
+        r#"type Seed = { x: Int }
+
+        fn main() -> Int {
+            let xs = Seed { x: 0 }.unfold(fn(state: Seed) =>
+                if (state.x < 3) {
+                    Some({ value: state.x, state: Seed { x: state.x + 1 } })
+                } else {
+                    None
+                }
+            ).to_list()
+            xs.len() + xs[0]
+        }"#,
+    ];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected no diagnostics, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn err_seq_static_constructors_are_rejected_rfc_0003() {
+    let cases = [
+        "fn main() -> Int { Seq.range(0, 3).count() }",
+        "fn main() -> Int { Seq.unfold(0, fn(state: Int) => None).count() }",
+    ];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("no method") || d.message.contains("unresolved")),
+            "expected removed Seq constructor diagnostic, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn err_seq_type_annotation_is_rejected_rfc_0003() {
+    let (result, _) = check("fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }\nfn main() -> Int { 0 }");
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("unresolved type") || d.message.contains("type mismatch")),
+        "expected Seq type annotation rejection diagnostic, got: {:?}",
+        result.diagnostics
+    );
 }
 
 #[test]
@@ -1309,8 +1381,8 @@ fn main() -> Int {
         result
             .diagnostics
             .iter()
-            .any(|d| d.message.contains("type mismatch")),
-        "expected type mismatch for non-traversal Seq param, got: {:?}",
+            .any(|d| d.message.contains("unresolved type") || d.message.contains("no method")),
+        "expected Seq type-annotation rejection diagnostics, got: {:?}",
         result.diagnostics
     );
 }

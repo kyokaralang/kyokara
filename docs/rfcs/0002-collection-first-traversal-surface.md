@@ -1,6 +1,6 @@
 # RFC 0002: Collection-First Traversal Surface (Hide `Seq` from User API)
 
-- Status: Draft
+- Status: Accepted
 - Owner: Language Design
 - Tracking issue: TBD
 - Last updated: 2026-03-04
@@ -43,7 +43,7 @@ Out of scope:
 
 1. Interval-specific stdlib additions (`merge_ranges`, `union`, etc.).
 2. Runtime optimization/fusion redesign.
-3. New parser syntax for range literals.
+3. Constructor-surface syntax redesign (`..<` and universal `.unfold`) — moved to RFC 0003.
 
 ## Design Goals
 
@@ -105,10 +105,10 @@ Keep source constructors minimal and explicit.
 
 Required source constructors (user-surface):
 
-1. integer range source (existing behavior preserved)
-2. unfold source (existing behavior preserved)
+1. integer range source
+2. unfold source
 
-Naming can remain as currently implemented for first rollout, but canonical docs must frame them as traversal sources, not as exposure of an internal engine type.
+Constructor spellings are defined by RFC 0003 (`start..<end` and `seed.unfold(step)`), while this RFC defines the collection-first traversal method model.
 
 ### P4. Hard-break policy (v0)
 
@@ -223,7 +223,6 @@ Decision: reject permanent dual surface.
 3. No loss of traversal expressiveness compared with current `Seq` surface.
 4. RFC 0001 law text updated to reflect canonical model.
 
-## Open Questions
+## Follow-up
 
-1. Should source constructors remain under existing names or move to a dedicated neutral namespace in a follow-up RFC?
-2. Should legacy `seq()` be parse-invalid immediately in v0, or rejected with a dedicated non-canonical diagnostic first?
+1. Constructor-surface details are captured in RFC 0003.

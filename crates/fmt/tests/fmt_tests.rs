@@ -280,6 +280,22 @@ fn fmt_pipeline_expr() {
 }
 
 #[test]
+fn fmt_range_until_expr_uses_canonical_spacing() {
+    assert_fmt(
+        "fn main() -> Int { (0..<5).count() }",
+        "fn main() -> Int {\n  (0 ..< 5).count()\n}\n",
+    );
+}
+
+#[test]
+fn fmt_range_until_nested_pipeline_is_idempotent() {
+    assert_fmt(
+        "fn main() -> Int { (0..<5).map(fn(n: Int) => n + 1) |> count }",
+        "fn main() -> Int {\n  (0 ..< 5).map(fn(n: Int) => n + 1) |> count\n}\n",
+    );
+}
+
+#[test]
 fn fmt_field_expr() {
     assert_fmt("fn main() -> Int { x.y }", "fn main() -> Int {\n  x.y\n}\n");
 }
@@ -448,8 +464,8 @@ fn fmt_lambda_with_if_body_uses_stable_multiline_layout() {
 #[test]
 fn fmt_fold_lambda_in_call_uses_stable_multiline_layout() {
     assert_fmt(
-        "fn main() -> Int { Seq.range(0, 3).fold(0, fn(acc: Int, n: Int) => if (n > 1) { acc + n } else { acc }) }",
-        "fn main() -> Int {\n  Seq.range(0, 3).fold(0, fn(acc: Int, n: Int) =>\n      if (n > 1) {\n        acc + n\n      } else {\n        acc\n      })\n}\n",
+        "fn main() -> Int { (0..<3).fold(0, fn(acc: Int, n: Int) => if (n > 1) { acc + n } else { acc }) }",
+        "fn main() -> Int {\n  (0 ..< 3).fold(0, fn(acc: Int, n: Int) =>\n      if (n > 1) {\n        acc + n\n      } else {\n        acc\n      })\n}\n",
     );
 }
 

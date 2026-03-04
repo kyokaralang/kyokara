@@ -737,10 +737,30 @@ impl Interpreter {
                     // Method call: value.method(args)
                     let base_val = eval_propagate!(self, env, body, base_idx);
 
-                    if let Some(receiver_key) = self.receiver_key_for_value(&base_val)
-                        && let Some(&fn_idx) =
-                            self.module_scope.methods.get(&(receiver_key, field_name))
-                    {
+                    let base_has_field = matches!(
+                        &base_val,
+                        Value::Record { fields, .. }
+                            if fields.iter().any(|(name, _)| *name == field_name)
+                    );
+                    let method_fn_idx = if base_has_field {
+                        None
+                    } else {
+                        self.receiver_key_for_value(&base_val)
+                            .and_then(|receiver_key| {
+                                self.module_scope
+                                    .methods
+                                    .get(&(receiver_key, field_name))
+                                    .copied()
+                            })
+                            .or_else(|| {
+                                self.module_scope
+                                    .methods
+                                    .get(&(ReceiverKey::Any, field_name))
+                                    .copied()
+                            })
+                    };
+
+                    if let Some(fn_idx) = method_fn_idx {
                         let source_order = self.args_in_source_order(&args);
                         let mut arg_values = Vec::with_capacity(source_order.len());
                         for idx in &source_order {
@@ -1046,10 +1066,30 @@ impl Interpreter {
 
                     let base_val = eval_propagate_shared!(self, body, base_idx);
 
-                    if let Some(receiver_key) = self.receiver_key_for_value(&base_val)
-                        && let Some(&fn_idx) =
-                            self.module_scope.methods.get(&(receiver_key, field_name))
-                    {
+                    let base_has_field = matches!(
+                        &base_val,
+                        Value::Record { fields, .. }
+                            if fields.iter().any(|(name, _)| *name == field_name)
+                    );
+                    let method_fn_idx = if base_has_field {
+                        None
+                    } else {
+                        self.receiver_key_for_value(&base_val)
+                            .and_then(|receiver_key| {
+                                self.module_scope
+                                    .methods
+                                    .get(&(receiver_key, field_name))
+                                    .copied()
+                            })
+                            .or_else(|| {
+                                self.module_scope
+                                    .methods
+                                    .get(&(ReceiverKey::Any, field_name))
+                                    .copied()
+                            })
+                    };
+
+                    if let Some(fn_idx) = method_fn_idx {
                         let source_order = self.args_in_source_order(args);
                         let mut arg_values = Vec::with_capacity(source_order.len());
                         for idx in &source_order {
@@ -1286,6 +1326,13 @@ impl Interpreter {
     #[inline(always)]
     fn eval_binary(&self, op: BinaryOp, lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
         match (op, &lhs, &rhs) {
+            // Half-open ascending integer range source.
+            (BinaryOp::RangeUntil, Value::Int(start), Value::Int(end)) => {
+                Ok(Value::seq_source(SeqSource::Range {
+                    start: *start,
+                    end: *end,
+                }))
+            }
             // Int arithmetic (checked to prevent overflow panics).
             (BinaryOp::Add, Value::Int(a), Value::Int(b)) => a
                 .checked_add(*b)

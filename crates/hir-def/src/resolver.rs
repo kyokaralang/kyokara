@@ -37,6 +37,7 @@ pub enum CoreType {
 /// Method receiver identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReceiverKey {
+    Any,
     Primitive(PrimitiveType),
     Core(CoreType),
     User(TypeItemIdx),
@@ -119,7 +120,6 @@ pub fn core_type_from_public_name(name: Name, interner: &Interner) -> Option<Cor
         "Result" => Some(CoreType::Result),
         "List" => Some(CoreType::List),
         "Deque" => Some(CoreType::Deque),
-        "Seq" => Some(CoreType::Seq),
         "Map" => Some(CoreType::Map),
         "Set" => Some(CoreType::Set),
         "ParseError" => Some(CoreType::ParseError),

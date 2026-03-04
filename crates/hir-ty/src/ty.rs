@@ -144,6 +144,16 @@ fn display_ty_inner(
     interner: &kyokara_intern::Interner,
     tree: Option<&kyokara_hir_def::item_tree::ItemTree>,
 ) -> std::string::String {
+    fn surface_type_name(raw: &str) -> std::string::String {
+        match raw {
+            "$core_Seq" => "<traversal>".into(),
+            _ => raw
+                .strip_prefix("$core_")
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| raw.to_owned()),
+        }
+    }
+
     match ty {
         Ty::Var(v) => format!("?{}", v.0),
         Ty::Int => "Int".into(),
@@ -158,6 +168,7 @@ fn display_ty_inner(
             let name = tree
                 .map(|t| t.types[*def].name.resolve(interner).to_owned())
                 .unwrap_or_else(|| "<adt>".to_owned());
+            let name = surface_type_name(&name);
             if args.is_empty() {
                 name
             } else {
