@@ -206,7 +206,7 @@ crates/
 | **v0.3** | KyokaraIR data structures ✓, HIR→KIR lowering ✓, WASM codegen MVP (scalars, control flow, calls, ADTs, records) ✓, property-based testing (`kyokara test --explore`) ✓, SMT verification (restricted fragment), capability sandbox, deterministic replay | In progress |
 
 AI-special-feature status tracking (with completeness scores + issue links) lives in [docs/design-v0.md#16-ai-first-feature-tracker](docs/design-v0.md#16-ai-first-feature-tracker).
-API surface design rules live in [docs/rfcs/0001-api-surface-law.md](docs/rfcs/0001-api-surface-law.md), with traversal-surface specifics in [docs/rfcs/0002-collection-first-traversal-surface.md](docs/rfcs/0002-collection-first-traversal-surface.md) and [docs/rfcs/0003-opaque-traversal-constructor-surface.md](docs/rfcs/0003-opaque-traversal-constructor-surface.md).
+API surface design rules live in [docs/rfcs/0001-api-surface-law.md](docs/rfcs/0001-api-surface-law.md), with traversal-surface specifics in [docs/rfcs/0002-collection-first-traversal-surface.md](docs/rfcs/0002-collection-first-traversal-surface.md), constructor-surface specifics in [docs/rfcs/0003-opaque-traversal-constructor-surface.md](docs/rfcs/0003-opaque-traversal-constructor-surface.md), and module/capability placement model in [docs/rfcs/0004-module-taxonomy-and-capability-boundaries.md](docs/rfcs/0004-module-taxonomy-and-capability-boundaries.md).
 Core dispatch shadow-safety and temporary constructor reservation are documented in [docs/design-v0.md#10-standard-library-v0-minimum](docs/design-v0.md#10-standard-library-v0-minimum) (qualified-constructor follow-up: [#293](https://github.com/kyokaralang/kyokara/issues/293)).
 Canonical documentation map lives in [docs/INDEX.md](docs/INDEX.md).
 
