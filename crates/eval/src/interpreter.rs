@@ -117,6 +117,7 @@ enum SeqIterState {
 enum SeqSourceIter {
     Range { current: i64, end: i64 },
     FromList { items: Rc<Vec<Value>>, idx: usize },
+    FromDeque { items: Rc<VecDeque<Value>>, idx: usize },
     StringSplit { parts: Vec<String>, idx: usize },
     StringLines { lines: Vec<String>, idx: usize },
     StringChars { chars: Vec<char>, idx: usize },
@@ -1806,17 +1807,19 @@ impl Interpreter {
         })
     }
 
-    fn require_seq_plan(
+    fn require_traversal_plan(
         &self,
         value: &Value,
         intrinsic_name: &str,
     ) -> Result<Rc<SeqPlan>, RuntimeError> {
-        let Value::Seq(plan) = value else {
-            return Err(RuntimeError::TypeError(format!(
-                "{intrinsic_name} expects a Seq"
-            )));
-        };
-        Ok(plan.clone())
+        match value {
+            Value::Seq(plan) => Ok(plan.clone()),
+            Value::List(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromList(xs.clone())))),
+            Value::Deque(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromDeque(xs.clone())))),
+            _ => Err(RuntimeError::TypeError(format!(
+                "{intrinsic_name} expects a traversal source"
+            ))),
+        }
     }
 
     fn seq_iter_from_plan(&mut self, plan: &SeqPlan) -> Result<SeqIterState, RuntimeError> {
@@ -1828,6 +1831,10 @@ impl Interpreter {
                         end: *end,
                     },
                     SeqSource::FromList(xs) => SeqSourceIter::FromList {
+                        items: xs.clone(),
+                        idx: 0,
+                    },
+                    SeqSource::FromDeque(xs) => SeqSourceIter::FromDeque {
                         items: xs.clone(),
                         idx: 0,
                     },
@@ -1923,6 +1930,13 @@ impl Interpreter {
                 }
             }
             SeqSourceIter::FromList { items, idx } => {
+                let out = items.get(*idx).cloned();
+                if out.is_some() {
+                    *idx += 1;
+                }
+                out
+            }
+            SeqSourceIter::FromDeque { items, idx } => {
                 let out = items.get(*idx).cloned();
                 if out.is_some() {
                     *idx += 1;
@@ -2130,6 +2144,15 @@ impl Interpreter {
                     Ok(())
                 }
                 SeqSource::FromList(xs) => {
+                    for item in xs.iter().cloned() {
+                        match emit(self, item)? {
+                            Continue => {}
+                            Break => return Ok(()),
+                        }
+                    }
+                    Ok(())
+                }
+                SeqSource::FromDeque(xs) => {
                     for item in xs.iter().cloned() {
                         match emit(self, item)? {
                             Continue => {}
@@ -2448,21 +2471,21 @@ impl Interpreter {
                 }
             }
             IntrinsicFn::SeqMap => {
-                let plan = self.require_seq_plan(&args[0], "seq_map")?;
+                let plan = self.require_traversal_plan(&args[0], "seq_map")?;
                 Ok(Value::seq_plan(SeqPlan::Map {
                     input: plan,
                     f: args[1].clone(),
                 }))
             }
             IntrinsicFn::SeqFilter => {
-                let plan = self.require_seq_plan(&args[0], "seq_filter")?;
+                let plan = self.require_traversal_plan(&args[0], "seq_filter")?;
                 Ok(Value::seq_plan(SeqPlan::Filter {
                     input: plan,
                     f: args[1].clone(),
                 }))
             }
             IntrinsicFn::SeqFold => {
-                let plan = self.require_seq_plan(&args[0], "seq_fold")?;
+                let plan = self.require_traversal_plan(&args[0], "seq_fold")?;
                 let mut acc = args[1].clone();
                 let folder = args[2].clone();
                 self.seq_for_each(&plan, &mut |interp, item| {
@@ -2473,7 +2496,7 @@ impl Interpreter {
                 Ok(acc)
             }
             IntrinsicFn::SeqScan => {
-                let input = self.require_seq_plan(&args[0], "seq_scan")?;
+                let input = self.require_traversal_plan(&args[0], "seq_scan")?;
                 Ok(Value::seq_plan(SeqPlan::Scan {
                     input,
                     init: args[1].clone(),
@@ -2485,16 +2508,16 @@ impl Interpreter {
                 step: args[1].clone(),
             })),
             IntrinsicFn::SeqEnumerate => {
-                let plan = self.require_seq_plan(&args[0], "seq_enumerate")?;
+                let plan = self.require_traversal_plan(&args[0], "seq_enumerate")?;
                 Ok(Value::seq_plan(SeqPlan::Enumerate { input: plan }))
             }
             IntrinsicFn::SeqZip => {
-                let left = self.require_seq_plan(&args[0], "seq_zip")?;
-                let right = self.require_seq_plan(&args[1], "seq_zip")?;
+                let left = self.require_traversal_plan(&args[0], "seq_zip")?;
+                let right = self.require_traversal_plan(&args[1], "seq_zip")?;
                 Ok(Value::seq_plan(SeqPlan::Zip { left, right }))
             }
             IntrinsicFn::SeqChunks => {
-                let input = self.require_seq_plan(&args[0], "seq_chunks")?;
+                let input = self.require_traversal_plan(&args[0], "seq_chunks")?;
                 let Value::Int(n) = &args[1] else {
                     return Err(RuntimeError::TypeError(
                         "seq_chunks expects an Int chunk size".into(),
@@ -2508,7 +2531,7 @@ impl Interpreter {
                 Ok(Value::seq_plan(SeqPlan::Chunks { input, n: *n }))
             }
             IntrinsicFn::SeqWindows => {
-                let input = self.require_seq_plan(&args[0], "seq_windows")?;
+                let input = self.require_traversal_plan(&args[0], "seq_windows")?;
                 let Value::Int(n) = &args[1] else {
                     return Err(RuntimeError::TypeError(
                         "seq_windows expects an Int window size".into(),
@@ -2522,7 +2545,7 @@ impl Interpreter {
                 Ok(Value::seq_plan(SeqPlan::Windows { input, n: *n }))
             }
             IntrinsicFn::SeqCount => {
-                let plan = self.require_seq_plan(&args[0], "seq_count")?;
+                let plan = self.require_traversal_plan(&args[0], "seq_count")?;
                 let mut count: i64 = 0;
                 self.seq_for_each(&plan, &mut |_interp, _| {
                     count = count.checked_add(1).ok_or(RuntimeError::IntegerOverflow)?;
@@ -2531,7 +2554,7 @@ impl Interpreter {
                 Ok(Value::Int(count))
             }
             IntrinsicFn::SeqAny => {
-                let plan = self.require_seq_plan(&args[0], "seq_any")?;
+                let plan = self.require_traversal_plan(&args[0], "seq_any")?;
                 let predicate = args[1].clone();
                 let mut result = false;
                 self.seq_for_each_control(&plan, &mut |interp, item| {
@@ -2550,7 +2573,7 @@ impl Interpreter {
                 Ok(Value::Bool(result))
             }
             IntrinsicFn::SeqAll => {
-                let plan = self.require_seq_plan(&args[0], "seq_all")?;
+                let plan = self.require_traversal_plan(&args[0], "seq_all")?;
                 let predicate = args[1].clone();
                 let mut result = true;
                 self.seq_for_each_control(&plan, &mut |interp, item| {
@@ -2569,7 +2592,7 @@ impl Interpreter {
                 Ok(Value::Bool(result))
             }
             IntrinsicFn::SeqFind => {
-                let plan = self.require_seq_plan(&args[0], "seq_find")?;
+                let plan = self.require_traversal_plan(&args[0], "seq_find")?;
                 let predicate = args[1].clone();
                 let mut found: Option<Value> = None;
                 self.seq_for_each_control(&plan, &mut |interp, item| {
@@ -2594,7 +2617,7 @@ impl Interpreter {
                 }
             }
             IntrinsicFn::SeqToList => {
-                let plan = self.require_seq_plan(&args[0], "seq_to_list")?;
+                let plan = self.require_traversal_plan(&args[0], "seq_to_list")?;
                 Ok(Value::list(self.eval_seq_to_vec(&plan)?))
             }
             IntrinsicFn::DequePopFront => {

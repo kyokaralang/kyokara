@@ -703,7 +703,7 @@ fn infer_iteration_ergonomics_happy_paths() {
     let cases = ["fn main() -> Bool {
             let xs = Seq.range(0, 5)
             let e = xs.enumerate().to_list()
-            let z = xs.zip(List.new().push(10).push(20).seq()).to_list()
+            let z = xs.zip(List.new().push(10).push(20)).to_list()
             let c = xs.chunks(2).to_list()
             let w = xs.windows(3).to_list()
             e.len() > 0 && z.len() == 2 && c.len() == 3 && w.len() == 3
@@ -1065,15 +1065,15 @@ fn err_iteration_ergonomics_wrong_arity_or_type() {
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { List.new().push(1).seq().zip(1).count() }",
+            src: "fn main() -> Int { List.new().push(1).zip(1).count() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { List.new().push(1).seq().chunks(true).count() }",
+            src: "fn main() -> Int { List.new().push(1).chunks(true).count() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { List.new().push(1).seq().windows(false).count() }",
+            src: "fn main() -> Int { List.new().push(1).windows(false).count() }",
             expected_fragment: "type mismatch",
         },
     ];
@@ -1212,7 +1212,7 @@ fn infer_seq_surface_happy_paths() {
         }"#,
         r#"fn main() -> Int {
             let xs = List.new().push(1).push(2).push(3)
-            xs.seq().map(fn(n: Int) => n * 2).to_list().len()
+            xs.map(fn(n: Int) => n * 2).to_list().len()
         }"#,
         r#"fn main() -> Int {
             let keys = Map.new().insert("a", 1).insert("b", 2).keys()
@@ -1237,13 +1237,7 @@ fn infer_seq_surface_happy_paths() {
 fn err_list_traversal_surface_is_removed() {
     let cases = [
         "fn main() -> Int { List.range(0, 5).len() }",
-        "fn main() -> Int { List.new().push(1).map(fn(n: Int) => n + 1).len() }",
-        "fn main() -> Int { List.new().push(1).filter(fn(n: Int) => n > 0).len() }",
-        "fn main() -> Int { List.new().push(1).fold(0, fn(acc: Int, n: Int) => acc + n) }",
-        "fn main() -> Int { List.new().push(1).enumerate().len() }",
-        "fn main() -> Int { List.new().push(1).zip(List.new()).len() }",
-        "fn main() -> Int { List.new().push(1).chunks(1).len() }",
-        "fn main() -> Int { List.new().push(1).windows(1).len() }",
+        "fn main() -> Int { List.new().push(1).seq().count() }",
     ];
 
     for src in cases {
@@ -1257,6 +1251,68 @@ fn err_list_traversal_surface_is_removed() {
             result.diagnostics
         );
     }
+}
+
+#[test]
+fn infer_collection_first_traversal_surface_happy_paths_rfc_0002() {
+    let cases = [
+        r#"fn main() -> Int {
+            let xs = List.new().push(1).push(2).push(3)
+            xs.map(fn(n: Int) => n + 1)
+                .filter(fn(n: Int) => n > 2)
+                .count()
+        }"#,
+        r#"fn main() -> Int {
+            let xs = Deque.new().push_back(1).push_back(2).push_back(3)
+            xs.map(fn(n: Int) => n * 2).to_list().len()
+        }"#,
+        r#"fn main() -> Int {
+            let a = List.new().push(1).push(2).zip(Seq.range(10, 13)).count()
+            let b = Seq.range(0, 3).zip(List.new().push(7).push(8)).count()
+            let c = Deque.new().push_back(1).push_back(2).zip(List.new().push(9)).count()
+            a + b + c
+        }"#,
+    ];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected no diagnostics, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn err_list_seq_bridge_is_removed_rfc_0002() {
+    let (result, _) = check("fn main() -> Int { List.new().push(1).seq().count() }");
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("no method") || d.message.contains("unresolved")),
+        "expected removed .seq() diagnostic, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn err_non_traversal_seq_param_still_rejects_list_rfc_0002() {
+    let src = r#"fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }
+fn main() -> Int {
+    let xs = List.new().push(1).push(2)
+    takes_seq(xs)
+}"#;
+    let (result, _) = check(src);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("type mismatch")),
+        "expected type mismatch for non-traversal Seq param, got: {:?}",
+        result.diagnostics
+    );
 }
 
 // ── Unresolved-name diagnostics ─────────────────────────────────────

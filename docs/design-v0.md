@@ -574,7 +574,8 @@ while `io`/`fs` are module namespaces for no-owner/effectful operations.
 * `ParseError` — builtin ADT (`InvalidInt(String) | InvalidFloat(String)`), used as error type for `parse_int`/`parse_float` ✓
 * `List<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<Vec<Value>>`) ✓
   * Constructor: `List.new()`
-  * Methods (storage/random-access): `xs.push(v)`, `xs.len()`, `xs.get(i)` → `Option<T>`, `xs.head()` → `Option<T>`, `xs.tail()`, `xs.is_empty()`, `xs.reverse()`, `xs.concat(ys)`, `xs.set(i, v)`, `xs.update(i, f)`, `xs.sort()`, `xs.sort_by(f)`, `xs.binary_search(x)`, `xs.seq()` → `Seq<T>`
+  * Methods (storage/random-access): `xs.push(v)`, `xs.len()`, `xs.get(i)` → `Option<T>`, `xs.head()` → `Option<T>`, `xs.tail()`, `xs.is_empty()`, `xs.reverse()`, `xs.concat(ys)`, `xs.set(i, v)`, `xs.update(i, f)`, `xs.sort()`, `xs.sort_by(f)`, `xs.binary_search(x)`
+  * Methods (traversal): `xs.map(f)`, `xs.filter(f)`, `xs.scan(init, f)`, `xs.enumerate()`, `xs.zip(other)`, `xs.chunks(n)`, `xs.windows(n)`, `xs.fold(init, f)`, `xs.count()`, `xs.any(f)`, `xs.all(f)`, `xs.find(f)`, `xs.to_list()`
   * Index update semantics: `set/update` require `0 <= i < len`; out-of-bounds is a direct runtime error.
   * Search helper: `xs.binary_search(x)` → `Int` with Rust/Java-style insertion contract:
     found index returns `>= 0`; missing element returns `-(insertion_point + 1)`.
@@ -582,11 +583,12 @@ while `io`/`fs` are module namespaces for no-owner/effectful operations.
     Only naturally orderable element types are allowed (same as `xs.sort()`).
 * `Deque<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<VecDeque<Value>>`) ✓
   * Constructor: `Deque.new()`
-  * Methods: `q.push_front(v)`, `q.push_back(v)`, `q.pop_front()` → `Option<{ value: T, rest: Deque<T> }>`, `q.len()`, `q.is_empty()`
+  * Methods (queue/storage): `q.push_front(v)`, `q.push_back(v)`, `q.pop_front()` → `Option<{ value: T, rest: Deque<T> }>`, `q.len()`, `q.is_empty()`
+  * Methods (traversal): `q.map(f)`, `q.filter(f)`, `q.scan(init, f)`, `q.enumerate()`, `q.zip(other)`, `q.chunks(n)`, `q.windows(n)`, `q.fold(init, f)`, `q.count()`, `q.any(f)`, `q.all(f)`, `q.find(f)`, `q.to_list()`
 * `Seq<T>` — opaque builtin traversal type (lazy, re-iterable) ✓
-  * Static helpers: `Seq.range(start, end)` returns half-open ascending range `[start, end)` (empty when `start >= end`); `Seq.unfold(seed, step)` builds a sequence from `step: fn(S) -> Option<{ value: T, state: S }>`
-  * Transforms: `s.map(f)`, `s.filter(f)`, `s.scan(init, f)` (includes `init` as first emitted element), `s.enumerate()` → `Seq<{ index: Int, value: T }>`, `s.zip(other)` → `Seq<{ left: T, right: U }>`, `s.chunks(n)` → `Seq<List<T>>`, `s.windows(n)` → `Seq<List<T>>` (`chunks/windows` require `n > 0`)
-  * Terminals: `s.fold(init, f)`, `s.count()`, `s.any(f)`, `s.all(f)`, `s.find(f)` → `Option<T>`, `s.to_list()`
+  * Constructor helpers kept in v0: `Seq.range(start, end)` returns half-open ascending range `[start, end)` (empty when `start >= end`); `Seq.unfold(seed, step)` builds a sequence from `step: fn(S) -> Option<{ value: T, state: S }>`
+  * Traversal pipeline type is internal-facing; canonical user style is collection-first traversal (`xs.map(...).filter(...).count()`) on `List`, `Deque`, and producer values (`String.split/lines/chars`, `Map.keys/values`, `Set.values`, `Seq.range/unfold` outputs)
+  * Supports transforms (`map/filter/scan/enumerate/zip/chunks/windows`) and terminals (`fold/count/any/all/find/to_list`) with the same semantics as collection traversal
   * Guidance: for predicate/search traversal, default to `s.any(f)`, `s.all(f)`, `s.find(f)`; reserve `s.fold(...)` for true accumulation/reduction
   * Evaluation model: each terminal re-runs the pipeline from source (no single-use consumption state)
 * `Map<K, V>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<IndexMap<MapKey, Value>>`, insertion-order-preserving hash map, O(1) lookup). Keys must be hashable types (Int, String, Char, Bool, Unit); invalid key types are rejected at compile time for typed map operations (E0024). `m.keys()` and `m.values()` return deterministic insertion order. ✓

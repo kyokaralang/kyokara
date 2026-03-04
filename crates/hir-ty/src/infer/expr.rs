@@ -1324,6 +1324,25 @@ impl<'a> InferenceCtx<'a> {
         ret
     }
 
+    fn is_traversal_intrinsic_name(name: &str) -> bool {
+        matches!(
+            name,
+            "seq_map"
+                | "seq_filter"
+                | "seq_fold"
+                | "seq_scan"
+                | "seq_enumerate"
+                | "seq_zip"
+                | "seq_chunks"
+                | "seq_windows"
+                | "seq_count"
+                | "seq_any"
+                | "seq_all"
+                | "seq_find"
+                | "seq_to_list"
+        )
+    }
+
     /// Try to resolve `base.field(args)` as a method call.
     ///
     /// Returns `Some(return_type)` if a method was found, `None` if the caller
@@ -1403,13 +1422,32 @@ impl<'a> InferenceCtx<'a> {
             &self.type_params,
         );
         let (params, ret) = instantiate_fn_sig(fn_idx, &env, &mut self.table);
+        let method_name = self.item_tree.functions[fn_idx].name;
+        let method_intrinsic_str = method_name.resolve(self.interner);
+        let traversal_intrinsic = Self::is_traversal_intrinsic_name(method_intrinsic_str);
 
         // The method's first parameter is the receiver (`self`).
         // Unify receiver type with first param type.
         if params.is_empty() {
             return None; // degenerate case: method with no params
         }
-        self.table.unify(&params[0], &base_ty);
+        let receiver_unified = if traversal_intrinsic {
+            self.with_traversal_seq_compat_scope(|ctx| {
+                !matches!(ctx.unify_or_err(&params[0], &base_ty), Ty::Error)
+            })
+        } else {
+            !matches!(self.unify_or_err(&params[0], &base_ty), Ty::Error)
+        };
+        if !receiver_unified {
+            for arg in args {
+                match arg {
+                    CallArg::Positional(e) | CallArg::Named { value: e, .. } => {
+                        self.infer_expr(*e, &Expectation::None);
+                    }
+                }
+            }
+            return Some(Ty::Error);
+        }
 
         // Record the callee expression type as the method's function type.
         let fn_ty = Ty::Fn {
@@ -1442,12 +1480,18 @@ impl<'a> InferenceCtx<'a> {
             .skip(1)
             .map(|p| p.name)
             .collect();
-        if self.infer_call_args_with_binding(args, method_param_tys, Some(&method_param_names)) {
+        let has_arg_errors = if traversal_intrinsic {
+            self.with_traversal_seq_compat_scope(|ctx| {
+                ctx.infer_call_args_with_binding(args, method_param_tys, Some(&method_param_names))
+            })
+        } else {
+            self.infer_call_args_with_binding(args, method_param_tys, Some(&method_param_names))
+        };
+        if has_arg_errors {
             return Some(Ty::Error);
         }
 
         // Record effect checking for the resolved method.
-        let method_name = self.item_tree.functions[fn_idx].name;
         let call_target = Some(method_name);
         self.record_call_edge_if_top_level(call_target);
         self.check_call_effects_if_function(call_target);

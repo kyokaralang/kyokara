@@ -12,7 +12,7 @@ use kyokara_hir_def::expr::ExprIdx;
 use kyokara_hir_def::item_tree::{FnItem, FnItemIdx, ItemTree, TypeDefKind, TypeItemIdx};
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
-use kyokara_hir_def::resolver::ModuleScope;
+use kyokara_hir_def::resolver::{CoreType, ModuleScope};
 use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_intern::Interner;
 use kyokara_span::Span;
@@ -98,9 +98,25 @@ pub(crate) struct InferenceCtx<'a> {
     pub param_names: Vec<Name>,
     /// Local variable types: PatIdx → Ty (for looking up bound names).
     pub local_types: ArenaMap<la_arena::Idx<Pat>, Ty>,
+    /// Depth counter for scoped Seq<-{List,Deque} compatibility in traversal inference.
+    pub traversal_seq_compat_depth: usize,
 }
 
 impl<'a> InferenceCtx<'a> {
+    pub(crate) fn with_traversal_seq_compat_scope<R>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.traversal_seq_compat_depth += 1;
+        let out = f(self);
+        self.traversal_seq_compat_depth -= 1;
+        out
+    }
+
+    fn traversal_seq_compat_enabled(&self) -> bool {
+        self.traversal_seq_compat_depth > 0
+    }
+
     /// Record a diagnostic at the current expression.
     pub(crate) fn push_diag(&mut self, data: TyDiagnosticData) {
         if let Some(expr_idx) = self.current_expr {
@@ -124,6 +140,10 @@ impl<'a> InferenceCtx<'a> {
 
         if self.table.unify(&expected_norm, &actual_norm) {
             self.table.resolve_deep(&expected_norm)
+        } else if self.traversal_seq_compat_enabled()
+            && self.unify_seq_traversal_compat(&expected_norm, &actual_norm)
+        {
+            self.table.resolve_deep(&expected_norm)
         } else {
             let expected = self.table.resolve_deep(&expected_norm);
             let actual = self.table.resolve_deep(&actual_norm);
@@ -135,6 +155,38 @@ impl<'a> InferenceCtx<'a> {
             }
             Ty::Error
         }
+    }
+
+    fn unify_seq_traversal_compat(&mut self, expected: &Ty, actual: &Ty) -> bool {
+        let expected = self.table.resolve(expected);
+        let actual = self.table.resolve(actual);
+        let (
+            Ty::Adt {
+                def: expected_def,
+                args: expected_args,
+            },
+            Ty::Adt {
+                def: actual_def,
+                args: actual_args,
+            },
+        ) = (&expected, &actual)
+        else {
+            return false;
+        };
+
+        let expected_core = self.module_scope.core_types.kind_for_idx(*expected_def);
+        let actual_core = self.module_scope.core_types.kind_for_idx(*actual_def);
+
+        if expected_core != Some(CoreType::Seq)
+            || !matches!(actual_core, Some(CoreType::List | CoreType::Deque))
+        {
+            return false;
+        }
+        if expected_args.len() != 1 || actual_args.len() != 1 {
+            return false;
+        }
+
+        self.table.unify(&expected_args[0], &actual_args[0])
     }
 
     /// Expand record aliases into structural records for unification-only paths.
@@ -330,6 +382,7 @@ pub fn infer_body(
         param_types: param_tys.clone(),
         param_names: fn_item.params.iter().map(|p| p.name).collect(),
         local_types: ArenaMap::default(),
+        traversal_seq_compat_depth: 0,
     };
 
     // Also try to bind param types to any matching pat_scopes entries.

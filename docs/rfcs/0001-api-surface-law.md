@@ -201,16 +201,19 @@ Until qualified constructors are available, unqualified user ADT variants with n
 This is a temporary safety gate and must be removed once qualified constructor usage
 (`Type.Variant`) is implemented ([#293](https://github.com/kyokaralang/kyokara/issues/293)).
 
-### L18. Storage/traversal split is explicit (`MUST`)
+### L18. Traversal model is collection-first and canonical (`MUST`)
 
-Traversal APIs live on `Seq<T>`. Storage/random-access APIs live on `List<T>`.
+Traversal operations are called directly on traversable source values.
+Internal traversal engine types are not required in canonical user code.
+Source constructors remain explicit and minimal.
+Docs/examples/diagnostics must use collection-first canonical forms.
 
 Canonical consequences:
 
-- integer ranges are `Seq.range(start, end)` (not `List.range`)
-- `List` exposes storage methods (`push/get/len/sort/...`) plus `xs.seq()` bridge
-- traversal transforms/terminals (`map/filter/enumerate/zip/chunks/windows/fold/count/to_list`) are on `Seq`
-- producer traversal APIs return `Seq` (`String.split/lines/chars`, `Map.keys/values`, `Set.values`)
+- integer ranges remain `Seq.range(start, end)` (constructor surface)
+- `List`/`Deque` expose storage methods and traversal methods directly
+- traversal transforms/terminals (`map/filter/enumerate/zip/chunks/windows/fold/count/to_list`) are callable on collection and producer values
+- producer traversal APIs stay traversal-capable (`String.split/lines/chars`, `Map.keys/values`, `Set.values`)
 
 ## Visibility policy (canonical decision)
 

@@ -4031,7 +4031,7 @@ fn check_iteration_ergonomics_canonical_surface_has_no_diagnostics() {
         r#"fn main() -> Bool {
             let xs = Seq.range(0, 5)
             let e = xs.enumerate().to_list()
-            let z = xs.zip(List.new().push(10).push(20).seq()).to_list()
+            let z = xs.zip(List.new().push(10).push(20)).to_list()
             let c = xs.chunks(2).to_list()
             let w = xs.windows(3).to_list()
             e[0].index == 0 && e[0].value == 0 && z.len() == 2 && c.len() == 3 && w.len() == 3
@@ -4052,7 +4052,7 @@ fn check_iteration_ergonomics_chains_from_map_set_string_have_no_diagnostics() {
             let sc = s.values().chunks(2).to_list()
             let set_ok = sc.len() == 2 && sc[1].len() == 1
 
-            let p = "abc".chars().zip(List.new().push(1).push(2).seq()).to_list()
+            let p = "abc".chars().zip(List.new().push(1).push(2)).to_list()
             let str_ok = p.len() == 2 && p[0].left == 'a' && p[1].right == 2
 
             map_ok && set_ok && str_ok
@@ -4287,7 +4287,7 @@ fn check_seq_surface_canonical_has_no_diagnostics() {
                 .filter(fn(n: Int) => n > 2)
             let a = xs.count()
             let b = xs.to_list().len()
-            let c = List.new().push(1).push(2).seq().count()
+            let c = List.new().push(1).push(2).count()
             let d = Map.new().insert("a", 1).insert("b", 2).keys().count()
             let e = Set.new().insert("x").insert("y").values().count()
             let f = "a,b,c".split(",").count()
@@ -4304,7 +4304,7 @@ fn check_removed_list_traversal_surface_reports_diagnostics() {
     let output = check(
         r#"fn main() -> Int {
             let a = List.range(0, 5).len()
-            let b = List.new().push(1).map(fn(n: Int) => n + 1).len()
+            let b = List.new().push(1).seq().len()
             a + b
         }"#,
         "test.ky",
@@ -4316,6 +4316,64 @@ fn check_removed_list_traversal_surface_reports_diagnostics() {
             .iter()
             .any(|d| d.message.contains("no method") || d.message.contains("unresolved name")),
         "expected removed-surface diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_collection_first_traversal_surface_has_no_diagnostics_rfc_0002() {
+    assert_check_no_diagnostics(
+        r#"fn main() -> Int {
+            let list_count = List.new().push(1).push(2).push(3)
+                .map(fn(n: Int) => n + 1)
+                .filter(fn(n: Int) => n > 2)
+                .count()
+            let deque_count = Deque.new().push_back(1).push_back(2).push_back(3)
+                .map(fn(n: Int) => n * 2)
+                .count()
+            let z1 = List.new().push(1).push(2).zip(Seq.range(10, 13)).count()
+            let z2 = Seq.range(0, 3).zip(List.new().push(7).push(8)).count()
+            let z3 = Deque.new().push_back(1).push_back(2).zip(List.new().push(9)).count()
+            list_count + deque_count + z1 + z2 + z3
+        }"#,
+        "collection-first traversal canonical surface",
+    );
+}
+
+#[test]
+fn check_list_seq_bridge_is_rejected_rfc_0002() {
+    let output = check(
+        r#"fn main() -> Int {
+            List.new().push(1).seq().count()
+        }"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("no method") || d.message.contains("unresolved name")),
+        "expected removed .seq() diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_non_traversal_seq_param_still_rejects_list_rfc_0002() {
+    let output = check(
+        r#"fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }
+fn main() -> Int {
+    let xs = List.new().push(1).push(2)
+    takes_seq(xs)
+}"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0001" && d.message.contains("type mismatch")),
+        "expected type mismatch for non-traversal Seq param, got: {:?}",
         output.diagnostics
     );
 }

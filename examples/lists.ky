@@ -1,4 +1,4 @@
-// List storage + Seq traversal bridge.
+// List storage + direct traversal methods.
 
 fn double(x: Int) -> Int { x * 2 }
 
@@ -6,11 +6,8 @@ fn main() -> Int {
   // Build a list [1, 2, 3, 4, 5]
   let xs = List.new().push(1).push(2).push(3).push(4).push(5)
 
-  // Traverse via Seq bridge.
-  let seq = xs.seq()
-
   // Map: [2, 4, 6, 8, 10]
-  let doubled = seq.map(double)
+  let doubled = xs.map(double)
 
   // Fold: 6 + 8 + 10 = 24
   let total = doubled

@@ -113,6 +113,7 @@ pub enum FnValue {
 pub enum SeqSource {
     Range { start: i64, end: i64 },
     FromList(Rc<Vec<Value>>),
+    FromDeque(Rc<VecDeque<Value>>),
     StringSplit { s: String, delim: String },
     StringLines { s: String },
     StringChars { s: String },

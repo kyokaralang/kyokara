@@ -33,7 +33,6 @@ pub enum IntrinsicFn {
     ListIsEmpty,
     ListReverse,
     ListConcat,
-    ListSeq,
     ListSet,
     ListUpdate,
     DequeNew,
@@ -298,12 +297,6 @@ impl IntrinsicFn {
                 let mut result = a.as_ref().clone();
                 result.extend(b.iter().cloned());
                 Ok(Value::list(result))
-            }
-            IntrinsicFn::ListSeq => {
-                let Value::List(xs) = &args[0] else {
-                    return Err(RuntimeError::TypeError("list_seq expects a List".into()));
-                };
-                Ok(Value::seq_source(SeqSource::FromList(xs.clone())))
             }
             IntrinsicFn::ListSet => {
                 let mut args = args;
@@ -1114,7 +1107,6 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
             IntrinsicFn::ListReverse,
         ),
         (Name::new(interner, "list_concat"), IntrinsicFn::ListConcat),
-        (Name::new(interner, "list_seq"), IntrinsicFn::ListSeq),
         (Name::new(interner, "list_set"), IntrinsicFn::ListSet),
         (Name::new(interner, "list_update"), IntrinsicFn::ListUpdate),
         // Deque
@@ -1706,28 +1698,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn list_seq_reuses_list_storage() {
-        let input = Value::list((0..5).map(Value::Int).collect());
-        let input_ptr = match &input {
-            Value::List(xs) => xs.clone(),
-            _ => panic!("expected list input"),
-        };
-
-        let seq = IntrinsicFn::ListSeq
-            .call(smallvec![input])
-            .expect("list_seq should succeed");
-        let Value::Seq(plan) = seq else {
-            panic!("expected seq value");
-        };
-        match plan.as_ref() {
-            SeqPlan::Source(SeqSource::FromList(xs)) => {
-                assert!(
-                    Rc::ptr_eq(xs, &input_ptr),
-                    "list_seq should reference original list storage"
-                );
-            }
-            other => panic!("expected from-list source, got {other:?}"),
-        }
-    }
 }

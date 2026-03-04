@@ -1408,7 +1408,7 @@ fn eval_list_map_lambda() {
     let val = run_ok(
         "fn main() -> Int {
            let xs = List.new().push(1).push(2).push(3)
-           let ys = xs.seq().map(fn(x: Int) => x * 2).to_list()
+           let ys = xs.map(fn(x: Int) => x * 2).to_list()
            match (ys.get(2)) {
              Some(x) => x
              None => 0
@@ -1424,7 +1424,7 @@ fn eval_list_map_named_fn() {
         "fn double(x: Int) -> Int { x * 2 }
          fn main() -> Int {
            let xs = List.new().push(5).push(10)
-           let ys = xs.seq().map(double).to_list()
+           let ys = xs.map(double).to_list()
            match (ys.head()) {
              Some(x) => x
              None => 0
@@ -1439,7 +1439,7 @@ fn eval_list_filter() {
     let val = run_ok(
         "fn main() -> Int {
            let xs = List.new().push(1).push(2).push(3).push(4)
-           xs.seq().filter(fn(x: Int) => x > 2).count()
+           xs.filter(fn(x: Int) => x > 2).count()
          }",
     );
     assert!(matches!(val, Value::Int(2)));
@@ -1450,7 +1450,7 @@ fn eval_list_fold_sum() {
     let val = run_ok(
         "fn main() -> Int {
            let xs = List.new().push(1).push(2).push(3)
-           xs.seq().fold(0, fn(acc: Int, x: Int) => acc + x)
+           xs.fold(0, fn(acc: Int, x: Int) => acc + x)
          }",
     );
     assert!(matches!(val, Value::Int(6)));
@@ -1870,7 +1870,7 @@ fn eval_list_map_fold_composition() {
     let val = run_ok(
         "fn main() -> Int {
            let xs = List.new().push(1).push(2).push(3)
-           let doubled = xs.seq().map(fn(x: Int) => x * 2)
+           let doubled = xs.map(fn(x: Int) => x * 2)
            doubled.fold(0, fn(acc: Int, x: Int) => acc + x)
          }",
     );
@@ -5297,7 +5297,7 @@ fn eval_list_iteration_ergonomics_matrix() {
         Case {
             name: "enumerate fields",
             src: "fn main() -> Int {
-                let pairs = List.new().push(10).push(20).seq().enumerate().to_list()
+                let pairs = List.new().push(10).push(20).enumerate().to_list()
                 pairs[0].index + pairs[0].value + pairs[1].index + pairs[1].value
             }",
             expected: Value::Int(31),
@@ -5306,8 +5306,7 @@ fn eval_list_iteration_ergonomics_matrix() {
             name: "zip truncates",
             src: "fn main() -> Int {
                 let pairs = List.new().push(1).push(2).push(3)
-                    .seq()
-                    .zip(List.new().push(10).push(20).seq())
+                    .zip(List.new().push(10).push(20))
                     .to_list()
                 pairs.len() * 100 + pairs[0].left * 10 + pairs[1].right
             }",
@@ -5316,7 +5315,7 @@ fn eval_list_iteration_ergonomics_matrix() {
         Case {
             name: "chunks keeps tail",
             src: "fn main() -> Int {
-                let cs = List.new().push(1).push(2).push(3).push(4).push(5).seq().chunks(2).to_list()
+                let cs = List.new().push(1).push(2).push(3).push(4).push(5).chunks(2).to_list()
                 cs.len() * 100 + cs[0].len() * 10 + cs[2].len()
             }",
             expected: Value::Int(321),
@@ -5324,7 +5323,7 @@ fn eval_list_iteration_ergonomics_matrix() {
         Case {
             name: "windows overlap",
             src: "fn main() -> Int {
-                let ws = List.new().push(1).push(2).push(3).push(4).push(5).seq().windows(3).to_list()
+                let ws = List.new().push(1).push(2).push(3).push(4).push(5).windows(3).to_list()
                 ws.len() * 100 + ws[0][0] * 10 + ws[2][2]
             }",
             expected: Value::Int(315),
@@ -5332,7 +5331,7 @@ fn eval_list_iteration_ergonomics_matrix() {
         Case {
             name: "windows larger than len empty",
             src: "fn main() -> Int {
-                List.new().push(1).push(2).seq().windows(6).count()
+                List.new().push(1).push(2).windows(6).count()
             }",
             expected: Value::Int(0),
         },
@@ -5347,7 +5346,7 @@ fn eval_list_iteration_ergonomics_matrix() {
                 let sc = s.values().chunks(2).to_list()
                 let set_ok = sc.len() == 2 && sc[0].len() == 2 && sc[1].len() == 1
 
-                let p = \"abc\".chars().zip(List.new().push(10).push(20).seq()).to_list()
+                let p = \"abc\".chars().zip(List.new().push(10).push(20)).to_list()
                 let string_ok = p.len() == 2 && p[0].left == 'a' && p[1].right == 20
 
                 map_ok && set_ok && string_ok
@@ -5425,7 +5424,6 @@ fn eval_seq_surface_happy_paths() {
             name: "list to seq map filter count",
             src: r#"fn main() -> Int {
                 List.new().push(1).push(2).push(3)
-                    .seq()
                     .map(fn(n: Int) => n + 1)
                     .filter(fn(n: Int) => n > 2)
                     .count()
@@ -5456,6 +5454,58 @@ fn eval_seq_surface_happy_paths() {
         let got = run_ok(case.src);
         assert_eq!(got, case.expected, "case `{}` failed", case.name);
     }
+}
+
+#[test]
+fn eval_collection_first_traversal_surface_semantics_rfc_0002() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let list_count = List.new().push(1).push(2).push(3)
+                .map(fn(n: Int) => n + 1)
+                .filter(fn(n: Int) => n > 2)
+                .count()
+            let deque_count = Deque.new().push_back(1).push_back(2).push_back(3)
+                .map(fn(n: Int) => n * 2)
+                .count()
+            let z1 = List.new().push(1).push(2).zip(Seq.range(10, 13)).count()
+            let z2 = Seq.range(0, 3).zip(List.new().push(7).push(8)).count()
+            let z3 = Deque.new().push_back(1).push_back(2).zip(List.new().push(9)).count()
+            list_count * 100 + deque_count * 10 + z1 + z2 + z3
+        }"#,
+    );
+    assert_eq!(val, Value::Int(235));
+}
+
+#[test]
+fn eval_collection_first_any_all_find_short_circuit_rfc_0002() {
+    let val = run_ok(
+        r#"fn main() -> Int {
+            let any_hit = List.new().push(1).push(0).any(fn(n: Int) =>
+                if (n == 1) { true } else { 10 / n > 0 }
+            )
+            let all_ok = Deque.new().push_back(0).push_back(1).all(fn(n: Int) =>
+                if (n == 0) { false } else { 10 / (n - 1) > 0 }
+            ) == false
+            let found = List.new().push(2).push(1).find(fn(n: Int) =>
+                if (n == 2) { true } else { 10 / (n - 1) > 0 }
+            ).unwrap_or(-1)
+            if (any_hit && all_ok && found == 2) { 1 } else { 0 }
+        }"#,
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
+fn eval_list_seq_bridge_is_rejected_rfc_0002() {
+    let err = run_err(
+        r#"fn main() -> Int {
+            List.new().push(1).seq().count()
+        }"#,
+    );
+    assert!(
+        err.contains("no method") || err.contains("unresolved"),
+        "expected removed .seq() diagnostic, got: {err}"
+    );
 }
 
 #[test]
@@ -5530,7 +5580,7 @@ fn eval_seq_any_all_find_short_circuit_regression() {
         Case {
             name: "any short-circuits after first true",
             src: r#"fn main() -> Bool {
-                List.new().push(1).push(0).seq().any(fn(n: Int) =>
+                List.new().push(1).push(0).any(fn(n: Int) =>
                     if (n == 1) { true } else { 10 / n > 0 }
                 )
             }"#,
@@ -5539,7 +5589,7 @@ fn eval_seq_any_all_find_short_circuit_regression() {
         Case {
             name: "all short-circuits after first false",
             src: r#"fn main() -> Bool {
-                List.new().push(0).push(1).seq().all(fn(n: Int) =>
+                List.new().push(0).push(1).all(fn(n: Int) =>
                     if (n == 0) { false } else { 10 / (n - 1) > 0 }
                 ) == false
             }"#,
@@ -5548,7 +5598,7 @@ fn eval_seq_any_all_find_short_circuit_regression() {
         Case {
             name: "find short-circuits after first match",
             src: r#"fn main() -> Int {
-                List.new().push(2).push(1).seq()
+                List.new().push(2).push(1)
                     .find(fn(n: Int) =>
                         if (n == 2) { true } else { 10 / (n - 1) > 0 }
                     )
@@ -6058,7 +6108,7 @@ fn eval_method_list_map() {
     let val = run_ok(
         "fn main() -> Int {
             let xs = List.new().push(1).push(2)
-            let ys = xs.seq().map(fn(x: Int) => x * 10).to_list()
+            let ys = xs.map(fn(x: Int) => x * 10).to_list()
             ys[0]
         }",
     );
@@ -6070,7 +6120,7 @@ fn eval_method_list_filter() {
     let val = run_ok(
         "fn main() -> Int {
             let xs = List.new().push(1).push(2).push(3)
-            xs.seq().filter(fn(x: Int) => x > 1).count()
+            xs.filter(fn(x: Int) => x > 1).count()
         }",
     );
     assert!(matches!(val, Value::Int(2)));
@@ -6081,7 +6131,7 @@ fn eval_method_list_fold() {
     let val = run_ok(
         "fn main() -> Int {
             let xs = List.new().push(1).push(2).push(3)
-            xs.seq().fold(0, fn(acc: Int, x: Int) => acc + x)
+            xs.fold(0, fn(acc: Int, x: Int) => acc + x)
         }",
     );
     assert!(matches!(val, Value::Int(6)));
