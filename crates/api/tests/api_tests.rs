@@ -205,6 +205,24 @@ fn check_parse_error_code() {
 }
 
 #[test]
+fn check_newline_parenthesized_range_after_let_has_no_call_cascade() {
+    let src = r#"
+fn main() -> Int {
+  (0..<1).fold(0, fn(acc: Int, i: Int) => {
+    let base = i
+    ((i + 1)..<4).fold(acc, fn(a: Int, j: Int) => a + j + base)
+  })
+}
+"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics for newline parenthesized range expression, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_parse_damaged_function_reports_parse_only_diagnostics() {
     let src = "fn main() -> Int { match value { _ => 0 } }";
     let output = check(src, "test.ky");
@@ -4389,7 +4407,10 @@ fn check_seq_static_constructors_are_rejected_rfc_0003() {
 
 #[test]
 fn check_seq_type_annotation_is_rejected_rfc_0003() {
-    let output = check("fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }\nfn main() -> Int { 0 }", "test.ky");
+    let output = check(
+        "fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }\nfn main() -> Int { 0 }",
+        "test.ky",
+    );
     assert!(
         output
             .diagnostics

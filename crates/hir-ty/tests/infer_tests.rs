@@ -234,6 +234,18 @@ fn infer_else_if_without_final_else_matches_nested_error() {
 }
 
 #[test]
+fn infer_newline_parenthesized_range_after_let_is_separate_expression() {
+    check_ok(
+        "fn main() -> Int {
+           (0..<1).fold(0, fn(acc: Int, i: Int) => {
+             let base = i
+             ((i + 1)..<4).fold(acc, fn(a: Int, j: Int) => a + j + base)
+           })
+         }",
+    );
+}
+
+#[test]
 fn infer_if_no_else_is_unit() {
     check_ok("fn foo() { if (true) { 1 } }");
 }
@@ -1345,7 +1357,8 @@ fn err_seq_static_constructors_are_rejected_rfc_0003() {
 
 #[test]
 fn err_seq_type_annotation_is_rejected_rfc_0003() {
-    let (result, _) = check("fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }\nfn main() -> Int { 0 }");
+    let (result, _) =
+        check("fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }\nfn main() -> Int { 0 }");
     assert!(
         result
             .diagnostics

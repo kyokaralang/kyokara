@@ -10,6 +10,16 @@ fn parse_tokens(kinds: &[SyntaxKind]) -> (Vec<Event>, Vec<ParseError>) {
     parse(&input)
 }
 
+/// Helper: parse from token kinds with explicit line-break-before metadata
+/// for each non-trivia token.
+fn parse_tokens_with_line_breaks(
+    kinds: &[SyntaxKind],
+    line_break_before_non_trivia: &[bool],
+) -> (Vec<Event>, Vec<ParseError>) {
+    let input = Input::new_with_line_breaks(kinds.to_vec(), line_break_before_non_trivia.to_vec());
+    parse(&input)
+}
+
 /// Helper: count events of a given variant.
 fn count_start_nodes(events: &[Event], kind: SyntaxKind) -> usize {
     events
@@ -565,7 +575,10 @@ fn binary_expr_precedence() {
 fn range_until_expr_compact_form_parses() {
     // let x = 0..<5
     let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, IntLiteral, DotDotLt, IntLiteral]);
-    assert!(has_no_errors(&errors), "expected no parse errors: {errors:?}");
+    assert!(
+        has_no_errors(&errors),
+        "expected no parse errors: {errors:?}"
+    );
     assert!(has_node(&events, BinaryExpr));
 }
 
@@ -575,7 +588,10 @@ fn range_until_precedence_between_arithmetic_and_pipeline() {
     let (events, errors) = parse_tokens(&[
         LetKw, Ident, Eq, IntLiteral, Plus, IntLiteral, DotDotLt, IntLiteral, PipeGt, Ident,
     ]);
-    assert!(has_no_errors(&errors), "expected no parse errors: {errors:?}");
+    assert!(
+        has_no_errors(&errors),
+        "expected no parse errors: {errors:?}"
+    );
     assert_eq!(
         count_start_nodes(&events, BinaryExpr),
         2,
@@ -591,9 +607,7 @@ fn range_until_precedence_between_arithmetic_and_pipeline() {
 #[test]
 fn malformed_range_until_reports_single_targeted_error() {
     // let x = 0..< |> f
-    let (_events, errors) = parse_tokens(&[
-        LetKw, Ident, Eq, IntLiteral, DotDotLt, PipeGt, Ident,
-    ]);
+    let (_events, errors) = parse_tokens(&[LetKw, Ident, Eq, IntLiteral, DotDotLt, PipeGt, Ident]);
     assert_eq!(
         errors.len(),
         1,
@@ -624,6 +638,31 @@ fn call_expr() {
     assert!(has_no_errors(&errors));
     assert!(has_node(&events, CallExpr));
     assert!(has_node(&events, ArgList));
+}
+
+#[test]
+fn call_expr_not_continued_across_line_break_before_lparen() {
+    // fn main() -> Int { let x = foo
+    // (1)
+    // x }
+    //
+    // Here we represent the line break as metadata before the LParen token.
+    let kinds = &[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, LBrace, LetKw, Ident, Eq, Ident, LParen,
+        IntLiteral, RParen, Ident, RBrace,
+    ];
+    let mut breaks = vec![false; kinds.len()];
+    breaks[11] = true; // line break before the call-start `(`
+    let (events, errors) = parse_tokens_with_line_breaks(kinds, &breaks);
+    assert!(
+        has_no_errors(&errors),
+        "unexpected parser errors: {errors:?}"
+    );
+    assert_eq!(
+        count_start_nodes(&events, CallExpr),
+        0,
+        "line break before `(` must prevent postfix call continuation"
+    );
 }
 
 #[test]
