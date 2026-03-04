@@ -53,12 +53,12 @@ fn expr_bp(p: &mut Parser<'_>, min_bp: u8) -> Option<CompletedMarker> {
                 p.expect(Ident);
                 m.complete(p, FieldExpr)
             }
-            LParen if 25 >= min_bp => {
+            LParen if 25 >= min_bp && !p.has_line_break_before_current() => {
                 let m = lhs.precede(p);
                 arg_list(p);
                 m.complete(p, CallExpr)
             }
-            LBracket if 25 >= min_bp => {
+            LBracket if 25 >= min_bp && !p.has_line_break_before_current() => {
                 let m = lhs.precede(p);
                 p.bump(); // [
                 expr(p);

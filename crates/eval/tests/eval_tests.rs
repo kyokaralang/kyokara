@@ -213,6 +213,19 @@ fn eval_let_multiple() {
     assert!(matches!(val, Value::Int(7)));
 }
 
+#[test]
+fn eval_newline_parenthesized_range_after_let() {
+    let val = run_ok(
+        "fn main() -> Int {
+           (0..<1).fold(0, fn(acc: Int, i: Int) => {
+             let base = i
+             ((i + 1)..<4).fold(acc, fn(a: Int, j: Int) => a + j + base)
+           })
+         }",
+    );
+    assert!(matches!(val, Value::Int(6)));
+}
+
 // ── If/else tests ────────────────────────────────────────────────────
 
 #[test]
@@ -5538,7 +5551,8 @@ fn eval_seq_surface_is_rejected_rfc_0003() {
         "expected Seq.unfold rejection, got: {err_unfold}"
     );
 
-    let err_type = run_err("fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }\nfn main() -> Int { 0 }");
+    let err_type =
+        run_err("fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }\nfn main() -> Int { 0 }");
     assert!(
         err_type.contains("unresolved type") || err_type.contains("type mismatch"),
         "expected Seq type rejection, got: {err_type}"

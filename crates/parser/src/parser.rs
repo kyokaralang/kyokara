@@ -100,6 +100,16 @@ impl<'i> Parser<'i> {
         }
     }
 
+    /// Returns `true` when a newline appears in trivia immediately before the
+    /// current token.
+    pub fn has_line_break_before_current(&self) -> bool {
+        if self.pending_virtual_gt > 0 {
+            false
+        } else {
+            self.input.line_break_before(self.pos)
+        }
+    }
+
     // ── Token consumption ───────────────────────────────────────────
 
     /// Advance past the current token, emitting a `Token` event.

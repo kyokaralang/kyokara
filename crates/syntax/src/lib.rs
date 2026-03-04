@@ -33,9 +33,23 @@ pub fn parse(source: &str) -> Parse {
     // 1. Lex into raw tokens.
     let tokens = lexer::lex(source);
 
-    // 2. Build parser input (trivia-filtered view).
+    // 2. Build parser input (trivia-filtered view), including line-break
+    // metadata before each non-trivia token.
     let raw_kinds: Vec<SyntaxKind> = tokens.iter().map(|t| t.kind).collect();
-    let input = kyokara_parser::Input::new(raw_kinds);
+    let mut line_break_before_non_trivia: Vec<bool> = Vec::new();
+    let mut saw_line_break_since_last_non_trivia = false;
+    for tok in &tokens {
+        if tok.kind.is_trivia() {
+            if tok.text.contains('\n') || tok.text.contains('\r') {
+                saw_line_break_since_last_non_trivia = true;
+            }
+        } else {
+            line_break_before_non_trivia.push(saw_line_break_since_last_non_trivia);
+            saw_line_break_since_last_non_trivia = false;
+        }
+    }
+    let input =
+        kyokara_parser::Input::new_with_line_breaks(raw_kinds, line_break_before_non_trivia);
 
     // 3. Run the parser to get events.
     let (events, mut errors) = kyokara_parser::parse(&input);
