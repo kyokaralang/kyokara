@@ -153,6 +153,50 @@ fn nested_type_args_accept_gtgt_token() {
 }
 
 #[test]
+fn deep_nested_type_args_accept_gtgt_plus_gt_tokens() {
+    // fn f(xs: List<List<List<Int>>>) -> Int { 0 }
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, Ident, Colon, Ident, Lt, Ident, Lt, Ident, Lt, Ident, GtGt, Gt, RParen,
+        Arrow, Ident, LBrace, IntLiteral, RBrace,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "deep nested type args should parse: {errors:?}"
+    );
+    assert!(has_node(&events, NameType));
+    assert_eq!(count_start_nodes(&events, TypeArgList), 3);
+}
+
+#[test]
+fn nested_type_args_in_variant_payload_parse() {
+    // type T = Wrap(List<List<Int>>) | None
+    let (events, errors) = parse_tokens(&[
+        TypeKw, Ident, Eq, Ident, LParen, Ident, Lt, Ident, Lt, Ident, GtGt, RParen, Pipe, Ident,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "nested type args in variant payload should parse: {errors:?}"
+    );
+    assert!(has_node(&events, VariantList));
+    assert_eq!(count_start_nodes(&events, TypeArgList), 2);
+}
+
+#[test]
+fn nested_type_args_with_map_and_list_parse() {
+    // fn f(xs: Map<String, List<List<Int>>>) -> Int { 0 }
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, Ident, Colon, Ident, Lt, Ident, Comma, Ident, Lt, Ident, Lt, Ident,
+        GtGt, Gt, RParen, Arrow, Ident, LBrace, IntLiteral, RBrace,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "nested map/list type args should parse: {errors:?}"
+    );
+    assert!(has_node(&events, NameType));
+    assert_eq!(count_start_nodes(&events, TypeArgList), 3);
+}
+
+#[test]
 fn type_with_single_payload_variant() {
     // type Boxed = Boxed(Int)
     let (events, errors) = parse_tokens(&[TypeKw, Ident, Eq, Ident, LParen, Ident, RParen]);

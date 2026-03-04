@@ -3,6 +3,7 @@
 #![allow(clippy::unwrap_used)]
 
 use kyokara_fmt::format_source;
+use kyokara_syntax::parse;
 
 /// Assert formatting produces expected output, AND is idempotent.
 fn assert_fmt(input: &str, expected: &str) {
@@ -19,6 +20,18 @@ fn assert_fmt(input: &str, expected: &str) {
 /// Assert that formatting doesn't change the input (already canonical).
 fn assert_unchanged(input: &str) {
     assert_fmt(input, input);
+}
+
+/// Assert formatting output parses without syntax errors.
+fn assert_fmt_parse_ok(input: &str, expected: &str) {
+    assert_fmt(input, expected);
+    let parsed = parse(expected);
+    assert!(
+        parsed.errors.is_empty(),
+        "expected formatted output to parse cleanly, got: {:?}\nsource:\n{}",
+        parsed.errors,
+        expected
+    );
 }
 
 // ── Simple constructs ───────────────────────────────────────────────
@@ -395,6 +408,30 @@ fn main() -> Int {
 #[test]
 fn fmt_type_with_generics() {
     assert_fmt("type  Box< T >  =  T", "type Box<T> = T\n");
+}
+
+#[test]
+fn fmt_nested_type_args_canonicalize_and_parse() {
+    assert_fmt_parse_ok(
+        "fn f(xs: List< List< Int > >) -> List< List< Int > > { xs }",
+        "fn f(xs: List<List<Int>>) -> List<List<Int>> {\n  xs\n}\n",
+    );
+}
+
+#[test]
+fn fmt_deep_nested_type_args_canonicalize_and_parse() {
+    assert_fmt_parse_ok(
+        "fn f(xs: Map< String, Option< List< List< Int > > > >) -> Int { xs.len() }",
+        "fn f(xs: Map<String, Option<List<List<Int>>>>) -> Int {\n  xs.len()\n}\n",
+    );
+}
+
+#[test]
+fn fmt_nested_type_args_in_alias_canonicalize_and_parse() {
+    assert_fmt_parse_ok(
+        "type T = Map< String, List< List< Int > > >",
+        "type T = Map<String, List<List<Int>>>\n",
+    );
 }
 
 #[test]
