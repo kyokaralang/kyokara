@@ -710,6 +710,27 @@ fn roundtrip_nested_type_args_with_gtgt() {
 }
 
 #[test]
+fn roundtrip_deep_nested_type_args_with_gtgt_plus_gt() {
+    let src = "fn main(xs: List<List<List<Int>>>) -> Int { xs.len() }";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn roundtrip_nested_type_args_mixed_map_option_list() {
+    let src = "fn main(xs: Map<String, Option<List<List<Int>>>>) -> Int { xs.len() }";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn roundtrip_nested_type_args_in_variant_payload() {
+    let src = "type T = Wrap(Map<String, List<List<Int>>>) | None";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
 fn roundtrip_property_trailing_comma() {
     let src = "property p(x: Int <- Gen.auto(),) { true }";
     let green = parse_ok(src);
