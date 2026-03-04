@@ -1545,6 +1545,28 @@ fn eval_deque_push_front_back_and_pop_front_fifo() {
 }
 
 #[test]
+fn eval_deque_pop_front_non_empty_returns_value_and_rest() {
+    let val = run_ok(
+        "fn main() -> Int {
+           let q0 = Deque.new().push_back(10).push_back(20)
+           match (q0.pop_front()) {
+             Some(p) =>
+               if (p.value == 10 && p.rest.len() == 1) {
+                 match (p.rest.pop_front()) {
+                   Some(p2) => p2.value
+                   None => -1
+                 }
+               } else {
+                 -1
+               }
+             None => -1
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(20)));
+}
+
+#[test]
 fn eval_deque_pop_front_empty_returns_none() {
     let val = run_ok(
         "fn main() -> Int {
