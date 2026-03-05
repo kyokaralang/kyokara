@@ -13,7 +13,7 @@ Define one consistent mental model for API placement and authority checks:
 2. Place specialized pure APIs (including specialized collections) in pure modules.
 3. Keep side effects in capability-scoped modules with explicit authority (`with ...`) and runtime manifest checks.
 
-This RFC proposes moving specialized collections such as `Deque` and `PriorityQueue` under a `collections` module namespace while preserving value-owned method APIs.
+This RFC proposes placing specialized collections such as `Deque`, `Array`, and `PriorityQueue` under a `collections` module namespace while preserving value-owned method APIs.
 
 ## Motivation
 
@@ -21,7 +21,7 @@ As the stdlib grows, global type constructors increase namespace noise and reduc
 
 Current friction:
 
-1. Specialized types (`Deque` today, `PriorityQueue` soon) add to the global surface.
+1. Specialized types (`Deque`/`Array` today, `PriorityQueue` soon) add to the global surface.
 2. The relationship between module import and capability authority is easy to misread.
 3. Users need one simple rule for "where does this API live" and "what permission do I need".
 
@@ -74,8 +74,9 @@ Specialized pure APIs live in modules and are imported explicitly.
 Initial policy:
 
 1. `Deque` should be exposed via `collections` (not prelude-global).
-2. `PriorityQueue` should be introduced in `collections` directly.
-3. Future specialized structures (for example `BitSet`) should follow the same rule.
+2. `Array` should be exposed via `collections` (not prelude-global).
+3. `PriorityQueue` should be introduced in `collections` directly.
+4. Future specialized structures (for example `BitSet`) should follow the same rule.
 
 #### Tier C: Effect modules
 
@@ -90,14 +91,16 @@ APIs that can perform side effects remain module-qualified and capability-scoped
 Canonical placement for specialized collection constructors:
 
 1. `collections.Deque.new()`
-2. `collections.PriorityQueue.new_min()` (or final canonical constructor naming once fixed)
+2. `collections.Array.new(...)` / `collections.Array.from_list(...)`
+3. `collections.PriorityQueue.new_min()` (or final canonical constructor naming once fixed)
 
 Once a value exists, behavior remains owner methods:
 
 1. `q.push_back(x)`
 2. `q.pop_front()`
-3. `pq.push(p, v)`
-4. `pq.pop()`
+3. `a.set(i, v)` / `a.update(i, f)` / `a[i]`
+4. `pq.push(p, v)`
+5. `pq.pop()`
 
 ### P4. Canonical examples
 
@@ -108,7 +111,8 @@ import collections
 
 fn queue_size() -> Int {
   let q = collections.Deque.new().push_back(1).push_back(2)
-  q.len()
+  let a = collections.Array.from_list(List.new().push(10).push(20))
+  q.len() + a[0]
 }
 ```
 
@@ -150,7 +154,7 @@ Only ubiquitous primitives should be prelude-global. Specialized pure APIs shoul
 
 ## Rollout (v0 hard-break policy)
 
-1. Move `Deque` constructor surface to `collections` namespace.
+1. Move specialized constructor surfaces to `collections` namespace (including `Deque` and `Array`).
 2. Keep method behavior unchanged.
 3. Introduce `PriorityQueue` directly under `collections`.
 4. Update docs/examples/completions to module-first specialized collection references.
@@ -201,7 +205,7 @@ Decision: reject.
 ## Acceptance Criteria
 
 1. The import/authority matrix is documented and consistent across docs.
-2. Specialized collections are module-namespaced, not prelude-global.
+2. Specialized collections (`Deque`, `Array`, future `PriorityQueue`, etc.) are module-namespaced, not prelude-global.
 3. Effect modules require both import and capability authority.
 4. Examples and diagnostics reflect one canonical model.
 

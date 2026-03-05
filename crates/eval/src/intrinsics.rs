@@ -27,6 +27,13 @@ pub enum IntrinsicFn {
     ListNew,
     ListPush,
     ListLen,
+    ArrayNew,
+    ArrayFromList,
+    ArrayLen,
+    ArrayIsEmpty,
+    ArrayGet,
+    ArraySet,
+    ArrayUpdate,
     ListGet,
     ListHead,
     ListTail,
@@ -154,8 +161,10 @@ impl IntrinsicFn {
         matches!(
             self,
             IntrinsicFn::ListGet
+                | IntrinsicFn::ArrayGet
                 | IntrinsicFn::ListHead
                 | IntrinsicFn::ListUpdate
+                | IntrinsicFn::ArrayUpdate
                 | IntrinsicFn::DequePopFront
                 | IntrinsicFn::DequePopBack
                 | IntrinsicFn::SeqMap
@@ -256,6 +265,72 @@ impl IntrinsicFn {
                     return Err(RuntimeError::TypeError("list_len expects a List".into()));
                 };
                 Ok(Value::Int(xs.len() as i64))
+            }
+            IntrinsicFn::ArrayNew => {
+                let Value::Int(len) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "array_new expects an Int length".into(),
+                    ));
+                };
+                if *len < 0 {
+                    return Err(RuntimeError::TypeError(
+                        "array_new: length must be >= 0".into(),
+                    ));
+                }
+                let len = usize::try_from(*len).map_err(|_| RuntimeError::IntegerOverflow)?;
+                Ok(Value::array(vec![args[1].clone(); len]))
+            }
+            IntrinsicFn::ArrayFromList => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "array_from_list expects a List".into(),
+                    ));
+                };
+                Ok(Value::array(xs.as_ref().clone()))
+            }
+            IntrinsicFn::ArrayLen => {
+                let Value::Array(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError("array_len expects an Array".into()));
+                };
+                Ok(Value::Int(xs.len() as i64))
+            }
+            IntrinsicFn::ArrayIsEmpty => {
+                let Value::Array(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "array_is_empty expects an Array".into(),
+                    ));
+                };
+                Ok(Value::Bool(xs.is_empty()))
+            }
+            IntrinsicFn::ArraySet => {
+                let mut args = args;
+                let val = args.pop().ok_or(RuntimeError::TypeError(
+                    "array_set: missing value argument".into(),
+                ))?;
+                let Value::Int(i) = args.pop().ok_or(RuntimeError::TypeError(
+                    "array_set: missing index argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "array_set expects an Int index".into(),
+                    ));
+                };
+                let Value::Array(mut xs) = args.pop().ok_or(RuntimeError::TypeError(
+                    "array_set: missing array argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError("array_set expects an Array".into()));
+                };
+
+                if i < 0 || i as usize >= xs.len() {
+                    return Err(RuntimeError::IndexOutOfBounds {
+                        index: i,
+                        len: xs.len() as i64,
+                    });
+                }
+
+                Rc::make_mut(&mut xs)[i as usize] = val;
+                Ok(Value::Array(xs))
             }
             IntrinsicFn::ListTail => {
                 let Value::List(xs) = &args[0] else {
@@ -1053,6 +1128,7 @@ impl IntrinsicFn {
 
             // ── Complex (intercepted by interpreter) ─────────────
             IntrinsicFn::ListGet
+            | IntrinsicFn::ArrayGet
             | IntrinsicFn::ListHead
             | IntrinsicFn::SeqMap
             | IntrinsicFn::SeqFilter
@@ -1070,6 +1146,7 @@ impl IntrinsicFn {
             | IntrinsicFn::SeqToList
             | IntrinsicFn::MapGet
             | IntrinsicFn::ListUpdate
+            | IntrinsicFn::ArrayUpdate
             | IntrinsicFn::DequePopFront
             | IntrinsicFn::DequePopBack
             | IntrinsicFn::ListSortBy => Err(RuntimeError::TypeError(
@@ -1098,6 +1175,16 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (Name::new(interner, "list_new"), IntrinsicFn::ListNew),
         (Name::new(interner, "list_push"), IntrinsicFn::ListPush),
         (Name::new(interner, "list_len"), IntrinsicFn::ListLen),
+        (Name::new(interner, "array_new"), IntrinsicFn::ArrayNew),
+        (
+            Name::new(interner, "array_from_list"),
+            IntrinsicFn::ArrayFromList,
+        ),
+        (Name::new(interner, "array_len"), IntrinsicFn::ArrayLen),
+        (Name::new(interner, "array_is_empty"), IntrinsicFn::ArrayIsEmpty),
+        (Name::new(interner, "array_get"), IntrinsicFn::ArrayGet),
+        (Name::new(interner, "array_set"), IntrinsicFn::ArraySet),
+        (Name::new(interner, "array_update"), IntrinsicFn::ArrayUpdate),
         (Name::new(interner, "list_get"), IntrinsicFn::ListGet),
         (Name::new(interner, "list_head"), IntrinsicFn::ListHead),
         (Name::new(interner, "list_tail"), IntrinsicFn::ListTail),

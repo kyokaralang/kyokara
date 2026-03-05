@@ -610,8 +610,8 @@ fn symbol_graph_contains_types() {
     let src = "type Color = Red | Green | Blue
         fn id(x: Int) -> Int { x }";
     let output = check(src, "test.ky");
-    // 8 types: Color (user-defined) + Option + Result + List + Deque + Map + Set + ParseError
-    assert_eq!(output.symbol_graph.types.len(), 8);
+    // 9 types: Color (user-defined) + Option + Result + List + Array + Deque + Map + Set + ParseError
+    assert_eq!(output.symbol_graph.types.len(), 9);
     let color = output
         .symbol_graph
         .types
@@ -621,6 +621,18 @@ fn symbol_graph_contains_types() {
     assert_eq!(color.kind, "adt");
     let variant_names: Vec<&str> = color.variants.iter().map(|v| v.name.as_str()).collect();
     assert_eq!(variant_names, vec!["Red", "Green", "Blue"]);
+}
+
+#[test]
+fn symbol_graph_includes_builtin_array_type() {
+    let output = check("fn main() -> Int { 1 }", "test.ky");
+    let array_ty = output
+        .symbol_graph
+        .types
+        .iter()
+        .find(|t| t.name == "Array")
+        .expect("Array builtin type should be in symbol graph");
+    assert_eq!(array_ty.kind, "adt");
 }
 
 #[test]
@@ -1555,7 +1567,7 @@ fn project_builtin_type_ids_are_unqualified() {
         ("main.ky", "fn foo() -> Int { 1 }"),
         ("math.ky", "pub fn bar() -> Int { 2 }"),
     ]);
-    for builtin in &["Option", "Result", "List", "Map"] {
+    for builtin in &["Option", "Result", "List", "Array", "Map"] {
         let t = output
             .symbol_graph
             .types
@@ -4399,6 +4411,33 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_collections_array_constructor_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+fn main() -> Int {
+    let a0 = collections.Array.new(3, 0)
+    let a1 = a0.set(1, 7).update(2, fn(n: Int) => n + 5)
+    let b = collections.Array.from_list(List.new().push(4).push(5))
+    a1[1] + a1[2] + b[1]
+}"#,
+        "collections.Array constructor canonical surface",
+    );
+}
+
+#[test]
+fn check_collections_array_alias_constructor_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import collections as c
+
+fn main() -> Int {
+    c.Array.new(2, 1).set(0, 9).len()
+}"#,
+        "collections.Array alias constructor canonical surface",
+    );
+}
+
+#[test]
 fn check_global_deque_constructor_surface_is_removed_rfc_0004() {
     let output = check("fn main() -> Int { Deque.new().len() }", "test.ky");
     assert!(
@@ -4407,6 +4446,58 @@ fn check_global_deque_constructor_surface_is_removed_rfc_0004() {
             .iter()
             .any(|d| d.message.contains("no method") || d.message.contains("unresolved name")),
         "expected removed constructor-surface diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_global_array_constructor_surface_is_removed() {
+    let output = check("fn main() -> Int { Array.new(2, 0).len() }", "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("no method") || d.message.contains("unresolved name")),
+        "expected removed constructor-surface diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_array_collection_first_traversal_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+fn main() -> Int {
+    let xs = collections.Array.from_list(List.new().push(1).push(2).push(3))
+    let c1 = xs.map(fn(n: Int) => n + 1).filter(fn(n: Int) => n > 2).count()
+    let c2 = xs.zip(List.new().push(9).push(8)).count()
+    let c3 = xs.zip(collections.Deque.new().push_back(1).push_back(2)).count()
+    let c4 = xs.zip((10..<20)).count()
+    c1 + c2 + c3 + c4
+}"#,
+        "Array traversal + zip canonical surface",
+    );
+}
+
+#[test]
+fn check_non_canonical_free_array_intrinsics_report_unresolved_name() {
+    let output = check(
+        r#"fn main() -> Int {
+            let a = array_new(3, 0)
+            let b = array_from_list(List.new().push(1))
+            let c = array_set(a, 0, 1)
+            let d = array_update(c, 0, fn(n: Int) => n + 1)
+            array_len(b) + array_len(d)
+        }"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("unresolved name")),
+        "expected unresolved-name diagnostics for free array intrinsics, got: {:?}",
         output.diagnostics
     );
 }

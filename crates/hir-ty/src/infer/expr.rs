@@ -1606,6 +1606,10 @@ impl<'a> InferenceCtx<'a> {
 
         match &base_ty {
             Ty::Adt { def, args } => match self.module_scope.core_types.kind_for_idx(*def) {
+                Some(CoreType::Array) => {
+                    self.infer_expr(index, &Expectation::Has(Ty::Int));
+                    args.first().cloned().unwrap_or(Ty::Error)
+                }
                 Some(CoreType::List) => {
                     self.infer_expr(index, &Expectation::Has(Ty::Int));
                     args.first().cloned().unwrap_or(Ty::Error)
