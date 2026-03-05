@@ -89,20 +89,25 @@ fn resolve_forward_parents(mut events: Vec<Event>) -> Vec<Event> {
                 // This node's start has been forwarded — collect the chain.
                 let mut chain = Vec::new();
                 let mut idx = i;
-                loop {
-                    match std::mem::replace(&mut events[idx], Event::Tombstone) {
-                        Event::StartNode {
-                            kind,
-                            forward_parent,
-                        } => {
-                            chain.push(kind);
-                            if let Some(delta) = forward_parent {
-                                idx += delta as usize;
-                            } else {
-                                break;
-                            }
+                while let Event::StartNode {
+                    kind,
+                    forward_parent,
+                } = events[idx].clone()
+                {
+                    // Consume only valid StartNode entries.
+                    events[idx] = Event::Tombstone;
+                    chain.push(kind);
+
+                    if let Some(delta) = forward_parent {
+                        let Some(next_idx) = idx.checked_add(delta as usize) else {
+                            break;
+                        };
+                        if next_idx >= events.len() {
+                            break;
                         }
-                        _ => unreachable!("forward_parent pointed to non-StartNode"),
+                        idx = next_idx;
+                    } else {
+                        break;
                     }
                 }
                 // Emit in reverse order (outermost parent first).
@@ -124,4 +129,65 @@ fn resolve_forward_parents(mut events: Vec<Event>) -> Vec<Event> {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_forward_parents;
+    use kyokara_parser::{Event, SyntaxKind};
+
+    #[test]
+    fn resolve_forward_parents_ignores_out_of_bounds_forward_parent() {
+        let events = vec![
+            Event::StartNode {
+                kind: SyntaxKind::SourceFile,
+                forward_parent: Some(100),
+            },
+            Event::FinishNode,
+        ];
+
+        let resolved = resolve_forward_parents(events);
+        assert_eq!(resolved.len(), 2, "should preserve valid events");
+        assert!(matches!(
+            resolved[0],
+            Event::StartNode {
+                kind: SyntaxKind::SourceFile,
+                forward_parent: None
+            }
+        ));
+        assert!(matches!(resolved[1], Event::FinishNode));
+    }
+
+    #[test]
+    fn resolve_forward_parents_ignores_non_startnode_forward_target() {
+        let events = vec![
+            Event::StartNode {
+                kind: SyntaxKind::SourceFile,
+                forward_parent: Some(1),
+            },
+            Event::Token {
+                kind: SyntaxKind::Ident,
+                n_raw_tokens: 0,
+            },
+            Event::FinishNode,
+        ];
+
+        let resolved = resolve_forward_parents(events);
+        assert_eq!(resolved.len(), 3, "should keep non-start events intact");
+        assert!(matches!(
+            resolved[0],
+            Event::StartNode {
+                kind: SyntaxKind::SourceFile,
+                forward_parent: None
+            }
+        ));
+        assert!(matches!(
+            resolved[1],
+            Event::Token {
+                kind: SyntaxKind::Ident,
+                n_raw_tokens: 0
+            }
+        ));
+        assert!(matches!(resolved[2], Event::FinishNode));
+    }
 }
