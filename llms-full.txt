@@ -91,17 +91,17 @@ fn add_fee(x: Money, fee_bps: Int) -> Money {
 Declare effects:
 
 ```kyokara
-effect Net
-effect Clock
-effect Db
-effect Secrets
+effect net
+effect clock
+effect db
+effect secrets
 ```
 
 Annotate effect requirements:
 
 ```kyokara
 fn fetch_rate(base: Currency, quote: Currency) -> Result<Float, HttpError>
-with Net
+with net
 {
   Http.get(url: "...") |> parse_rate(base: base, quote: quote)
 }
@@ -228,7 +228,7 @@ Runtime enforces capabilities with an explicit manifest, deny-by-default. Pass `
 
 Enforcement points:
 - **Intrinsic I/O**: `print` and `println` require `"io"` in the manifest
-- **User-defined capabilities**: functions with `with Console` etc. are checked against manifest at call time
+- **User-defined capabilities**: functions with `with console` etc. are checked against manifest at call time
 - **Pure functions**: never denied regardless of manifest
 - **Violation**: `RuntimeError::CapabilityDenied { capability, function }` — includes cap name and function name
 
@@ -237,10 +237,10 @@ API: `run_with_manifest(source, manifest)` and `run_project_with_manifest(path, 
 ```json
 {
   "caps": {
-    "Net": { "allow_domains": ["rates.example", "api.partner.com"] },
-    "Db":  { "allow_tables": ["payments", "users"] },
-    "Secrets": { "allow_keys": ["PAYMENTS_API_KEY"] },
-    "Clock": {},
+    "net": { "allow_domains": ["rates.example", "api.partner.com"] },
+    "db":  { "allow_tables": ["payments", "users"] },
+    "secrets": { "allow_keys": ["PAYMENTS_API_KEY"] },
+    "clock": {},
     "io": {}
   }
 }

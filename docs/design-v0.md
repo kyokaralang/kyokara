@@ -148,17 +148,17 @@ fn add_fee(x: Money, fee_bps: Int) -> Money {
 Declare effects:
 
 ```kyokara
-effect Net
-effect Clock
-effect Db
-effect Secrets
+effect net
+effect clock
+effect db
+effect secrets
 ```
 
 Annotate effect requirements:
 
 ```kyokara
 fn fetch_rate(base: Currency, quote: Currency) -> Result<Float, HttpError>
-with Net
+with net
 {
   Http.get(url: "...") |> parse_rate(base: base, quote: quote)
 }
@@ -170,7 +170,7 @@ Rules:
 
 Open design questions (to resolve before hir-ty):
 * **Effect polymorphism**: higher-order functions need effect-polymorphic signatures, e.g. `fn map(f: fn(A) -> B with e, xs: List<A>) -> List<B> with e`. Without this, the stdlib will be painful.
-* **Subeffecting**: is `Pure` a subeffect of every capability set? Can `with Net` call a `Pure` function? (Yes — effects are an upper bound, "may do", not "must do".)
+* **Subeffecting**: is `Pure` a subeffect of every capability set? Can `with net` call a `Pure` function? (Yes — effects are an upper bound, "may do", not "must do".)
 * **Scoped capabilities**: can a caller restrict a capability before passing it? e.g. `with caps.restrict(domain="rates.example")`.
 * **Async**: if concurrency is added later, effect tracking must compose with async. Deferring concurrency to post-v0 avoids this for now.
 
@@ -393,7 +393,7 @@ KyokaraIR must be:
 
 Each function has an effect set:
 * `effects {}` for pure
-* `effects {Net, Db, Clock, Secrets}` etc.
+* `effects {net, db, clock, secrets}` etc.
 
 Calls require the caller's effect set to be a superset.
 
@@ -464,7 +464,7 @@ Runtime enforces capabilities via a JSON manifest loaded with `--caps`:
 
 Enforcement points:
 * **Intrinsic I/O** — `print` and `println` require the `"io"` capability
-* **User-defined capabilities** — functions with `with Console` etc. are checked against the manifest at call time
+* **User-defined capabilities** — functions with `with console` etc. are checked against the manifest at call time
 * **Pure functions** — never denied regardless of manifest
 
 Example manifest:
@@ -472,10 +472,10 @@ Example manifest:
 ```json
 {
   "caps": {
-    "Net": { "allow_domains": ["rates.example", "api.partner.com"] },
-    "Db":  { "allow_tables": ["payments", "users"] },
-    "Secrets": { "allow_keys": ["PAYMENTS_API_KEY"] },
-    "Clock": {},
+    "net": { "allow_domains": ["rates.example", "api.partner.com"] },
+    "db":  { "allow_tables": ["payments", "users"] },
+    "secrets": { "allow_keys": ["PAYMENTS_API_KEY"] },
+    "clock": {},
     "io": {}
   }
 }
@@ -698,7 +698,7 @@ Crate dependency DAG follows rust-analyzer's layered pattern: parser is tree-agn
 Brand: **Kyokara**
 Product: **Kyokara Runtime**
 Core concept mapping:
-* explicit caps -> `Net`, `Db`, `Secrets`, `Clock`
+* explicit caps -> `net`, `db`, `secrets`, `clock`
 * evidence/audit -> contracts + logs + replay
 * AI-first -> holes + structured diagnostics + refactor transactions
 

@@ -23,7 +23,7 @@ Every side effect is declared and sandboxed. A function that touches the network
 
 ```kyokara
 fn fetch_rate(base: Currency, quote: Currency) -> Result<Float, HttpError>
-with Net
+with net
 {
   Http.get(url: "https://rates.example/api") |> parse_rate(base, quote)
 }
