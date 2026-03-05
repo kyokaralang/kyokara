@@ -2613,26 +2613,37 @@ impl Interpreter {
                 }
             }
             IntrinsicFn::ListUpdate => {
-                let Value::List(xs) = &args[0] else {
+                let mut args = args.into_iter();
+                let Value::List(mut xs) = args.next().ok_or(RuntimeError::TypeError(
+                    "list_update: missing list argument".into(),
+                ))?
+                else {
                     return Err(RuntimeError::TypeError("list_update expects a List".into()));
                 };
-                let Value::Int(i) = &args[1] else {
+                let Value::Int(i) = args.next().ok_or(RuntimeError::TypeError(
+                    "list_update: missing index argument".into(),
+                ))?
+                else {
                     return Err(RuntimeError::TypeError(
                         "list_update expects an Int index".into(),
                     ));
                 };
-                if *i < 0 || *i as usize >= xs.len() {
+                if i < 0 || i as usize >= xs.len() {
                     return Err(RuntimeError::IndexOutOfBounds {
-                        index: *i,
+                        index: i,
                         len: xs.len() as i64,
                     });
                 }
-                let idx = *i as usize;
-                let updater = args[2].clone();
+                let idx = i as usize;
+                let updater = args.next().ok_or(RuntimeError::TypeError(
+                    "list_update: missing updater argument".into(),
+                ))?;
                 let updated = self.call_value(updater, smallvec::smallvec![xs[idx].clone()])?;
-                let mut out = xs.clone();
-                Rc::make_mut(&mut out)[idx] = updated;
-                Ok(Value::List(out))
+                if updated == xs[idx] {
+                    return Ok(Value::List(xs));
+                }
+                Rc::make_mut(&mut xs)[idx] = updated;
+                Ok(Value::List(xs))
             }
             IntrinsicFn::MutableListUpdate => {
                 let Value::MutableList(xs) = &args[0] else {
@@ -4029,6 +4040,105 @@ mod tests {
         assert!(
             std::ptr::eq(alias_ptr_before, Rc::as_ptr(alias_q)),
             "empty pop should not mutate alias storage"
+        );
+    }
+
+    #[test]
+    fn list_update_reuses_storage_when_unique() {
+        let mut interp = make_checked_interpreter(
+            "fn inc(x: Int) -> Int { x + 1 }\n\
+             fn main() -> Unit {}",
+        );
+        let inc_idx = fn_idx_by_name(&mut interp, "inc");
+        let updater = Value::Fn(Box::new(FnValue::User(inc_idx)));
+        let original = Value::list(vec![Value::Int(1), Value::Int(2)]);
+        let before_ptr = match &original {
+            Value::List(xs) => Rc::as_ptr(xs),
+            _ => panic!("expected list"),
+        };
+
+        let out = interp
+            .call_complex_intrinsic(
+                IntrinsicFn::ListUpdate,
+                smallvec![original, Value::Int(1), updater],
+            )
+            .expect("list_update should succeed");
+
+        let Value::List(updated) = &out else {
+            panic!("expected list output");
+        };
+        assert_eq!(updated.as_ref(), &[Value::Int(1), Value::Int(3)]);
+        assert!(
+            std::ptr::eq(before_ptr, Rc::as_ptr(updated)),
+            "list_update should mutate in-place when storage is uniquely owned"
+        );
+    }
+
+    #[test]
+    fn list_update_noop_keeps_shared_storage() {
+        let mut interp = make_checked_interpreter(
+            "fn identity(x: Int) -> Int { x }\n\
+             fn main() -> Unit {}",
+        );
+        let id_idx = fn_idx_by_name(&mut interp, "identity");
+        let updater = Value::Fn(Box::new(FnValue::User(id_idx)));
+        let original = Value::list(vec![Value::Int(5), Value::Int(7)]);
+        let alias = original.clone();
+        let alias_ptr = match &alias {
+            Value::List(xs) => Rc::as_ptr(xs),
+            _ => panic!("expected list alias"),
+        };
+
+        let out = interp
+            .call_complex_intrinsic(
+                IntrinsicFn::ListUpdate,
+                smallvec![original, Value::Int(1), updater],
+            )
+            .expect("list_update should succeed");
+
+        let Value::List(updated) = &out else {
+            panic!("expected list output");
+        };
+        assert_eq!(updated.as_ref(), &[Value::Int(5), Value::Int(7)]);
+        assert!(
+            std::ptr::eq(alias_ptr, Rc::as_ptr(updated)),
+            "no-op list_update should not detach shared storage"
+        );
+    }
+
+    #[test]
+    fn list_update_detaches_when_shared_and_changed() {
+        let mut interp = make_checked_interpreter(
+            "fn inc(x: Int) -> Int { x + 1 }\n\
+             fn main() -> Unit {}",
+        );
+        let inc_idx = fn_idx_by_name(&mut interp, "inc");
+        let updater = Value::Fn(Box::new(FnValue::User(inc_idx)));
+        let original = Value::list(vec![Value::Int(10), Value::Int(20)]);
+        let alias = original.clone();
+        let alias_ptr = match &alias {
+            Value::List(xs) => Rc::as_ptr(xs),
+            _ => panic!("expected list alias"),
+        };
+
+        let out = interp
+            .call_complex_intrinsic(
+                IntrinsicFn::ListUpdate,
+                smallvec![original, Value::Int(1), updater],
+            )
+            .expect("list_update should succeed");
+
+        let Value::List(updated) = &out else {
+            panic!("expected list output");
+        };
+        let Value::List(alias_items) = &alias else {
+            panic!("expected list alias");
+        };
+        assert_eq!(alias_items.as_ref(), &[Value::Int(10), Value::Int(20)]);
+        assert_eq!(updated.as_ref(), &[Value::Int(10), Value::Int(21)]);
+        assert!(
+            !std::ptr::eq(alias_ptr, Rc::as_ptr(updated)),
+            "list_update must detach when mutation occurs on shared storage"
         );
     }
 
