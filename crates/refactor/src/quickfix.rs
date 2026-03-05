@@ -40,26 +40,43 @@ pub fn add_missing_match_cases_project(
     offset: u32,
     target_file: Option<&str>,
 ) -> Result<RefactorResult, RefactorError> {
+    if let Some(target) = target_file {
+        let target_exists = result
+            .module_graph
+            .iter()
+            .any(|(_, info)| info.path.display().to_string() == target);
+        if !target_exists {
+            return Err(RefactorError::IoError {
+                message: format!("target_file `{target}` not found in project module graph"),
+            });
+        }
+    }
+
     for (mod_path, tc) in &result.type_checks {
-        let info = result.module_graph.get(mod_path);
+        let Some(info) = result.module_graph.get(mod_path) else {
+            return Err(RefactorError::InternalError {
+                message: format!(
+                    "module graph missing entry for module in quickfix lookup: {:?}",
+                    mod_path
+                ),
+            });
+        };
 
         // Filter by target_file if provided.
-        if let Some(target) = target_file {
-            let matches = info.is_some_and(|i| i.path.display().to_string() == target);
-            if !matches {
-                continue;
-            }
+        if let Some(target) = target_file
+            && info.path.display().to_string() != target
+        {
+            continue;
         }
 
-        let file_id = info.map(|i| i.file_id).unwrap_or(FileId(0));
+        let file_id = info.file_id;
 
         for (data, span) in &tc.raw_diagnostics {
             if let TyDiagnosticData::MissingMatchArms { missing } = data {
                 let start: u32 = span.range.start().into();
                 let end: u32 = span.range.end().into();
                 if offset >= start && offset <= end {
-                    let source = info.map(|i| i.source.as_str()).unwrap_or("");
-                    let parse = kyokara_syntax::parse(source);
+                    let parse = kyokara_syntax::parse(info.source.as_str());
                     let root = SyntaxNode::new_root(parse.green);
                     return build_match_cases_edit(file_id, &root, span.range, missing);
                 }
@@ -181,26 +198,43 @@ pub fn add_missing_capability_project(
     offset: u32,
     target_file: Option<&str>,
 ) -> Result<RefactorResult, RefactorError> {
+    if let Some(target) = target_file {
+        let target_exists = result
+            .module_graph
+            .iter()
+            .any(|(_, info)| info.path.display().to_string() == target);
+        if !target_exists {
+            return Err(RefactorError::IoError {
+                message: format!("target_file `{target}` not found in project module graph"),
+            });
+        }
+    }
+
     for (mod_path, tc) in &result.type_checks {
-        let info = result.module_graph.get(mod_path);
+        let Some(info) = result.module_graph.get(mod_path) else {
+            return Err(RefactorError::InternalError {
+                message: format!(
+                    "module graph missing entry for module in quickfix lookup: {:?}",
+                    mod_path
+                ),
+            });
+        };
 
         // Filter by target_file if provided.
-        if let Some(target) = target_file {
-            let matches = info.is_some_and(|i| i.path.display().to_string() == target);
-            if !matches {
-                continue;
-            }
+        if let Some(target) = target_file
+            && info.path.display().to_string() != target
+        {
+            continue;
         }
 
-        let file_id = info.map(|i| i.file_id).unwrap_or(FileId(0));
+        let file_id = info.file_id;
 
         for (data, span) in &tc.raw_diagnostics {
             if let TyDiagnosticData::EffectViolation { missing } = data {
                 let start: u32 = span.range.start().into();
                 let end: u32 = span.range.end().into();
                 if offset >= start && offset <= end {
-                    let source = info.map(|i| i.source.as_str()).unwrap_or("");
-                    let parse = kyokara_syntax::parse(source);
+                    let parse = kyokara_syntax::parse(info.source.as_str());
                     let root = SyntaxNode::new_root(parse.green);
                     return build_capability_edit(file_id, &root, span.range, missing);
                 }

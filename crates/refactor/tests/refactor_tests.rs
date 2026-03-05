@@ -1215,6 +1215,98 @@ fn project_quickfix_wrong_target_file_returns_error() {
 }
 
 #[test]
+fn project_quickfix_missing_target_file_returns_io_error() {
+    // If target_file does not exist in the project graph, quickfix should fail
+    // with a file-not-found style error (not NoDiagnosticAtOffset).
+    let dir = tempfile::tempdir().unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    std::fs::write(
+        &main_path,
+        "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        X => 1\n    }\n}\n",
+    )
+    .unwrap();
+
+    let result = kyokara_hir::check_project(&main_path);
+    let (_root_path, root_tc) = result
+        .type_checks
+        .iter()
+        .find(|(mp, _)| mp.is_root())
+        .expect("should have root module");
+
+    let (_, span) = root_tc
+        .raw_diagnostics
+        .iter()
+        .find(|(d, _)| matches!(d, kyokara_hir::TyDiagnosticData::MissingMatchArms { .. }))
+        .expect("main.ky should have MissingMatchArms diagnostic");
+    let offset: u32 = span.range.start().into();
+
+    let missing_target = dir.path().join("missing.ky");
+    let action = RefactorAction::AddMissingMatchCases {
+        offset,
+        target_file: Some(missing_target.display().to_string()),
+    };
+    let err = kyokara_refactor::refactor_project(&result, action).unwrap_err();
+    match err {
+        RefactorError::IoError { message } => {
+            assert!(
+                message.contains("target_file")
+                    && message.contains("not found")
+                    && message.contains(&missing_target.display().to_string()),
+                "unexpected IoError message: {message}"
+            );
+        }
+        other => panic!("expected IoError for unknown target_file, got: {other:?}"),
+    }
+}
+
+#[test]
+fn project_quickfix_missing_module_info_returns_internal_error() {
+    // Guard against silent FileId(0) fallback when project data is inconsistent.
+    let dir = tempfile::tempdir().unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    std::fs::write(
+        &main_path,
+        "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        X => 1\n    }\n}\n",
+    )
+    .unwrap();
+
+    let result = kyokara_hir::check_project(&main_path);
+    let (_root_path, root_tc) = result
+        .type_checks
+        .iter()
+        .find(|(mp, _)| mp.is_root())
+        .expect("should have root module");
+
+    let (_, span) = root_tc
+        .raw_diagnostics
+        .iter()
+        .find(|(d, _)| matches!(d, kyokara_hir::TyDiagnosticData::MissingMatchArms { .. }))
+        .expect("main.ky should have MissingMatchArms diagnostic");
+    let offset: u32 = span.range.start().into();
+
+    let inconsistent = kyokara_hir::ProjectCheckResult {
+        module_graph: kyokara_hir::ModuleGraph::new(),
+        type_checks: result.type_checks,
+        interner: result.interner,
+        file_map: result.file_map,
+        parse_errors: result.parse_errors,
+        lowering_diagnostics: result.lowering_diagnostics,
+    };
+
+    let action = RefactorAction::AddMissingMatchCases {
+        offset,
+        target_file: None,
+    };
+    let err = kyokara_refactor::refactor_project(&inconsistent, action).unwrap_err();
+    assert!(
+        matches!(err, RefactorError::InternalError { .. }),
+        "expected InternalError when module graph has no entry, got: {err:?}"
+    );
+}
+
+#[test]
 fn io_error_display_includes_io_prefix() {
     let err = RefactorError::IoError {
         message: "disk full".into(),
