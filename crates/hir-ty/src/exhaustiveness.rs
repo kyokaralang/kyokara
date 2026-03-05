@@ -7,23 +7,41 @@ use kyokara_hir_def::expr::{ExprIdx, Literal, MatchArm};
 use kyokara_hir_def::item_tree::{ItemTree, TypeDefKind, TypeItemIdx};
 use kyokara_hir_def::pat::Pat;
 use kyokara_intern::Interner;
-use kyokara_stdx::FxHashSet;
-use la_arena::Arena;
+use kyokara_stdx::{FxHashMap, FxHashSet};
+use la_arena::{Arena, ArenaMap};
 
 use crate::diagnostics::TyDiagnosticData;
 use crate::infer::DiagLoc;
 use crate::ty::Ty;
+use crate::unify::UnificationTable;
+
+pub(crate) struct AdtExhaustivenessInput<'a> {
+    pub type_idx: TypeItemIdx,
+    pub arms: &'a [MatchArm],
+    pub pats: &'a Arena<Pat>,
+    pub pat_types: &'a ArenaMap<la_arena::Idx<Pat>, Ty>,
+    pub table: &'a UnificationTable,
+    pub item_tree: &'a ItemTree,
+    pub interner: &'a Interner,
+    pub match_expr_idx: ExprIdx,
+}
 
 /// Check that a match on an ADT type is exhaustive and has no redundant arms.
 pub(crate) fn check_exhaustiveness(
-    type_idx: TypeItemIdx,
-    arms: &[MatchArm],
-    pats: &Arena<Pat>,
-    item_tree: &ItemTree,
-    interner: &Interner,
+    input: AdtExhaustivenessInput<'_>,
     diags: &mut Vec<(TyDiagnosticData, DiagLoc)>,
-    match_expr_idx: ExprIdx,
 ) {
+    let AdtExhaustivenessInput {
+        type_idx,
+        arms,
+        pats,
+        pat_types,
+        table,
+        item_tree,
+        interner,
+        match_expr_idx,
+    } = input;
+
     let type_item = &item_tree.types[type_idx];
     let variants = match &type_item.kind {
         TypeDefKind::Adt { variants } => variants,
@@ -31,6 +49,7 @@ pub(crate) fn check_exhaustiveness(
     };
 
     let mut covered: FxHashSet<usize> = FxHashSet::default();
+    let mut bool_coverage: FxHashMap<usize, BoolCoverage> = FxHashMap::default();
     let mut has_wildcard = false;
     let mut wildcard_seen_at: Option<usize> = None;
 
@@ -58,6 +77,24 @@ pub(crate) fn check_exhaustiveness(
                     ));
                     continue;
                 }
+
+                let Some(name) = path.last() else {
+                    continue;
+                };
+                let Some(variant_idx) = variants
+                    .iter()
+                    .position(|v| v.name.resolve(interner) == name.resolve(interner))
+                else {
+                    continue;
+                };
+                if covered.contains(&variant_idx) {
+                    diags.push((
+                        TyDiagnosticData::RedundantMatchArm,
+                        DiagLoc::Expr(match_expr_idx),
+                    ));
+                    continue;
+                }
+
                 // Conservative nested-pattern handling:
                 // only constructor arms with irrefutable argument patterns
                 // (wildcards/binds) are considered full variant coverage.
@@ -67,15 +104,40 @@ pub(crate) fn check_exhaustiveness(
                     .iter()
                     .all(|arg| matches!(&pats[*arg], Pat::Wildcard | Pat::Bind { .. }));
                 if !args_irrefutable {
+                    if let Some((arity, assignments)) =
+                        bool_assignments(args, pats, pat_types, table)
+                    {
+                        let Some(domain_size) = (1_usize).checked_shl(arity as u32) else {
+                            continue;
+                        };
+                        let entry =
+                            bool_coverage
+                                .entry(variant_idx)
+                                .or_insert_with(|| BoolCoverage {
+                                    arity,
+                                    seen: FxHashSet::default(),
+                                });
+                        if entry.arity != arity {
+                            continue;
+                        }
+                        let mut added_any = false;
+                        for assignment in assignments {
+                            if entry.seen.insert(assignment) {
+                                added_any = true;
+                            }
+                        }
+                        if !added_any {
+                            diags.push((
+                                TyDiagnosticData::RedundantMatchArm,
+                                DiagLoc::Expr(match_expr_idx),
+                            ));
+                        } else if entry.seen.len() == domain_size {
+                            covered.insert(variant_idx);
+                        }
+                    }
                     continue;
                 }
-                // Find which variant this constructor matches.
-                if let Some(name) = path.last()
-                    && let Some(variant_idx) = variants
-                        .iter()
-                        .position(|v| v.name.resolve(interner) == name.resolve(interner))
-                    && !covered.insert(variant_idx)
-                {
+                if !covered.insert(variant_idx) {
                     diags.push((
                         TyDiagnosticData::RedundantMatchArm,
                         DiagLoc::Expr(match_expr_idx),
@@ -103,6 +165,52 @@ pub(crate) fn check_exhaustiveness(
             DiagLoc::Expr(match_expr_idx),
         ));
     }
+}
+
+#[derive(Debug)]
+struct BoolCoverage {
+    arity: usize,
+    seen: FxHashSet<u64>,
+}
+
+fn bool_assignments(
+    args: &[la_arena::Idx<Pat>],
+    pats: &Arena<Pat>,
+    pat_types: &ArenaMap<la_arena::Idx<Pat>, Ty>,
+    table: &UnificationTable,
+) -> Option<(usize, Vec<u64>)> {
+    if args.is_empty() || args.len() > u64::BITS as usize {
+        return None;
+    }
+
+    let mut assignments = vec![0_u64];
+    for (idx, arg) in args.iter().enumerate() {
+        let ty = pat_types.get(*arg)?;
+        if !matches!(table.resolve_deep(ty), Ty::Bool) {
+            return None;
+        }
+
+        match &pats[*arg] {
+            Pat::Literal(Literal::Bool(value)) => {
+                if *value {
+                    for assignment in &mut assignments {
+                        *assignment |= 1_u64 << idx;
+                    }
+                }
+            }
+            Pat::Wildcard | Pat::Bind { .. } => {
+                let mut expanded = Vec::with_capacity(assignments.len() * 2);
+                for assignment in assignments {
+                    expanded.push(assignment);
+                    expanded.push(assignment | (1_u64 << idx));
+                }
+                assignments = expanded;
+            }
+            _ => return None,
+        }
+    }
+
+    Some((args.len(), assignments))
 }
 
 /// Check match exhaustiveness for non-ADT scrutinees.

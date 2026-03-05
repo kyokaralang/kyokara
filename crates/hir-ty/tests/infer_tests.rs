@@ -1930,3 +1930,43 @@ fn path_record_lit_valid_record_still_works() {
          }",
     );
 }
+
+#[test]
+fn exhaustive_option_bool_with_literal_arms() {
+    check_ok(
+        "fn foo(x: Option<Bool>) -> Int {
+             match (x) {
+                 Some(true) => 1
+                 Some(false) => 0
+                 None => 2
+             }
+         }",
+    );
+}
+
+#[test]
+fn err_non_exhaustive_option_bool_with_partial_literal_arms() {
+    check_err(
+        "fn foo(x: Option<Bool>) -> Int {
+             match (x) {
+                 Some(true) => 1
+                 None => 2
+             }
+         }",
+        "non-exhaustive",
+    );
+}
+
+#[test]
+fn err_non_exhaustive_option_int_with_literal_arms() {
+    check_err(
+        "fn foo(x: Option<Int>) -> Int {
+             match (x) {
+                 Some(1) => 1
+                 Some(2) => 2
+                 None => 0
+             }
+         }",
+        "non-exhaustive",
+    );
+}

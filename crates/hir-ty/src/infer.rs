@@ -138,10 +138,9 @@ impl<'a> InferenceCtx<'a> {
         let expected_norm = self.normalize_record_aliases_for_unify(expected);
         let actual_norm = self.normalize_record_aliases_for_unify(actual);
 
-        if self.table.unify(&expected_norm, &actual_norm) {
-            self.table.resolve_deep(&expected_norm)
-        } else if self.traversal_seq_compat_enabled()
-            && self.unify_seq_traversal_compat(&expected_norm, &actual_norm)
+        if self.table.unify(&expected_norm, &actual_norm)
+            || (self.traversal_seq_compat_enabled()
+                && self.unify_seq_traversal_compat(&expected_norm, &actual_norm))
         {
             self.table.resolve_deep(&expected_norm)
         } else {

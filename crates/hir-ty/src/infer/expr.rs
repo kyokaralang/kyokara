@@ -849,13 +849,17 @@ impl<'a> InferenceCtx<'a> {
         let resolved_scrutinee = self.table.resolve_deep(&scrutinee_ty);
         if let Ty::Adt { def, .. } = &resolved_scrutinee {
             crate::exhaustiveness::check_exhaustiveness(
-                *def,
-                arms,
-                &self.body.pats,
-                self.item_tree,
-                self.interner,
+                crate::exhaustiveness::AdtExhaustivenessInput {
+                    type_idx: *def,
+                    arms,
+                    pats: &self.body.pats,
+                    pat_types: &self.pat_types,
+                    table: &self.table,
+                    item_tree: self.item_tree,
+                    interner: self.interner,
+                    match_expr_idx,
+                },
                 &mut self.diags,
-                match_expr_idx,
             );
         } else {
             crate::exhaustiveness::check_non_adt_exhaustiveness(
