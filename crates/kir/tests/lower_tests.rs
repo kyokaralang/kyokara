@@ -134,6 +134,23 @@ fn test_range_until_lowers_via_seq_range_intrinsic_path_rfc_0003() {
     assert!(out.contains("call intrinsic:seq_count("), "output:\n{out}");
 }
 
+#[test]
+fn test_loop_statements_lower_with_minimal_kir_compatibility_rfc_0006() {
+    let out = lower_and_display(
+        "import collections\n\
+         fn f() -> Int {\n\
+           let acc = collections.MutableList.new().push(0)\n\
+           for (x in 0..<10) {\n\
+             if (x == 7) { break }\n\
+             if ((x % 2) == 0) { continue }\n\
+             acc.set(0, acc[0] + x)\n\
+           }\n\
+           acc[0]\n\
+         }",
+    );
+    assert!(out.contains("@f"), "output:\n{out}");
+}
+
 // ── Unary ops ────────────────────────────────────────────────────
 
 #[test]

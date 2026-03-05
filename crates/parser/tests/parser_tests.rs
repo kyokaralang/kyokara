@@ -156,8 +156,8 @@ fn nested_type_args_accept_gtgt_token() {
 fn deep_nested_type_args_accept_gtgt_plus_gt_tokens() {
     // fn f(xs: List<List<List<Int>>>) -> Int { 0 }
     let (events, errors) = parse_tokens(&[
-        FnKw, Ident, LParen, Ident, Colon, Ident, Lt, Ident, Lt, Ident, Lt, Ident, GtGt, Gt, RParen,
-        Arrow, Ident, LBrace, IntLiteral, RBrace,
+        FnKw, Ident, LParen, Ident, Colon, Ident, Lt, Ident, Lt, Ident, Lt, Ident, GtGt, Gt,
+        RParen, Arrow, Ident, LBrace, IntLiteral, RBrace,
     ]);
     assert!(
         has_no_errors(&errors),
@@ -966,6 +966,108 @@ fn block_expr_allows_semicolon_separators() {
     assert!(has_no_errors(&errors));
     assert!(has_node(&events, FnDef));
     assert!(has_node(&events, BlockExpr));
+}
+
+#[test]
+fn while_stmt_parses_in_block() {
+    // fn main() -> Unit { while (true) {} }
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, LBrace, WhileKw, LParen, TrueKw, RParen, LBrace,
+        RBrace, RBrace,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "unexpected parser errors: {errors:?}"
+    );
+    assert!(has_node(&events, WhileStmt));
+}
+
+#[test]
+fn for_stmt_parses_in_block() {
+    // fn main() -> Unit { for (x in 0..<10) {} }
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, LBrace, ForKw, LParen, Ident, InKw, IntLiteral,
+        DotDotLt, IntLiteral, RParen, LBrace, RBrace, RBrace,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "unexpected parser errors: {errors:?}"
+    );
+    assert!(has_node(&events, ForStmt));
+}
+
+#[test]
+fn break_and_continue_parse_in_block() {
+    // fn main() -> Unit { while (true) { continue; break; } }
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, LBrace, WhileKw, LParen, TrueKw, RParen, LBrace,
+        ContinueKw, Semicolon, BreakKw, Semicolon, RBrace, RBrace,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "unexpected parser errors: {errors:?}"
+    );
+    assert!(has_node(&events, ContinueStmt));
+    assert!(has_node(&events, BreakStmt));
+}
+
+#[test]
+fn while_loop_head_missing_parens_reports_targeted_error() {
+    // fn main() -> Unit { while true { } }
+    let (_events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, LBrace, WhileKw, TrueKw, LBrace, RBrace, RBrace,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted while parse error, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("while condition must be parenthesized"),
+        "expected targeted while diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn for_loop_head_missing_parens_reports_targeted_error() {
+    // fn main() -> Unit { for x in 0..<10 {} }
+    let (_events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, LBrace, ForKw, Ident, InKw, IntLiteral,
+        DotDotLt, IntLiteral, LBrace, RBrace, RBrace,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted for parse error, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("for loop head must be parenthesized"),
+        "expected targeted for-parens diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn for_loop_head_missing_in_reports_targeted_error() {
+    // fn main() -> Unit { for (x xs) {} }
+    let (_events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, Arrow, Ident, LBrace, ForKw, LParen, Ident, Ident, RParen,
+        LBrace, RBrace, RBrace,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted for parse error, got: {errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message.contains("for loop requires 'in'")),
+        "expected targeted missing-`in` diagnostic, got: {errors:?}"
+    );
 }
 
 // ── Patterns ────────────────────────────────────────────────────────

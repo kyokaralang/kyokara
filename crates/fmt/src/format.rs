@@ -85,6 +85,10 @@ fn format_node_inner(node: &SyntaxNode) -> Doc {
         SyntaxKind::MatchArm => format_match_arm(node),
         SyntaxKind::MatchArmList => format_match_arm_list(node),
         SyntaxKind::IfExpr => format_if_expr(node),
+        SyntaxKind::WhileStmt => format_while_stmt(node),
+        SyntaxKind::ForStmt => format_for_stmt(node),
+        SyntaxKind::BreakStmt => format_break_stmt(),
+        SyntaxKind::ContinueStmt => format_continue_stmt(),
         SyntaxKind::BlockExpr => format_block_expr(node),
         SyntaxKind::RecordExpr => format_record_expr(node),
         SyntaxKind::RecordExprField => format_record_expr_field(node),
@@ -1170,10 +1174,65 @@ fn format_if_expr(node: &SyntaxNode) -> Doc {
     Doc::concat(parts)
 }
 
+fn format_while_stmt(node: &SyntaxNode) -> Doc {
+    let condition = node.children().find(|c| is_expr(c.kind()));
+    let body = find_child_node(node, SyntaxKind::BlockExpr);
+
+    let mut parts = vec![Doc::text("while"), Doc::text(" "), Doc::text("(")];
+    if let Some(cond) = condition {
+        parts.push(format_node(&cond));
+    }
+    parts.push(Doc::text(")"));
+    if let Some(block) = body {
+        parts.push(Doc::text(" "));
+        parts.push(format_node(&block));
+    }
+    Doc::concat(parts)
+}
+
+fn format_for_stmt(node: &SyntaxNode) -> Doc {
+    let pat = node.children().find(|c| is_pat(c.kind()));
+    let source = node.children().find(|c| is_expr(c.kind()));
+    let body = find_child_node(node, SyntaxKind::BlockExpr);
+
+    let mut parts = vec![Doc::text("for"), Doc::text(" "), Doc::text("(")];
+    if let Some(p) = pat {
+        parts.push(format_node(&p));
+    }
+    parts.push(Doc::text(" in "));
+    if let Some(src) = source {
+        parts.push(format_node(&src));
+    }
+    parts.push(Doc::text(")"));
+    if let Some(block) = body {
+        parts.push(Doc::text(" "));
+        parts.push(format_node(&block));
+    }
+    Doc::concat(parts)
+}
+
+fn format_break_stmt() -> Doc {
+    Doc::text("break")
+}
+
+fn format_continue_stmt() -> Doc {
+    Doc::text("continue")
+}
+
 fn format_block_expr(node: &SyntaxNode) -> Doc {
     let item_docs = comments::format_children_with_comments(
         node,
-        |c| is_expr(c.kind()) || c.kind() == SyntaxKind::LetBinding,
+        |c| {
+            is_expr(c.kind())
+                || matches!(
+                    c.kind(),
+                    SyntaxKind::LetBinding
+                        | SyntaxKind::WhileStmt
+                        | SyntaxKind::ForStmt
+                        | SyntaxKind::BreakStmt
+                        | SyntaxKind::ContinueStmt
+                )
+        },
         format_node,
     );
 

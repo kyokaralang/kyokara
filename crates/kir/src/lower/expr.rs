@@ -921,6 +921,37 @@ impl<'a> LoweringCtx<'a> {
                     let init_val = self.lower_expr(*init);
                     self.bind_pattern(*pat, init_val);
                 }
+                Stmt::While {
+                    condition,
+                    body: loop_body,
+                } => {
+                    // RFC 0006 phase-1 compatibility: keep KIR lowering exhaustive
+                    // without full loop CFG semantics yet.
+                    self.lower_expr(*condition);
+                    self.lower_expr(*loop_body);
+                }
+                Stmt::For {
+                    pat,
+                    source,
+                    body: loop_body,
+                } => {
+                    // RFC 0006 phase-1 compatibility: lower source/body and
+                    // seed pattern locals with a typed placeholder.
+                    self.lower_expr(*source);
+                    self.push_scope();
+                    let hole = self.next_hole_id();
+                    let elem = self.builder.push_hole(hole, vec![], self.pat_ty(*pat));
+                    self.bind_pattern(*pat, elem);
+                    self.lower_expr(*loop_body);
+                    self.pop_scope();
+                }
+                Stmt::Break | Stmt::Continue => {
+                    // RFC 0006 phase-1 compatibility: represent control-only
+                    // statements as typed holes in KIR until dedicated loop CFG
+                    // lowering lands.
+                    let hole = self.next_hole_id();
+                    self.builder.push_hole(hole, vec![], Ty::Unit);
+                }
                 Stmt::Expr(expr) => {
                     self.lower_expr(*expr);
                 }

@@ -43,6 +43,7 @@ pub struct Body {
 pub enum LocalBindingOrigin {
     LetPattern,
     MatchArmPattern,
+    ForPattern,
     LambdaParam,
     ContractResult,
 }

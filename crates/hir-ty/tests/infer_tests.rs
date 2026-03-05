@@ -251,6 +251,45 @@ fn infer_if_no_else_is_unit() {
 }
 
 #[test]
+fn infer_while_and_for_with_traversable_sources() {
+    check_ok(
+        "fn foo(xs: List<Int>, ys: MutableList<Int>, zs: Deque<Int>) {
+           for (x in 0..<3) { x }
+           for (x in xs) { x }
+           for (y in ys) { y }
+           for (z in zs) { z }
+           while (true) { break }
+         }",
+    );
+}
+
+#[test]
+fn err_for_source_not_traversable() {
+    check_err(
+        "fn foo() { for (x in 1) { x } }",
+        "for source must be traversable",
+    );
+}
+
+#[test]
+fn err_break_outside_loop() {
+    check_err("fn foo() { break }", "`break` used outside loop");
+}
+
+#[test]
+fn err_continue_outside_loop() {
+    check_err("fn foo() { continue }", "`continue` used outside loop");
+}
+
+#[test]
+fn err_for_pattern_must_be_irrefutable() {
+    check_err(
+        "fn foo(xs: List<Option<Int>>) { for (Some(x) in xs) { x } }",
+        "for loop pattern must be irrefutable",
+    );
+}
+
+#[test]
 fn infer_function_call() {
     check_ok("fn bar(x: Int) -> Int { x }\nfn foo() -> Int { bar(42) }");
 }

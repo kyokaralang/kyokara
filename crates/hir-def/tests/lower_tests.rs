@@ -238,6 +238,65 @@ fn lower_if_expr() {
 }
 
 #[test]
+fn lower_while_for_break_continue_statements() {
+    let src = "fn foo() {
+      while (true) { continue; break }
+      for (x in 0..<3) { x }
+    }";
+    let (body, diags, _) = lower_fn_body(src);
+    assert!(
+        diags.is_empty(),
+        "unexpected lowering diagnostics: {diags:?}"
+    );
+
+    let Expr::Block { stmts, .. } = &body.exprs[body.root] else {
+        panic!("expected root Block");
+    };
+
+    assert!(
+        stmts.iter().any(|s| matches!(s, Stmt::While { .. })),
+        "expected lowered while statement, got: {stmts:?}"
+    );
+    assert!(
+        stmts.iter().any(|s| matches!(s, Stmt::For { .. })),
+        "expected lowered for statement, got: {stmts:?}"
+    );
+}
+
+#[test]
+fn lower_for_pattern_binding_preserves_pattern_shape() {
+    let src = "fn foo(rows: List<{ x: Int }>) {
+      for ({ x } in rows) { x }
+    }";
+    let (body, diags, _) = lower_fn_body(src);
+    assert!(
+        diags.is_empty(),
+        "unexpected lowering diagnostics: {diags:?}"
+    );
+
+    let Expr::Block { stmts, .. } = &body.exprs[body.root] else {
+        panic!("expected root Block");
+    };
+
+    let for_pat = stmts.iter().find_map(|stmt| {
+        if let Stmt::For { pat, .. } = stmt {
+            Some(*pat)
+        } else {
+            None
+        }
+    });
+
+    let Some(for_pat) = for_pat else {
+        panic!("expected for statement with pattern binding");
+    };
+    assert!(
+        matches!(&body.pats[for_pat], Pat::Record { .. }),
+        "expected record pattern for for-binding, got: {:?}",
+        body.pats[for_pat]
+    );
+}
+
+#[test]
 fn lower_else_if_expr_preserves_nested_else_branch() {
     let src = "fn foo() -> Int { if (true) { 1 } else if (false) { 2 } else { 3 } }";
     let (body, diags, _) = lower_fn_body(src);

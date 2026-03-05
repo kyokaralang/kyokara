@@ -904,6 +904,43 @@ impl<'a> InferenceCtx<'a> {
                 Stmt::Expr(e) => {
                     self.infer_expr(*e, &Expectation::None);
                 }
+                Stmt::While { condition, body } => {
+                    self.infer_expr(*condition, &Expectation::Has(Ty::Bool));
+                    self.with_loop_scope(|ctx| {
+                        ctx.infer_expr(*body, &Expectation::None);
+                    });
+                }
+                Stmt::For { pat, source, body } => {
+                    let source_ty = self.infer_expr(*source, &Expectation::None);
+                    let source_ty_resolved = self.table.resolve_deep(&source_ty);
+                    let elem_ty = self
+                        .traversable_element_type(&source_ty_resolved)
+                        .unwrap_or_else(|| {
+                            self.push_diag(TyDiagnosticData::ForSourceNotTraversable {
+                                ty: source_ty_resolved.clone(),
+                            });
+                            Ty::Error
+                        });
+
+                    self.infer_pat(*pat, &elem_ty);
+                    if !self.is_irrefutable_let_pattern(*pat, &elem_ty) {
+                        self.push_pat_diag(*pat, TyDiagnosticData::RefutableForPattern);
+                    }
+
+                    self.with_loop_scope(|ctx| {
+                        ctx.infer_expr(*body, &Expectation::None);
+                    });
+                }
+                Stmt::Break => {
+                    if !self.in_loop() {
+                        self.push_diag(TyDiagnosticData::BreakOutsideLoop);
+                    }
+                }
+                Stmt::Continue => {
+                    if !self.in_loop() {
+                        self.push_diag(TyDiagnosticData::ContinueOutsideLoop);
+                    }
+                }
             }
         }
 
@@ -992,6 +1029,20 @@ impl<'a> InferenceCtx<'a> {
                     .all(|(sub_pat, field_ty)| self.is_irrefutable_let_pattern(*sub_pat, field_ty))
             }
         }
+    }
+
+    fn traversable_element_type(&self, source_ty: &Ty) -> Option<Ty> {
+        let Ty::Adt { def, args } = source_ty else {
+            return None;
+        };
+        let core = self.module_scope.core_types.kind_for_idx(*def)?;
+        if !matches!(
+            core,
+            CoreType::Seq | CoreType::List | CoreType::MutableList | CoreType::Deque
+        ) {
+            return None;
+        }
+        args.first().cloned()
     }
 
     fn infer_record_lit(

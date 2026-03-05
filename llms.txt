@@ -19,6 +19,7 @@
 - Typed holes: `_` compiles to structured hole specs with expected type, effects, and constraints
 - Pipeline operator: `x |> f(a: 1)` desugars to `f(x, a: 1)`
 - Error propagation: `expr?` desugars to early-return match on `Result`
+- Loop control surface: `while (cond) { ... }`, `for (pattern in source) { ... }`, `break`, `continue`; `for` patterns support destructuring but must be irrefutable, and `for` sources are any traversables (ranges, collections, producer chains)
 - No null, no exceptions: `Option<T>` and `Result<T, E>` only (builtin types, available without imports)
 
 ## Compiler Architecture

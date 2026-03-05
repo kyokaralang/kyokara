@@ -253,6 +253,30 @@ fn fmt_if_expr() {
 }
 
 #[test]
+fn fmt_while_stmt_canonical_single_line_head() {
+    assert_fmt(
+        "fn main() -> Int { while (x<10) { x } }",
+        "fn main() -> Int {\n  while (x < 10) {\n    x\n  }\n}\n",
+    );
+}
+
+#[test]
+fn fmt_for_stmt_canonical_single_line_head() {
+    assert_fmt(
+        "fn main() -> Int { for (x in 0 ..< 10) { x } }",
+        "fn main() -> Int {\n  for (x in 0 ..< 10) {\n    x\n  }\n}\n",
+    );
+}
+
+#[test]
+fn fmt_break_continue_statements() {
+    assert_fmt(
+        "fn main() -> Int { while (true) { continue; break } }",
+        "fn main() -> Int {\n  while (true) {\n    continue\n    break\n  }\n}\n",
+    );
+}
+
+#[test]
 fn fmt_match_expr() {
     assert_fmt(
         "fn main() -> Int { match (x) { 1 => 2, _ => 3 } }",

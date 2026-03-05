@@ -43,7 +43,8 @@ Ident            <- [a-zA-Z_] [a-zA-Z0-9_]*
 Keyword          <- 'module' / 'import' / 'as' / 'type' / 'fn' / 'let' / 'pub'
                   / 'match' / 'cap' / 'effect' / 'with' / 'pipe' / 'contract'
                   / 'requires' / 'ensures' / 'invariant'
-                  / 'property' / 'for' / 'all' / 'where'
+                  / 'property' / 'for' / 'all' / 'where' / 'in'
+                  / 'while' / 'break' / 'continue'
                   / 'old' / 'true' / 'false' / 'if' / 'else' / 'return'
 
 # Operators
@@ -188,23 +189,25 @@ Operator precedence (lowest to highest):
 | Precedence | Operators | Associativity |
 |---|---|---|
 | 1 | `\|>` | Left |
-| 2 | `\|\|` | Left |
-| 3 | `&&` | Left |
-| 4 | `==` `!=` | Left |
-| 5 | `<` `>` `<=` `>=` | Left |
-| 6 | `\|` | Left |
-| 7 | `^` | Left |
-| 8 | `&` | Left |
-| 9 | `<<` `>>` | Left |
-| 10 | `+` `-` | Left |
-| 11 | `*` `/` `%` | Left |
-| 12 | Unary `!` `-` `~` | Prefix |
-| 13 | Postfix `?` `.` `()` `[]` | Postfix |
+| 2 | `..<` | Left |
+| 3 | `\|\|` | Left |
+| 4 | `&&` | Left |
+| 5 | `==` `!=` | Left |
+| 6 | `<` `>` `<=` `>=` | Left |
+| 7 | `\|` | Left |
+| 8 | `^` | Left |
+| 9 | `&` | Left |
+| 10 | `<<` `>>` | Left |
+| 11 | `+` `-` | Left |
+| 12 | `*` `/` `%` | Left |
+| 13 | Unary `!` `-` `~` | Prefix |
+| 14 | Postfix `?` `.` `()` `[]` | Postfix |
 
 ```peg
 Expr               <- PipelineExpr
 
-PipelineExpr       <- OrExpr ('|>' OrExpr)*
+PipelineExpr       <- RangeExpr ('|>' RangeExpr)*
+RangeExpr          <- OrExpr ('..<' OrExpr)*
 OrExpr             <- AndExpr ('||' AndExpr)*
 AndExpr            <- EqualityExpr ('&&' EqualityExpr)*
 EqualityExpr       <- ComparisonExpr (('==' / '!=') ComparisonExpr)*
@@ -246,8 +249,13 @@ LiteralExpr        <- IntLiteral / FloatLiteral / StringLiteral
 IdentExpr          <- Ident
 PathExpr           <- Path
 ParenExpr          <- '(' Expr ')'
-BlockExpr          <- '{' (LetBinding / Expr)* Expr? '}'
+BlockExpr          <- '{' BlockItem* Expr? '}'
+BlockItem          <- LetBinding / WhileStmt / ForStmt / BreakStmt / ContinueStmt / Expr
 IfExpr             <- 'if' '(' Expr ')' BlockExpr ('else' (IfExpr / BlockExpr))?
+WhileStmt          <- 'while' '(' Expr ')' BlockExpr
+ForStmt            <- 'for' '(' Pattern 'in' Expr ')' BlockExpr
+BreakStmt          <- 'break'
+ContinueStmt       <- 'continue'
 MatchExpr          <- 'match' '(' Expr ')' MatchArmList
 # Match arms accept optional commas; leading `|` is rejected.
 MatchArmList       <- '{' (MatchArm (',' MatchArm)* ','?)? '}'
@@ -287,7 +295,8 @@ All keywords listed above are reserved and cannot be used as identifiers.
 
 ```
 all      as       cap      contract  effect   else     ensures
-false    fn       for      if        import   invariant let
-match    module   old      pipe      property pub      requires
-return   true     type     where     with
+false    fn       for      if        import   in        invariant
+let      match    module   old       pipe     property  pub
+requires return   true     type      where    while     with
+break    continue
 ```

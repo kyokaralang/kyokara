@@ -25,6 +25,8 @@ const EXPR_RECOVERY: TokenSet = TokenSet::new(&[
 ]);
 const IF_HEAD_RECOVERY: TokenSet = TokenSet::new(&[LBrace, ElseKw, Semicolon, RBrace]);
 const MATCH_HEAD_RECOVERY: TokenSet = TokenSet::new(&[LBrace, Semicolon, RBrace]);
+const WHILE_HEAD_RECOVERY: TokenSet = TokenSet::new(&[LBrace, Semicolon, RBrace]);
+const FOR_HEAD_RECOVERY: TokenSet = TokenSet::new(&[RParen, LBrace, Semicolon, RBrace]);
 const RANGE_RHS_RECOVERY: TokenSet = TokenSet::new(&[
     LetKw, RBrace, Semicolon, RParen, Comma, FatArrow, TypeKw, FnKw, CapKw, PropertyKw, LeftArrow,
     PipeGt,
@@ -179,6 +181,18 @@ pub(super) fn block_expr(p: &mut Parser<'_>) -> CompletedMarker {
         if p.at(LetKw) {
             super::items::let_binding(p);
             while p.eat(Semicolon) {}
+        } else if p.at(WhileKw) {
+            while_stmt(p);
+            while p.eat(Semicolon) {}
+        } else if p.at(ForKw) {
+            for_stmt(p);
+            while p.eat(Semicolon) {}
+        } else if p.at(BreakKw) {
+            break_stmt(p);
+            while p.eat(Semicolon) {}
+        } else if p.at(ContinueKw) {
+            continue_stmt(p);
+            while p.eat(Semicolon) {}
         } else if expr(p).is_some() {
             // Expression statement — optionally followed by semicolons
             // (we don't require semicolons in the grammar)
@@ -217,6 +231,72 @@ fn if_expr(p: &mut Parser<'_>) -> CompletedMarker {
         }
     }
     m.complete(p, IfExpr)
+}
+
+/// `while '(' Expr ')' BlockExpr`
+fn while_stmt(p: &mut Parser<'_>) -> CompletedMarker {
+    let m = p.open();
+    p.bump(); // while
+    if p.eat(LParen) {
+        expr(p);
+        p.expect(RParen);
+    } else {
+        p.error_recover_parenthesized_head(
+            "while condition must be parenthesized",
+            WHILE_HEAD_RECOVERY,
+        );
+    }
+    if p.at(LBrace) {
+        block_expr(p);
+    } else {
+        p.error("expected block after while condition");
+    }
+    m.complete(p, WhileStmt)
+}
+
+/// `for '(' Pattern 'in' Expr ')' BlockExpr`
+fn for_stmt(p: &mut Parser<'_>) -> CompletedMarker {
+    let m = p.open();
+    p.bump(); // for
+    if p.eat(LParen) {
+        super::patterns::pattern(p);
+        if p.eat(InKw) {
+            expr(p);
+        } else {
+            p.error("for loop requires 'in'");
+            if can_start_expr(p.current()) {
+                expr(p);
+            } else {
+                p.recover_parenthesized_head_content(FOR_HEAD_RECOVERY);
+            }
+        }
+        p.expect(RParen);
+    } else {
+        p.error_recover_parenthesized_head(
+            "for loop head must be parenthesized",
+            FOR_HEAD_RECOVERY,
+        );
+    }
+    if p.at(LBrace) {
+        block_expr(p);
+    } else {
+        p.error("expected block after for loop head");
+    }
+    m.complete(p, ForStmt)
+}
+
+/// `break`
+fn break_stmt(p: &mut Parser<'_>) -> CompletedMarker {
+    let m = p.open();
+    p.bump(); // break
+    m.complete(p, BreakStmt)
+}
+
+/// `continue`
+fn continue_stmt(p: &mut Parser<'_>) -> CompletedMarker {
+    let m = p.open();
+    p.bump(); // continue
+    m.complete(p, ContinueStmt)
 }
 
 /// `match '(' Expr ')' MatchArmList`

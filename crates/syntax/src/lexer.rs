@@ -296,6 +296,10 @@ mod tests {
             ("invariant", InvariantKw),
             ("property", PropertyKw),
             ("for", ForKw),
+            ("in", InKw),
+            ("while", WhileKw),
+            ("break", BreakKw),
+            ("continue", ContinueKw),
             ("where", WhereKw),
             ("pipe", PipeKw),
             ("old", OldKw),
@@ -315,7 +319,17 @@ mod tests {
     fn keyword_vs_ident() {
         // Prefixes/suffixes of keywords are identifiers, not keywords.
         let idents = [
-            "modules", "letx", "fns", "iff", "returned", "trueish", "all",
+            "modules",
+            "letx",
+            "fns",
+            "iff",
+            "returned",
+            "trueish",
+            "inbox",
+            "whiley",
+            "breaker",
+            "continues",
+            "all",
         ];
         for text in idents {
             let tokens = lex_kinds(text);

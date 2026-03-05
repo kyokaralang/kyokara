@@ -828,6 +828,73 @@ pub enum ElseBranch {
     IfExpr(IfExpr),
 }
 
+define_ast_node!(WhileStmt, WhileStmt);
+
+impl WhileStmt {
+    pub fn condition(&self) -> Option<Expr> {
+        self.syntax.children().find_map(Expr::cast)
+    }
+
+    pub fn body(&self) -> Option<BlockExpr> {
+        support::child(&self.syntax)
+    }
+}
+
+define_ast_node!(ForStmt, ForStmt);
+
+impl ForStmt {
+    pub fn pat(&self) -> Option<Pat> {
+        self.syntax.children().find_map(Pat::cast)
+    }
+
+    pub fn source(&self) -> Option<Expr> {
+        let mut after_in = false;
+        for elem in self.syntax.children_with_tokens() {
+            if let Some(tok) = elem.as_token() {
+                if tok.kind() == SyntaxKind::InKw {
+                    after_in = true;
+                    continue;
+                }
+                if after_in && tok.kind() == SyntaxKind::RParen {
+                    break;
+                }
+                continue;
+            }
+            if !after_in {
+                continue;
+            }
+            let node = elem.into_node()?;
+            if let Some(expr) = Expr::cast(node) {
+                return Some(expr);
+            }
+        }
+        None
+    }
+
+    pub fn body(&self) -> Option<BlockExpr> {
+        let mut after_head = false;
+        for elem in self.syntax.children_with_tokens() {
+            if let Some(tok) = elem.as_token() {
+                if tok.kind() == SyntaxKind::RParen {
+                    after_head = true;
+                }
+                continue;
+            }
+            if !after_head {
+                continue;
+            }
+            let node = elem.into_node()?;
+            if let Some(block) = BlockExpr::cast(node) {
+                return Some(block);
+            }
+        }
+        None
+    }
+}
+
+define_ast_node!(BreakStmt, BreakStmt);
+define_ast_node!(ContinueStmt, ContinueStmt);
+
 define_ast_node!(BlockExpr, BlockExpr);
 
 impl BlockExpr {
@@ -841,6 +908,10 @@ impl BlockExpr {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BlockItem {
     LetBinding(LetBinding),
+    WhileStmt(WhileStmt),
+    ForStmt(ForStmt),
+    BreakStmt(BreakStmt),
+    ContinueStmt(ContinueStmt),
     Expr(Expr),
 }
 
@@ -848,6 +919,18 @@ impl BlockItem {
     pub fn cast(node: SyntaxNode) -> Option<Self> {
         if let Some(let_b) = LetBinding::cast(node.clone()) {
             return Some(BlockItem::LetBinding(let_b));
+        }
+        if let Some(while_stmt) = WhileStmt::cast(node.clone()) {
+            return Some(BlockItem::WhileStmt(while_stmt));
+        }
+        if let Some(for_stmt) = ForStmt::cast(node.clone()) {
+            return Some(BlockItem::ForStmt(for_stmt));
+        }
+        if let Some(break_stmt) = BreakStmt::cast(node.clone()) {
+            return Some(BlockItem::BreakStmt(break_stmt));
+        }
+        if let Some(continue_stmt) = ContinueStmt::cast(node.clone()) {
+            return Some(BlockItem::ContinueStmt(continue_stmt));
         }
         Expr::cast(node).map(BlockItem::Expr)
     }

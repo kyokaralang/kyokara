@@ -223,6 +223,65 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_while_and_for_loops_typecheck() {
+    let src = r#"
+fn main(xs: List<Int>) -> Int {
+  for (x in xs) { x }
+  while (true) { break }
+  0
+}
+"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_break_outside_loop_reports_targeted_type_diagnostic() {
+    let output = check("fn main() { break }", "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("`break` used outside loop")),
+        "expected targeted break-outside-loop diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_for_non_traversable_source_reports_targeted_type_diagnostic() {
+    let output = check("fn main() { for (x in 1) { x } }", "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("for source must be traversable")),
+        "expected targeted non-traversable diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_refutable_for_pattern_reports_targeted_type_diagnostic() {
+    let output = check(
+        "fn main(xs: List<Option<Int>>) { for (Some(x) in xs) { x } }",
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("for loop pattern must be irrefutable")),
+        "expected targeted refutable-pattern diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_parse_damaged_function_reports_parse_only_diagnostics() {
     let src = "fn main() -> Int { match value { _ => 0 } }";
     let output = check(src, "test.ky");
@@ -623,7 +682,11 @@ fn symbol_graph_contains_types() {
     assert_eq!(variant_names, vec!["Red", "Green", "Blue"]);
 
     assert!(
-        output.symbol_graph.types.iter().any(|t| t.name == "MutableList"),
+        output
+            .symbol_graph
+            .types
+            .iter()
+            .any(|t| t.name == "MutableList"),
         "MutableList builtin type should be in symbol graph"
     );
 }

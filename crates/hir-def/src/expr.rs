@@ -160,6 +160,18 @@ pub enum Stmt {
         ty: Option<TypeRef>,
         init: ExprIdx,
     },
+    /// `while (condition) { body }`
+    While { condition: ExprIdx, body: ExprIdx },
+    /// `for (pat in source) { body }`
+    For {
+        pat: PatIdx,
+        source: ExprIdx,
+        body: ExprIdx,
+    },
+    /// `break`
+    Break,
+    /// `continue`
+    Continue,
     /// An expression statement.
     Expr(ExprIdx),
 }

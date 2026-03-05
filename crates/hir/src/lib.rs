@@ -765,15 +765,10 @@ mod tests {
         let a_path = dir.join("a.ky");
         let b_path = dir.join("b.ky");
 
-        std::fs::write(
-            &main_path,
-            "import a\nimport b\nfn main() -> Int { 0 }\n",
-        )
-        .expect("main file should be writable");
-        std::fs::write(&a_path, "pub type A = Clash(Int)\n")
-            .expect("a module should be writable");
-        std::fs::write(&b_path, "pub type B = Clash(Int)\n")
-            .expect("b module should be writable");
+        std::fs::write(&main_path, "import a\nimport b\nfn main() -> Int { 0 }\n")
+            .expect("main file should be writable");
+        std::fs::write(&a_path, "pub type A = Clash(Int)\n").expect("a module should be writable");
+        std::fs::write(&b_path, "pub type B = Clash(Int)\n").expect("b module should be writable");
 
         let result = check_project(&main_path);
         let has_collision = result.lowering_diagnostics.iter().any(|d| {
@@ -800,15 +795,10 @@ mod tests {
         let a_path = dir.join("a.ky");
         let b_path = dir.join("b.ky");
 
-        std::fs::write(
-            &main_path,
-            "import a\nimport b\nfn main() -> Int { 0 }\n",
-        )
-        .expect("main file should be writable");
-        std::fs::write(&a_path, "pub type A = Left(Int)\n")
-            .expect("a module should be writable");
-        std::fs::write(&b_path, "pub type B = Right(Int)\n")
-            .expect("b module should be writable");
+        std::fs::write(&main_path, "import a\nimport b\nfn main() -> Int { 0 }\n")
+            .expect("main file should be writable");
+        std::fs::write(&a_path, "pub type A = Left(Int)\n").expect("a module should be writable");
+        std::fs::write(&b_path, "pub type B = Right(Int)\n").expect("b module should be writable");
 
         let result = check_project(&main_path);
         let has_collision = result

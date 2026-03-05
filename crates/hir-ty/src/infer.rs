@@ -100,6 +100,8 @@ pub(crate) struct InferenceCtx<'a> {
     pub local_types: ArenaMap<la_arena::Idx<Pat>, Ty>,
     /// Depth counter for scoped Seq<-{List,Deque} compatibility in traversal inference.
     pub traversal_seq_compat_depth: usize,
+    /// Nesting depth of loop statements (`while` / `for`) during inference.
+    pub loop_depth: usize,
 }
 
 impl<'a> InferenceCtx<'a> {
@@ -115,6 +117,17 @@ impl<'a> InferenceCtx<'a> {
 
     fn traversal_seq_compat_enabled(&self) -> bool {
         self.traversal_seq_compat_depth > 0
+    }
+
+    pub(crate) fn with_loop_scope<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.loop_depth += 1;
+        let out = f(self);
+        self.loop_depth -= 1;
+        out
+    }
+
+    pub(crate) fn in_loop(&self) -> bool {
+        self.loop_depth > 0
     }
 
     /// Record a diagnostic at the current expression.
@@ -385,6 +398,7 @@ pub fn infer_body(
         param_names: fn_item.params.iter().map(|p| p.name).collect(),
         local_types: ArenaMap::default(),
         traversal_seq_compat_depth: 0,
+        loop_depth: 0,
     };
 
     // Also try to bind param types to any matching pat_scopes entries.
