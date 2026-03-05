@@ -39,6 +39,7 @@ pub enum IntrinsicFn {
     DequePushFront,
     DequePushBack,
     DequePopFront,
+    DequePopBack,
     DequeLen,
     DequeIsEmpty,
     SeqRange,
@@ -156,6 +157,7 @@ impl IntrinsicFn {
                 | IntrinsicFn::ListHead
                 | IntrinsicFn::ListUpdate
                 | IntrinsicFn::DequePopFront
+                | IntrinsicFn::DequePopBack
                 | IntrinsicFn::SeqMap
                 | IntrinsicFn::SeqFilter
                 | IntrinsicFn::SeqFold
@@ -1069,6 +1071,7 @@ impl IntrinsicFn {
             | IntrinsicFn::MapGet
             | IntrinsicFn::ListUpdate
             | IntrinsicFn::DequePopFront
+            | IntrinsicFn::DequePopBack
             | IntrinsicFn::ListSortBy => Err(RuntimeError::TypeError(
                 "complex intrinsic called without interpreter context".into(),
             )),
@@ -1122,6 +1125,10 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (
             Name::new(interner, "deque_pop_front"),
             IntrinsicFn::DequePopFront,
+        ),
+        (
+            Name::new(interner, "deque_pop_back"),
+            IntrinsicFn::DequePopBack,
         ),
         (Name::new(interner, "deque_len"), IntrinsicFn::DequeLen),
         (

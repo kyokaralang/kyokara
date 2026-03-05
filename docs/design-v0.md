@@ -586,7 +586,7 @@ while `io`/`fs` are module namespaces for effectful operations.
     Only naturally orderable element types are allowed (same as `xs.sort()`).
 * `Deque<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<VecDeque<Value>>`) ✓
   * Constructor: `collections.Deque.new()` (requires `import collections`)
-  * Methods (queue/storage): `q.push_front(v)`, `q.push_back(v)`, `q.pop_front()` → `Option<{ value: T, rest: Deque<T> }>`, `q.len()`, `q.is_empty()`
+  * Methods (queue/storage): `q.push_front(v)`, `q.push_back(v)`, `q.pop_front()` → `Option<{ value: T, rest: Deque<T> }>`, `q.pop_back()` → `Option<{ value: T, rest: Deque<T> }>`, `q.len()`, `q.is_empty()`
   * Methods (traversal): `q.map(f)`, `q.filter(f)`, `q.scan(init, f)`, `q.enumerate()`, `q.zip(other)`, `q.chunks(n)`, `q.windows(n)`, `q.fold(init, f)`, `q.count()`, `q.any(f)`, `q.all(f)`, `q.find(f)`, `q.to_list()`
 * Traversal constructors and behavior (public surface) ✓
   * Half-open range source: `start..<end` (ascending, empty when `start >= end`)

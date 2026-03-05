@@ -454,6 +454,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             ReceiverKey::Core(CoreType::Deque),
             "pop_front",
         ),
+        (
+            "deque_pop_back",
+            ReceiverKey::Core(CoreType::Deque),
+            "pop_back",
+        ),
         ("deque_len", ReceiverKey::Core(CoreType::Deque), "len"),
         (
             "deque_is_empty",
@@ -1256,6 +1261,14 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         mk_intrinsic(
             interner,
             "deque_pop_front",
+            vec![t_name],
+            vec![("q", deque_t.clone())],
+            option_deque_pop_t.clone(),
+        ),
+        // deque_pop_back<T>(q: Deque<T>) -> Option<{ value: T, rest: Deque<T> }>
+        mk_intrinsic(
+            interner,
+            "deque_pop_back",
             vec![t_name],
             vec![("q", deque_t.clone())],
             option_deque_pop_t,

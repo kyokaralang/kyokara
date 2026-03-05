@@ -1136,6 +1136,30 @@ fn infer_deque_and_list_index_update_happy_paths() {
 }
 
 #[test]
+fn infer_deque_pop_back_happy_paths() {
+    let cases = [r#"import collections
+        fn main() -> Int {
+            let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
+            match (q0.pop_back()) {
+                Some(p1) => match (p1.rest.pop_back()) {
+                    Some(p2) => p1.value + p2.value + p2.rest.len()
+                    None => -1
+                }
+                None => -1
+            }
+        }"#];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected no diagnostics, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
 fn infer_collections_deque_constructor_happy_paths_rfc_0004() {
     let cases = [
         r#"import collections
@@ -1191,6 +1215,10 @@ fn err_deque_and_list_index_update_wrong_arity_or_type() {
         Case {
             src: "import collections\nfn main() -> Int { collections.Deque.new().push_back().len() }",
             expected_fragment: "expected 1 argument(s)",
+        },
+        Case {
+            src: "import collections\nfn main() -> Int { collections.Deque.new().push_back(1).pop_back(2).len() }",
+            expected_fragment: "expected 0 argument(s)",
         },
         Case {
             src: "fn main() -> Int { List.new().push(1).set(true, 2).len() }",
