@@ -2080,6 +2080,19 @@ fn check_project_aliased_import_resolves_by_path_not_alias() {
 }
 
 #[test]
+fn check_project_aliased_synthetic_collections_import_activates_alias() {
+    let output = check_project_from_files(&[(
+        "main.ky",
+        "import collections as c\nfn main() -> Int { c.Deque.new().push_back(1).len() }\n",
+    )]);
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics for aliased synthetic collections import, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_project_reports_ambiguous_import_last_segment() {
     let output = check_project_from_files(&[
         ("main.ky", "import math\nfn main() -> Int { value() }\n"),
@@ -4341,20 +4354,76 @@ fn check_removed_list_traversal_surface_reports_diagnostics() {
 #[test]
 fn check_collection_first_traversal_surface_has_no_diagnostics_rfc_0002() {
     assert_check_no_diagnostics(
-        r#"fn main() -> Int {
+        r#"import collections
+
+fn main() -> Int {
             let list_count = List.new().push(1).push(2).push(3)
                 .map(fn(n: Int) => n + 1)
                 .filter(fn(n: Int) => n > 2)
                 .count()
-            let deque_count = Deque.new().push_back(1).push_back(2).push_back(3)
+            let deque_count = collections.Deque.new().push_back(1).push_back(2).push_back(3)
                 .map(fn(n: Int) => n * 2)
                 .count()
             let z1 = List.new().push(1).push(2).zip((10..<13)).count()
             let z2 = (0..<3).zip(List.new().push(7).push(8)).count()
-            let z3 = Deque.new().push_back(1).push_back(2).zip(List.new().push(9)).count()
+            let z3 = collections.Deque.new().push_back(1).push_back(2).zip(List.new().push(9)).count()
             list_count + deque_count + z1 + z2 + z3
         }"#,
         "collection-first traversal canonical surface",
+    );
+}
+
+#[test]
+fn check_collections_deque_constructor_surface_has_no_diagnostics_rfc_0004() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+fn main() -> Int {
+    let q = collections.Deque.new().push_back(1).push_back(2)
+    q.len()
+}"#,
+        "collections.Deque constructor canonical surface",
+    );
+}
+
+#[test]
+fn check_collections_alias_constructor_surface_has_no_diagnostics_rfc_0004() {
+    assert_check_no_diagnostics(
+        r#"import collections as c
+
+fn main() -> Int {
+    c.Deque.new().push_back(1).len()
+}"#,
+        "collections alias constructor canonical surface",
+    );
+}
+
+#[test]
+fn check_global_deque_constructor_surface_is_removed_rfc_0004() {
+    let output = check("fn main() -> Int { Deque.new().len() }", "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("no method") || d.message.contains("unresolved name")),
+        "expected removed constructor-surface diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_effect_module_alias_still_resolves_rfc_0004() {
+    let output = check(
+        r#"import io as i
+fn main() -> Unit {
+    i.println("ok")
+}"#,
+        "test.ky",
+    );
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics for synthetic module alias call, got: {:?}",
+        output.diagnostics
     );
 }
 
@@ -4462,8 +4531,10 @@ fn main() -> Int {
 #[test]
 fn check_deque_and_list_index_update_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
-        r#"fn main() -> Int {
-            let q0 = Deque.new().push_back(1).push_back(2).push_front(0)
+        r#"import collections
+
+fn main() -> Int {
+            let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
             let q1 = match (q0.pop_front()) {
                 Some(p) => p.rest.push_back(p.value + 10)
                 None => q0

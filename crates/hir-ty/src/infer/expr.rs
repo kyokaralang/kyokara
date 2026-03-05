@@ -1217,6 +1217,43 @@ impl<'a> InferenceCtx<'a> {
         field: kyokara_hir_def::name::Name,
         args: &[CallArg],
     ) -> Option<Ty> {
+        // Nested module static call: collections.Deque.new()
+        if let Expr::Field {
+            base: module_base,
+            field: type_name,
+        } = &self.body.exprs[base]
+            && let Expr::Path(ref module_path) = self.body.exprs[*module_base]
+            && module_path.is_single()
+        {
+            let module_name = module_path.segments[0];
+            if self.module_scope.imported_modules.contains(&module_name) {
+                if let Some(&fn_idx) = self.module_scope.synthetic_module_static_methods.get(&(
+                    module_name,
+                    *type_name,
+                    field,
+                )) {
+                    return Some(self.infer_qualified_fn_call(callee, fn_idx, args));
+                }
+                let module_str = module_name.resolve(self.interner);
+                let type_str = type_name.resolve(self.interner);
+                let method_str = field.resolve(self.interner);
+                self.push_diag(TyDiagnosticData::NoSuchMethod {
+                    method: format!("{module_str}.{type_str}.{method_str}"),
+                    ty: Ty::Error,
+                });
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(e) | CallArg::Named { value: e, .. } => {
+                            self.infer_expr(*e, &Expectation::None);
+                        }
+                    }
+                }
+                return Some(Ty::Error);
+            }
+
+            return None;
+        }
+
         let Expr::Path(ref path) = self.body.exprs[base] else {
             return None;
         };
@@ -1409,8 +1446,7 @@ impl<'a> InferenceCtx<'a> {
                     .methods
                     .get(&(ReceiverKey::Any, field))
                     .copied()
-            })
-        {
+            }) {
             Some(idx) => idx,
             None => {
                 // Type has a name but no such method exists — emit diagnostic.

@@ -546,15 +546,16 @@ a canonical API surface: method calls for value-owned behavior, module-qualified
 for no-owner utilities and effects, and type-namespaced constructors.
 
 Canonical visibility matrix:
-* Prelude builtin value types (no import): `List.new()`, `Deque.new()`, `Map.new()`, `Set.new()`, value methods.
+* Prelude builtin value types (no import): `List.new()`, `Map.new()`, `Set.new()`, value methods.
+* Pure specialized collections (imported module): `collections.Deque.new()`
 * Prelude traversal constructors (no import): `start..<end`, `seed.unfold(step)`.
 * Pure no-owner utilities (imported module): `math.*`
 * Effectful utilities (imported capability modules): `io.*`, `fs.*`
 * Internal intrinsic IDs (`list_new`, `map_insert`, etc.) are implementation detail only.
 
 Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `Deque<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
-injected as synthetic types before type-checking. Synthetic modules (`io`, `math`, `fs`)
-require explicit `import io` / `import math` / `import fs` in all modes.
+injected as synthetic types before type-checking. Synthetic modules (`collections`, `io`, `math`, `fs`)
+require explicit `import collections` / `import io` / `import math` / `import fs` in all modes.
 Zero intrinsic free functions exist in user scope.
 
 Runtime soundness invariants for core APIs:
@@ -565,7 +566,8 @@ Runtime soundness invariants for core APIs:
 * Follow-up: add qualified constructors/patterns (`Type.Variant`) and remove the temporary reservation ([#293](https://github.com/kyokaralang/kyokara/issues/293)).
 
 Mental model: `List`/`Map`/`Set` are prelude value types (type/value namespace),
-while `io`/`fs` are module namespaces for no-owner/effectful operations.
+`collections` is the pure module namespace for specialized collection constructors,
+while `io`/`fs` are module namespaces for effectful operations.
 
 **Implemented (v0.1+):**
 * `Option<T>` — builtin ADT (`Some(T) | None`), used as return type for safe lookups ✓
@@ -583,7 +585,7 @@ while `io`/`fs` are module namespaces for no-owner/effectful operations.
     `insertion_point` is where `x` would be inserted to keep sorted order.
     Only naturally orderable element types are allowed (same as `xs.sort()`).
 * `Deque<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<VecDeque<Value>>`) ✓
-  * Constructor: `Deque.new()`
+  * Constructor: `collections.Deque.new()` (requires `import collections`)
   * Methods (queue/storage): `q.push_front(v)`, `q.push_back(v)`, `q.pop_front()` → `Option<{ value: T, rest: Deque<T> }>`, `q.len()`, `q.is_empty()`
   * Methods (traversal): `q.map(f)`, `q.filter(f)`, `q.scan(init, f)`, `q.enumerate()`, `q.zip(other)`, `q.chunks(n)`, `q.windows(n)`, `q.fold(init, f)`, `q.count()`, `q.any(f)`, `q.all(f)`, `q.find(f)`, `q.to_list()`
 * Traversal constructors and behavior (public surface) ✓

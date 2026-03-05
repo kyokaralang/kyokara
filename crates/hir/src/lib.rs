@@ -154,12 +154,12 @@ pub fn check_file(source: &str) -> CheckResult {
         &mut item_result.module_scope,
         &mut interner,
     );
+    register_static_methods(&mut item_result.module_scope, &mut interner);
     activate_synthetic_imports(
         &item_result.tree,
         &mut item_result.module_scope,
         &mut interner,
     );
-    register_static_methods(&mut item_result.module_scope, &mut interner);
 
     // 5. Type-check all functions (Pass 2 + 3).
     let type_check = check_module(
@@ -355,6 +355,7 @@ fn resolve_project_imports(
     struct PendingImport {
         importing_mod: ModulePath,
         import_path: Path,
+        import_alias: Option<Name>,
         file_id: FileId,
         import_range: TextRange,
     }
@@ -380,6 +381,7 @@ fn resolve_project_imports(
             to_resolve.push(PendingImport {
                 importing_mod: mod_path.clone(),
                 import_path: imp.path.clone(),
+                import_alias: imp.alias,
                 file_id: info.file_id,
                 import_range: imp.source_range.unwrap_or_default(),
             });
@@ -391,6 +393,7 @@ fn resolve_project_imports(
         let PendingImport {
             importing_mod,
             import_path,
+            import_alias,
             file_id,
             import_range,
         } = pending;
@@ -429,7 +432,37 @@ fn resolve_project_imports(
                         .is_some_and(|info| info.scope.synthetic_modules.contains_key(&seg_name));
                     if is_synthetic {
                         if let Some(info) = graph.get_mut(&importing_mod) {
-                            info.scope.imported_modules.insert(seg_name);
+                            let visible_name = import_alias.unwrap_or(seg_name);
+                            if visible_name != seg_name
+                                && let Some(mod_fns) =
+                                    info.scope.synthetic_modules.get(&seg_name).cloned()
+                            {
+                                info.scope
+                                    .synthetic_modules
+                                    .entry(visible_name)
+                                    .or_insert(mod_fns);
+
+                                let aliased_static_entries: Vec<_> = info
+                                    .scope
+                                    .synthetic_module_static_methods
+                                    .iter()
+                                    .filter_map(
+                                        |((module_name, type_name, method_name), &fn_idx)| {
+                                            if *module_name == seg_name {
+                                                Some((*type_name, *method_name, fn_idx))
+                                            } else {
+                                                None
+                                            }
+                                        },
+                                    )
+                                    .collect();
+                                for (type_name, method_name, fn_idx) in aliased_static_entries {
+                                    info.scope
+                                        .synthetic_module_static_methods
+                                        .insert((visible_name, type_name, method_name), fn_idx);
+                                }
+                            }
+                            info.scope.imported_modules.insert(visible_name);
                         }
                         continue;
                     }

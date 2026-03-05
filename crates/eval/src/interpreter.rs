@@ -695,6 +695,46 @@ impl Interpreter {
                     let base_idx = *base;
                     let field_name = *field;
 
+                    // Nested module-qualified static method:
+                    // collections.Deque.new()
+                    if let Expr::Field {
+                        base: module_base_idx,
+                        field: type_name,
+                    } = &body.exprs[base_idx]
+                        && let Expr::Path(ref module_path) = body.exprs[*module_base_idx]
+                        && module_path.is_single()
+                    {
+                        let module_name = module_path.segments[0];
+                        if self.module_scope.imported_modules.contains(&module_name)
+                            && let Some(&fn_idx) = self
+                                .module_scope
+                                .synthetic_module_static_methods
+                                .get(&(module_name, *type_name, field_name))
+                        {
+                            let source_order = self.args_in_source_order(&args);
+                            let mut arg_values = Vec::with_capacity(source_order.len());
+                            for idx in &source_order {
+                                let v = eval_propagate!(self, env, body, *idx);
+                                arg_values.push(v);
+                            }
+                            let param_names = self.param_names_for_fn_idx(fn_idx);
+                            let callee_name = format!(
+                                "function `{}`",
+                                self.item_tree.functions[fn_idx]
+                                    .name
+                                    .resolve(&self.interner)
+                            );
+                            let arg_vals = self.bind_call_values_for_param_names(
+                                &callee_name,
+                                &args,
+                                arg_values,
+                                &param_names,
+                            )?;
+                            let fn_val = self.fn_value_for_fn_idx(fn_idx);
+                            return self.call_value(fn_val, arg_vals).map(ControlFlow::Value);
+                        }
+                    }
+
                     // Before evaluating base as a value, check if it's a synthetic
                     // module or a type with static methods.
                     if let Expr::Path(ref path) = body.exprs[base_idx]
@@ -1025,6 +1065,46 @@ impl Interpreter {
                 if let Expr::Field { base, field } = &body.exprs[callee_idx] {
                     let base_idx = *base;
                     let field_name = *field;
+
+                    // Nested module-qualified static method:
+                    // collections.Deque.new()
+                    if let Expr::Field {
+                        base: module_base_idx,
+                        field: type_name,
+                    } = &body.exprs[base_idx]
+                        && let Expr::Path(ref module_path) = body.exprs[*module_base_idx]
+                        && module_path.is_single()
+                    {
+                        let module_name = module_path.segments[0];
+                        if self.module_scope.imported_modules.contains(&module_name)
+                            && let Some(&fn_idx) = self
+                                .module_scope
+                                .synthetic_module_static_methods
+                                .get(&(module_name, *type_name, field_name))
+                        {
+                            let source_order = self.args_in_source_order(args);
+                            let mut arg_values = Vec::with_capacity(source_order.len());
+                            for idx in &source_order {
+                                let v = eval_propagate_shared!(self, body, *idx);
+                                arg_values.push(v);
+                            }
+                            let param_names = self.param_names_for_fn_idx(fn_idx);
+                            let callee_name = format!(
+                                "function `{}`",
+                                self.item_tree.functions[fn_idx]
+                                    .name
+                                    .resolve(&self.interner)
+                            );
+                            let arg_vals = self.bind_call_values_for_param_names(
+                                &callee_name,
+                                args,
+                                arg_values,
+                                &param_names,
+                            )?;
+                            let fn_val = self.fn_value_for_fn_idx(fn_idx);
+                            return self.call_value(fn_val, arg_vals).map(ControlFlow::Value);
+                        }
+                    }
 
                     // Before evaluating base as a value, check module/static dispatch.
                     if let Expr::Path(ref path) = body.exprs[base_idx]

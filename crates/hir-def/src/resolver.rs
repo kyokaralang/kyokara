@@ -162,6 +162,11 @@ pub struct ModuleScope {
     /// Synthetic modules: `module_name` → `{ fn_name → FnItemIdx }`.
     /// Module-qualified calls like `io.println(s)` resolve through this.
     pub synthetic_modules: FxHashMap<Name, FxHashMap<Name, FnItemIdx>>,
+    /// Synthetic module static methods:
+    /// `(module_name, type_name, static_method_name)` -> `FnItemIdx`.
+    /// Used for nested module-qualified constructor calls like
+    /// `collections.Deque.new()`.
+    pub synthetic_module_static_methods: FxHashMap<(Name, Name, Name), FnItemIdx>,
     /// Static methods: `(owner_identity, method_name)` → `FnItemIdx`.
     /// Type-namespaced constructors like `List.new()` resolve through this.
     pub static_methods: FxHashMap<(StaticOwnerKey, Name), FnItemIdx>,

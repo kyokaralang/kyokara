@@ -593,7 +593,8 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
     }
 }
 
-/// Register synthetic modules (`io`, `math`, `fs`) that hold module-qualified intrinsics.
+/// Register synthetic modules (`io`, `math`, `fs`, `collections`) that hold
+/// module-qualified intrinsics.
 ///
 /// Module-qualified calls like `io.println(s)` resolve through `scope.synthetic_modules`.
 /// Each module's FnItems are allocated in the item tree (via `register_builtin_intrinsics`).
@@ -629,6 +630,7 @@ pub fn register_synthetic_modules(
             ],
         ),
         ("fs", &[("read_file", "read_file")]),
+        ("collections", &[]),
     ];
 
     for &(mod_name_str, fns) in module_fns {
@@ -669,8 +671,32 @@ pub fn activate_synthetic_imports(
     for import in &tree.imports {
         if import.path.segments.len() == 1 {
             let seg = import.path.segments[0];
-            if scope.synthetic_modules.contains_key(&seg) {
-                scope.imported_modules.insert(seg);
+            if let Some(mod_fns) = scope.synthetic_modules.get(&seg).cloned() {
+                let visible_name = import.alias.unwrap_or(seg);
+                if visible_name != seg {
+                    scope
+                        .synthetic_modules
+                        .entry(visible_name)
+                        .or_insert(mod_fns);
+
+                    let aliased_static_entries: Vec<_> = scope
+                        .synthetic_module_static_methods
+                        .iter()
+                        .filter_map(|((module_name, type_name, method_name), &fn_idx)| {
+                            if *module_name == seg {
+                                Some((*type_name, *method_name, fn_idx))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    for (type_name, method_name, fn_idx) in aliased_static_entries {
+                        scope
+                            .synthetic_module_static_methods
+                            .insert((visible_name, type_name, method_name), fn_idx);
+                    }
+                }
+                scope.imported_modules.insert(visible_name);
             }
         }
     }
@@ -765,7 +791,7 @@ fn mk_module_intrinsic(
     }
 }
 
-/// Register static methods (`List.new()`, `Deque.new()`, `Map.new()`, `Set.new()`) in
+/// Register static methods (`List.new()`, `Map.new()`, `Set.new()`) in
 /// `scope.static_methods`.
 ///
 /// Static methods are always available (no import needed) since the types they
@@ -774,7 +800,6 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     // (intrinsic_fn_name, owner_key, static_method_name)
     let mappings: &[(&str, StaticOwnerKey, &str)] = &[
         ("list_new", StaticOwnerKey::Core(CoreType::List), "new"),
-        ("deque_new", StaticOwnerKey::Core(CoreType::Deque), "new"),
         ("map_new", StaticOwnerKey::Core(CoreType::Map), "new"),
         ("set_new", StaticOwnerKey::Core(CoreType::Set), "new"),
     ];
@@ -786,6 +811,17 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
         if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&intr_name) {
             scope.static_methods.insert((owner_key, meth_name), fn_idx);
         }
+    }
+
+    // Specialized collection constructors are module-qualified.
+    let collections = Name::new(interner, "collections");
+    let deque = Name::new(interner, "Deque");
+    let new = Name::new(interner, "new");
+    let deque_new = Name::new(interner, "deque_new");
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&deque_new) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, deque, new), fn_idx);
     }
 }
 

@@ -154,12 +154,12 @@ pub fn run_with_manifest(
         &mut item_result.module_scope,
         &mut interner,
     );
+    register_static_methods(&mut item_result.module_scope, &mut interner);
     activate_synthetic_imports(
         &item_result.tree,
         &mut item_result.module_scope,
         &mut interner,
     );
-    register_static_methods(&mut item_result.module_scope, &mut interner);
 
     // 6. Type-check.
     let type_check = check_module(
@@ -243,12 +243,12 @@ pub fn run_project_with_manifest(
         &mut entry_info.scope,
         &mut project.interner,
     );
+    register_static_methods(&mut entry_info.scope, &mut project.interner);
     activate_synthetic_imports(
         &entry_info.item_tree,
         &mut entry_info.scope,
         &mut project.interner,
     );
-    register_static_methods(&mut entry_info.scope, &mut project.interner);
 
     // Collect fn bodies: start with the entry module's type check.
     let entry_tc = project
