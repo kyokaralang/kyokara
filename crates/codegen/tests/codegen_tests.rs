@@ -1719,3 +1719,118 @@ fn test_requires_complex_and_ensures_complex() {
         30
     );
 }
+
+// ── Float field extraction (#335) ───────────────────────────────
+
+#[test]
+fn test_adt_float_field_roundtrip() {
+    // Float stored in ADT field, then extracted via match — must use
+    // type-aware f64.store/f64.load (not i64 reinterpret hack).
+    let val = run_main_f64(
+        "type Wrap = Wrap(Float)\n\
+         fn main() -> Float {\n\
+           match (Wrap(3.14)) {\n\
+             Wrap(x) => x\n\
+           }\n\
+         }",
+    );
+    assert!((val - 3.14).abs() < 1e-10, "expected 3.14, got {val}");
+}
+
+#[test]
+fn test_adt_float_field_arithmetic() {
+    // Extract float from ADT and use it in arithmetic.
+    let val = run_main_f64(
+        "type Wrap = Wrap(Float)\n\
+         fn main() -> Float {\n\
+           match (Wrap(2.5)) {\n\
+             Wrap(x) => x * 2.0\n\
+           }\n\
+         }",
+    );
+    assert!((val - 5.0).abs() < 1e-10, "expected 5.0, got {val}");
+}
+
+#[test]
+fn test_adt_mixed_int_float_fields() {
+    // ADT with both Int and Float fields — Int extraction must still work.
+    assert_eq!(
+        run_main_i64(
+            "type Pair = Pair(Int, Float)\n\
+             fn main() -> Int {\n\
+               match (Pair(42, 3.14)) {\n\
+                 Pair(n, _) => n\n\
+               }\n\
+             }"
+        ),
+        42
+    );
+}
+
+#[test]
+fn test_adt_mixed_int_float_fields_get_float() {
+    // Same mixed ADT but extract the Float field.
+    let val = run_main_f64(
+        "type Pair = Pair(Int, Float)\n\
+         fn main() -> Float {\n\
+           match (Pair(42, 3.14)) {\n\
+             Pair(_, f) => f\n\
+           }\n\
+         }",
+    );
+    assert!((val - 3.14).abs() < 1e-10, "expected 3.14, got {val}");
+}
+
+#[test]
+fn test_record_float_field_roundtrip() {
+    // Float stored in record field, then extracted via field access.
+    let val = run_main_f64(
+        "type Pt = { x: Float, y: Float }\n\
+         fn main() -> Float {\n\
+           let p = Pt { x: 1.5, y: 2.5 }\n\
+           p.x\n\
+         }",
+    );
+    assert!((val - 1.5).abs() < 1e-10, "expected 1.5, got {val}");
+}
+
+#[test]
+fn test_record_float_field_addition() {
+    // Extract two float fields from a record and add them.
+    let val = run_main_f64(
+        "type Pt = { x: Float, y: Float }\n\
+         fn main() -> Float {\n\
+           let p = Pt { x: 1.5, y: 2.5 }\n\
+           p.x + p.y\n\
+         }",
+    );
+    assert!((val - 4.0).abs() < 1e-10, "expected 4.0, got {val}");
+}
+
+#[test]
+fn test_record_mixed_int_float_fields() {
+    // Record with Int and Float fields — guard that Int extraction is unaffected.
+    assert_eq!(
+        run_main_i64(
+            "type Rec = { count: Int, value: Float }\n\
+             fn main() -> Int {\n\
+               let r = Rec { count: 7, value: 3.14 }\n\
+               r.count\n\
+             }"
+        ),
+        7
+    );
+}
+
+#[test]
+fn test_record_mixed_int_float_get_float() {
+    // Same mixed record but extract the Float field.
+    let val = run_main_f64(
+        "type Rec = { count: Int, value: Float }\n\
+         fn main() -> Float {\n\
+           let r = Rec { count: 7, value: 3.14 }\n\
+           r.value\n\
+         }",
+    );
+    assert!((val - 3.14).abs() < 1e-10, "expected 3.14, got {val}");
+}
