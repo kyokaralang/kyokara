@@ -45,12 +45,12 @@ fn check(src: &str) -> (TypeCheckResult, Interner) {
         &mut item_result.module_scope,
         &mut interner,
     );
+    register_static_methods(&mut item_result.module_scope, &mut interner);
     activate_synthetic_imports(
         &item_result.tree,
         &mut item_result.module_scope,
         &mut interner,
     );
-    register_static_methods(&mut item_result.module_scope, &mut interner);
     let result = check_module(
         &root,
         &item_result.tree,
@@ -1112,8 +1112,9 @@ fn err_iteration_ergonomics_wrong_arity_or_type() {
 
 #[test]
 fn infer_deque_and_list_index_update_happy_paths() {
-    let cases = [r#"fn main() -> Int {
-            let q0 = Deque.new().push_back(1).push_back(2).push_front(0)
+    let cases = [r#"import collections
+        fn main() -> Int {
+            let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
             let q1 = match (q0.pop_front()) {
                 Some(p) => p.rest.push_back(p.value + 10)
                 None => q0
@@ -1135,6 +1136,47 @@ fn infer_deque_and_list_index_update_happy_paths() {
 }
 
 #[test]
+fn infer_collections_deque_constructor_happy_paths_rfc_0004() {
+    let cases = [
+        r#"import collections
+        fn main() -> Int {
+            let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
+            let q1 = match (q0.pop_front()) {
+                Some(p) => p.rest.push_back(p.value + 10)
+                None => q0
+            }
+            q1.len()
+        }"#,
+        r#"import collections as c
+        fn main() -> Int {
+            c.Deque.new().push_back(1).push_back(2).len()
+        }"#,
+    ];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected no diagnostics, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn err_global_deque_constructor_surface_is_removed_rfc_0004() {
+    let (result, _) = check("fn main() -> Int { Deque.new().len() }");
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("no method") || d.message.contains("unresolved")),
+        "expected removed-surface diagnostic, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn err_deque_and_list_index_update_wrong_arity_or_type() {
     struct Case<'a> {
         src: &'a str,
@@ -1143,11 +1185,11 @@ fn err_deque_and_list_index_update_wrong_arity_or_type() {
 
     let cases = [
         Case {
-            src: "fn main() -> Int { Deque.new(1).len() }",
+            src: "import collections\nfn main() -> Int { collections.Deque.new(1).len() }",
             expected_fragment: "expected 0 argument(s)",
         },
         Case {
-            src: "fn main() -> Int { Deque.new().push_back().len() }",
+            src: "import collections\nfn main() -> Int { collections.Deque.new().push_back().len() }",
             expected_fragment: "expected 1 argument(s)",
         },
         Case {
@@ -1270,14 +1312,16 @@ fn infer_collection_first_traversal_surface_happy_paths_rfc_0002() {
                 .filter(fn(n: Int) => n > 2)
                 .count()
         }"#,
-        r#"fn main() -> Int {
-            let xs = Deque.new().push_back(1).push_back(2).push_back(3)
+        r#"import collections
+        fn main() -> Int {
+            let xs = collections.Deque.new().push_back(1).push_back(2).push_back(3)
             xs.map(fn(n: Int) => n * 2).to_list().len()
         }"#,
-        r#"fn main() -> Int {
+        r#"import collections
+        fn main() -> Int {
             let a = List.new().push(1).push(2).zip((10..<13)).count()
             let b = (0..<3).zip(List.new().push(7).push(8)).count()
-            let c = Deque.new().push_back(1).push_back(2).zip(List.new().push(9)).count()
+            let c = collections.Deque.new().push_back(1).push_back(2).zip(List.new().push(9)).count()
             a + b + c
         }"#,
     ];

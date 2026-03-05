@@ -1530,8 +1530,9 @@ fn eval_list_set_negative_index_runtime_error() {
 #[test]
 fn eval_deque_push_front_back_and_pop_front_fifo() {
     let val = run_ok(
-        "fn main() -> Int {
-           let q0 = Deque.new().push_back(1).push_back(2).push_front(0)
+        "import collections
+         fn main() -> Int {
+           let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
            match (q0.pop_front()) {
              Some(p1) => match (p1.rest.pop_front()) {
                Some(p2) => p1.value * 100 + p2.value * 10 + p2.rest.len()
@@ -1547,8 +1548,9 @@ fn eval_deque_push_front_back_and_pop_front_fifo() {
 #[test]
 fn eval_deque_pop_front_non_empty_returns_value_and_rest() {
     let val = run_ok(
-        "fn main() -> Int {
-           let q0 = Deque.new().push_back(10).push_back(20)
+        "import collections
+         fn main() -> Int {
+           let q0 = collections.Deque.new().push_back(10).push_back(20)
            match (q0.pop_front()) {
              Some(p) =>
                if (p.value == 10 && p.rest.len() == 1) {
@@ -1569,8 +1571,9 @@ fn eval_deque_pop_front_non_empty_returns_value_and_rest() {
 #[test]
 fn eval_deque_pop_front_empty_returns_none() {
     let val = run_ok(
-        "fn main() -> Int {
-           match (Deque.new().pop_front()) {
+        "import collections
+         fn main() -> Int {
+           match (collections.Deque.new().pop_front()) {
              Some(_p) => 0
              None => 1
            }
@@ -1582,10 +1585,64 @@ fn eval_deque_pop_front_empty_returns_none() {
 #[test]
 fn eval_deque_is_empty_and_len() {
     let val = run_ok(
-        "fn main() -> Int {
-           let q0: Deque<Int> = Deque.new()
+        "import collections
+         fn main() -> Int {
+           let q0: Deque<Int> = collections.Deque.new()
            let q1 = q0.push_back(42)
            if (q0.is_empty() && q1.is_empty() == false && q1.len() == 1) { 1 } else { 0 }
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_collections_deque_constructor_surface_rfc_0004() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
+           match (q0.pop_front()) {
+             Some(p1) => match (p1.rest.pop_front()) {
+               Some(p2) => p1.value * 100 + p2.value * 10 + p2.rest.len()
+               None => -1
+             }
+             None => -1
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(11)));
+}
+
+#[test]
+fn eval_collections_alias_constructor_surface_rfc_0004() {
+    let val = run_ok(
+        "import collections as c
+         fn main() -> Int {
+           c.Deque.new().push_back(1).push_back(2).len()
+         }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_global_deque_constructor_surface_is_removed_rfc_0004() {
+    let err = run_err("fn main() -> Int { Deque.new().len() }");
+    assert!(
+        err.contains("no method `new`")
+            || err.contains("unresolved name")
+            || err.contains("import name"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn eval_effect_module_alias_call_works_rfc_0004() {
+    let val = run_ok(
+        "import io as i
+         fn main() -> Int
+         {
+           i.println(\"ok\")
+           1
          }",
     );
     assert!(matches!(val, Value::Int(1)));
@@ -3221,6 +3278,26 @@ fn run_project_import_math_activates_synthetic_when_no_project_module_exists() {
 
     let result = kyokara_eval::run_project(&main_path).expect("synthetic math import should work");
     assert_eq!(result.value, Value::Int(1));
+}
+
+#[test]
+fn run_project_aliased_collections_import_activates_alias() {
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import collections as c").unwrap();
+    writeln!(
+        main_file,
+        "fn main() -> Int {{ c.Deque.new().push_back(1).push_back(2).len() }}"
+    )
+    .unwrap();
+
+    let result = kyokara_eval::run_project(&main_path)
+        .expect("aliased synthetic collections import should work");
+    assert_eq!(result.value, Value::Int(2));
 }
 
 #[test]
@@ -5494,17 +5571,19 @@ fn eval_seq_surface_happy_paths() {
 #[test]
 fn eval_collection_first_traversal_surface_semantics_rfc_0002() {
     let val = run_ok(
-        r#"fn main() -> Int {
+        r#"import collections
+
+fn main() -> Int {
             let list_count = List.new().push(1).push(2).push(3)
                 .map(fn(n: Int) => n + 1)
                 .filter(fn(n: Int) => n > 2)
                 .count()
-            let deque_count = Deque.new().push_back(1).push_back(2).push_back(3)
+            let deque_count = collections.Deque.new().push_back(1).push_back(2).push_back(3)
                 .map(fn(n: Int) => n * 2)
                 .count()
             let z1 = List.new().push(1).push(2).zip(((10)..<13)).count()
             let z2 = ((0)..<3).zip(List.new().push(7).push(8)).count()
-            let z3 = Deque.new().push_back(1).push_back(2).zip(List.new().push(9)).count()
+            let z3 = collections.Deque.new().push_back(1).push_back(2).zip(List.new().push(9)).count()
             list_count * 100 + deque_count * 10 + z1 + z2 + z3
         }"#,
     );
@@ -5514,11 +5593,13 @@ fn eval_collection_first_traversal_surface_semantics_rfc_0002() {
 #[test]
 fn eval_collection_first_any_all_find_short_circuit_rfc_0002() {
     let val = run_ok(
-        r#"fn main() -> Int {
+        r#"import collections
+
+fn main() -> Int {
             let any_hit = List.new().push(1).push(0).any(fn(n: Int) =>
                 if (n == 1) { true } else { 10 / n > 0 }
             )
-            let all_ok = Deque.new().push_back(0).push_back(1).all(fn(n: Int) =>
+            let all_ok = collections.Deque.new().push_back(0).push_back(1).all(fn(n: Int) =>
                 if (n == 0) { false } else { 10 / (n - 1) > 0 }
             ) == false
             let found = List.new().push(2).push(1).find(fn(n: Int) =>

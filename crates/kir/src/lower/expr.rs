@@ -340,32 +340,24 @@ impl<'a> LoweringCtx<'a> {
         }
 
         // Module-qualified, static method, or method call.
-        if let Expr::Field { base, field } = callee_expr
-            && let Expr::Path(ref path) = self.body.exprs[base]
-            && path.is_single()
-        {
-            let seg = path.segments[0];
-
-            // Module-qualified call: io.println(s), math.min(a, b)
-            if self.module_scope.imported_modules.contains(&seg)
-                && let Some(mod_fns) = self.module_scope.synthetic_modules.get(&seg)
-                && let Some(&fn_idx) = mod_fns.get(&field)
+        if let Expr::Field { base, field } = callee_expr {
+            // Nested module-qualified static call:
+            // collections.Deque.new()
+            if let Expr::Field {
+                base: module_base,
+                field: type_name,
+            } = self.body.exprs[base]
+                && let Expr::Path(ref module_path) = self.body.exprs[module_base]
+                && module_path.is_single()
             {
-                let param_names = self.param_names_for_fn_idx(fn_idx);
-                let arg_vals = self.lower_call_args_for_param_names(&args, &param_names);
-                let fn_item = &self.item_tree.functions[fn_idx];
-                let target = if self.intrinsics.contains(&fn_item.name) {
-                    CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
-                } else {
-                    CallTarget::Direct(fn_item.name)
-                };
-                return self.builder.push_call(target, arg_vals, ty);
-            }
-
-            // Static method call: List.new(), Map.new()
-            if let Some(&type_idx) = self.module_scope.types.get(&seg) {
-                let owner_key = self.static_owner_key_for_type_idx(type_idx);
-                if let Some(&fn_idx) = self.module_scope.static_methods.get(&(owner_key, field)) {
+                let module_name = module_path.segments[0];
+                if self.module_scope.imported_modules.contains(&module_name)
+                    && let Some(&fn_idx) = self.module_scope.synthetic_module_static_methods.get(&(
+                        module_name,
+                        type_name,
+                        field,
+                    ))
+                {
                     let param_names = self.param_names_for_fn_idx(fn_idx);
                     let arg_vals = self.lower_call_args_for_param_names(&args, &param_names);
                     let fn_item = &self.item_tree.functions[fn_idx];
@@ -378,8 +370,46 @@ impl<'a> LoweringCtx<'a> {
                 }
             }
 
-            // Method call or field access — fall through to complex callee lowering.
+            if let Expr::Path(ref path) = self.body.exprs[base]
+                && path.is_single()
+            {
+                let seg = path.segments[0];
+
+                // Module-qualified call: io.println(s), math.min(a, b)
+                if self.module_scope.imported_modules.contains(&seg)
+                    && let Some(mod_fns) = self.module_scope.synthetic_modules.get(&seg)
+                    && let Some(&fn_idx) = mod_fns.get(&field)
+                {
+                    let param_names = self.param_names_for_fn_idx(fn_idx);
+                    let arg_vals = self.lower_call_args_for_param_names(&args, &param_names);
+                    let fn_item = &self.item_tree.functions[fn_idx];
+                    let target = if self.intrinsics.contains(&fn_item.name) {
+                        CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
+                    } else {
+                        CallTarget::Direct(fn_item.name)
+                    };
+                    return self.builder.push_call(target, arg_vals, ty);
+                }
+
+                // Static method call: List.new(), Map.new()
+                if let Some(&type_idx) = self.module_scope.types.get(&seg) {
+                    let owner_key = self.static_owner_key_for_type_idx(type_idx);
+                    if let Some(&fn_idx) = self.module_scope.static_methods.get(&(owner_key, field))
+                    {
+                        let param_names = self.param_names_for_fn_idx(fn_idx);
+                        let arg_vals = self.lower_call_args_for_param_names(&args, &param_names);
+                        let fn_item = &self.item_tree.functions[fn_idx];
+                        let target = if self.intrinsics.contains(&fn_item.name) {
+                            CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
+                        } else {
+                            CallTarget::Direct(fn_item.name)
+                        };
+                        return self.builder.push_call(target, arg_vals, ty);
+                    }
+                }
+            }
         }
+        // Method call or field access — fall through to complex callee lowering.
 
         if let Expr::Field { base, field } = callee_expr {
             let base_ty = self.expr_ty(base);
