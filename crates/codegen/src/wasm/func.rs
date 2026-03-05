@@ -1069,12 +1069,7 @@ impl<'a> FuncCodegen<'a> {
             let offset = AdtLayout::field_offset(i as u32);
             derive_ptr(func, layout.size);
             let field_ty = self.value_ty(field_vid);
-            self.emit_get_as_i64(func, field_vid, field_ty);
-            func.instruction(&Instruction::I64Store(MemArg {
-                offset: u64::from(offset),
-                align: 3,
-                memory_index: 0,
-            }));
+            self.emit_typed_store(func, field_vid, field_ty, u64::from(offset));
         }
 
         // Leave ptr on stack for the caller's local.set.
@@ -1095,16 +1090,7 @@ impl<'a> FuncCodegen<'a> {
         let offset = AdtLayout::field_offset(field_index);
 
         self.emit_get(func, base);
-        func.instruction(&Instruction::I64Load(MemArg {
-            offset: u64::from(offset),
-            align: 3,
-            memory_index: 0,
-        }));
-
-        // If the result type is i32 (Bool/Unit/Ptr), wrap down from i64.
-        if is_i32_type(result_ty) {
-            func.instruction(&Instruction::I32WrapI64);
-        }
+        self.emit_typed_load(func, result_ty, u64::from(offset));
 
         Ok(())
     }
@@ -1143,12 +1129,7 @@ impl<'a> FuncCodegen<'a> {
             let offset = layout::record_field_offset(i as u32);
             derive_ptr(func, size);
             let field_ty = self.value_ty(*vid);
-            self.emit_get_as_i64(func, *vid, field_ty);
-            func.instruction(&Instruction::I64Store(MemArg {
-                offset: u64::from(offset),
-                align: 3,
-                memory_index: 0,
-            }));
+            self.emit_typed_store(func, *vid, field_ty, u64::from(offset));
         }
 
         // Leave ptr on stack.
@@ -1172,15 +1153,7 @@ impl<'a> FuncCodegen<'a> {
         let offset = layout::record_field_offset(field_index);
 
         self.emit_get(func, base);
-        func.instruction(&Instruction::I64Load(MemArg {
-            offset: u64::from(offset),
-            align: 3,
-            memory_index: 0,
-        }));
-
-        if is_i32_type(result_ty) {
-            func.instruction(&Instruction::I32WrapI64);
-        }
+        self.emit_typed_load(func, result_ty, u64::from(offset));
 
         Ok(())
     }
@@ -1248,20 +1221,75 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalGet(self.local_for(vid)));
     }
 
-    /// Emit a value as i64 for storing in linear memory.
-    /// If the value is i32 (Bool/Unit/Ptr), extend to i64.
-    fn emit_get_as_i64(&self, func: &mut Function, vid: ValueId, ty: &Ty) {
+    /// Type-aware store: emit the value and the appropriate store instruction.
+    ///
+    /// - Float → `f64.store` (8 bytes, align 3)
+    /// - Int   → `i64.store` (8 bytes, align 3)
+    /// - i32 types (Bool/Unit/Ptr) → extend to i64, then `i64.store`
+    ///
+    /// All field slots are 8 bytes, so even i32 values are stored as i64
+    /// to keep the layout uniform.
+    fn emit_typed_store(&self, func: &mut Function, vid: ValueId, ty: &Ty, offset: u64) {
         self.emit_get(func, vid);
         match ty {
-            Ty::Int => {} // already i64
             Ty::Float => {
-                // reinterpret f64 bits as i64 for uniform storage
-                func.instruction(&Instruction::I64ReinterpretF64);
+                func.instruction(&Instruction::F64Store(MemArg {
+                    offset,
+                    align: 3,
+                    memory_index: 0,
+                }));
+            }
+            Ty::Int => {
+                func.instruction(&Instruction::I64Store(MemArg {
+                    offset,
+                    align: 3,
+                    memory_index: 0,
+                }));
+            }
+            _ => {
+                // i32 types (Bool/Unit/pointers): extend to i64 for uniform slot size.
+                if is_i32_type(ty) {
+                    func.instruction(&Instruction::I64ExtendI32U);
+                }
+                func.instruction(&Instruction::I64Store(MemArg {
+                    offset,
+                    align: 3,
+                    memory_index: 0,
+                }));
+            }
+        }
+    }
+
+    /// Type-aware load: emit the appropriate load instruction for the field type.
+    ///
+    /// - Float → `f64.load` (8 bytes)
+    /// - Int   → `i64.load` (8 bytes)
+    /// - i32 types → `i64.load` + `i32.wrap_i64`
+    fn emit_typed_load(&self, func: &mut Function, ty: &Ty, offset: u64) {
+        match ty {
+            Ty::Float => {
+                func.instruction(&Instruction::F64Load(MemArg {
+                    offset,
+                    align: 3,
+                    memory_index: 0,
+                }));
             }
             _ if is_i32_type(ty) => {
-                func.instruction(&Instruction::I64ExtendI32U);
+                func.instruction(&Instruction::I64Load(MemArg {
+                    offset,
+                    align: 3,
+                    memory_index: 0,
+                }));
+                func.instruction(&Instruction::I32WrapI64);
             }
-            _ => {} // best effort
+            _ => {
+                // Int and anything else: i64.load
+                func.instruction(&Instruction::I64Load(MemArg {
+                    offset,
+                    align: 3,
+                    memory_index: 0,
+                }));
+            }
         }
     }
 }
