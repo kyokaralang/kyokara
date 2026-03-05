@@ -1499,7 +1499,7 @@ fn eval_list_set_out_of_bounds_runtime_error() {
            List.new().push(10).set(9, 0).len()
          }",
     );
-    assert!(err.contains("list_set: index out of bounds"), "got: {err}");
+    assert!(err.contains("index out of bounds"), "got: {err}");
 }
 
 #[test]
@@ -1509,10 +1509,7 @@ fn eval_list_update_out_of_bounds_runtime_error() {
            List.new().push(10).update(3, fn(n: Int) => n + 1).len()
          }",
     );
-    assert!(
-        err.contains("list_update: index out of bounds"),
-        "got: {err}"
-    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
 }
 
 #[test]
@@ -1522,7 +1519,7 @@ fn eval_list_set_negative_index_runtime_error() {
            List.new().push(10).set(0 - 1, 0).len()
          }",
     );
-    assert!(err.contains("list_set: index out of bounds"), "got: {err}");
+    assert!(err.contains("index out of bounds"), "got: {err}");
 }
 
 // ── Deque tests ─────────────────────────────────────────────────────
@@ -7445,5 +7442,80 @@ fn eval_list_sort_valid_types_no_rejection() {
             let bools = List.new().push(true).push(false).sort()
             ints.len() == 3 && floats.len() == 3 && strings.len() == 3 && chars.len() == 3 && bools.len() == 2
         }"#,
+    );
+}
+
+// ── Negative index and error consistency (#348, #349) ────────────
+
+#[test]
+fn eval_list_get_negative_index_returns_none() {
+    // Negative index should return None, not silently wrap to huge usize.
+    let val = run_ok(
+        "fn main() -> Int {
+           let xs = List.new().push(10).push(20)
+           match (xs.get(0 - 1)) {
+             Some(_) => 1
+             None => 0
+           }
+         }",
+    );
+    assert!(
+        matches!(val, Value::Int(0)),
+        "negative index should yield None, got: {val:?}"
+    );
+}
+
+#[test]
+fn eval_list_update_negative_index_error() {
+    // Negative index in list_update should report IndexOutOfBounds, not TypeError.
+    let err = run_err(
+        "fn main() -> Int {
+           List.new().push(10).update(0 - 1, fn(n: Int) => n + 1).len()
+         }",
+    );
+    assert!(
+        err.contains("index out of bounds"),
+        "expected IndexOutOfBounds error, got: {err}"
+    );
+    // Should NOT be a TypeError.
+    assert!(
+        !err.starts_with("type error"),
+        "should use IndexOutOfBounds, not TypeError: {err}"
+    );
+}
+
+#[test]
+fn eval_list_update_oob_error_type() {
+    // list_update with positive OOB should also use IndexOutOfBounds.
+    let err = run_err(
+        "fn main() -> Int {
+           List.new().push(10).update(5, fn(n: Int) => n + 1).len()
+         }",
+    );
+    assert!(
+        err.contains("index out of bounds"),
+        "expected IndexOutOfBounds error, got: {err}"
+    );
+    assert!(
+        !err.starts_with("type error"),
+        "should use IndexOutOfBounds, not TypeError: {err}"
+    );
+}
+
+#[test]
+fn eval_list_set_oob_error_type() {
+    // list_set with positive OOB should also use IndexOutOfBounds, not TypeError.
+    let err = run_err(
+        "fn main() -> Int {
+           List.new().push(10).set(5, 0).len()
+         }",
+    );
+    assert!(
+        err.contains("index out of bounds"),
+        "expected IndexOutOfBounds error, got: {err}"
+    );
+    assert!(
+        !err.starts_with("type error"),
+        "should use IndexOutOfBounds, not TypeError: {err}"
     );
 }
