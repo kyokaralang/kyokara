@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use salsa::Setter;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex as AsyncMutex, RwLock};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
@@ -29,6 +29,11 @@ pub struct KyokaraLanguageServer {
     sources: RwLock<HashMap<Url, String>>,
     /// Map from URI to cached analysis result.
     analyses: RwLock<HashMap<Url, Arc<FileAnalysis>>>,
+    /// Serialize on_change recomputations to avoid stale overwrite races.
+    on_change_gate: AsyncMutex<()>,
+    #[cfg(test)]
+    /// Test-only hook to force deterministic interleaving in concurrent on_change tests.
+    test_on_change_delay_yields: Mutex<HashMap<String, u32>>,
 }
 
 impl KyokaraLanguageServer {
@@ -39,11 +44,33 @@ impl KyokaraLanguageServer {
             files: Mutex::new(HashMap::new()),
             sources: RwLock::new(HashMap::new()),
             analyses: RwLock::new(HashMap::new()),
+            on_change_gate: AsyncMutex::new(()),
+            #[cfg(test)]
+            test_on_change_delay_yields: Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[cfg(test)]
+    fn set_test_on_change_delay_yields(&self, text: &str, delay_yields: u32) {
+        self.test_on_change_delay_yields
+            .lock()
+            .insert(text.to_string(), delay_yields);
+    }
+
+    #[cfg(test)]
+    async fn maybe_delay_for_text(&self, text: &str) {
+        let delay_yields = self.test_on_change_delay_yields.lock().get(text).copied();
+        if let Some(ticks) = delay_yields {
+            for _ in 0..ticks {
+                tokio::task::yield_now().await;
+            }
         }
     }
 
     /// Update a file's source, recompute analysis, and publish diagnostics.
     async fn on_change(&self, uri: Url, text: String) {
+        let _gate = self.on_change_gate.lock().await;
+
         // Check if salsa detects a change (text equality).
         let needs_recompute = {
             let mut db = self.db.lock();
@@ -68,6 +95,9 @@ impl KyokaraLanguageServer {
         };
 
         if needs_recompute {
+            #[cfg(test)]
+            self.maybe_delay_for_text(&text).await;
+
             let analysis = Arc::new(FileAnalysis::from_check_result(
                 kyokara_hir::check_file(&text),
                 text.clone(),
@@ -295,6 +325,7 @@ mod tests {
     use futures::StreamExt;
     use serde_json::{Value, json};
     use tower::{Service, ServiceExt};
+    use tower_lsp::lsp_types::Url;
     use tower_lsp::LspService;
     use tower_lsp::jsonrpc::{Request, Response};
 
@@ -857,6 +888,50 @@ mod tests {
         assert!(
             labels_after.iter().any(|l| l == "baz"),
             "baz should appear after save with new text, got labels: {labels_after:?}"
+        );
+
+        drain.abort();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn concurrent_on_change_keeps_latest_analysis() {
+        let (mut service, mut socket) = LspService::new(KyokaraLanguageServer::new);
+        let drain = tokio::spawn(async move { while socket.next().await.is_some() {} });
+
+        initialize(&mut service).await;
+
+        let uri = Url::parse("file:///race.ky").expect("valid uri");
+        let slow_source = "fn slow() -> Int { 1 }\nfn main() -> Int { slow() }\n";
+        let fast_source = "fn fast() -> Int { 2 }\nfn main() -> Int { fast() }\n";
+
+        service
+            .inner()
+            .set_test_on_change_delay_yields(slow_source, 256_u32);
+
+        let slow_fut = service.inner().on_change(uri.clone(), slow_source.to_string());
+        let fast_fut = async {
+            for _ in 0..4 {
+                tokio::task::yield_now().await;
+            }
+            service.inner().on_change(uri.clone(), fast_source.to_string()).await;
+        };
+        tokio::join!(slow_fut, fast_fut);
+
+        let sources = service.inner().sources.read().await;
+        assert_eq!(
+            sources.get(&uri).map(String::as_str),
+            Some(fast_source),
+            "latest source should be retained after concurrent on_change"
+        );
+        drop(sources);
+
+        let analyses = service.inner().analyses.read().await;
+        let analysis = analyses
+            .get(&uri)
+            .expect("analysis should exist after on_change");
+        assert_eq!(
+            analysis.source, fast_source,
+            "latest analysis should not be overwritten by stale recompute"
         );
 
         drain.abort();
