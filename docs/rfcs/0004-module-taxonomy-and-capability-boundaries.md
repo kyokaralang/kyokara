@@ -55,6 +55,7 @@ Key rule:
 1. `import` controls visibility.
 2. `with` + manifest control authority.
 3. Import never grants authority.
+4. Built-in capability names are strict, case-sensitive lowercase (`io`, `fs`) matching module names.
 
 ### P2. Namespace tiers
 
@@ -80,8 +81,8 @@ Initial policy:
 
 APIs that can perform side effects remain module-qualified and capability-scoped:
 
-1. `io.*` with `IO`
-2. `fs.*` with `FS`
+1. `io.*` with `io`
+2. `fs.*` with `fs`
 3. future effect modules follow the same import + authority model
 
 ### P3. Collections placement contract
@@ -117,7 +118,7 @@ Effectful module use:
 import io
 
 fn main() -> Unit
-with IO
+with io
 {
   io.println("ok")
 }
@@ -129,7 +130,7 @@ Invalid (visible but unauthorized):
 import io
 
 fn main() -> Unit {
-  io.println("no") // compile error: missing with IO
+  io.println("no") // compile error: missing with io
 }
 ```
 
@@ -207,4 +208,3 @@ Decision: reject.
 ## Open Questions
 
 1. Should module-qualified type constructors require fully qualified usage always, or allow imported aliases with canonical formatter output?
-2. Should capability names be normalized to match module names (`IO`/`io` mapping policy) in diagnostics and docs?

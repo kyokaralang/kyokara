@@ -32,7 +32,7 @@ with Net
 A pure function has no `with` clause. It *cannot* do I/O. This isn't a convention — it's a compiler guarantee.
 
 Current runtime scope:
-- Manifest checks are enforced for capability presence (`IO` intrinsics + user `with Cap` functions).
+- Manifest checks are enforced for capability presence (built-in `io`/`fs` intrinsics + user `with <effect>` functions). Built-in capability names are canonical, case-sensitive lowercase (`io`, `fs`).
 - Fine-grained manifest fields (`allow_domains`, `allow_tables`, `allow_keys`) are fail-closed right now: if any are present, execution is rejected until resource-aware host operations are implemented.
 
 ### 2. Deterministic Replay
@@ -100,7 +100,7 @@ The compiler doesn't print error messages — it emits structured JSON. Diagnost
   "symbol_graph": {
     "functions": [{"id": "fn::add", "name": "add", "calls": ["fn::helper"], ...}],
     "types": [{"id": "type::Color", "variants": [{"id": "type::Color::Red", ...}], ...}],
-    "capabilities": [{"id": "cap::IO", "functions": ["cap::IO::read"], ...}]
+    "capabilities": [{"id": "cap::io", "functions": ["cap::io::read"], ...}]
   }
 }
 ```

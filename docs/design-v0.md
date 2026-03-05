@@ -463,7 +463,7 @@ Runtime enforces capabilities via a JSON manifest loaded with `--caps`:
 * if a manifest contains those fine-grained fields, runtime returns a structured error (`UnsupportedManifestConstraint`) until resource-aware enforcement is implemented
 
 Enforcement points:
-* **Intrinsic I/O** — `print` and `println` require the `"IO"` capability
+* **Intrinsic I/O** — `print` and `println` require the `"io"` capability
 * **User-defined capabilities** — functions with `with Console` etc. are checked against the manifest at call time
 * **Pure functions** — never denied regardless of manifest
 
@@ -476,7 +476,7 @@ Example manifest:
     "Db":  { "allow_tables": ["payments", "users"] },
     "Secrets": { "allow_keys": ["PAYMENTS_API_KEY"] },
     "Clock": {},
-    "IO": {}
+    "io": {}
   }
 }
 ```
@@ -516,7 +516,7 @@ WASM limitations to address:
 ### 8.4 Capability violation errors ✓
 
 Capability violations at runtime produce a structured `CapabilityDenied` error (not a panic). This error includes:
-* the capability requested (e.g. `"IO"`, `"Console"`)
+* the capability requested (for example `"io"` for built-ins, plus user-defined effect names)
 * the function that requested it (e.g. `"Println"` for intrinsics, `"greet"` for user functions)
 
 Error format: `capability denied: {capability} (required by \`{function}\`)`

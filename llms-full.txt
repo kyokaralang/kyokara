@@ -227,7 +227,7 @@ The compiler emits structured JSON, not human-readable error messages:
 Runtime enforces capabilities with an explicit manifest, deny-by-default. Pass `--caps caps.json` to `kyokara run` to activate enforcement. Without `--caps`, all capabilities are allowed (backward compatible).
 
 Enforcement points:
-- **Intrinsic I/O**: `print` and `println` require `"IO"` in the manifest
+- **Intrinsic I/O**: `print` and `println` require `"io"` in the manifest
 - **User-defined capabilities**: functions with `with Console` etc. are checked against manifest at call time
 - **Pure functions**: never denied regardless of manifest
 - **Violation**: `RuntimeError::CapabilityDenied { capability, function }` — includes cap name and function name
@@ -241,7 +241,7 @@ API: `run_with_manifest(source, manifest)` and `run_project_with_manifest(path, 
     "Db":  { "allow_tables": ["payments", "users"] },
     "Secrets": { "allow_keys": ["PAYMENTS_API_KEY"] },
     "Clock": {},
-    "IO": {}
+    "io": {}
   }
 }
 ```
