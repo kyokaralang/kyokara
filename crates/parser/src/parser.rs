@@ -123,13 +123,6 @@ impl<'i> Parser<'i> {
         self.do_bump(kind);
     }
 
-    /// Advance past the current token, remapping its kind.
-    #[allow(dead_code)]
-    pub fn bump_remap(&mut self, kind: SyntaxKind) {
-        assert!(!self.at_eof(), "bump_remap at EOF");
-        self.do_bump(kind);
-    }
-
     fn do_bump(&mut self, kind: SyntaxKind) {
         self.events.push(Event::Token {
             kind,
