@@ -1969,6 +1969,9 @@ impl Interpreter {
         match value {
             Value::Seq(plan) => Ok(plan.clone()),
             Value::List(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromList(xs.clone())))),
+            Value::MutableList(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromList(
+                Rc::new(xs.borrow().clone()),
+            )))),
             Value::Deque(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromDeque(xs.clone())))),
             _ => Err(RuntimeError::TypeError(format!(
                 "{intrinsic_name} expects a traversal source"
@@ -2581,6 +2584,24 @@ impl Interpreter {
                     self.make_none()
                 }
             }
+            IntrinsicFn::MutableListGet => {
+                let Value::MutableList(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_get expects a MutableList".into(),
+                    ));
+                };
+                let Value::Int(i) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_get expects an Int index".into(),
+                    ));
+                };
+                let idx = *i as usize;
+                if let Some(val) = xs.borrow().get(idx) {
+                    self.make_some(val.clone())
+                } else {
+                    self.make_none()
+                }
+            }
             IntrinsicFn::ListHead => {
                 let Value::List(xs) = &args[0] else {
                     return Err(RuntimeError::TypeError("list_head expects a List".into()));
@@ -2612,6 +2633,31 @@ impl Interpreter {
                 let mut out = xs.clone();
                 Rc::make_mut(&mut out)[idx] = updated;
                 Ok(Value::List(out))
+            }
+            IntrinsicFn::MutableListUpdate => {
+                let Value::MutableList(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_update expects a MutableList".into(),
+                    ));
+                };
+                let Value::Int(i) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_update expects an Int index".into(),
+                    ));
+                };
+                let len = xs.borrow().len();
+                if *i < 0 || *i as usize >= len {
+                    return Err(RuntimeError::IndexOutOfBounds {
+                        index: *i,
+                        len: len as i64,
+                    });
+                }
+                let idx = *i as usize;
+                let updater = args[2].clone();
+                let current = xs.borrow()[idx].clone();
+                let updated = self.call_value(updater, smallvec::smallvec![current])?;
+                xs.borrow_mut()[idx] = updated;
+                Ok(Value::MutableList(xs.clone()))
             }
             IntrinsicFn::MapGet => {
                 let Value::Map(entries) = &args[0] else {
@@ -3005,6 +3051,11 @@ impl Interpreter {
                 .core_types
                 .get(CoreType::List)
                 .map(|_| ReceiverKey::Core(CoreType::List)),
+            Value::MutableList(_) => self
+                .module_scope
+                .core_types
+                .get(CoreType::MutableList)
+                .map(|_| ReceiverKey::Core(CoreType::MutableList)),
             Value::Deque(_) => self
                 .module_scope
                 .core_types
@@ -3066,6 +3117,24 @@ impl Interpreter {
                     })
                 }
             }
+            (Value::MutableList(items), Value::Int(i)) => {
+                let i = *i;
+                if i < 0 {
+                    return Err(RuntimeError::IndexOutOfBounds {
+                        index: i,
+                        len: items.borrow().len() as i64,
+                    });
+                }
+                let idx = i as usize;
+                if let Some(item) = items.borrow().get(idx) {
+                    Ok(item.clone())
+                } else {
+                    Err(RuntimeError::IndexOutOfBounds {
+                        index: i,
+                        len: items.borrow().len() as i64,
+                    })
+                }
+            }
             (Value::String(s), Value::Int(i)) => {
                 let i = *i;
                 if i < 0 {
@@ -3088,7 +3157,7 @@ impl Interpreter {
                 entries.get(&k).cloned().ok_or(RuntimeError::KeyNotFound)
             }
             _ => Err(RuntimeError::TypeError(
-                "indexing requires List, String, or Map".into(),
+                "indexing requires List, MutableList, String, or Map".into(),
             )),
         }
     }

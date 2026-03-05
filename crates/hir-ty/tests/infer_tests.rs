@@ -1201,6 +1201,110 @@ fn err_global_deque_constructor_surface_is_removed_rfc_0004() {
 }
 
 #[test]
+fn infer_collections_mutable_list_constructor_happy_paths_rfc_0005() {
+    let cases = [
+        r#"import collections
+        fn main() -> Int {
+            let xs = collections.MutableList.new().push(1).push(2).set(0, 9)
+            let ys = collections.MutableList.from_list(List.new().push(3).push(4))
+            xs.get(0).unwrap_or(0) + ys.len()
+        }"#,
+        r#"import collections as c
+        fn main() -> Int {
+            let xs: MutableList<Int> = c.MutableList.new().push(1).push(2)
+            xs.update(1, fn(n: Int) => n + 1).len()
+        }"#,
+        r#"import collections
+        fn main() -> Int {
+            collections.MutableList.from_list(List.new().push(1).push(2).push(3))
+                .map(fn(n: Int) => n * 2)
+                .zip(List.new().push(10))
+                .count()
+        }"#,
+    ];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected no diagnostics, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn err_global_mutable_list_constructor_surface_is_removed_rfc_0005() {
+    let (result, _) = check("fn main() -> Int { MutableList.new().len() }");
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("no method") || d.message.contains("unresolved")),
+        "expected removed-surface diagnostic, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn err_mutable_list_wrong_arity_or_type_rfc_0005() {
+    struct Case<'a> {
+        src: &'a str,
+        expected_fragment: &'a str,
+    }
+
+    let cases = [
+        Case {
+            src: "import collections\nfn main() -> Int { collections.MutableList.new(1).len() }",
+            expected_fragment: "expected 0 argument(s)",
+        },
+        Case {
+            src: "import collections\nfn main() -> Int { collections.MutableList.from_list(1).len() }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "import collections\nfn main() -> Int { collections.MutableList.new().push().len() }",
+            expected_fragment: "expected 1 argument(s)",
+        },
+        Case {
+            src: "import collections\nfn main() -> Int { collections.MutableList.new().push(1).set(true, 2).len() }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "import collections\nfn main() -> Int { collections.MutableList.new().push(1).update(0, fn(n: Int) => \"x\").len() }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "import collections\nfn main() -> Int { collections.MutableList.new().push(1).get(false).unwrap_or(0) }",
+            expected_fragment: "type mismatch",
+        },
+    ];
+
+    for case in cases {
+        let (result, _) = check(case.src);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains(case.expected_fragment)),
+            "expected diagnostic containing `{}`; got: {:?}\nsource:\n{}",
+            case.expected_fragment,
+            result.diagnostics,
+            case.src
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|d| !d.message.contains("unresolved name")),
+            "expected canonical surface to resolve names; got unresolved-name diagnostics: {:?}\nsource:\n{}",
+            result.diagnostics,
+            case.src
+        );
+    }
+}
+
+#[test]
 fn err_deque_and_list_index_update_wrong_arity_or_type() {
     struct Case<'a> {
         src: &'a str,

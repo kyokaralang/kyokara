@@ -35,6 +35,14 @@ pub enum IntrinsicFn {
     ListConcat,
     ListSet,
     ListUpdate,
+    MutableListNew,
+    MutableListFromList,
+    MutableListPush,
+    MutableListLen,
+    MutableListIsEmpty,
+    MutableListGet,
+    MutableListSet,
+    MutableListUpdate,
     DequeNew,
     DequePushFront,
     DequePushBack,
@@ -156,6 +164,8 @@ impl IntrinsicFn {
             IntrinsicFn::ListGet
                 | IntrinsicFn::ListHead
                 | IntrinsicFn::ListUpdate
+                | IntrinsicFn::MutableListGet
+                | IntrinsicFn::MutableListUpdate
                 | IntrinsicFn::DequePopFront
                 | IntrinsicFn::DequePopBack
                 | IntrinsicFn::SeqMap
@@ -329,6 +339,80 @@ impl IntrinsicFn {
 
                 Rc::make_mut(&mut xs)[i as usize] = val;
                 Ok(Value::List(xs))
+            }
+            IntrinsicFn::MutableListNew => Ok(Value::mutable_list(Vec::new())),
+            IntrinsicFn::MutableListFromList => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_from_list expects a List".into(),
+                    ));
+                };
+                Ok(Value::mutable_list(xs.as_ref().clone()))
+            }
+            IntrinsicFn::MutableListPush => {
+                let mut args = args;
+                let val = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_list_push: missing value argument".into(),
+                ))?;
+                let Value::MutableList(xs) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_list_push: missing mutable list argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_push expects a MutableList".into(),
+                    ));
+                };
+                xs.borrow_mut().push(val);
+                Ok(Value::MutableList(xs))
+            }
+            IntrinsicFn::MutableListLen => {
+                let Value::MutableList(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_len expects a MutableList".into(),
+                    ));
+                };
+                Ok(Value::Int(xs.borrow().len() as i64))
+            }
+            IntrinsicFn::MutableListIsEmpty => {
+                let Value::MutableList(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_is_empty expects a MutableList".into(),
+                    ));
+                };
+                Ok(Value::Bool(xs.borrow().is_empty()))
+            }
+            IntrinsicFn::MutableListSet => {
+                let mut args = args;
+                let val = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_list_set: missing value argument".into(),
+                ))?;
+                let Value::Int(i) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_list_set: missing index argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_set expects an Int index".into(),
+                    ));
+                };
+                let Value::MutableList(xs) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_list_set: missing mutable list argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_set expects a MutableList".into(),
+                    ));
+                };
+
+                let len = xs.borrow().len();
+                if i < 0 || i as usize >= len {
+                    return Err(RuntimeError::IndexOutOfBounds {
+                        index: i,
+                        len: len as i64,
+                    });
+                }
+
+                xs.borrow_mut()[i as usize] = val;
+                Ok(Value::MutableList(xs))
             }
             IntrinsicFn::DequeNew => Ok(Value::deque(VecDeque::new())),
             IntrinsicFn::DequePushFront => {
@@ -1054,6 +1138,7 @@ impl IntrinsicFn {
             // ── Complex (intercepted by interpreter) ─────────────
             IntrinsicFn::ListGet
             | IntrinsicFn::ListHead
+            | IntrinsicFn::MutableListGet
             | IntrinsicFn::SeqMap
             | IntrinsicFn::SeqFilter
             | IntrinsicFn::SeqFold
@@ -1070,6 +1155,7 @@ impl IntrinsicFn {
             | IntrinsicFn::SeqToList
             | IntrinsicFn::MapGet
             | IntrinsicFn::ListUpdate
+            | IntrinsicFn::MutableListUpdate
             | IntrinsicFn::DequePopFront
             | IntrinsicFn::DequePopBack
             | IntrinsicFn::ListSortBy => Err(RuntimeError::TypeError(
@@ -1112,6 +1198,38 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (Name::new(interner, "list_concat"), IntrinsicFn::ListConcat),
         (Name::new(interner, "list_set"), IntrinsicFn::ListSet),
         (Name::new(interner, "list_update"), IntrinsicFn::ListUpdate),
+        (
+            Name::new(interner, "mutable_list_new"),
+            IntrinsicFn::MutableListNew,
+        ),
+        (
+            Name::new(interner, "mutable_list_from_list"),
+            IntrinsicFn::MutableListFromList,
+        ),
+        (
+            Name::new(interner, "mutable_list_push"),
+            IntrinsicFn::MutableListPush,
+        ),
+        (
+            Name::new(interner, "mutable_list_len"),
+            IntrinsicFn::MutableListLen,
+        ),
+        (
+            Name::new(interner, "mutable_list_is_empty"),
+            IntrinsicFn::MutableListIsEmpty,
+        ),
+        (
+            Name::new(interner, "mutable_list_get"),
+            IntrinsicFn::MutableListGet,
+        ),
+        (
+            Name::new(interner, "mutable_list_set"),
+            IntrinsicFn::MutableListSet,
+        ),
+        (
+            Name::new(interner, "mutable_list_update"),
+            IntrinsicFn::MutableListUpdate,
+        ),
         // Deque
         (Name::new(interner, "deque_new"), IntrinsicFn::DequeNew),
         (

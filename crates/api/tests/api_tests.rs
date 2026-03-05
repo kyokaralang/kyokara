@@ -610,8 +610,8 @@ fn symbol_graph_contains_types() {
     let src = "type Color = Red | Green | Blue
         fn id(x: Int) -> Int { x }";
     let output = check(src, "test.ky");
-    // 8 types: Color (user-defined) + Option + Result + List + Deque + Map + Set + ParseError
-    assert_eq!(output.symbol_graph.types.len(), 8);
+    // 9 types: Color (user-defined) + Option + Result + List + MutableList + Deque + Map + Set + ParseError
+    assert_eq!(output.symbol_graph.types.len(), 9);
     let color = output
         .symbol_graph
         .types
@@ -621,6 +621,11 @@ fn symbol_graph_contains_types() {
     assert_eq!(color.kind, "adt");
     let variant_names: Vec<&str> = color.variants.iter().map(|v| v.name.as_str()).collect();
     assert_eq!(variant_names, vec!["Red", "Green", "Blue"]);
+
+    assert!(
+        output.symbol_graph.types.iter().any(|t| t.name == "MutableList"),
+        "MutableList builtin type should be in symbol graph"
+    );
 }
 
 #[test]
@@ -4401,6 +4406,46 @@ fn main() -> Int {
 #[test]
 fn check_global_deque_constructor_surface_is_removed_rfc_0004() {
     let output = check("fn main() -> Int { Deque.new().len() }", "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("no method") || d.message.contains("unresolved name")),
+        "expected removed constructor-surface diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_collections_mutable_list_constructor_surface_has_no_diagnostics_rfc_0005() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+fn main() -> Int {
+    let xs = collections.MutableList.new().push(1).push(2)
+    let ys = collections.MutableList.from_list(List.new().push(3).push(4)).set(0, 9)
+    xs.update(1, fn(n: Int) => n + 10).len() + ys.get(0).unwrap_or(0)
+}"#,
+        "collections.MutableList constructor canonical surface",
+    );
+}
+
+#[test]
+fn check_collections_mutable_list_alias_constructor_surface_has_no_diagnostics_rfc_0005() {
+    assert_check_no_diagnostics(
+        r#"import collections as c
+
+fn main() -> Int {
+    let xs: MutableList<Int> = c.MutableList.new().push(1).push(2)
+    xs.map(fn(n: Int) => n + 1).count()
+}"#,
+        "collections.MutableList alias constructor canonical surface",
+    );
+}
+
+#[test]
+fn check_global_mutable_list_constructor_surface_is_removed_rfc_0005() {
+    let output = check("fn main() -> Int { MutableList.new().len() }", "test.ky");
     assert!(
         output
             .diagnostics

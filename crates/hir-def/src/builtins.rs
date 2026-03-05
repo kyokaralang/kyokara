@@ -29,6 +29,7 @@ fn core_hidden_type_name(interner: &mut Interner, core: CoreType) -> Name {
         CoreType::Option => "$core_Option",
         CoreType::Result => "$core_Result",
         CoreType::List => "$core_List",
+        CoreType::MutableList => "$core_MutableList",
         CoreType::Deque => "$core_Deque",
         CoreType::Seq => "$core_Seq",
         CoreType::Map => "$core_Map",
@@ -43,6 +44,7 @@ fn core_public_type_name(interner: &mut Interner, core: CoreType) -> Name {
         CoreType::Option => "Option",
         CoreType::Result => "Result",
         CoreType::List => "List",
+        CoreType::MutableList => "MutableList",
         CoreType::Deque => "Deque",
         CoreType::Seq => "Seq",
         CoreType::Map => "Map",
@@ -86,7 +88,7 @@ fn register_core_type_item(
     (idx, type_name)
 }
 
-/// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `Deque<T>`, `Seq<T>`, `Map<K,V>`, `Set<T>`, and
+/// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`, `Deque<T>`, `Seq<T>`, `Map<K,V>`, `Set<T>`, and
 /// `ParseError` into the item tree
 /// and module scope.
 ///
@@ -101,6 +103,7 @@ pub fn register_builtin_types(
     register_option(tree, scope, interner);
     register_result(tree, scope, interner);
     register_list(tree, scope, interner);
+    register_mutable_list(tree, scope, interner);
     register_deque(tree, scope, interner);
     register_seq(tree, scope, interner);
     register_map(tree, scope, interner);
@@ -151,6 +154,19 @@ fn register_list(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut In
         scope,
         interner,
         CoreType::List,
+        vec![t_name],
+        TypeDefKind::Adt { variants: vec![] },
+    );
+}
+
+/// `MutableList<T>` — opaque builtin type (no variants, no pattern matching).
+fn register_mutable_list(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
+    let t_name = Name::new(interner, "T");
+    let _ = register_core_type_item(
+        tree,
+        scope,
+        interner,
+        CoreType::MutableList,
         vec![t_name],
         TypeDefKind::Adt { variants: vec![] },
     );
@@ -320,6 +336,10 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         bool_: Some(Name::new(interner, "Bool")),
         char_: Some(Name::new(interner, "Char")),
         list: scope.core_types.get(CoreType::List).map(|t| t.type_name),
+        mutable_list: scope
+            .core_types
+            .get(CoreType::MutableList)
+            .map(|t| t.type_name),
         deque: scope.core_types.get(CoreType::Deque).map(|t| t.type_name),
         seq: scope.core_types.get(CoreType::Seq).map(|t| t.type_name),
         map: scope.core_types.get(CoreType::Map).map(|t| t.type_name),
@@ -438,6 +458,74 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_all", ReceiverKey::Core(CoreType::List), "all"),
         ("seq_find", ReceiverKey::Core(CoreType::List), "find"),
         ("seq_to_list", ReceiverKey::Core(CoreType::List), "to_list"),
+        // MutableList methods
+        (
+            "mutable_list_push",
+            ReceiverKey::Core(CoreType::MutableList),
+            "push",
+        ),
+        (
+            "mutable_list_len",
+            ReceiverKey::Core(CoreType::MutableList),
+            "len",
+        ),
+        (
+            "mutable_list_is_empty",
+            ReceiverKey::Core(CoreType::MutableList),
+            "is_empty",
+        ),
+        (
+            "mutable_list_get",
+            ReceiverKey::Core(CoreType::MutableList),
+            "get",
+        ),
+        (
+            "mutable_list_set",
+            ReceiverKey::Core(CoreType::MutableList),
+            "set",
+        ),
+        (
+            "mutable_list_update",
+            ReceiverKey::Core(CoreType::MutableList),
+            "update",
+        ),
+        ("seq_map", ReceiverKey::Core(CoreType::MutableList), "map"),
+        (
+            "seq_filter",
+            ReceiverKey::Core(CoreType::MutableList),
+            "filter",
+        ),
+        ("seq_fold", ReceiverKey::Core(CoreType::MutableList), "fold"),
+        ("seq_scan", ReceiverKey::Core(CoreType::MutableList), "scan"),
+        (
+            "seq_enumerate",
+            ReceiverKey::Core(CoreType::MutableList),
+            "enumerate",
+        ),
+        ("seq_zip", ReceiverKey::Core(CoreType::MutableList), "zip"),
+        (
+            "seq_chunks",
+            ReceiverKey::Core(CoreType::MutableList),
+            "chunks",
+        ),
+        (
+            "seq_windows",
+            ReceiverKey::Core(CoreType::MutableList),
+            "windows",
+        ),
+        (
+            "seq_count",
+            ReceiverKey::Core(CoreType::MutableList),
+            "count",
+        ),
+        ("seq_any", ReceiverKey::Core(CoreType::MutableList), "any"),
+        ("seq_all", ReceiverKey::Core(CoreType::MutableList), "all"),
+        ("seq_find", ReceiverKey::Core(CoreType::MutableList), "find"),
+        (
+            "seq_to_list",
+            ReceiverKey::Core(CoreType::MutableList),
+            "to_list",
+        ),
         // Deque methods
         (
             "deque_push_front",
@@ -821,12 +909,26 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     // Specialized collection constructors are module-qualified.
     let collections = Name::new(interner, "collections");
     let deque = Name::new(interner, "Deque");
+    let mutable_list = Name::new(interner, "MutableList");
     let new = Name::new(interner, "new");
+    let from_list = Name::new(interner, "from_list");
     let deque_new = Name::new(interner, "deque_new");
+    let mutable_list_new = Name::new(interner, "mutable_list_new");
+    let mutable_list_from_list = Name::new(interner, "mutable_list_from_list");
     if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&deque_new) {
         scope
             .synthetic_module_static_methods
             .insert((collections, deque, new), fn_idx);
+    }
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_list_new) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, mutable_list, new), fn_idx);
+    }
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_list_from_list) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, mutable_list, from_list), fn_idx);
     }
 }
 
@@ -896,6 +998,11 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         .get(CoreType::List)
         .map(|info| info.type_name)
         .unwrap_or_else(|| Name::new(interner, "List"));
+    let mutable_list_core_name = scope
+        .core_types
+        .get(CoreType::MutableList)
+        .map(|info| info.type_name)
+        .unwrap_or_else(|| Name::new(interner, "MutableList"));
     let deque_core_name = scope
         .core_types
         .get(CoreType::Deque)
@@ -969,6 +1076,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     // Composite type refs.
     let list_t = TypeRef::Path {
         path: Path::single(list_core_name),
+        args: vec![t_ref.clone()],
+    };
+    let mutable_list_t = TypeRef::Path {
+        path: Path::single(mutable_list_core_name),
         args: vec![t_ref.clone()],
     };
     let deque_t = TypeRef::Path {
@@ -1235,9 +1346,81 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![
                 ("xs", list_t.clone()),
                 ("i", int_ty.clone()),
-                ("f", fn_t_to_t),
+                ("f", fn_t_to_t.clone()),
             ],
             list_t.clone(),
+        ),
+        // mutable_list_new<T>() -> MutableList<T>
+        mk_intrinsic(
+            interner,
+            "mutable_list_new",
+            vec![t_name],
+            vec![],
+            mutable_list_t.clone(),
+        ),
+        // mutable_list_from_list<T>(xs: List<T>) -> MutableList<T>
+        mk_intrinsic(
+            interner,
+            "mutable_list_from_list",
+            vec![t_name],
+            vec![("xs", list_t.clone())],
+            mutable_list_t.clone(),
+        ),
+        // mutable_list_push<T>(xs: MutableList<T>, x: T) -> MutableList<T>
+        mk_intrinsic(
+            interner,
+            "mutable_list_push",
+            vec![t_name],
+            vec![("xs", mutable_list_t.clone()), ("x", t_ref.clone())],
+            mutable_list_t.clone(),
+        ),
+        // mutable_list_len<T>(xs: MutableList<T>) -> Int
+        mk_intrinsic(
+            interner,
+            "mutable_list_len",
+            vec![t_name],
+            vec![("xs", mutable_list_t.clone())],
+            int_ty.clone(),
+        ),
+        // mutable_list_is_empty<T>(xs: MutableList<T>) -> Bool
+        mk_intrinsic(
+            interner,
+            "mutable_list_is_empty",
+            vec![t_name],
+            vec![("xs", mutable_list_t.clone())],
+            bool_ty.clone(),
+        ),
+        // mutable_list_get<T>(xs: MutableList<T>, i: Int) -> Option<T>
+        mk_intrinsic(
+            interner,
+            "mutable_list_get",
+            vec![t_name],
+            vec![("xs", mutable_list_t.clone()), ("i", int_ty.clone())],
+            option_t.clone(),
+        ),
+        // mutable_list_set<T>(xs: MutableList<T>, i: Int, x: T) -> MutableList<T>
+        mk_intrinsic(
+            interner,
+            "mutable_list_set",
+            vec![t_name],
+            vec![
+                ("xs", mutable_list_t.clone()),
+                ("i", int_ty.clone()),
+                ("x", t_ref.clone()),
+            ],
+            mutable_list_t.clone(),
+        ),
+        // mutable_list_update<T>(xs: MutableList<T>, i: Int, f: fn(T) -> T) -> MutableList<T>
+        mk_intrinsic(
+            interner,
+            "mutable_list_update",
+            vec![t_name],
+            vec![
+                ("xs", mutable_list_t.clone()),
+                ("i", int_ty.clone()),
+                ("f", fn_t_to_t.clone()),
+            ],
+            mutable_list_t.clone(),
         ),
         // deque_new<T>() -> Deque<T>
         mk_intrinsic(interner, "deque_new", vec![t_name], vec![], deque_t.clone()),

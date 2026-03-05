@@ -1740,6 +1740,135 @@ fn eval_effect_module_alias_call_works_rfc_0004() {
     assert!(matches!(val, Value::Int(1)));
 }
 
+#[test]
+fn eval_collections_mutable_list_constructor_surface_rfc_0005() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let xs = collections.MutableList.new().push(1).push(2)
+           let ys = collections.MutableList.from_list(List.new().push(3).push(4))
+           xs.len() * 10 + ys.get(1).unwrap_or(0)
+         }",
+    );
+    assert!(matches!(val, Value::Int(24)));
+}
+
+#[test]
+fn eval_collections_mutable_list_alias_constructor_surface_rfc_0005() {
+    let val = run_ok(
+        "import collections as c
+         fn main() -> Int {
+           let xs: MutableList<Int> = c.MutableList.new().push(7).push(8)
+           xs.len()
+         }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_global_mutable_list_constructor_surface_is_removed_rfc_0005() {
+    let err = run_err("fn main() -> Int { MutableList.new().len() }");
+    assert!(
+        err.contains("no method `new`")
+            || err.contains("unresolved name")
+            || err.contains("import name"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn eval_mutable_list_aliases_observe_in_place_mutation() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let xs = collections.MutableList.from_list(List.new().push(10).push(20))
+           let alias = xs
+           xs.set(1, 99)
+           xs.update(0, fn(n: Int) => n + 1)
+           alias.get(0).unwrap_or(0) * 100 + alias.get(1).unwrap_or(0)
+         }",
+    );
+    assert!(matches!(val, Value::Int(1199)));
+}
+
+#[test]
+fn eval_mutable_list_indexing_and_bounds_behavior() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let xs = collections.MutableList.from_list(List.new().push(3).push(4))
+           xs[1]
+         }",
+    );
+    assert!(matches!(val, Value::Int(4)));
+
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let xs = collections.MutableList.from_list(List.new().push(3).push(4))
+           match (xs.get(9)) {
+             Some(_n) => 0
+             None => 1
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+
+    let err = run_err(
+        "import collections
+         fn main() -> Int {
+           let xs = collections.MutableList.from_list(List.new().push(3).push(4))
+           xs.set(-1, 0).len()
+         }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
+
+    let err = run_err(
+        "import collections
+         fn main() -> Int {
+           let xs = collections.MutableList.from_list(List.new().push(3).push(4))
+           xs[2]
+         }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
+}
+
+#[test]
+fn eval_mutable_list_collection_first_traversal_semantics() {
+    let val = run_ok(
+        r#"import collections
+
+fn main() -> Int {
+    let xs = collections.MutableList.from_list(List.new().push(1).push(2).push(3))
+    let count = xs.map(fn(n: Int) => n + 1).filter(fn(n: Int) => n > 2).count()
+    let zip_count = xs.zip(List.new().push(10).push(20)).count()
+    count * 10 + zip_count
+}"#,
+    );
+    assert_eq!(val, Value::Int(22));
+}
+
+#[test]
+fn eval_mutable_list_any_all_find_short_circuit() {
+    let val = run_ok(
+        r#"import collections
+
+fn main() -> Int {
+    let any_hit = collections.MutableList.from_list(List.new().push(1).push(0)).any(fn(n: Int) =>
+        if (n == 1) { true } else { 10 / n > 0 }
+    )
+    let all_ok = collections.MutableList.from_list(List.new().push(0).push(1)).all(fn(n: Int) =>
+        if (n == 0) { false } else { 10 / (n - 1) > 0 }
+    ) == false
+    let found = collections.MutableList.from_list(List.new().push(2).push(1)).find(fn(n: Int) =>
+        if (n == 2) { true } else { 10 / (n - 1) > 0 }
+    ).unwrap_or(-1)
+    if (any_hit && all_ok && found == 2) { 1 } else { 0 }
+}"#,
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
 // ── Map tests ───────────────────────────────────────────────────────
 
 #[test]

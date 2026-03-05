@@ -1,5 +1,6 @@
 //! Runtime value representation.
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -82,6 +83,7 @@ pub enum Value {
         type_idx: Option<TypeItemIdx>,
     },
     List(Rc<Vec<Value>>),
+    MutableList(Rc<RefCell<Vec<Value>>>),
     Deque(Rc<VecDeque<Value>>),
     Seq(Rc<SeqPlan>),
     Map(Rc<IndexMap<MapKey, Value>>),
@@ -183,6 +185,7 @@ impl PartialEq for Value {
             ) => t1 == t2 && v1 == v2 && f1 == f2,
             (Value::Record { fields: f1, .. }, Value::Record { fields: f2, .. }) => f1 == f2,
             (Value::List(a), Value::List(b)) => a == b,
+            (Value::MutableList(a), Value::MutableList(b)) => *a.borrow() == *b.borrow(),
             (Value::Deque(a), Value::Deque(b)) => a == b,
             // Sequences are lazy plans; do not force-evaluate for equality.
             (Value::Seq(_), Value::Seq(_)) => false,
@@ -200,6 +203,10 @@ impl Eq for Value {}
 impl Value {
     pub fn list(items: Vec<Value>) -> Self {
         Value::List(Rc::new(items))
+    }
+
+    pub fn mutable_list(items: Vec<Value>) -> Self {
+        Value::MutableList(Rc::new(RefCell::new(items)))
     }
 
     pub fn seq_source(source: SeqSource) -> Self {
@@ -251,6 +258,14 @@ impl Value {
                 let fs: Vec<String> = items.iter().map(|v| v.display(interner)).collect();
                 format!("[{}]", fs.join(", "))
             }
+            Value::MutableList(items) => {
+                let fs: Vec<String> = items
+                    .borrow()
+                    .iter()
+                    .map(|v| v.display(interner))
+                    .collect();
+                format!("MutableList([{}])", fs.join(", "))
+            }
             Value::Deque(items) => {
                 let fs: Vec<String> = items.iter().map(|v| v.display(interner)).collect();
                 format!("Deque([{}])", fs.join(", "))
@@ -286,6 +301,19 @@ mod tests {
         assert!(
             Rc::ptr_eq(a, b),
             "list clone should share storage before mutation in COW model"
+        );
+    }
+
+    #[test]
+    fn mutable_list_clone_shares_storage() {
+        let original = Value::mutable_list(vec![Value::Int(1), Value::Int(2)]);
+        let cloned = original.clone();
+        let (Value::MutableList(a), Value::MutableList(b)) = (&original, &cloned) else {
+            panic!("expected mutable list values");
+        };
+        assert!(
+            Rc::ptr_eq(a, b),
+            "mutable list clone should share storage for alias-visible mutation"
         );
     }
 

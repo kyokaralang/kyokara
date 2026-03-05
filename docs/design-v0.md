@@ -548,13 +548,13 @@ for no-owner utilities and effects, and type-namespaced constructors.
 
 Canonical visibility matrix:
 * Prelude builtin value types (no import): `List.new()`, `Map.new()`, `Set.new()`, value methods.
-* Pure specialized collections (imported module): `collections.Deque.new()`
+* Pure specialized collections (imported module): `collections.Deque.new()`, `collections.MutableList.new()`, `collections.MutableList.from_list(xs)`
 * Prelude traversal constructors (no import): `start..<end`, `seed.unfold(step)`.
 * Pure no-owner utilities (imported module): `math.*`
 * Effectful utilities (imported capability modules): `io.*`, `fs.*`
 * Internal intrinsic IDs (`list_new`, `map_insert`, etc.) are implementation detail only.
 
-Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `Deque<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
+Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`, `Deque<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
 injected as synthetic types before type-checking. Synthetic modules (`collections`, `io`, `math`, `fs`)
 require explicit `import collections` / `import io` / `import math` / `import fs` in all modes.
 Zero intrinsic free functions exist in user scope.
@@ -567,7 +567,7 @@ Runtime soundness invariants for core APIs:
 * Follow-up: add qualified constructors/patterns (`Type.Variant`) and remove the temporary reservation ([#293](https://github.com/kyokaralang/kyokara/issues/293)).
 
 Mental model: `List`/`Map`/`Set` are prelude value types (type/value namespace),
-`collections` is the pure module namespace for specialized collection constructors,
+`collections` is the pure module namespace for specialized collection constructors (including `Deque` and `MutableList`),
 while `io`/`fs` are module namespaces for effectful operations.
 
 **Implemented (v0.1+):**
@@ -585,6 +585,11 @@ while `io`/`fs` are module namespaces for effectful operations.
     found index returns `>= 0`; missing element returns `-(insertion_point + 1)`.
     `insertion_point` is where `x` would be inserted to keep sorted order.
     Only naturally orderable element types are allowed (same as `xs.sort()`).
+* `MutableList<T>` — opaque builtin type with alias-visible in-place runtime storage (`Rc<RefCell<Vec<Value>>>`) ✓
+  * Constructors: `collections.MutableList.new()` and `collections.MutableList.from_list(xs)` (requires `import collections`)
+  * Methods (storage/random-access): `xs.push(v)`, `xs.len()`, `xs.is_empty()`, `xs.get(i)` → `Option<T>`, `xs.set(i, v)`, `xs.update(i, f)`, `xs[i]`
+  * Methods (traversal): `xs.map(f)`, `xs.filter(f)`, `xs.scan(init, f)`, `xs.enumerate()`, `xs.zip(other)`, `xs.chunks(n)`, `xs.windows(n)`, `xs.fold(init, f)`, `xs.count()`, `xs.any(f)`, `xs.all(f)`, `xs.find(f)`, `xs.to_list()`
+  * Mutation semantics: updates are visible across aliases that reference the same `MutableList`.
 * `Deque<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<VecDeque<Value>>`) ✓
   * Constructor: `collections.Deque.new()` (requires `import collections`)
   * Methods (queue/storage): `q.push_front(v)`, `q.push_back(v)`, `q.pop_front()` → `Option<{ value: T, rest: Deque<T> }>`, `q.pop_back()` → `Option<{ value: T, rest: Deque<T> }>`, `q.len()`, `q.is_empty()`
@@ -592,7 +597,7 @@ while `io`/`fs` are module namespaces for effectful operations.
 * Traversal constructors and behavior (public surface) ✓
   * Half-open range source: `start..<end` (ascending, empty when `start >= end`)
   * Stateful source: `seed.unfold(step)` where `step: fn(S) -> Option<{ value: T, state: S }>`
-  * Canonical user style is collection-first traversal (`xs.map(...).filter(...).count()`) on `List`, `Deque`, and producer values (`String.split/lines/chars`, `Map.keys/values`, `Set.values`, ranges, unfolds)
+  * Canonical user style is collection-first traversal (`xs.map(...).filter(...).count()`) on `List`, `MutableList`, `Deque`, and producer values (`String.split/lines/chars`, `Map.keys/values`, `Set.values`, ranges, unfolds)
   * Supports transforms (`map/filter/scan/enumerate/zip/chunks/windows`) and terminals (`fold/count/any/all/find/to_list`) with the same semantics as collection traversal
   * Guidance: for predicate/search traversal, default to `s.any(f)`, `s.all(f)`, `s.find(f)`; reserve `s.fold(...)` for true accumulation/reduction
   * Evaluation model: each terminal re-runs the traversal pipeline from source (no single-use consumption state)

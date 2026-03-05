@@ -1610,6 +1610,10 @@ impl<'a> InferenceCtx<'a> {
                     self.infer_expr(index, &Expectation::Has(Ty::Int));
                     args.first().cloned().unwrap_or(Ty::Error)
                 }
+                Some(CoreType::MutableList) => {
+                    self.infer_expr(index, &Expectation::Has(Ty::Int));
+                    args.first().cloned().unwrap_or(Ty::Error)
+                }
                 Some(CoreType::Map) => {
                     let key_ty = args
                         .first()
