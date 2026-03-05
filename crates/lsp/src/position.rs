@@ -31,7 +31,10 @@ pub fn lsp_position_to_offset(pos: Position, text: &str) -> Option<TextSize> {
         }
         offset += line.len() + 1; // +1 for the '\n'
     }
-    None
+    // Position is past the last line — clamp to end of file.
+    // LSP clients can send this for cursors at EOF in files without
+    // trailing newlines.
+    Some(TextSize::from(text.len() as u32))
 }
 
 /// Convert a byte offset to an LSP `Position`.
@@ -331,6 +334,48 @@ mod tests {
         let offset = lsp_position_to_offset(pos, text).unwrap();
         let back = offset_to_lsp_position(offset, text);
         assert_eq!(pos, back);
+    }
+
+    #[test]
+    fn offset_at_eof_no_trailing_newline() {
+        // File without trailing newline — cursor at end of last line.
+        let text = "fn main() -> Int { 42 }";
+        // Line 0, col 23 = one past the last character.
+        let pos = Position::new(0, 23);
+        let offset = lsp_position_to_offset(pos, text);
+        assert_eq!(
+            offset,
+            Some(TextSize::from(23)),
+            "cursor at EOF of no-newline file should resolve"
+        );
+    }
+
+    #[test]
+    fn offset_past_last_line_no_trailing_newline() {
+        // File "hello\nworld" has lines 0 and 1. Line 2 doesn't exist.
+        // LSP clients can send line 2, col 0 when cursor is at the very end.
+        let text = "hello\nworld";
+        let pos = Position::new(2, 0);
+        let offset = lsp_position_to_offset(pos, text);
+        // Should clamp to end of file, not return None.
+        assert!(
+            offset.is_some(),
+            "position past last line should clamp to EOF, got None"
+        );
+    }
+
+    #[test]
+    fn offset_past_last_line_with_trailing_newline() {
+        // File "hello\nworld\n" — split gives ["hello", "world", ""].
+        // Line 2 is the empty string after the trailing newline.
+        let text = "hello\nworld\n";
+        let pos = Position::new(2, 0);
+        let offset = lsp_position_to_offset(pos, text);
+        assert_eq!(
+            offset,
+            Some(TextSize::from(12)),
+            "line 2 col 0 in trailing-newline file should be byte 12"
+        );
     }
 
     #[test]
