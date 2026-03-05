@@ -216,11 +216,14 @@ pub(crate) fn instantiate_constructor(
     }
 
     let field_tys = match &type_item.kind {
-        TypeDefKind::Adt { variants } => variants[variant_idx]
-            .fields
-            .iter()
-            .map(|f| inner_env.resolve_type_ref(f, table))
-            .collect(),
+        TypeDefKind::Adt { variants } => match variants.get(variant_idx) {
+            Some(variant) => variant
+                .fields
+                .iter()
+                .map(|f| inner_env.resolve_type_ref(f, table))
+                .collect(),
+            None => return (vec![], Ty::Error),
+        },
         TypeDefKind::Record { fields } => fields
             .iter()
             .map(|(_, f)| inner_env.resolve_type_ref(f, table))
@@ -234,4 +237,89 @@ pub(crate) fn instantiate_constructor(
     };
 
     (field_tys, adt_ty)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kyokara_hir_def::item_tree::{ItemTree, TypeItem, VariantDef};
+    use kyokara_hir_def::resolver::ModuleScope;
+    use la_arena::Arena;
+
+    /// Build a minimal item tree with one ADT having a single variant.
+    fn make_adt_item_tree(interner: &mut Interner) -> (ItemTree, TypeItemIdx) {
+        let mut types = Arena::new();
+        let name = Name::new(interner, "MyAdt");
+        let variant_name = Name::new(interner, "V0");
+        let idx = types.alloc(TypeItem {
+            name,
+            is_pub: false,
+            type_params: vec![],
+            kind: TypeDefKind::Adt {
+                variants: vec![VariantDef {
+                    name: variant_name,
+                    fields: vec![],
+                }],
+            },
+        });
+        let tree = ItemTree {
+            module_name: None,
+            imports: vec![],
+            functions: Arena::new(),
+            types,
+            effects: Arena::new(),
+            properties: Arena::new(),
+            lets: Arena::new(),
+        };
+        (tree, idx)
+    }
+
+    #[test]
+    fn instantiate_constructor_oob_variant_returns_error() {
+        let mut interner = Interner::new();
+        let (tree, idx) = make_adt_item_tree(&mut interner);
+        let scope = ModuleScope::default();
+        let env = TyResolutionEnv {
+            item_tree: &tree,
+            module_scope: &scope,
+            interner: &interner,
+            type_params: vec![],
+            resolving_aliases: vec![],
+        };
+        let mut table = UnificationTable::new();
+
+        // variant_idx=999 is way out of bounds (only 1 variant exists).
+        let (field_tys, ty) = instantiate_constructor(idx, 999, &env, &mut table);
+        assert!(
+            field_tys.is_empty(),
+            "OOB variant should produce empty fields"
+        );
+        assert!(
+            matches!(ty, Ty::Error),
+            "OOB variant should produce Ty::Error, got: {ty:?}"
+        );
+    }
+
+    #[test]
+    fn instantiate_constructor_valid_variant_works() {
+        let mut interner = Interner::new();
+        let (tree, idx) = make_adt_item_tree(&mut interner);
+        let scope = ModuleScope::default();
+        let env = TyResolutionEnv {
+            item_tree: &tree,
+            module_scope: &scope,
+            interner: &interner,
+            type_params: vec![],
+            resolving_aliases: vec![],
+        };
+        let mut table = UnificationTable::new();
+
+        // variant_idx=0 is valid.
+        let (field_tys, ty) = instantiate_constructor(idx, 0, &env, &mut table);
+        assert!(field_tys.is_empty(), "V0 has no fields");
+        assert!(
+            matches!(ty, Ty::Adt { .. }),
+            "valid variant should produce Adt type"
+        );
+    }
 }
