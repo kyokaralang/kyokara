@@ -62,6 +62,7 @@ First-class specification:
 
 API/stdlib surface consistency rules are specified in RFC 0001:
 - [API Surface Law (AI-first)](rfcs/0001-api-surface-law.md)
+- [Mutable Collection Naming and Placement](rfcs/0005-mutable-collection-naming-and-placement.md)
 
 ### 2.2 Modules and imports
 
