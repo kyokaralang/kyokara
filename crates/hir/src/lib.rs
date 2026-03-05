@@ -557,11 +557,23 @@ fn resolve_project_imports(
                         importing_info.scope.types.insert(name, idx);
                         // Register constructors.
                         for (vname, vi) in variants_info {
-                            importing_info
-                                .scope
-                                .constructors
-                                .entry(vname)
-                                .or_insert((idx, vi));
+                            match importing_info.scope.constructors.entry(vname) {
+                                std::collections::hash_map::Entry::Vacant(entry) => {
+                                    entry.insert((idx, vi));
+                                }
+                                std::collections::hash_map::Entry::Occupied(_) => {
+                                    let ctor_name = vname.resolve(interner);
+                                    diagnostics.push(kyokara_diagnostics::Diagnostic::error(
+                                        format!(
+                                            "conflicting import: constructor `{ctor_name}` is already defined"
+                                        ),
+                                        kyokara_span::Span {
+                                            file: import_file_id,
+                                            range: import_range,
+                                        },
+                                    ));
+                                }
+                            }
                         }
                     }
                 }
@@ -633,6 +645,7 @@ fn collect_pub_data(item_tree: &ItemTree) -> Vec<PubData> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn lowering_diagnostic_code_maps_duplicate() {
@@ -724,6 +737,94 @@ mod tests {
         assert_eq!(
             display_type_ref(&result, &interner),
             "Result<foo.A, { T: foo.bar.B }>"
+        );
+    }
+
+    fn make_temp_dir() -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let pid = std::process::id();
+        for attempt in 0..128_u32 {
+            let dir =
+                std::env::temp_dir().join(format!("kyokara_hir_tests_{pid}_{nanos}_{attempt}"));
+            match std::fs::create_dir(&dir) {
+                Ok(()) => return dir,
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(err) => panic!("temp dir should be creatable: {err}"),
+            }
+        }
+        panic!("failed to allocate unique temp dir");
+    }
+
+    #[test]
+    fn project_import_constructor_collision_emits_diagnostic() {
+        let dir = make_temp_dir();
+        let main_path = dir.join("main.ky");
+        let a_path = dir.join("a.ky");
+        let b_path = dir.join("b.ky");
+
+        std::fs::write(
+            &main_path,
+            "import a\nimport b\nfn main() -> Int { 0 }\n",
+        )
+        .expect("main file should be writable");
+        std::fs::write(&a_path, "pub type A = Clash(Int)\n")
+            .expect("a module should be writable");
+        std::fs::write(&b_path, "pub type B = Clash(Int)\n")
+            .expect("b module should be writable");
+
+        let result = check_project(&main_path);
+        let has_collision = result.lowering_diagnostics.iter().any(|d| {
+            d.message
+                .contains("conflicting import: constructor `Clash` is already defined")
+        });
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+        assert!(
+            has_collision,
+            "expected constructor collision diagnostic, got: {:?}",
+            result
+                .lowering_diagnostics
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn project_import_distinct_constructors_has_no_collision_diagnostic() {
+        let dir = make_temp_dir();
+        let main_path = dir.join("main.ky");
+        let a_path = dir.join("a.ky");
+        let b_path = dir.join("b.ky");
+
+        std::fs::write(
+            &main_path,
+            "import a\nimport b\nfn main() -> Int { 0 }\n",
+        )
+        .expect("main file should be writable");
+        std::fs::write(&a_path, "pub type A = Left(Int)\n")
+            .expect("a module should be writable");
+        std::fs::write(&b_path, "pub type B = Right(Int)\n")
+            .expect("b module should be writable");
+
+        let result = check_project(&main_path);
+        let has_collision = result
+            .lowering_diagnostics
+            .iter()
+            .any(|d| d.message.contains("conflicting import: constructor"));
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+        assert!(
+            !has_collision,
+            "did not expect constructor collision diagnostic, got: {:?}",
+            result
+                .lowering_diagnostics
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
         );
     }
 }
