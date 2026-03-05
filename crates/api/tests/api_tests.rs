@@ -4549,11 +4549,31 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_deque_pop_back_canonical_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+fn main() -> Int {
+    let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
+    match (q0.pop_back()) {
+        Some(p1) => match (p1.rest.pop_back()) {
+            Some(p2) => p1.value + p2.value + p2.rest.len()
+            None => -1
+        }
+        None => -1
+    }
+}"#,
+        "deque pop_back canonical surface",
+    );
+}
+
+#[test]
 fn check_non_canonical_free_deque_list_set_update_functions_report_unresolved_name() {
     let output = check(
         r#"fn main() -> Int {
             let q = deque_new()
             let q = deque_push_back(q, 1)
+            let _ = deque_pop_back(q)
             let xs = list_set(List.new().push(1), 0, 2)
             let ys = list_update(xs, 0, fn(n: Int) => n + 1)
             q.len() + ys.len()

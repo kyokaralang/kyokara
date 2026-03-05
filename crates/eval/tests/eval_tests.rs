@@ -1583,6 +1583,101 @@ fn eval_deque_pop_front_empty_returns_none() {
 }
 
 #[test]
+fn eval_deque_push_front_back_and_pop_back_lifo() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
+           match (q0.pop_back()) {
+             Some(p1) => match (p1.rest.pop_back()) {
+               Some(p2) => p1.value * 100 + p2.value * 10 + p2.rest.len()
+               None => -1
+             }
+             None => -1
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(211)));
+}
+
+#[test]
+fn eval_deque_pop_back_non_empty_returns_value_and_rest() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let q0 = collections.Deque.new().push_back(10).push_back(20)
+           match (q0.pop_back()) {
+             Some(p) =>
+               if (p.value == 20 && p.rest.len() == 1) {
+                 match (p.rest.pop_back()) {
+                   Some(p2) => p2.value
+                   None => -1
+                 }
+               } else {
+                 -1
+               }
+             None => -1
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(10)));
+}
+
+#[test]
+fn eval_deque_pop_back_empty_returns_none() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           match (collections.Deque.new().pop_back()) {
+             Some(_p) => 0
+             None => 1
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_deque_empty_pop_operations_are_stable() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let q0 = collections.Deque.new()
+           let q1 = match (q0.pop_front()) {
+             Some(p) => p.rest
+             None => q0
+           }
+           let q2 = match (q1.pop_back()) {
+             Some(p) => p.rest
+             None => q1
+           }
+           if (q2.is_empty() && q2.len() == 0) { 1 } else { 0 }
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_deque_pop_back_singleton_rest_is_empty() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let q0 = collections.Deque.new().push_back(7)
+           match (q0.pop_back()) {
+             Some(p) =>
+               if (p.value == 7 && p.rest.is_empty() && p.rest.len() == 0) {
+                 1
+               } else {
+                 0
+               }
+             None => 0
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
 fn eval_deque_is_empty_and_len() {
     let val = run_ok(
         "import collections

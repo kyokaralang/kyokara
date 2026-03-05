@@ -2798,6 +2798,30 @@ impl Interpreter {
                 };
                 self.make_some(payload)
             }
+            IntrinsicFn::DequePopBack => {
+                let mut args = args.into_iter();
+                let Value::Deque(mut q) = args.next().ok_or(RuntimeError::TypeError(
+                    "deque_pop_back: missing deque argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "deque_pop_back expects a Deque".into(),
+                    ));
+                };
+                if q.is_empty() {
+                    return self.make_none();
+                }
+                let value = Rc::make_mut(&mut q)
+                    .pop_back()
+                    .expect("checked deque is non-empty before pop_back");
+                let value_name = Name::new(&mut self.interner, "value");
+                let rest_name = Name::new(&mut self.interner, "rest");
+                let payload = Value::Record {
+                    fields: vec![(value_name, value), (rest_name, Value::Deque(q))],
+                    type_idx: None,
+                };
+                self.make_some(payload)
+            }
             IntrinsicFn::ListSortBy => {
                 let Value::List(xs) = &args[0] else {
                     return Err(RuntimeError::TypeError(
@@ -3829,6 +3853,103 @@ mod tests {
 
         let none_payload = interp
             .decode_option_some_payload(&out, "deque_pop_front")
+            .expect("decode should succeed");
+        assert!(none_payload.is_none(), "empty deque should return None");
+
+        let Value::Deque(alias_q) = &alias else {
+            panic!("expected alias deque");
+        };
+        assert_eq!(alias_q.len(), 0, "alias must remain empty");
+        assert!(
+            std::ptr::eq(alias_ptr_before, Rc::as_ptr(alias_q)),
+            "empty pop should not mutate alias storage"
+        );
+    }
+
+    #[test]
+    fn deque_pop_back_reuses_storage_when_unique() {
+        let mut interp = make_checked_interpreter("fn main() -> Unit {}");
+        let original = Value::deque(VecDeque::from([Value::Int(1), Value::Int(2)]));
+        let before_ptr = match &original {
+            Value::Deque(q) => Rc::as_ptr(q),
+            _ => panic!("expected deque"),
+        };
+
+        let out = interp
+            .call_complex_intrinsic(IntrinsicFn::DequePopBack, smallvec![original])
+            .expect("deque_pop_back should succeed");
+
+        let payload = interp
+            .decode_option_some_payload(&out, "deque_pop_back")
+            .expect("decode should succeed")
+            .expect("expected Some payload");
+        let Value::Record { fields, .. } = payload else {
+            panic!("expected record payload");
+        };
+        assert_eq!(fields.len(), 2, "payload should contain value/rest");
+        assert_eq!(fields[0].1, Value::Int(2), "back value should be returned");
+        let Value::Deque(rest) = &fields[1].1 else {
+            panic!("rest should be a deque");
+        };
+        assert_eq!(rest.len(), 1, "rest should contain one element");
+        assert!(
+            std::ptr::eq(before_ptr, Rc::as_ptr(rest)),
+            "deque_pop_back should not allocate a fresh deque when uniquely owned"
+        );
+    }
+
+    #[test]
+    fn deque_pop_back_detaches_when_storage_is_shared() {
+        let mut interp = make_checked_interpreter("fn main() -> Unit {}");
+        let original = Value::deque(VecDeque::from([Value::Int(1), Value::Int(2)]));
+        let alias = original.clone();
+        let alias_ptr = match &alias {
+            Value::Deque(q) => Rc::as_ptr(q),
+            _ => panic!("expected alias deque"),
+        };
+
+        let out = interp
+            .call_complex_intrinsic(IntrinsicFn::DequePopBack, smallvec![original])
+            .expect("deque_pop_back should succeed");
+
+        let payload = interp
+            .decode_option_some_payload(&out, "deque_pop_back")
+            .expect("decode should succeed")
+            .expect("expected Some payload");
+        let Value::Record { fields, .. } = payload else {
+            panic!("expected record payload");
+        };
+        let Value::Deque(rest) = &fields[1].1 else {
+            panic!("rest should be a deque");
+        };
+        let Value::Deque(alias_q) = &alias else {
+            panic!("expected alias deque");
+        };
+
+        assert_eq!(alias_q.len(), 2, "alias must remain unchanged");
+        assert_eq!(rest.len(), 1, "rest should have one element after pop");
+        assert!(
+            !std::ptr::eq(alias_ptr, Rc::as_ptr(rest)),
+            "deque_pop_back must detach when input storage is shared"
+        );
+    }
+
+    #[test]
+    fn deque_pop_back_empty_shared_does_not_mutate_alias() {
+        let mut interp = make_checked_interpreter("fn main() -> Unit {}");
+        let original = Value::deque(VecDeque::new());
+        let alias = original.clone();
+        let alias_ptr_before = match &alias {
+            Value::Deque(q) => Rc::as_ptr(q),
+            _ => panic!("expected alias deque"),
+        };
+
+        let out = interp
+            .call_complex_intrinsic(IntrinsicFn::DequePopBack, smallvec![original])
+            .expect("deque_pop_back should succeed");
+
+        let none_payload = interp
+            .decode_option_some_payload(&out, "deque_pop_back")
             .expect("decode should succeed");
         assert!(none_payload.is_none(), "empty deque should return None");
 
