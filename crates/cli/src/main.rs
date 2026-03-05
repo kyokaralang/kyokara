@@ -379,6 +379,9 @@ fn main() {
             }
 
             if apply && (output.status == "typechecked" || output.status == "skipped") {
+                if output.status == "skipped" {
+                    eprintln!("warning: verification skipped due to --force flag");
+                }
                 // Use patched sources from the transaction when available.
                 if let Some(patched) = &output.patched_sources {
                     if let Err(e) = apply_patched_sources_atomically(patched) {

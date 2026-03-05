@@ -152,17 +152,11 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
 
     // Aggregate parse errors from all modules.
     for (mod_path, errors) in &result.parse_errors {
-        let file_name = result
-            .file_map
-            .path(
-                result
-                    .module_graph
-                    .get(mod_path)
-                    .map(|i| i.file_id)
-                    .unwrap_or(kyokara_span::FileId(0)),
-            )
+        let file_id = result.module_graph.get(mod_path).map(|i| i.file_id);
+        let file_name = file_id
+            .and_then(|fid| result.file_map.path(fid))
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "<unknown>".into());
+            .unwrap_or_else(|| format!("<unresolved:{:?}>", mod_path));
 
         for err in errors {
             diagnostics.push(DiagnosticDto {
@@ -188,7 +182,7 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
             .file_map
             .path(diag.span.file)
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "<project>".into());
+            .unwrap_or_else(|| format!("<unresolved:FileId({})>", diag.span.file.0));
         diagnostics.push(convert_lowering_diagnostic(diag, code, &file_name));
     }
 
@@ -199,7 +193,7 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
             .get(mod_path)
             .and_then(|i| result.file_map.path(i.file_id))
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "<unknown>".into());
+            .unwrap_or_else(|| format!("<unresolved:{:?}>", mod_path));
 
         let item_tree = result.module_graph.get(mod_path).map(|i| &i.item_tree);
 
@@ -224,16 +218,10 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
     let mut all_types = Vec::new();
     let mut all_capabilities = Vec::new();
 
-    let builtin_names: std::collections::HashSet<&str> = [
-        "Option",
-        "Result",
-        "List",
-        "Map",
-        "Set",
-        "ParseError",
-    ]
-    .into_iter()
-    .collect();
+    let builtin_names: std::collections::HashSet<&str> =
+        ["Option", "Result", "List", "Map", "Set", "ParseError"]
+            .into_iter()
+            .collect();
     let mut seen_builtins: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for (mod_path, tc) in &result.type_checks {
@@ -242,7 +230,7 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
             .get(mod_path)
             .and_then(|i| result.file_map.path(i.file_id))
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "<unknown>".into());
+            .unwrap_or_else(|| format!("<unresolved:{:?}>", mod_path));
 
         // Build module prefix from ModulePath segments.
         let prefix = if mod_path.is_root() {
@@ -946,7 +934,7 @@ pub fn refactor(
             if fid == file_id {
                 file_name.to_string()
             } else {
-                "<unknown>".into()
+                format!("<unresolved:FileId({})>", fid.0)
             }
         }),
         Err(e) => error_dto(e),
@@ -975,7 +963,7 @@ pub fn refactor_project(
             file_map
                 .path(fid)
                 .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "<unknown>".into())
+                .unwrap_or_else(|| format!("<unresolved:FileId({})>", fid.0))
         }),
         Err(e) => error_dto(e),
     }

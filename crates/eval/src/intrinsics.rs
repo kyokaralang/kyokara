@@ -321,10 +321,10 @@ impl IntrinsicFn {
                 };
 
                 if i < 0 || i as usize >= xs.len() {
-                    return Err(RuntimeError::TypeError(format!(
-                        "list_set: index out of bounds: index {i}, length {}",
-                        xs.len()
-                    )));
+                    return Err(RuntimeError::IndexOutOfBounds {
+                        index: i,
+                        len: xs.len() as i64,
+                    });
                 }
 
                 Rc::make_mut(&mut xs)[i as usize] = val;
@@ -1704,5 +1704,4 @@ mod tests {
             other => panic!("expected range source, got {other:?}"),
         }
     }
-
 }

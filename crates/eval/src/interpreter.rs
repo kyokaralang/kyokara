@@ -2601,10 +2601,10 @@ impl Interpreter {
                     ));
                 };
                 if *i < 0 || *i as usize >= xs.len() {
-                    return Err(RuntimeError::TypeError(format!(
-                        "list_update: index out of bounds: index {i}, length {}",
-                        xs.len()
-                    )));
+                    return Err(RuntimeError::IndexOutOfBounds {
+                        index: *i,
+                        len: xs.len() as i64,
+                    });
                 }
                 let idx = *i as usize;
                 let updater = args[2].clone();
