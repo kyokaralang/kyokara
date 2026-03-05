@@ -148,13 +148,10 @@ fn try_dot_completion(
     }
 
     // Check static methods: List.new, Map.new, etc.
-    let base_type_idx = scope
-        .types
-        .iter()
-        .find_map(|(ty_name, ty_idx)| {
-            let resolved = ty_name.resolve(interner);
-            (!resolved.starts_with("$core_") && resolved == base_name).then_some(*ty_idx)
-        });
+    let base_type_idx = scope.types.iter().find_map(|(ty_name, ty_idx)| {
+        let resolved = ty_name.resolve(interner);
+        (!resolved.starts_with("$core_") && resolved == base_name).then_some(*ty_idx)
+    });
     if let Some(ty_idx) = base_type_idx {
         let owner_key = if let Some(core) = scope.core_types.kind_for_idx(ty_idx) {
             StaticOwnerKey::Core(core)

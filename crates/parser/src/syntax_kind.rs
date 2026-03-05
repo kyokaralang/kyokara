@@ -74,6 +74,14 @@ pub enum SyntaxKind {
     PropertyKw,
     /// `for`
     ForKw,
+    /// `in`
+    InKw,
+    /// `while`
+    WhileKw,
+    /// `break`
+    BreakKw,
+    /// `continue`
+    ContinueKw,
     /// `all`
     AllKw,
     /// `where`
@@ -286,6 +294,14 @@ pub enum SyntaxKind {
     MatchArmList,
     /// `if cond { … } else { … }`
     IfExpr,
+    /// `while (cond) { ... }`
+    WhileStmt,
+    /// `for (pat in source) { ... }`
+    ForStmt,
+    /// `break`
+    BreakStmt,
+    /// `continue`
+    ContinueStmt,
     /// `{ … }` block.
     BlockExpr,
     /// Record construction (`Foo { x: 1, y: 2 }`).
@@ -367,6 +383,10 @@ impl SyntaxKind {
                 | Self::ContractKw
                 | Self::PropertyKw
                 | Self::ForKw
+                | Self::InKw
+                | Self::WhileKw
+                | Self::BreakKw
+                | Self::ContinueKw
                 | Self::AllKw
                 | Self::WhereKw
                 | Self::PipeKw
@@ -463,6 +483,10 @@ impl SyntaxKind {
             "contract" => Some(Self::ContractKw),
             "property" => Some(Self::PropertyKw),
             "for" => Some(Self::ForKw),
+            "in" => Some(Self::InKw),
+            "while" => Some(Self::WhileKw),
+            "break" => Some(Self::BreakKw),
+            "continue" => Some(Self::ContinueKw),
             "where" => Some(Self::WhereKw),
             "pipe" => Some(Self::PipeKw),
             "old" => Some(Self::OldKw),

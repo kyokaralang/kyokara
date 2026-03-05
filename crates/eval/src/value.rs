@@ -259,11 +259,7 @@ impl Value {
                 format!("[{}]", fs.join(", "))
             }
             Value::MutableList(items) => {
-                let fs: Vec<String> = items
-                    .borrow()
-                    .iter()
-                    .map(|v| v.display(interner))
-                    .collect();
+                let fs: Vec<String> = items.borrow().iter().map(|v| v.display(interner)).collect();
                 format!("MutableList([{}])", fs.join(", "))
             }
             Value::Deque(items) => {

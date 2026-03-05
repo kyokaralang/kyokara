@@ -58,6 +58,8 @@ pub struct Interpreter {
 enum ControlFlow {
     Value(Value),
     Return(Value),
+    Break,
+    Continue,
 }
 
 enum LogicalEvalStep {
@@ -202,6 +204,7 @@ impl ControlFlow {
     fn into_value(self) -> Value {
         match self {
             ControlFlow::Value(v) | ControlFlow::Return(v) => v,
+            ControlFlow::Break | ControlFlow::Continue => Value::Unit,
         }
     }
 }
@@ -216,6 +219,7 @@ macro_rules! eval_propagate {
         let cf = $self.eval_expr($env, $body, $idx)?;
         match cf {
             cf @ ControlFlow::Return(_) => return Ok(cf),
+            cf @ ControlFlow::Break | cf @ ControlFlow::Continue => return Ok(cf),
             ControlFlow::Value(v) => v,
         }
     }};
@@ -227,6 +231,7 @@ macro_rules! eval_propagate_shared {
         let cf = $self.eval_expr_shared($body, $idx)?;
         match cf {
             cf @ ControlFlow::Return(_) => return Ok(cf),
+            cf @ ControlFlow::Break | cf @ ControlFlow::Continue => return Ok(cf),
             ControlFlow::Value(v) => v,
         }
     }};
@@ -583,6 +588,14 @@ impl Interpreter {
             if !has_requires && !has_ensures && !has_invariant {
                 let return_val = match self.eval_expr_shared(&body, body.root)? {
                     ControlFlow::Value(v) | ControlFlow::Return(v) => v,
+                    ControlFlow::Break => {
+                        return Err(RuntimeError::TypeError("`break` used outside loop".into()));
+                    }
+                    ControlFlow::Continue => {
+                        return Err(RuntimeError::TypeError(
+                            "`continue` used outside loop".into(),
+                        ));
+                    }
                 };
                 Ok(return_val)
             } else {
@@ -600,6 +613,14 @@ impl Interpreter {
 
                 let return_val = match self.eval_expr_shared(&body, body.root)? {
                     ControlFlow::Value(v) | ControlFlow::Return(v) => v,
+                    ControlFlow::Break => {
+                        return Err(RuntimeError::TypeError("`break` used outside loop".into()));
+                    }
+                    ControlFlow::Continue => {
+                        return Err(RuntimeError::TypeError(
+                            "`continue` used outside loop".into(),
+                        ));
+                    }
                 };
 
                 for inv_idx in body.invariant.iter().copied() {
@@ -1969,9 +1990,9 @@ impl Interpreter {
         match value {
             Value::Seq(plan) => Ok(plan.clone()),
             Value::List(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromList(xs.clone())))),
-            Value::MutableList(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromList(
-                Rc::new(xs.borrow().clone()),
-            )))),
+            Value::MutableList(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromList(Rc::new(
+                xs.borrow().clone(),
+            ))))),
             Value::Deque(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromDeque(xs.clone())))),
             _ => Err(RuntimeError::TypeError(format!(
                 "{intrinsic_name} expects a traversal source"
@@ -3302,7 +3323,10 @@ impl Interpreter {
                             return Err(err);
                         }
                     };
-                    if let ControlFlow::Return(_) = &result {
+                    if matches!(
+                        result,
+                        ControlFlow::Return(_) | ControlFlow::Break | ControlFlow::Continue
+                    ) {
                         env.pop_scope();
                         return Ok(result);
                     }
@@ -3310,6 +3334,47 @@ impl Interpreter {
                         env.pop_scope();
                         return Err(err);
                     }
+                }
+                Stmt::While {
+                    condition,
+                    body: loop_body,
+                } => {
+                    let result = match self.eval_while(env, body, *condition, *loop_body) {
+                        Ok(result) => result,
+                        Err(err) => {
+                            env.pop_scope();
+                            return Err(err);
+                        }
+                    };
+                    if !matches!(result, ControlFlow::Value(_)) {
+                        env.pop_scope();
+                        return Ok(result);
+                    }
+                }
+                Stmt::For {
+                    pat,
+                    source,
+                    body: loop_body,
+                } => {
+                    let result = match self.eval_for(env, body, *pat, *source, *loop_body) {
+                        Ok(result) => result,
+                        Err(err) => {
+                            env.pop_scope();
+                            return Err(err);
+                        }
+                    };
+                    if !matches!(result, ControlFlow::Value(_)) {
+                        env.pop_scope();
+                        return Ok(result);
+                    }
+                }
+                Stmt::Break => {
+                    env.pop_scope();
+                    return Ok(ControlFlow::Break);
+                }
+                Stmt::Continue => {
+                    env.pop_scope();
+                    return Ok(ControlFlow::Continue);
                 }
                 Stmt::Expr(idx) => {
                     let result = match self.eval_expr(env, body, *idx) {
@@ -3319,7 +3384,10 @@ impl Interpreter {
                             return Err(err);
                         }
                     };
-                    if let ControlFlow::Return(_) = &result {
+                    if matches!(
+                        result,
+                        ControlFlow::Return(_) | ControlFlow::Break | ControlFlow::Continue
+                    ) {
                         env.pop_scope();
                         return Ok(result);
                     }
@@ -3333,6 +3401,87 @@ impl Interpreter {
         };
         env.pop_scope();
         result
+    }
+
+    fn eval_while(
+        &mut self,
+        env: &mut Env,
+        body: &Body,
+        condition: ExprIdx,
+        loop_body: ExprIdx,
+    ) -> Result<ControlFlow, RuntimeError> {
+        loop {
+            let cond = match self.eval_expr(env, body, condition)? {
+                ControlFlow::Value(v) => v,
+                ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+                ControlFlow::Break => return Ok(ControlFlow::Break),
+                ControlFlow::Continue => return Ok(ControlFlow::Continue),
+            };
+            let Value::Bool(cond_bool) = cond else {
+                return Err(RuntimeError::TypeError(
+                    "while condition must be Bool".into(),
+                ));
+            };
+            if !cond_bool {
+                return Ok(ControlFlow::Value(Value::Unit));
+            }
+
+            match self.eval_expr(env, body, loop_body)? {
+                ControlFlow::Value(_) => {}
+                ControlFlow::Continue => continue,
+                ControlFlow::Break => return Ok(ControlFlow::Value(Value::Unit)),
+                ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+            }
+        }
+    }
+
+    fn eval_for(
+        &mut self,
+        env: &mut Env,
+        body: &Body,
+        pat: kyokara_hir_def::expr::PatIdx,
+        source: ExprIdx,
+        loop_body: ExprIdx,
+    ) -> Result<ControlFlow, RuntimeError> {
+        let source_val = match self.eval_expr(env, body, source)? {
+            ControlFlow::Value(v) => v,
+            ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+            ControlFlow::Break => return Ok(ControlFlow::Break),
+            ControlFlow::Continue => return Ok(ControlFlow::Continue),
+        };
+        let plan = self.require_traversal_plan(&source_val, "for loop source")?;
+        let mut early_return: Option<Value> = None;
+        self.seq_for_each_control(&plan, &mut |interp, item| {
+            env.push_scope();
+            if let Err(err) = interp.bind_pat(body, pat, &item, env) {
+                env.pop_scope();
+                return Err(err);
+            }
+
+            let body_result = match interp.eval_expr(env, body, loop_body) {
+                Ok(result) => result,
+                Err(err) => {
+                    env.pop_scope();
+                    return Err(err);
+                }
+            };
+            env.pop_scope();
+
+            match body_result {
+                ControlFlow::Value(_) | ControlFlow::Continue => Ok(SeqEmitControl::Continue),
+                ControlFlow::Break => Ok(SeqEmitControl::Break),
+                ControlFlow::Return(v) => {
+                    early_return = Some(v);
+                    Ok(SeqEmitControl::Break)
+                }
+            }
+        })?;
+
+        if let Some(v) = early_return {
+            Ok(ControlFlow::Return(v))
+        } else {
+            Ok(ControlFlow::Value(Value::Unit))
+        }
     }
 
     fn bind_pat(
@@ -3438,7 +3587,10 @@ impl Interpreter {
                             return Err(err);
                         }
                     };
-                    if let ControlFlow::Return(_) = &result {
+                    if matches!(
+                        result,
+                        ControlFlow::Return(_) | ControlFlow::Break | ControlFlow::Continue
+                    ) {
                         self.env.pop_scope();
                         return Ok(result);
                     }
@@ -3446,6 +3598,47 @@ impl Interpreter {
                         self.env.pop_scope();
                         return Err(err);
                     }
+                }
+                Stmt::While {
+                    condition,
+                    body: loop_body,
+                } => {
+                    let result = match self.eval_while_shared(body, *condition, *loop_body) {
+                        Ok(result) => result,
+                        Err(err) => {
+                            self.env.pop_scope();
+                            return Err(err);
+                        }
+                    };
+                    if !matches!(result, ControlFlow::Value(_)) {
+                        self.env.pop_scope();
+                        return Ok(result);
+                    }
+                }
+                Stmt::For {
+                    pat,
+                    source,
+                    body: loop_body,
+                } => {
+                    let result = match self.eval_for_shared(body, *pat, *source, *loop_body) {
+                        Ok(result) => result,
+                        Err(err) => {
+                            self.env.pop_scope();
+                            return Err(err);
+                        }
+                    };
+                    if !matches!(result, ControlFlow::Value(_)) {
+                        self.env.pop_scope();
+                        return Ok(result);
+                    }
+                }
+                Stmt::Break => {
+                    self.env.pop_scope();
+                    return Ok(ControlFlow::Break);
+                }
+                Stmt::Continue => {
+                    self.env.pop_scope();
+                    return Ok(ControlFlow::Continue);
                 }
                 Stmt::Expr(idx) => {
                     let result = match self.eval_expr_shared(body, *idx) {
@@ -3455,7 +3648,10 @@ impl Interpreter {
                             return Err(err);
                         }
                     };
-                    if let ControlFlow::Return(_) = &result {
+                    if matches!(
+                        result,
+                        ControlFlow::Return(_) | ControlFlow::Break | ControlFlow::Continue
+                    ) {
                         self.env.pop_scope();
                         return Ok(result);
                     }
@@ -3469,6 +3665,85 @@ impl Interpreter {
         };
         self.env.pop_scope();
         result
+    }
+
+    fn eval_while_shared(
+        &mut self,
+        body: &Body,
+        condition: ExprIdx,
+        loop_body: ExprIdx,
+    ) -> Result<ControlFlow, RuntimeError> {
+        loop {
+            let cond = match self.eval_expr_shared(body, condition)? {
+                ControlFlow::Value(v) => v,
+                ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+                ControlFlow::Break => return Ok(ControlFlow::Break),
+                ControlFlow::Continue => return Ok(ControlFlow::Continue),
+            };
+            let Value::Bool(cond_bool) = cond else {
+                return Err(RuntimeError::TypeError(
+                    "while condition must be Bool".into(),
+                ));
+            };
+            if !cond_bool {
+                return Ok(ControlFlow::Value(Value::Unit));
+            }
+
+            match self.eval_expr_shared(body, loop_body)? {
+                ControlFlow::Value(_) => {}
+                ControlFlow::Continue => continue,
+                ControlFlow::Break => return Ok(ControlFlow::Value(Value::Unit)),
+                ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+            }
+        }
+    }
+
+    fn eval_for_shared(
+        &mut self,
+        body: &Body,
+        pat: kyokara_hir_def::expr::PatIdx,
+        source: ExprIdx,
+        loop_body: ExprIdx,
+    ) -> Result<ControlFlow, RuntimeError> {
+        let source_val = match self.eval_expr_shared(body, source)? {
+            ControlFlow::Value(v) => v,
+            ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+            ControlFlow::Break => return Ok(ControlFlow::Break),
+            ControlFlow::Continue => return Ok(ControlFlow::Continue),
+        };
+        let plan = self.require_traversal_plan(&source_val, "for loop source")?;
+        let mut early_return: Option<Value> = None;
+        self.seq_for_each_control(&plan, &mut |interp, item| {
+            interp.env.push_scope();
+            if let Err(err) = interp.bind_pat_shared(body, pat, &item) {
+                interp.env.pop_scope();
+                return Err(err);
+            }
+
+            let body_result = match interp.eval_expr_shared(body, loop_body) {
+                Ok(result) => result,
+                Err(err) => {
+                    interp.env.pop_scope();
+                    return Err(err);
+                }
+            };
+            interp.env.pop_scope();
+
+            match body_result {
+                ControlFlow::Value(_) | ControlFlow::Continue => Ok(SeqEmitControl::Continue),
+                ControlFlow::Break => Ok(SeqEmitControl::Break),
+                ControlFlow::Return(v) => {
+                    early_return = Some(v);
+                    Ok(SeqEmitControl::Break)
+                }
+            }
+        })?;
+
+        if let Some(v) = early_return {
+            Ok(ControlFlow::Return(v))
+        } else {
+            Ok(ControlFlow::Value(Value::Unit))
+        }
     }
 
     fn bind_pat_shared(

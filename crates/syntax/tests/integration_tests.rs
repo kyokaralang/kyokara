@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used)]
 
 use kyokara_syntax::ast::AstNode;
-use kyokara_syntax::ast::nodes::{ElseBranch, FnDef, IfExpr, SourceFile};
+use kyokara_syntax::ast::nodes::{ElseBranch, FnDef, ForStmt, IfExpr, SourceFile};
 use kyokara_syntax::{SyntaxKind, parse};
 
 /// Helper: parse source, check no errors, return CST debug string.
@@ -175,6 +175,59 @@ fn roundtrip_module_and_import() {
 #[test]
 fn roundtrip_if_else() {
     let src = "let x = if (true) { 1 } else { 2 }";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn roundtrip_while_stmt() {
+    let src = "fn main() -> Int { let i = 0; while (i < 10) { i }; i }";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn roundtrip_for_stmt_with_pattern_binding() {
+    let src = "fn main() -> Int { let acc = 0; for (x in 0..<10) { x }; acc }";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+}
+
+#[test]
+fn parse_for_stmt_with_block_source_keeps_distinct_source_and_body() {
+    let src = "fn main() -> Int { for (x in { let y = 1; y..<3 }) { x } }";
+    let result = parse(src);
+    assert!(
+        result.errors.is_empty(),
+        "unexpected parse errors for for-with-block-source: {:?}",
+        result.errors
+    );
+
+    let root = kyokara_syntax::SyntaxNode::new_root(result.green);
+    let sf = SourceFile::cast(root).expect("parsed root should cast to SourceFile");
+    let for_stmt = sf
+        .syntax()
+        .descendants()
+        .find_map(ForStmt::cast)
+        .expect("expected for statement");
+
+    let source = for_stmt
+        .source()
+        .expect("expected source expression in for statement");
+    let body = for_stmt
+        .body()
+        .expect("expected body block in for statement");
+
+    assert_ne!(
+        source.syntax().text_range(),
+        body.syntax().text_range(),
+        "for source and body must point to distinct syntax nodes"
+    );
+}
+
+#[test]
+fn roundtrip_break_and_continue_in_nested_loops() {
+    let src = "fn main() -> Int { while (true) { for (x in 0..<10) { if (x == 3) { continue } else { break } }; break }; 0 }";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
 }
@@ -506,6 +559,61 @@ fn parse_if_without_parenthesized_condition_reports_targeted_error() {
         result.errors
     );
     assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
+fn parse_while_without_parenthesized_condition_reports_targeted_error() {
+    let src = "fn main() -> Int { while true { 0 }; 0 }";
+    let result = parse(src);
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one targeted while parse error, got: {:?}",
+        result.errors
+    );
+    assert!(
+        result.errors[0]
+            .message
+            .contains("while condition must be parenthesized"),
+        "expected while-parenthesized diagnostic, got: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn parse_for_without_parenthesized_head_reports_targeted_error() {
+    let src = "fn main() -> Int { for x in 0..<10 { 0 }; 0 }";
+    let result = parse(src);
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one targeted for parse error, got: {:?}",
+        result.errors
+    );
+    assert!(
+        result.errors[0]
+            .message
+            .contains("for loop head must be parenthesized"),
+        "expected for-parenthesized diagnostic, got: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn parse_for_missing_in_reports_targeted_error() {
+    let src = "fn main() -> Int { for (x 0..<10) { 0 }; 0 }";
+    let result = parse(src);
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one targeted for parse error, got: {:?}",
+        result.errors
+    );
+    assert!(
+        result.errors[0].message.contains("for loop requires 'in'"),
+        "expected missing `in` diagnostic, got: {:?}",
+        result.errors
+    );
 }
 
 #[test]

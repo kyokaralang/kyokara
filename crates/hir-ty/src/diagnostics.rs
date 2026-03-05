@@ -66,6 +66,14 @@ pub enum TyDiagnosticData {
     InvalidSetElement { ty: Ty },
     /// Unsortable element type used with `List.sort()`.
     UnsortableElement { ty: Ty },
+    /// `for` source expression is not traversable.
+    ForSourceNotTraversable { ty: Ty },
+    /// `break` used when not inside a loop.
+    BreakOutsideLoop,
+    /// `continue` used when not inside a loop.
+    ContinueOutsideLoop,
+    /// `for` loop binder pattern is refutable.
+    RefutableForPattern,
 }
 
 impl TyDiagnosticData {
@@ -100,6 +108,10 @@ impl TyDiagnosticData {
             TyDiagnosticData::InvalidMapKey { .. } => "E0024",
             TyDiagnosticData::InvalidSetElement { .. } => "E0028",
             TyDiagnosticData::UnsortableElement { .. } => "E0025",
+            TyDiagnosticData::ForSourceNotTraversable { .. } => "E0029",
+            TyDiagnosticData::BreakOutsideLoop => "E0030",
+            TyDiagnosticData::ContinueOutsideLoop => "E0031",
+            TyDiagnosticData::RefutableForPattern => "E0032",
         }
     }
 
@@ -235,6 +247,12 @@ impl TyDiagnosticData {
                     dt(ty),
                 )
             }
+            TyDiagnosticData::ForSourceNotTraversable { ty } => {
+                format!("for source must be traversable, found `{}`", dt(ty))
+            }
+            TyDiagnosticData::BreakOutsideLoop => "`break` used outside loop".into(),
+            TyDiagnosticData::ContinueOutsideLoop => "`continue` used outside loop".into(),
+            TyDiagnosticData::RefutableForPattern => "for loop pattern must be irrefutable".into(),
         };
         Diagnostic::error(message, span)
     }

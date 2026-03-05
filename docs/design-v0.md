@@ -189,7 +189,45 @@ fn currency_symbol(c: Currency) -> String {
 
 Compiler enforces exhaustiveness.
 
-### 2.7 Contracts
+### 2.7 Loop control
+
+```kyokara
+import collections
+
+fn sum_odds(n: Int) -> Int {
+  let acc = collections.MutableList.new().push(0)
+  for (x in 0..<n) {
+    if ((x % 2) == 0) { continue }
+    if (x > 1000) { break }
+    acc.set(0, acc[0] + x)
+  }
+  acc[0]
+}
+
+fn count_positive(xs: List<Int>) -> Int {
+  let acc = collections.MutableList.new().push(0)
+  for (x in xs) {
+    if (x > 0) { acc.set(0, acc[0] + 1) }
+  }
+  acc[0]
+}
+
+fn non_empty_line_count(s: String) -> Int {
+  let acc = collections.MutableList.new().push(0)
+  for (line in s.lines()) {
+    if (line.len() > 0) { acc.set(0, acc[0] + 1) }
+  }
+  acc[0]
+}
+```
+
+Rules:
+* statement-only loop/control forms: `while (cond) { ... }`, `for (pattern in source) { ... }`, `break`, `continue`
+* parentheses and braces are mandatory in loop heads/bodies
+* `for` source must be traversable (`start..<end`, collections, and producer chains)
+* `for` pattern uses full pattern grammar but must be irrefutable (refutable patterns are type errors)
+
+### 2.8 Contracts
 
 ```kyokara
 fn withdraw(acct: Account, amt: Money) -> Result<Account, WithdrawError>
@@ -217,7 +255,7 @@ fn withdraw(acct: Account, amt: Money) -> Result<Account, WithdrawError>
 
 `old(expr)` refers to pre-state.
 
-### 2.8 Property-based tests
+### 2.9 Property-based tests
 
 ```kyokara
 property sort_idempotent(xs: List<Int> <- Gen.auto()) {
@@ -245,7 +283,7 @@ where (x > 0)
 
 The `where` expression is lowered as a precondition on the property body. Candidates that violate the constraint are discarded (with a budget of 100x the requested test count). The shrinker respects `where` constraints: shrunk counterexamples always satisfy the predicate. Unsatisfiable constraints (all candidates discarded) are reported as errors. Refined types in non-property contexts (regular functions, type aliases) are still rejected.
 
-### 2.9 Typed holes + partial compilation
+### 2.10 Typed holes + partial compilation
 
 Holes are legal syntax:
 

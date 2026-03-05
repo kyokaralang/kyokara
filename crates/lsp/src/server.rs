@@ -325,9 +325,9 @@ mod tests {
     use futures::StreamExt;
     use serde_json::{Value, json};
     use tower::{Service, ServiceExt};
-    use tower_lsp::lsp_types::Url;
     use tower_lsp::LspService;
     use tower_lsp::jsonrpc::{Request, Response};
+    use tower_lsp::lsp_types::Url;
 
     use super::KyokaraLanguageServer;
 
@@ -908,12 +908,17 @@ mod tests {
             .inner()
             .set_test_on_change_delay_yields(slow_source, 256_u32);
 
-        let slow_fut = service.inner().on_change(uri.clone(), slow_source.to_string());
+        let slow_fut = service
+            .inner()
+            .on_change(uri.clone(), slow_source.to_string());
         let fast_fut = async {
             for _ in 0..4 {
                 tokio::task::yield_now().await;
             }
-            service.inner().on_change(uri.clone(), fast_source.to_string()).await;
+            service
+                .inner()
+                .on_change(uri.clone(), fast_source.to_string())
+                .await;
         };
         tokio::join!(slow_fut, fast_fut);
 

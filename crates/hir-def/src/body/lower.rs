@@ -806,6 +806,36 @@ impl BodyLowerCtx<'_> {
                         stmts.push(Stmt::Expr(idx));
                     }
                 }
+                BlockItem::WhileStmt(ws) => {
+                    let condition = ws
+                        .condition()
+                        .map(|e| self.lower_expr(&e))
+                        .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+                    let body = ws
+                        .body()
+                        .map(|b| self.lower_block(&b))
+                        .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+                    stmts.push(Stmt::While { condition, body });
+                }
+                BlockItem::ForStmt(fs) => {
+                    let source = fs
+                        .source()
+                        .map(|e| self.lower_expr(&e))
+                        .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+                    self.push_scope();
+                    let pat = fs
+                        .pat()
+                        .map(|p| self.lower_pat(&p, LocalBindingOrigin::ForPattern))
+                        .unwrap_or_else(|| self.alloc_pat(pat::Pat::Missing));
+                    let body = fs
+                        .body()
+                        .map(|b| self.lower_block(&b))
+                        .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+                    self.pop_scope();
+                    stmts.push(Stmt::For { pat, source, body });
+                }
+                BlockItem::BreakStmt(_) => stmts.push(Stmt::Break),
+                BlockItem::ContinueStmt(_) => stmts.push(Stmt::Continue),
             }
         }
 

@@ -240,6 +240,65 @@ fn eval_if_false() {
     assert!(matches!(val, Value::Int(2)));
 }
 
+// ── Loop tests ───────────────────────────────────────────────────────
+
+#[test]
+fn eval_while_loop_breaks_correctly() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let box = collections.MutableList.new().push(0)
+           while (box[0] < 5) {
+             box.set(0, box[0] + 1)
+           }
+           box[0]
+         }",
+    );
+    assert!(matches!(val, Value::Int(5)));
+}
+
+#[test]
+fn eval_for_loop_over_range_with_continue_and_break() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let acc = collections.MutableList.new().push(0)
+           for (x in 0..<10) {
+             if (x == 7) { break }
+             if ((x % 2) == 0) { continue }
+             acc.set(0, acc[0] + x)
+           }
+           acc[0]
+         }",
+    );
+    assert!(matches!(val, Value::Int(9)));
+}
+
+#[test]
+fn eval_return_inside_loop_exits_function() {
+    let val = run_ok("fn main() -> Int { while (true) { return 7 }\n 0 }");
+    assert!(matches!(val, Value::Int(7)));
+}
+
+#[test]
+fn eval_for_source_is_evaluated_once() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let counter = collections.MutableList.new().push(0)
+           for (x in { counter.set(0, counter[0] + 1)\n 0..<3 }) { x }
+           counter[0]
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_break_continue_outside_loop_are_compile_errors() {
+    assert!(check_has_compile_errors("fn main() { break }"));
+    assert!(check_has_compile_errors("fn main() { continue }"));
+}
+
 #[test]
 fn eval_if_with_comparison() {
     let val = run_ok(
