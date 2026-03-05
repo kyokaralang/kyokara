@@ -547,13 +547,13 @@ for no-owner utilities and effects, and type-namespaced constructors.
 
 Canonical visibility matrix:
 * Prelude builtin value types (no import): `List.new()`, `Map.new()`, `Set.new()`, value methods.
-* Pure specialized collections (imported module): `collections.Deque.new()`, `collections.Array.new()`, `collections.Array.from_list(xs)`
+* Pure specialized collections (imported module): `collections.Deque.new()`
 * Prelude traversal constructors (no import): `start..<end`, `seed.unfold(step)`.
 * Pure no-owner utilities (imported module): `math.*`
 * Effectful utilities (imported capability modules): `io.*`, `fs.*`
 * Internal intrinsic IDs (`list_new`, `map_insert`, etc.) are implementation detail only.
 
-Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `Deque<T>`, `Array<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
+Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `Deque<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
 injected as synthetic types before type-checking. Synthetic modules (`collections`, `io`, `math`, `fs`)
 require explicit `import collections` / `import io` / `import math` / `import fs` in all modes.
 Zero intrinsic free functions exist in user scope.
@@ -566,8 +566,7 @@ Runtime soundness invariants for core APIs:
 * Follow-up: add qualified constructors/patterns (`Type.Variant`) and remove the temporary reservation ([#293](https://github.com/kyokaralang/kyokara/issues/293)).
 
 Mental model: `List`/`Map`/`Set` are prelude value types (type/value namespace),
-`collections` is the pure module namespace for specialized collection constructors
-(`Deque`, `Array`, and future specialized structures),
+`collections` is the pure module namespace for specialized collection constructors,
 while `io`/`fs` are module namespaces for effectful operations.
 
 **Implemented (v0.1+):**
@@ -589,15 +588,10 @@ while `io`/`fs` are module namespaces for effectful operations.
   * Constructor: `collections.Deque.new()` (requires `import collections`)
   * Methods (queue/storage): `q.push_front(v)`, `q.push_back(v)`, `q.pop_front()` → `Option<{ value: T, rest: Deque<T> }>`, `q.pop_back()` → `Option<{ value: T, rest: Deque<T> }>`, `q.len()`, `q.is_empty()`
   * Methods (traversal): `q.map(f)`, `q.filter(f)`, `q.scan(init, f)`, `q.enumerate()`, `q.zip(other)`, `q.chunks(n)`, `q.windows(n)`, `q.fold(init, f)`, `q.count()`, `q.any(f)`, `q.all(f)`, `q.find(f)`, `q.to_list()`
-* `Array<T>` — opaque builtin fixed-size type with COW-backed persistent runtime storage (`Rc<Vec<Value>>`) ✓
-  * Constructors: `collections.Array.new(len, init)`, `collections.Array.from_list(xs)` (requires `import collections`)
-  * Methods (storage/random-access): `a.len()`, `a.is_empty()`, `a.get(i)` → `Option<T>`, `a.set(i, v)`, `a.update(i, f)`, `a[i]`
-  * Methods (traversal): `a.map(f)`, `a.filter(f)`, `a.scan(init, f)`, `a.enumerate()`, `a.zip(other)`, `a.chunks(n)`, `a.windows(n)`, `a.fold(init, f)`, `a.count()`, `a.any(f)`, `a.all(f)`, `a.find(f)`, `a.to_list()`
-  * Bounds behavior: `get` returns `None` for negative/OOB; `set`/`update`/`a[i]` raise direct runtime index-out-of-bounds errors for negative/OOB.
 * Traversal constructors and behavior (public surface) ✓
   * Half-open range source: `start..<end` (ascending, empty when `start >= end`)
   * Stateful source: `seed.unfold(step)` where `step: fn(S) -> Option<{ value: T, state: S }>`
-  * Canonical user style is collection-first traversal (`xs.map(...).filter(...).count()`) on `List`, `Deque`, `Array`, and producer values (`String.split/lines/chars`, `Map.keys/values`, `Set.values`, ranges, unfolds)
+  * Canonical user style is collection-first traversal (`xs.map(...).filter(...).count()`) on `List`, `Deque`, and producer values (`String.split/lines/chars`, `Map.keys/values`, `Set.values`, ranges, unfolds)
   * Supports transforms (`map/filter/scan/enumerate/zip/chunks/windows`) and terminals (`fold/count/any/all/find/to_list`) with the same semantics as collection traversal
   * Guidance: for predicate/search traversal, default to `s.any(f)`, `s.all(f)`, `s.find(f)`; reserve `s.fold(...)` for true accumulation/reduction
   * Evaluation model: each terminal re-runs the traversal pipeline from source (no single-use consumption state)
@@ -644,7 +638,7 @@ while `io`/`fs` are module namespaces for effectful operations.
 * Canonical formatter (`kyokara fmt`, `kyokara-fmt` crate, Wadler-Lindig Doc IR) ✓
 * Stable symbol IDs (`kind::name` / `kind::parent::child` format, unique across symbol kinds) ✓
 * Runtime contract checks (requires/ensures/old) ✓
-* Core stdlib (List/Deque/Array, Map, Set, String, Int/Float, io, math, fs — intrinsic functions exposed via canonical method/module API) ✓
+* Core stdlib (List, Map, Set, String, Int/Float, io, math, fs — intrinsic functions exposed via canonical method/module API) ✓
 
 **v0.2 — Refactoring + LSP + Capabilities**
 * Module system: convention-based file layout, `pub` visibility, flat imports ✓

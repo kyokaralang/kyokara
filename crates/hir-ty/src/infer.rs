@@ -178,10 +178,7 @@ impl<'a> InferenceCtx<'a> {
         let actual_core = self.module_scope.core_types.kind_for_idx(*actual_def);
 
         if expected_core != Some(CoreType::Seq)
-            || !matches!(
-                actual_core,
-                Some(CoreType::List | CoreType::Array | CoreType::Deque)
-            )
+            || !matches!(actual_core, Some(CoreType::List | CoreType::Deque))
         {
             return false;
         }

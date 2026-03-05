@@ -29,7 +29,6 @@ fn core_hidden_type_name(interner: &mut Interner, core: CoreType) -> Name {
         CoreType::Option => "$core_Option",
         CoreType::Result => "$core_Result",
         CoreType::List => "$core_List",
-        CoreType::Array => "$core_Array",
         CoreType::Deque => "$core_Deque",
         CoreType::Seq => "$core_Seq",
         CoreType::Map => "$core_Map",
@@ -44,7 +43,6 @@ fn core_public_type_name(interner: &mut Interner, core: CoreType) -> Name {
         CoreType::Option => "Option",
         CoreType::Result => "Result",
         CoreType::List => "List",
-        CoreType::Array => "Array",
         CoreType::Deque => "Deque",
         CoreType::Seq => "Seq",
         CoreType::Map => "Map",
@@ -88,7 +86,7 @@ fn register_core_type_item(
     (idx, type_name)
 }
 
-/// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `Array<T>`, `Deque<T>`, `Seq<T>`, `Map<K,V>`, `Set<T>`, and
+/// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `Deque<T>`, `Seq<T>`, `Map<K,V>`, `Set<T>`, and
 /// `ParseError` into the item tree
 /// and module scope.
 ///
@@ -103,7 +101,6 @@ pub fn register_builtin_types(
     register_option(tree, scope, interner);
     register_result(tree, scope, interner);
     register_list(tree, scope, interner);
-    register_array(tree, scope, interner);
     register_deque(tree, scope, interner);
     register_seq(tree, scope, interner);
     register_map(tree, scope, interner);
@@ -154,19 +151,6 @@ fn register_list(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut In
         scope,
         interner,
         CoreType::List,
-        vec![t_name],
-        TypeDefKind::Adt { variants: vec![] },
-    );
-}
-
-/// `Array<T>` — opaque builtin type (no variants, no pattern matching).
-fn register_array(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
-    let t_name = Name::new(interner, "T");
-    let _ = register_core_type_item(
-        tree,
-        scope,
-        interner,
-        CoreType::Array,
         vec![t_name],
         TypeDefKind::Adt { variants: vec![] },
     );
@@ -336,7 +320,6 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         bool_: Some(Name::new(interner, "Bool")),
         char_: Some(Name::new(interner, "Char")),
         list: scope.core_types.get(CoreType::List).map(|t| t.type_name),
-        array: scope.core_types.get(CoreType::Array).map(|t| t.type_name),
         deque: scope.core_types.get(CoreType::Deque).map(|t| t.type_name),
         seq: scope.core_types.get(CoreType::Seq).map(|t| t.type_name),
         map: scope.core_types.get(CoreType::Map).map(|t| t.type_name),
@@ -438,29 +421,6 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             ReceiverKey::Core(CoreType::List),
             "binary_search",
         ),
-        // Array methods
-        ("array_len", ReceiverKey::Core(CoreType::Array), "len"),
-        ("array_is_empty", ReceiverKey::Core(CoreType::Array), "is_empty"),
-        ("array_get", ReceiverKey::Core(CoreType::Array), "get"),
-        ("array_set", ReceiverKey::Core(CoreType::Array), "set"),
-        ("array_update", ReceiverKey::Core(CoreType::Array), "update"),
-        ("seq_map", ReceiverKey::Core(CoreType::Array), "map"),
-        ("seq_filter", ReceiverKey::Core(CoreType::Array), "filter"),
-        ("seq_fold", ReceiverKey::Core(CoreType::Array), "fold"),
-        ("seq_scan", ReceiverKey::Core(CoreType::Array), "scan"),
-        (
-            "seq_enumerate",
-            ReceiverKey::Core(CoreType::Array),
-            "enumerate",
-        ),
-        ("seq_zip", ReceiverKey::Core(CoreType::Array), "zip"),
-        ("seq_chunks", ReceiverKey::Core(CoreType::Array), "chunks"),
-        ("seq_windows", ReceiverKey::Core(CoreType::Array), "windows"),
-        ("seq_count", ReceiverKey::Core(CoreType::Array), "count"),
-        ("seq_any", ReceiverKey::Core(CoreType::Array), "any"),
-        ("seq_all", ReceiverKey::Core(CoreType::Array), "all"),
-        ("seq_find", ReceiverKey::Core(CoreType::Array), "find"),
-        ("seq_to_list", ReceiverKey::Core(CoreType::Array), "to_list"),
         ("seq_map", ReceiverKey::Core(CoreType::List), "map"),
         ("seq_filter", ReceiverKey::Core(CoreType::List), "filter"),
         ("seq_fold", ReceiverKey::Core(CoreType::List), "fold"),
@@ -860,23 +820,9 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
 
     // Specialized collection constructors are module-qualified.
     let collections = Name::new(interner, "collections");
-    let array = Name::new(interner, "Array");
     let deque = Name::new(interner, "Deque");
     let new = Name::new(interner, "new");
-    let from_list = Name::new(interner, "from_list");
-    let array_new = Name::new(interner, "array_new");
-    let array_from_list = Name::new(interner, "array_from_list");
     let deque_new = Name::new(interner, "deque_new");
-    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&array_new) {
-        scope
-            .synthetic_module_static_methods
-            .insert((collections, array, new), fn_idx);
-    }
-    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&array_from_list) {
-        scope
-            .synthetic_module_static_methods
-            .insert((collections, array, from_list), fn_idx);
-    }
     if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&deque_new) {
         scope
             .synthetic_module_static_methods
@@ -950,11 +896,6 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         .get(CoreType::List)
         .map(|info| info.type_name)
         .unwrap_or_else(|| Name::new(interner, "List"));
-    let array_core_name = scope
-        .core_types
-        .get(CoreType::Array)
-        .map(|info| info.type_name)
-        .unwrap_or_else(|| Name::new(interner, "Array"));
     let deque_core_name = scope
         .core_types
         .get(CoreType::Deque)
@@ -1028,10 +969,6 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     // Composite type refs.
     let list_t = TypeRef::Path {
         path: Path::single(list_core_name),
-        args: vec![t_ref.clone()],
-    };
-    let array_t = TypeRef::Path {
-        path: Path::single(array_core_name),
         args: vec![t_ref.clone()],
     };
     let deque_t = TypeRef::Path {
@@ -1298,73 +1235,9 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![
                 ("xs", list_t.clone()),
                 ("i", int_ty.clone()),
-                ("f", fn_t_to_t.clone()),
-            ],
-            list_t.clone(),
-        ),
-        // array_new<T>(len: Int, init: T) -> Array<T>
-        mk_intrinsic(
-            interner,
-            "array_new",
-            vec![t_name],
-            vec![("len", int_ty.clone()), ("init", t_ref.clone())],
-            array_t.clone(),
-        ),
-        // array_from_list<T>(xs: List<T>) -> Array<T>
-        mk_intrinsic(
-            interner,
-            "array_from_list",
-            vec![t_name],
-            vec![("xs", list_t.clone())],
-            array_t.clone(),
-        ),
-        // array_len<T>(xs: Array<T>) -> Int
-        mk_intrinsic(
-            interner,
-            "array_len",
-            vec![t_name],
-            vec![("xs", array_t.clone())],
-            int_ty.clone(),
-        ),
-        // array_is_empty<T>(xs: Array<T>) -> Bool
-        mk_intrinsic(
-            interner,
-            "array_is_empty",
-            vec![t_name],
-            vec![("xs", array_t.clone())],
-            bool_ty.clone(),
-        ),
-        // array_get<T>(xs: Array<T>, i: Int) -> Option<T>
-        mk_intrinsic(
-            interner,
-            "array_get",
-            vec![t_name],
-            vec![("xs", array_t.clone()), ("i", int_ty.clone())],
-            option_t.clone(),
-        ),
-        // array_set<T>(xs: Array<T>, i: Int, x: T) -> Array<T>
-        mk_intrinsic(
-            interner,
-            "array_set",
-            vec![t_name],
-            vec![
-                ("xs", array_t.clone()),
-                ("i", int_ty.clone()),
-                ("x", t_ref.clone()),
-            ],
-            array_t.clone(),
-        ),
-        // array_update<T>(xs: Array<T>, i: Int, f: fn(T) -> T) -> Array<T>
-        mk_intrinsic(
-            interner,
-            "array_update",
-            vec![t_name],
-            vec![
-                ("xs", array_t.clone()),
-                ("i", int_ty.clone()),
                 ("f", fn_t_to_t),
             ],
-            array_t.clone(),
+            list_t.clone(),
         ),
         // deque_new<T>() -> Deque<T>
         mk_intrinsic(interner, "deque_new", vec![t_name], vec![], deque_t.clone()),

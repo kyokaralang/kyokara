@@ -123,10 +123,6 @@ enum SeqSourceIter {
         items: Rc<Vec<Value>>,
         idx: usize,
     },
-    FromArray {
-        items: Rc<Vec<Value>>,
-        idx: usize,
-    },
     FromDeque {
         items: Rc<VecDeque<Value>>,
         idx: usize,
@@ -1973,7 +1969,6 @@ impl Interpreter {
         match value {
             Value::Seq(plan) => Ok(plan.clone()),
             Value::List(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromList(xs.clone())))),
-            Value::Array(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromArray(xs.clone())))),
             Value::Deque(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromDeque(xs.clone())))),
             _ => Err(RuntimeError::TypeError(format!(
                 "{intrinsic_name} expects a traversal source"
@@ -1990,10 +1985,6 @@ impl Interpreter {
                         end: *end,
                     },
                     SeqSource::FromList(xs) => SeqSourceIter::FromList {
-                        items: xs.clone(),
-                        idx: 0,
-                    },
-                    SeqSource::FromArray(xs) => SeqSourceIter::FromArray {
                         items: xs.clone(),
                         idx: 0,
                     },
@@ -2093,13 +2084,6 @@ impl Interpreter {
                 }
             }
             SeqSourceIter::FromList { items, idx } => {
-                let out = items.get(*idx).cloned();
-                if out.is_some() {
-                    *idx += 1;
-                }
-                out
-            }
-            SeqSourceIter::FromArray { items, idx } => {
                 let out = items.get(*idx).cloned();
                 if out.is_some() {
                     *idx += 1;
@@ -2314,15 +2298,6 @@ impl Interpreter {
                     Ok(())
                 }
                 SeqSource::FromList(xs) => {
-                    for item in xs.iter().cloned() {
-                        match emit(self, item)? {
-                            Continue => {}
-                            Break => return Ok(()),
-                        }
-                    }
-                    Ok(())
-                }
-                SeqSource::FromArray(xs) => {
                     for item in xs.iter().cloned() {
                         match emit(self, item)? {
                             Continue => {}
@@ -2606,25 +2581,6 @@ impl Interpreter {
                     self.make_none()
                 }
             }
-            IntrinsicFn::ArrayGet => {
-                let Value::Array(xs) = &args[0] else {
-                    return Err(RuntimeError::TypeError("array_get expects an Array".into()));
-                };
-                let Value::Int(i) = &args[1] else {
-                    return Err(RuntimeError::TypeError(
-                        "array_get expects an Int index".into(),
-                    ));
-                };
-                if *i < 0 {
-                    return self.make_none();
-                }
-                let idx = *i as usize;
-                if let Some(val) = xs.get(idx) {
-                    self.make_some(val.clone())
-                } else {
-                    self.make_none()
-                }
-            }
             IntrinsicFn::ListHead => {
                 let Value::List(xs) = &args[0] else {
                     return Err(RuntimeError::TypeError("list_head expects a List".into()));
@@ -2656,28 +2612,6 @@ impl Interpreter {
                 let mut out = xs.clone();
                 Rc::make_mut(&mut out)[idx] = updated;
                 Ok(Value::List(out))
-            }
-            IntrinsicFn::ArrayUpdate => {
-                let Value::Array(xs) = &args[0] else {
-                    return Err(RuntimeError::TypeError("array_update expects an Array".into()));
-                };
-                let Value::Int(i) = &args[1] else {
-                    return Err(RuntimeError::TypeError(
-                        "array_update expects an Int index".into(),
-                    ));
-                };
-                if *i < 0 || *i as usize >= xs.len() {
-                    return Err(RuntimeError::IndexOutOfBounds {
-                        index: *i,
-                        len: xs.len() as i64,
-                    });
-                }
-                let idx = *i as usize;
-                let updater = args[2].clone();
-                let updated = self.call_value(updater, smallvec::smallvec![xs[idx].clone()])?;
-                let mut out = xs.clone();
-                Rc::make_mut(&mut out)[idx] = updated;
-                Ok(Value::Array(out))
             }
             IntrinsicFn::MapGet => {
                 let Value::Map(entries) = &args[0] else {
@@ -3071,11 +3005,6 @@ impl Interpreter {
                 .core_types
                 .get(CoreType::List)
                 .map(|_| ReceiverKey::Core(CoreType::List)),
-            Value::Array(_) => self
-                .module_scope
-                .core_types
-                .get(CoreType::Array)
-                .map(|_| ReceiverKey::Core(CoreType::Array)),
             Value::Deque(_) => self
                 .module_scope
                 .core_types
@@ -3137,24 +3066,6 @@ impl Interpreter {
                     })
                 }
             }
-            (Value::Array(items), Value::Int(i)) => {
-                let i = *i;
-                if i < 0 {
-                    return Err(RuntimeError::IndexOutOfBounds {
-                        index: i,
-                        len: items.len() as i64,
-                    });
-                }
-                let idx = i as usize;
-                if idx < items.len() {
-                    Ok(items[idx].clone())
-                } else {
-                    Err(RuntimeError::IndexOutOfBounds {
-                        index: i,
-                        len: items.len() as i64,
-                    })
-                }
-            }
             (Value::String(s), Value::Int(i)) => {
                 let i = *i;
                 if i < 0 {
@@ -3177,7 +3088,7 @@ impl Interpreter {
                 entries.get(&k).cloned().ok_or(RuntimeError::KeyNotFound)
             }
             _ => Err(RuntimeError::TypeError(
-                "indexing requires List, Array, String, or Map".into(),
+                "indexing requires List, String, or Map".into(),
             )),
         }
     }

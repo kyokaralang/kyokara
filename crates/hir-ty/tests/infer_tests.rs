@@ -1201,54 +1201,6 @@ fn err_global_deque_constructor_surface_is_removed_rfc_0004() {
 }
 
 #[test]
-fn infer_collections_array_constructor_happy_paths() {
-    let cases = [
-        r#"import collections
-        fn main() -> Int {
-            let a0 = collections.Array.new(3, 0)
-            let a1 = a0.set(1, 7).update(2, fn(n: Int) => n + 5)
-            let b = collections.Array.from_list(List.new().push(4).push(5))
-            a1[1] + a1[2] + b[1]
-        }"#,
-        r#"import collections
-        fn main() -> Int {
-            let xs = collections.Array.from_list(List.new().push(1).push(2).push(3))
-            let c1 = xs.map(fn(n: Int) => n + 1).filter(fn(n: Int) => n > 2).count()
-            let c2 = xs.zip(List.new().push(9).push(8)).count()
-            let c3 = xs.zip(collections.Deque.new().push_back(1).push_back(2)).count()
-            let c4 = xs.zip((10..<20)).count()
-            c1 + c2 + c3 + c4
-        }"#,
-        r#"import collections as c
-        fn main() -> Int {
-            c.Array.new(2, 1).set(0, 9).len()
-        }"#,
-    ];
-
-    for src in cases {
-        let (result, _) = check(src);
-        assert!(
-            result.diagnostics.is_empty(),
-            "expected no diagnostics, got: {:?}\nsource:\n{src}",
-            result.diagnostics
-        );
-    }
-}
-
-#[test]
-fn err_global_array_constructor_surface_is_removed() {
-    let (result, _) = check("fn main() -> Int { Array.new(2, 0).len() }");
-    assert!(
-        result
-            .diagnostics
-            .iter()
-            .any(|d| d.message.contains("no method") || d.message.contains("unresolved")),
-        "expected removed-surface diagnostic, got: {:?}",
-        result.diagnostics
-    );
-}
-
-#[test]
 fn err_deque_and_list_index_update_wrong_arity_or_type() {
     struct Case<'a> {
         src: &'a str,
