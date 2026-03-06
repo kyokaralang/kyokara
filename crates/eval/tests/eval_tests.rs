@@ -1836,6 +1836,86 @@ fn eval_global_mutable_list_constructor_surface_is_removed_rfc_0005() {
 }
 
 #[test]
+fn eval_collections_mutable_map_constructor_surface_rfc_0008() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let m = collections.MutableMap.new().insert(\"a\", 1).insert(\"b\", 2)
+           m.len()
+         }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_collections_mutable_map_alias_constructor_surface_rfc_0008() {
+    let val = run_ok(
+        "import collections as c
+         fn main() -> Int {
+           let m: MutableMap<String, Int> = c.MutableMap.new().insert(\"x\", 5)
+           match (m.get(\"x\")) {
+             Some(v) => v
+             None => 0
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(5)));
+}
+
+#[test]
+fn eval_global_mutable_map_constructor_surface_is_removed_rfc_0008() {
+    let err = run_err("fn main() -> Int { MutableMap.new().len() }");
+    assert!(
+        err.contains("no method `new`")
+            || err.contains("unresolved name")
+            || err.contains("import name"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn eval_mutable_map_aliases_observe_in_place_mutation() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let m = collections.MutableMap.new().insert(\"a\", 1).insert(\"b\", 2)
+           let alias = m
+           m.insert(\"a\", 9)
+           alias.get(\"a\").unwrap_or(0) * 10 + alias.len()
+         }",
+    );
+    assert!(matches!(val, Value::Int(92)));
+}
+
+#[test]
+fn eval_mutable_map_key_order_is_deterministic() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let m = collections.MutableMap.new()
+             .insert(\"b\", 1)
+             .insert(\"a\", 2)
+             .remove(\"b\")
+             .insert(\"b\", 3)
+           let ks = m.keys().to_list()
+           if (ks[0] == \"a\" && ks[1] == \"b\") { 1 } else { 0 }
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_mutable_map_invalid_key_type_is_compile_error() {
+    assert!(check_has_compile_errors(
+        "import collections
+         fn main() -> Int {
+           let m = collections.MutableMap.new().insert(3.14, 1)
+           m.len()
+         }"
+    ));
+}
+
+#[test]
 fn eval_mutable_list_aliases_observe_in_place_mutation() {
     let val = run_ok(
         "import collections
