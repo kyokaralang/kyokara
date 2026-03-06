@@ -26,7 +26,7 @@ use crate::value::{FnValue, MapKey, SeqPlan, SeqSource, Value};
 pub struct Interpreter {
     item_tree: ItemTree,
     module_scope: ModuleScope,
-    fn_bodies: FxHashMap<FnItemIdx, Body>,
+    fn_bodies: FxHashMap<FnItemIdx, Rc<Body>>,
     /// Per-function module-level function overrides used for project mode.
     /// Maps `current_fn_idx -> (name -> resolved fn_idx)`.
     fn_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, FnItemIdx>>,
@@ -52,6 +52,8 @@ pub struct Interpreter {
     env: Env,
     /// Current user function being evaluated (used to select scope overrides).
     current_fn: Option<FnItemIdx>,
+    /// Current shared body handle being evaluated (used by nested lambda literals).
+    current_body: Option<Rc<Body>>,
 }
 
 /// Used to implement early return from functions.
@@ -345,7 +347,10 @@ impl Interpreter {
         Interpreter {
             item_tree,
             module_scope,
-            fn_bodies,
+            fn_bodies: fn_bodies
+                .into_iter()
+                .map(|(fn_idx, body)| (fn_idx, Rc::new(body)))
+                .collect(),
             fn_scope_overrides,
             interner,
             intrinsics,
@@ -359,6 +364,7 @@ impl Interpreter {
             manifest,
             env: Env::new(),
             current_fn: None,
+            current_body: None,
         }
     }
 
@@ -393,7 +399,7 @@ impl Interpreter {
     }
 
     /// Borrow the function bodies map.
-    pub fn fn_bodies(&self) -> &FxHashMap<FnItemIdx, Body> {
+    pub fn fn_bodies(&self) -> &FxHashMap<FnItemIdx, Rc<Body>> {
         &self.fn_bodies
     }
 
@@ -571,6 +577,7 @@ impl Interpreter {
         )?;
 
         self.env.push_scope();
+        let prev_body = self.current_body.replace(body.clone());
 
         for (param, val) in params.iter().zip(args.into_iter()) {
             self.env.bind(param.name, val);
@@ -646,6 +653,7 @@ impl Interpreter {
         })();
 
         self.env.pop_scope();
+        self.current_body = prev_body;
         if swapped_old_env {
             self.old_env = prev_old_env;
         }
@@ -992,23 +1000,15 @@ impl Interpreter {
             } => {
                 let param_pats: Vec<_> = params.iter().map(|(pat, _)| *pat).collect();
                 let lambda_body_idx = *lambda_body;
+                let body_handle = self
+                    .current_body
+                    .as_ref()
+                    .cloned()
+                    .expect("lambda evaluation should have a current shared body handle");
                 Ok(ControlFlow::Value(Value::Fn(Box::new(FnValue::Lambda {
                     params: param_pats,
                     body_expr: lambda_body_idx,
-                    body: Rc::new(Body {
-                        exprs: body.exprs.clone(),
-                        pats: body.pats.clone(),
-                        root: lambda_body_idx,
-                        requires: Vec::new(),
-                        ensures: Vec::new(),
-                        invariant: Vec::new(),
-                        scopes: Default::default(),
-                        pat_scopes: Vec::new(),
-                        expr_scopes: Default::default(),
-                        expr_source_map: Default::default(),
-                        pat_source_map: Default::default(),
-                        local_binding_meta: Default::default(),
-                    }),
+                    body: body_handle,
                     env: env.clone(),
                 }))))
             }
@@ -1357,23 +1357,15 @@ impl Interpreter {
             } => {
                 let param_pats: Vec<_> = params.iter().map(|(pat, _)| *pat).collect();
                 let lambda_body_idx = *lambda_body;
+                let body_handle = self
+                    .current_body
+                    .as_ref()
+                    .cloned()
+                    .expect("lambda evaluation should have a current shared body handle");
                 Ok(ControlFlow::Value(Value::Fn(Box::new(FnValue::Lambda {
                     params: param_pats,
                     body_expr: lambda_body_idx,
-                    body: Rc::new(Body {
-                        exprs: body.exprs.clone(),
-                        pats: body.pats.clone(),
-                        root: lambda_body_idx,
-                        requires: Vec::new(),
-                        ensures: Vec::new(),
-                        invariant: Vec::new(),
-                        scopes: Default::default(),
-                        pat_scopes: Vec::new(),
-                        expr_scopes: Default::default(),
-                        expr_source_map: Default::default(),
-                        pat_source_map: Default::default(),
-                        local_binding_meta: Default::default(),
-                    }),
+                    body: body_handle,
                     env: self.env.clone(),
                 }))))
             }
@@ -1637,11 +1629,16 @@ impl Interpreter {
                     self.ensure_arity("lambda", params.len(), args.len())?;
                     let mut env = captured_env;
                     env.push_scope();
-                    for (pat_idx, val) in params.iter().zip(args) {
-                        self.bind_pat(&body, *pat_idx, &val, &mut env)?;
-                    }
-                    let result = self.eval_expr(&mut env, &body, body_expr)?;
-                    Ok(result.into_value())
+                    let prev_body = self.current_body.replace(body.clone());
+                    let result = (|| -> Result<Value, RuntimeError> {
+                        for (pat_idx, val) in params.iter().zip(args) {
+                            self.bind_pat(&body, *pat_idx, &val, &mut env)?;
+                        }
+                        let result = self.eval_expr(&mut env, &body, body_expr)?;
+                        Ok(result.into_value())
+                    })();
+                    self.current_body = prev_body;
+                    result
                 }
                 FnValue::Constructor {
                     type_idx,
@@ -3992,6 +3989,36 @@ mod tests {
             .expect("function should exist")
     }
 
+    trait SharedBodyRef {
+        fn body_ptr(&self) -> *const Body;
+    }
+
+    impl SharedBodyRef for Body {
+        fn body_ptr(&self) -> *const Body {
+            self as *const Body
+        }
+    }
+
+    impl SharedBodyRef for Rc<Body> {
+        fn body_ptr(&self) -> *const Body {
+            Rc::as_ptr(self)
+        }
+    }
+
+    fn shared_body_ptr<B: SharedBodyRef>(body: &B) -> *const Body {
+        body.body_ptr()
+    }
+
+    fn lambda_body_ptr(value: &Value) -> *const Body {
+        let Value::Fn(fv) = value else {
+            panic!("expected function value");
+        };
+        let FnValue::Lambda { body, .. } = &**fv else {
+            panic!("expected lambda function value");
+        };
+        Rc::as_ptr(body)
+    }
+
     #[test]
     fn user_function_call_reports_arity_mismatch() {
         let mut interp = make_checked_interpreter(
@@ -4051,6 +4078,60 @@ mod tests {
             err.to_string().contains("arity mismatch"),
             "expected arity mismatch error, got: {err}"
         );
+    }
+
+    #[test]
+    fn factory_lambda_reuses_stored_function_body_handle() {
+        let mut interp = make_checked_interpreter(
+            "fn make() -> fn() -> Int { fn() => 1 } fn main() -> Int { 0 }",
+        );
+        let make_idx = fn_idx_by_name(&mut interp, "make");
+        let stored_body_ptr = shared_body_ptr(
+            interp
+                .fn_bodies
+                .get(&make_idx)
+                .expect("factory function body should exist"),
+        );
+
+        let lambda = interp
+            .call_fn_by_idx(make_idx, Args::new())
+            .expect("factory call should return lambda");
+
+        assert_eq!(
+            stored_body_ptr,
+            lambda_body_ptr(&lambda),
+            "returned lambda should reuse the stored function body handle"
+        );
+    }
+
+    #[test]
+    fn repeated_factory_calls_share_body_handle_and_keep_distinct_captures() {
+        let mut interp = make_checked_interpreter(
+            "fn make(x: Int) -> fn() -> Int { fn() => x } fn main() -> Int { 0 }",
+        );
+        let make_idx = fn_idx_by_name(&mut interp, "make");
+
+        let first = interp
+            .call_fn_by_idx(make_idx, smallvec![Value::Int(1)])
+            .expect("first factory call should succeed");
+        let second = interp
+            .call_fn_by_idx(make_idx, smallvec![Value::Int(2)])
+            .expect("second factory call should succeed");
+
+        assert_eq!(
+            lambda_body_ptr(&first),
+            lambda_body_ptr(&second),
+            "factory-produced lambdas should share the same body handle"
+        );
+
+        let first_value = interp
+            .call_value(first, Args::new())
+            .expect("first captured lambda should run");
+        let second_value = interp
+            .call_value(second, Args::new())
+            .expect("second captured lambda should run");
+        assert_eq!(first_value, Value::Int(1));
+        assert_eq!(second_value, Value::Int(2));
     }
 
     #[test]
