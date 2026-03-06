@@ -91,7 +91,7 @@ fn normalize_email(s: String) -> String {
 
 ### 5. Compiler as API
 
-The compiler doesn't print error messages — it emits structured JSON. Diagnostics, typed ASTs, symbol graphs, hole specifications, and machine-applicable fix patches. AI agents consume compiler output directly, no parsing required.
+The compiler doesn't print error messages — it emits structured JSON. Default `check --format json` output contains diagnostics, hole specs, and symbol graph; typed AST is available via explicit opt-in (`--emit typed-ast`). AI agents consume compiler output directly, no prose parsing required.
 
 ```json
 {
@@ -103,6 +103,12 @@ The compiler doesn't print error messages — it emits structured JSON. Diagnost
     "capabilities": [{"id": "cap::io", "functions": ["cap::io::read"], ...}]
   }
 }
+```
+
+Typed AST opt-in:
+
+```sh
+kyokara check file.ky --format json --emit typed-ast
 ```
 
 ### 6. Semantic Refactoring
@@ -220,7 +226,7 @@ crates/
 | **v0.3** | KyokaraIR data structures ✓, HIR→KIR lowering ✓, WASM codegen MVP (scalars, control flow, calls, ADTs, records) ✓, property-based testing (`kyokara test --explore`) ✓, SMT verification (restricted fragment), capability sandbox, deterministic replay | In progress |
 
 AI-special-feature status tracking (with completeness scores + issue links) lives in [docs/design-v0.md#16-ai-first-feature-tracker](docs/design-v0.md#16-ai-first-feature-tracker).
-API surface design rules live in [docs/rfcs/0001-api-surface-law.md](docs/rfcs/0001-api-surface-law.md), with traversal-surface specifics in [docs/rfcs/0002-collection-first-traversal-surface.md](docs/rfcs/0002-collection-first-traversal-surface.md), constructor-surface specifics in [docs/rfcs/0003-opaque-traversal-constructor-surface.md](docs/rfcs/0003-opaque-traversal-constructor-surface.md), module/capability placement model in [docs/rfcs/0004-module-taxonomy-and-capability-boundaries.md](docs/rfcs/0004-module-taxonomy-and-capability-boundaries.md), and mutable collection naming/placement policy in [docs/rfcs/0005-mutable-collection-naming-and-placement.md](docs/rfcs/0005-mutable-collection-naming-and-placement.md).
+API surface design rules live in [docs/rfcs/0001-api-surface-law.md](docs/rfcs/0001-api-surface-law.md), with traversal-surface specifics in [docs/rfcs/0002-collection-first-traversal-surface.md](docs/rfcs/0002-collection-first-traversal-surface.md), constructor-surface specifics in [docs/rfcs/0003-opaque-traversal-constructor-surface.md](docs/rfcs/0003-opaque-traversal-constructor-surface.md), module/capability placement model in [docs/rfcs/0004-module-taxonomy-and-capability-boundaries.md](docs/rfcs/0004-module-taxonomy-and-capability-boundaries.md), mutable collection naming/placement policy in [docs/rfcs/0005-mutable-collection-naming-and-placement.md](docs/rfcs/0005-mutable-collection-naming-and-placement.md), loop-control surface policy in [docs/rfcs/0006-loop-control-surface.md](docs/rfcs/0006-loop-control-surface.md), and compiler API typed-AST opt-in contract in [docs/rfcs/0007-optional-typed-ast-api-output.md](docs/rfcs/0007-optional-typed-ast-api-output.md).
 Core dispatch shadow-safety and temporary constructor reservation are documented in [docs/design-v0.md#10-standard-library-v0-minimum](docs/design-v0.md#10-standard-library-v0-minimum) (qualified-constructor follow-up: [#293](https://github.com/kyokaralang/kyokara/issues/293)).
 Canonical documentation map lives in [docs/INDEX.md](docs/INDEX.md).
 
@@ -232,7 +238,7 @@ Kyokara's primary user is an AI agent, not a human at a REPL. The agent's workfl
 
 **Can I run Kyokara programs right now?**
 
-Yes. You can write `.ky` files and: `kyokara check file.ky --format json` (type-check), `kyokara run file.ky` (interpret), or `kyokara fmt file.ky` (format). Check gives you structured diagnostics, typed hole specifications, a symbol graph, and machine-applicable fix patches. Run executes via a tree-walking interpreter. Fmt enforces canonical formatting.
+Yes. You can write `.ky` files and: `kyokara check file.ky --format json` (type-check), `kyokara run file.ky` (interpret), or `kyokara fmt file.ky` (format). Check gives you structured diagnostics, typed hole specs, symbol graph, and machine-applicable fix patches; `--emit typed-ast` adds typed AST when needed. Run executes via a tree-walking interpreter. Fmt enforces canonical formatting.
 
 **Why Rust?**
 

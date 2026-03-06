@@ -27,6 +27,9 @@ enum Command {
         /// Output format: "human" (default) or "json".
         #[arg(long, default_value = "human")]
         format: String,
+        /// Optional JSON-only payloads.
+        #[arg(long, value_name = "WHAT", value_parser = ["typed-ast"])]
+        emit: Option<String>,
         /// Force multi-file project mode (auto-detected for main.ky).
         #[arg(long)]
         project: bool,
@@ -114,13 +117,22 @@ fn main() {
         Command::Check {
             file,
             format,
+            emit,
             project,
         } => {
             let path = std::path::Path::new(&file);
             let is_multi_file = should_use_project_mode(path, project);
+            let include_typed_ast = emit.as_deref() == Some("typed-ast");
+
+            if let Err(message) = validate_check_emit_format(&format, include_typed_ast) {
+                eprintln!("error: {message}");
+                std::process::exit(1);
+            }
+
+            let options = kyokara_api::CheckOptions { include_typed_ast };
 
             let output = if is_multi_file {
-                kyokara_api::check_project(path)
+                kyokara_api::check_project_with_options(path, &options)
             } else {
                 let source = match std::fs::read_to_string(&file) {
                     Ok(s) => s,
@@ -129,7 +141,7 @@ fn main() {
                         std::process::exit(1);
                     }
                 };
-                kyokara_api::check(&source, &file)
+                kyokara_api::check_with_options(&source, &file, &options)
             };
 
             match format.as_str() {
@@ -495,6 +507,13 @@ where
     rollback_errors
 }
 
+fn validate_check_emit_format(format: &str, include_typed_ast: bool) -> Result<(), &'static str> {
+    if include_typed_ast && format != "json" {
+        return Err("`--emit typed-ast` requires `--format json`");
+    }
+    Ok(())
+}
+
 /// Check if there are other `.ky` files alongside the given file.
 fn has_sibling_ky_files(entry: &std::path::Path, dir: &std::path::Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -757,5 +776,42 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn check_emit_typed_ast_requires_json_format() {
+        let err = validate_check_emit_format("human", true).expect_err("human format must fail");
+        assert_eq!(err, "`--emit typed-ast` requires `--format json`");
+    }
+
+    #[test]
+    fn check_emit_typed_ast_allows_json_format() {
+        validate_check_emit_format("json", true).expect("json format should be accepted");
+    }
+
+    #[test]
+    fn clap_parses_check_emit_typed_ast() {
+        let cli = Cli::try_parse_from([
+            "kyokara",
+            "check",
+            "main.ky",
+            "--format",
+            "json",
+            "--emit",
+            "typed-ast",
+        ])
+        .expect("check args with --emit typed-ast should parse");
+
+        match cli.command {
+            Command::Check {
+                emit: Some(value),
+                format,
+                ..
+            } => {
+                assert_eq!(value, "typed-ast");
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected check command with emit"),
+        }
     }
 }

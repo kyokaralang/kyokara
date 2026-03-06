@@ -1,7 +1,10 @@
 //! End-to-end API tests: source → `check()` → verify structured output.
 #![allow(clippy::unwrap_used)]
 
-use kyokara_api::{check, check_project, refactor, refactor_project};
+use kyokara_api::{
+    CheckOptions, check, check_project, check_project_with_options, check_with_options, refactor,
+    refactor_project,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[test]
@@ -602,6 +605,116 @@ fn check_json_roundtrip() {
 }
 
 #[test]
+fn check_default_json_contract_does_not_emit_typed_ast() {
+    let output = check("fn main() -> Int { 1 }", "test.ky");
+    let json = serde_json::to_value(&output).expect("serialization failed");
+    let obj = json
+        .as_object()
+        .expect("check output should serialize to object");
+
+    let keys: BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+    assert_eq!(
+        keys,
+        BTreeSet::from(["diagnostics", "holes", "symbol_graph"]),
+        "default check output keys drifted: {keys:?}"
+    );
+    assert!(
+        obj.get("typed_ast").is_none(),
+        "typed_ast must be omitted unless explicitly requested"
+    );
+}
+
+#[test]
+fn check_with_options_emits_typed_ast_minimal_shape() {
+    let source = r#"
+        fn add(x: Int, y: Int) -> Int { x + y }
+        fn main() -> Int { add(1, 2) }
+    "#;
+    let output = check_with_options(
+        source,
+        "test.ky",
+        &CheckOptions {
+            include_typed_ast: true,
+        },
+    );
+
+    let typed_ast = output
+        .typed_ast
+        .as_ref()
+        .expect("typed_ast should be present when opted in");
+    assert!(
+        !typed_ast.partial,
+        "clean program should produce non-partial typed_ast"
+    );
+    assert_eq!(
+        typed_ast.files.len(),
+        1,
+        "single-file check should emit one file"
+    );
+    assert_eq!(typed_ast.files[0].file, "test.ky");
+
+    let mut fn_ids = BTreeSet::new();
+    for function in &typed_ast.files[0].functions {
+        assert!(!function.id.is_empty(), "function id must be non-empty");
+        assert!(!function.name.is_empty(), "function name must be non-empty");
+        assert!(
+            fn_ids.insert(function.id.clone()),
+            "typed_ast function ids must be unique within a file"
+        );
+
+        for expr in &function.expr_nodes {
+            assert!(!expr.kind.is_empty(), "expr kind must be non-empty");
+            assert!(!expr.ty.is_empty(), "expr type must be non-empty");
+            assert_eq!(expr.span.file, "test.ky");
+            assert!(
+                expr.span.start <= expr.span.end,
+                "expr span should be valid: {:?}",
+                expr.span
+            );
+        }
+        for pat in &function.pat_nodes {
+            assert!(!pat.kind.is_empty(), "pat kind must be non-empty");
+            assert!(!pat.ty.is_empty(), "pat type must be non-empty");
+            assert_eq!(pat.span.file, "test.ky");
+            assert!(
+                pat.span.start <= pat.span.end,
+                "pat span should be valid: {:?}",
+                pat.span
+            );
+        }
+    }
+
+    let json = serde_json::to_value(&output).expect("serialization failed");
+    assert!(
+        json.get("typed_ast").is_some(),
+        "typed_ast key must be present in opt-in mode"
+    );
+}
+
+#[test]
+fn check_with_options_parse_error_sets_typed_ast_partial_true() {
+    let output = check_with_options(
+        "fn main( -> Int { 1 }",
+        "test.ky",
+        &CheckOptions {
+            include_typed_ast: true,
+        },
+    );
+
+    let typed_ast = output
+        .typed_ast
+        .as_ref()
+        .expect("typed_ast should be present in opt-in mode");
+    assert!(
+        typed_ast.partial,
+        "parse-error input should mark typed_ast.partial=true"
+    );
+
+    let _: serde_json::Value =
+        serde_json::to_value(&output).expect("typed_ast output should serialize");
+}
+
+#[test]
 fn check_arg_count_mismatch_code() {
     let src = "fn add(x: Int, y: Int) -> Int { x + y }\nfn caller() -> Int { add(1) }";
     let output = check(src, "test.ky");
@@ -1145,6 +1258,54 @@ fn write_project(files: &[(&str, &str)]) -> (tempfile::TempDir, std::path::PathB
 fn check_project_from_files(files: &[(&str, &str)]) -> kyokara_api::CheckOutput {
     let (_dir, main_path) = write_project(files);
     check_project(&main_path)
+}
+
+fn check_project_with_options_from_files(
+    files: &[(&str, &str)],
+    options: &CheckOptions,
+) -> kyokara_api::CheckOutput {
+    let (_dir, main_path) = write_project(files);
+    check_project_with_options(&main_path, options)
+}
+
+#[test]
+fn check_project_with_options_emits_typed_ast_for_multiple_files() {
+    let output = check_project_with_options_from_files(
+        &[
+            ("main.ky", "import math\nfn main() -> Int { add(1, 2) }\n"),
+            ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
+        ],
+        &CheckOptions {
+            include_typed_ast: true,
+        },
+    );
+
+    let typed_ast = output
+        .typed_ast
+        .as_ref()
+        .expect("typed_ast should be present when opted in");
+    assert!(
+        typed_ast.files.len() >= 2,
+        "project mode should include multiple files in typed_ast"
+    );
+    assert!(
+        typed_ast.files.iter().any(|f| f.file.ends_with("main.ky")),
+        "typed_ast should include main.ky entry, got: {:?}",
+        typed_ast
+            .files
+            .iter()
+            .map(|f| f.file.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        typed_ast.files.iter().any(|f| f.file.ends_with("math.ky")),
+        "typed_ast should include imported module entry, got: {:?}",
+        typed_ast
+            .files
+            .iter()
+            .map(|f| f.file.as_str())
+            .collect::<Vec<_>>()
+    );
 }
 
 fn find_function_by_id<'a>(

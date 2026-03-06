@@ -469,7 +469,8 @@ Kyokara's toolchain is a core part of the spec.
 
 Compiler emits:
 * `diagnostics.json`: structured errors, spans, expected vs actual types/effects, suggested patches
-* `typed_ast.json` or binary form
+* default API output: diagnostics + hole specs + symbol graph
+* optional `typed_ast` payload via explicit opt-in (`check_with_options(... include_typed_ast=true)` / `kyokara check --format json --emit typed-ast`)
 * `symbol_graph.json`: call graph, type graph, effect graph — each node carries a stable namespaced ID (`fn::name`, `type::Name`, `type::Name::Variant`, `cap::Name`, `cap::Name::method`)
 * `hole_specs.json`: each hole's expected type and constraints
 * `patches.json`: machine-applicable edits for common fixes
@@ -824,7 +825,7 @@ are maintained in one place.
 | `D2` | Property-based testing integrated in language workflow | Implemented + expansion ongoing | `85%` | [#23](https://github.com/kyokaralang/kyokara/issues/23), [#200](https://github.com/kyokaralang/kyokara/issues/200), [#25](https://github.com/kyokaralang/kyokara/issues/25) |
 | `D3` | Deterministic replay logging/execution for auditability | In progress | `40%` | [#26](https://github.com/kyokaralang/kyokara/issues/26), [#27](https://github.com/kyokaralang/kyokara/issues/27) |
 | `D4` | Refactor transactions with verify-before-apply behavior | Implemented | `90%` | [#32](https://github.com/kyokaralang/kyokara/issues/32), [#190](https://github.com/kyokaralang/kyokara/issues/190), [#191](https://github.com/kyokaralang/kyokara/issues/191) |
-| `D5` | Compiler-as-API outputs for AI loops (diagnostics/symbol graph/holes) | Implemented with contract drift risk | `75%` | [#36](https://github.com/kyokaralang/kyokara/issues/36), [#38](https://github.com/kyokaralang/kyokara/issues/38), [#241](https://github.com/kyokaralang/kyokara/issues/241) |
+| `D5` | Compiler-as-API outputs for AI loops (diagnostics/symbol graph/holes + optional typed AST) | Implemented with dual-mode contract (RFC 0007); schema versioning pending | `90%` | [#36](https://github.com/kyokaralang/kyokara/issues/36), [#38](https://github.com/kyokaralang/kyokara/issues/38), [#241](https://github.com/kyokaralang/kyokara/issues/241), [#235](https://github.com/kyokaralang/kyokara/issues/235) |
 | `D6` | LSP support for interactive coding loops | Implemented baseline, stronger incrementality pending | `70%` | [#33](https://github.com/kyokaralang/kyokara/issues/33), [#239](https://github.com/kyokaralang/kyokara/issues/239) |
 | `D7` | API surface law (canonical placement/order/pipe compatibility for AI generation) | Implemented (core) + hardening follow-ups | `90%` | [#243](https://github.com/kyokaralang/kyokara/issues/243), [#265](https://github.com/kyokaralang/kyokara/issues/265), [#266](https://github.com/kyokaralang/kyokara/issues/266), [#267](https://github.com/kyokaralang/kyokara/issues/267), [#293](https://github.com/kyokaralang/kyokara/issues/293), [#236](https://github.com/kyokaralang/kyokara/issues/236), [#238](https://github.com/kyokaralang/kyokara/issues/238) |
 
@@ -833,7 +834,7 @@ are maintained in one place.
 | ID | Drift item | Assessment | Completeness | GitHub issue(s) |
 |---|---|---|---|---|
 | `X1` | Replay CLI is documented as available in multiple docs, but runtime/CLI path is not fully exposed | Open drift | `30%` | [#240](https://github.com/kyokaralang/kyokara/issues/240), [#26](https://github.com/kyokaralang/kyokara/issues/26), [#27](https://github.com/kyokaralang/kyokara/issues/27) |
-| `X2` | `typed_ast.json` is documented, but current `kyokara-api` check output omits it | Open drift | `20%` | [#241](https://github.com/kyokaralang/kyokara/issues/241), [#39](https://github.com/kyokaralang/kyokara/issues/39) |
+| `X2` | `typed_ast` contract drift between docs and API output | Resolved via RFC 0007 dual-mode output (`typed_ast` opt-in) | `100%` | [#241](https://github.com/kyokaralang/kyokara/issues/241), [#39](https://github.com/kyokaralang/kyokara/issues/39) |
 
 ### 16.5 Update protocol
 

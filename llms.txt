@@ -1,6 +1,6 @@
 # Kyokara
 
-> Kyokara is an AI-first programming language and runtime. It is designed for machine generation, machine verification, and machine refactoring — with humans as reviewers and operators. The compiler is an API that emits structured JSON (diagnostics, typed ASTs, symbol graphs, hole specs, fix patches). The runtime enforces capability-based sandboxing and deterministic replay. Written in Rust.
+> Kyokara is an AI-first programming language and runtime. It is designed for machine generation, machine verification, and machine refactoring — with humans as reviewers and operators. The compiler is an API that emits structured JSON (default diagnostics/hole specs/symbol graph, optional typed AST, fix patches). The runtime enforces capability-based sandboxing and deterministic replay. Written in Rust.
 
 ## Core Concepts
 
@@ -40,8 +40,8 @@
 - [refactor](https://github.com/kyokaralang/kyokara/tree/main/crates/refactor): Semantic refactor engine — CST-based rename (function, type, capability, variant), add missing match cases, add missing capability annotation, transactional verification (apply edits in-memory, re-check, return Verified/Failed/Skipped status)
 - [lsp](https://github.com/kyokaralang/kyokara/tree/main/crates/lsp): LSP server with salsa incrementality — diagnostics, hover, go-to-definition, find references, completion, code actions (quickfixes), formatting
 - [pbt](https://github.com/kyokaralang/kyokara/tree/main/crates/pbt): Property-based testing — choice-sequence engine (SplitMix64 RNG, record/replay), type-driven generators (scalars, ADTs, records, Option, Result, List, Map), 4-pass shrinker (zero-suffix, block deletion, binary-search minimize, pair swap), corpus persistence, contract-for-free testing of `requires`/`ensures`/`invariant` functions, explicit `property` declarations (bodies type-checked, must return Bool), refinement-constrained generation (rejection sampling)
-- [api](https://github.com/kyokaralang/kyokara/tree/main/crates/api): JSON serialization of all compiler outputs (diagnostics, typed AST, symbol graph with stable namespaced IDs, patches, refactor results)
-- [cli](https://github.com/kyokaralang/kyokara/tree/main/crates/cli): `kyokara check`, `kyokara run`, `kyokara fmt`, `kyokara refactor`, `kyokara test`, `kyokara lsp`
+- [api](https://github.com/kyokaralang/kyokara/tree/main/crates/api): JSON serialization of compiler outputs (diagnostics, holes, symbol graph, optional typed AST via check options, patches, refactor results)
+- [cli](https://github.com/kyokaralang/kyokara/tree/main/crates/cli): `kyokara check` (`--emit typed-ast` requires `--format json`), `kyokara run`, `kyokara fmt`, `kyokara refactor`, `kyokara test`, `kyokara lsp`
 
 ## Optional
 

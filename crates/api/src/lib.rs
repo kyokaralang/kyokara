@@ -4,17 +4,32 @@
 //! `serde`-free; instead, `api` defines its own DTO types that mirror
 //! the internal structures and derive `Serialize`.
 //!
-//! Outputs (v0.0):
-//! - `CheckOutput` with structured diagnostics, typed hole specs, and symbol graph
+//! Outputs (v0.0+):
+//! - `CheckOutput` with structured diagnostics, typed hole specs, symbol graph,
+//!   and optional typed AST (opt-in via `CheckOptions`)
 
 use kyokara_diagnostics::Severity;
 use kyokara_hir::{
     CheckResult, HoleInfo, TyDiagnosticData, TypeDefKind, TypeRef, display_ty_with_tree,
 };
+use kyokara_hir_def::expr::{CallArg, Expr, ExprIdx, MatchArm, PatIdx, Stmt};
+use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree};
+use kyokara_hir_def::pat::Pat;
+use kyokara_hir_def::resolver::{ModuleScope, ResolvedName};
+use kyokara_hir_def::scope::ScopeDef;
+use kyokara_hir_ty::TypeCheckResult;
 use kyokara_intern::Interner;
+use kyokara_span::TextRange;
+use kyokara_stdx::FxHashMap;
 use serde::Serialize;
 
 // ── Top-level output ────────────────────────────────────────────────
+
+/// Options for `check`/`check_project` API calls.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CheckOptions {
+    pub include_typed_ast: bool,
+}
 
 /// Top-level output from the check pipeline.
 #[derive(Debug, Serialize)]
@@ -22,6 +37,8 @@ pub struct CheckOutput {
     pub diagnostics: Vec<DiagnosticDto>,
     pub holes: Vec<HoleSpecDto>,
     pub symbol_graph: SymbolGraphDto,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub typed_ast: Option<TypedAstDto>,
 }
 
 // ── Diagnostic DTOs ─────────────────────────────────────────────────
@@ -136,19 +153,83 @@ pub struct CapNodeDto {
     pub functions: Vec<String>,
 }
 
+// ── Typed AST DTOs ──────────────────────────────────────────────────
+
+/// Typed AST payload (opt-in in `CheckOptions`).
+#[derive(Debug, Serialize)]
+pub struct TypedAstDto {
+    pub partial: bool,
+    pub files: Vec<TypedAstFileDto>,
+}
+
+/// Typed AST for a single file/module.
+#[derive(Debug, Serialize)]
+pub struct TypedAstFileDto {
+    pub file: String,
+    pub functions: Vec<TypedFnAstDto>,
+}
+
+/// Typed AST for a single lowered function body.
+#[derive(Debug, Serialize)]
+pub struct TypedFnAstDto {
+    pub id: String,
+    pub name: String,
+    pub root_expr: u32,
+    pub expr_nodes: Vec<TypedExprNodeDto>,
+    pub pat_nodes: Vec<TypedPatNodeDto>,
+}
+
+/// A typed expression node.
+#[derive(Debug, Serialize)]
+pub struct TypedExprNodeDto {
+    pub id: u32,
+    pub kind: String,
+    pub span: SpanDto,
+    pub ty: String,
+    pub expr_refs: Vec<u32>,
+    pub pat_refs: Vec<u32>,
+    pub symbol: Option<String>,
+}
+
+/// A typed pattern node.
+#[derive(Debug, Serialize)]
+pub struct TypedPatNodeDto {
+    pub id: u32,
+    pub kind: String,
+    pub span: SpanDto,
+    pub ty: String,
+    pub pat_refs: Vec<u32>,
+    pub symbol: Option<String>,
+}
+
 // ── Public entry point ──────────────────────────────────────────────
 
 /// Run the full check pipeline on source text and return structured output.
 pub fn check(source: &str, file_name: &str) -> CheckOutput {
+    check_with_options(source, file_name, &CheckOptions::default())
+}
+
+/// Run the full check pipeline with explicit options.
+pub fn check_with_options(source: &str, file_name: &str, options: &CheckOptions) -> CheckOutput {
     let result = kyokara_hir::check_file(source);
-    convert_result(&result, file_name)
+    convert_result(&result, file_name, options)
 }
 
 /// Run the check pipeline on a multi-file project and return structured output.
 pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
+    check_project_with_options(entry_file, &CheckOptions::default())
+}
+
+/// Run the check pipeline on a multi-file project with explicit options.
+pub fn check_project_with_options(
+    entry_file: &std::path::Path,
+    options: &CheckOptions,
+) -> CheckOutput {
     let result = kyokara_hir::check_project(entry_file);
     let mut diagnostics = Vec::new();
     let interner = &result.interner;
+    let mut typed_ast_files = Vec::new();
+    let mut typed_ast_partial = result.parse_errors.iter().any(|(_, errs)| !errs.is_empty());
 
     // Aggregate parse errors from all modules.
     for (mod_path, errors) in &result.parse_errors {
@@ -265,6 +346,22 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
             all_functions.extend(graph.functions);
             all_capabilities.extend(graph.capabilities);
 
+            if options.include_typed_ast {
+                let (functions, partial) = build_typed_ast_for_module(
+                    &info.item_tree,
+                    &info.scope,
+                    tc,
+                    interner,
+                    &file_name,
+                    prefix.as_deref(),
+                );
+                typed_ast_partial |= partial;
+                typed_ast_files.push(TypedAstFileDto {
+                    file: file_name.clone(),
+                    functions,
+                });
+            }
+
             // Deduplicate builtins: only keep the first copy.
             for t in graph.types {
                 if builtin_names.contains(t.name.as_str()) {
@@ -280,6 +377,8 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
                     all_types.push(t);
                 }
             }
+        } else if options.include_typed_ast {
+            typed_ast_partial = true;
         }
     }
 
@@ -381,12 +480,16 @@ pub fn check_project(entry_file: &std::path::Path) -> CheckOutput {
             capabilities: all_capabilities,
             partial: result.parse_errors.iter().any(|(_, errs)| !errs.is_empty()),
         },
+        typed_ast: options.include_typed_ast.then_some(TypedAstDto {
+            partial: typed_ast_partial,
+            files: typed_ast_files,
+        }),
     }
 }
 
 // ── Conversion helpers ──────────────────────────────────────────────
 
-fn convert_result(result: &CheckResult, file_name: &str) -> CheckOutput {
+fn convert_result(result: &CheckResult, file_name: &str, options: &CheckOptions) -> CheckOutput {
     let interner = &result.interner;
     let mut diagnostics = Vec::new();
 
@@ -451,10 +554,31 @@ fn convert_result(result: &CheckResult, file_name: &str) -> CheckOutput {
     }
     symbol_graph.partial = !result.parse_errors.is_empty();
 
+    let typed_ast = if options.include_typed_ast {
+        let (functions, partial) = build_typed_ast_for_module(
+            &result.item_tree,
+            &result.module_scope,
+            &result.type_check,
+            interner,
+            file_name,
+            None,
+        );
+        Some(TypedAstDto {
+            partial: !result.parse_errors.is_empty() || partial,
+            files: vec![TypedAstFileDto {
+                file: file_name.to_owned(),
+                functions,
+            }],
+        })
+    } else {
+        None
+    };
+
     CheckOutput {
         diagnostics,
         holes,
         symbol_graph,
+        typed_ast,
     }
 }
 
@@ -868,6 +992,428 @@ fn severity_str(sev: Severity) -> String {
         Severity::Warning => "warning".into(),
         Severity::Info => "info".into(),
         Severity::Hint => "hint".into(),
+    }
+}
+
+fn expr_idx_to_u32(idx: ExprIdx) -> u32 {
+    idx.into_raw().into_u32()
+}
+
+fn pat_idx_to_u32(idx: PatIdx) -> u32 {
+    idx.into_raw().into_u32()
+}
+
+fn local_symbol_id(fn_id: &str, pat_idx: PatIdx) -> String {
+    format!("local::{fn_id}::{}", pat_idx_to_u32(pat_idx))
+}
+
+fn range_to_span(range: TextRange, file_name: &str) -> SpanDto {
+    SpanDto {
+        file: file_name.to_owned(),
+        start: range.start().into(),
+        end: range.end().into(),
+    }
+}
+
+fn build_function_id_map(
+    item_tree: &ItemTree,
+    interner: &Interner,
+    module_prefix: Option<&str>,
+) -> FxHashMap<FnItemIdx, String> {
+    let cap_member_fns: std::collections::HashSet<FnItemIdx> = item_tree
+        .effects
+        .iter()
+        .flat_map(|(_, cap)| cap.functions.iter().copied())
+        .collect();
+
+    let mut fn_id_map = FxHashMap::default();
+    let mut fn_id_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+
+    for (idx, fn_item) in item_tree.functions.iter() {
+        if fn_item.source_range.is_none() || cap_member_fns.contains(&idx) {
+            continue;
+        }
+        let name = fn_item.name.resolve(interner);
+        let base_id = symbol_id("fn", name, module_prefix);
+        let count = fn_id_counts.entry(base_id.clone()).or_insert(0);
+        *count += 1;
+        let id = if *count == 1 {
+            base_id
+        } else {
+            format!("{base_id}#{}", count)
+        };
+        fn_id_map.insert(idx, id);
+    }
+
+    fn_id_map
+}
+
+fn build_typed_ast_for_module(
+    item_tree: &ItemTree,
+    module_scope: &ModuleScope,
+    type_check: &TypeCheckResult,
+    interner: &Interner,
+    file_name: &str,
+    module_prefix: Option<&str>,
+) -> (Vec<TypedFnAstDto>, bool) {
+    let fn_id_map = build_function_id_map(item_tree, interner, module_prefix);
+    let mut functions = Vec::new();
+    let mut partial = false;
+
+    for (fn_idx, fn_item) in item_tree.functions.iter() {
+        let Some(fn_id) = fn_id_map.get(&fn_idx) else {
+            continue;
+        };
+        if !fn_item.has_body || fn_item.source_range.is_none() {
+            continue;
+        }
+
+        let Some(body) = type_check.fn_bodies.get(&fn_idx) else {
+            partial = true;
+            continue;
+        };
+        let Some(result) = type_check.fn_results.get(&fn_idx) else {
+            partial = true;
+            continue;
+        };
+
+        functions.push(build_typed_fn_ast(
+            fn_id,
+            fn_item.name.resolve(interner),
+            fn_item.source_range,
+            body,
+            result,
+            module_scope,
+            item_tree,
+            interner,
+            file_name,
+            &fn_id_map,
+            module_prefix,
+        ));
+    }
+
+    (functions, partial)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_typed_fn_ast(
+    fn_id: &str,
+    fn_name: &str,
+    fn_range: Option<TextRange>,
+    body: &kyokara_hir::Body,
+    inference: &kyokara_hir::InferenceResult,
+    module_scope: &ModuleScope,
+    item_tree: &ItemTree,
+    interner: &Interner,
+    file_name: &str,
+    fn_id_map: &FxHashMap<FnItemIdx, String>,
+    module_prefix: Option<&str>,
+) -> TypedFnAstDto {
+    let mut expr_nodes = Vec::new();
+    for (expr_idx, expr) in body.exprs.iter() {
+        let id = expr_idx_to_u32(expr_idx);
+        let span = body
+            .expr_source_map
+            .get(expr_idx)
+            .copied()
+            .or(fn_range)
+            .map(|range| range_to_span(range, file_name))
+            .unwrap_or_else(|| range_to_span(TextRange::default(), file_name));
+
+        let ty = inference
+            .expr_types
+            .get(expr_idx)
+            .map(|t| display_ty_with_tree(t, interner, item_tree))
+            .unwrap_or_else(|| "<unknown>".to_owned());
+
+        expr_nodes.push(TypedExprNodeDto {
+            id,
+            kind: expr_kind(expr).to_owned(),
+            span,
+            ty,
+            expr_refs: expr_expr_refs(expr),
+            pat_refs: expr_pat_refs(expr),
+            symbol: expr_symbol(
+                expr_idx,
+                expr,
+                body,
+                module_scope,
+                item_tree,
+                interner,
+                fn_id,
+                fn_id_map,
+                module_prefix,
+            ),
+        });
+    }
+    expr_nodes.sort_by_key(|node| node.id);
+
+    let mut pat_nodes = Vec::new();
+    for (pat_idx, pat) in body.pats.iter() {
+        let id = pat_idx_to_u32(pat_idx);
+        let span = body
+            .pat_source_map
+            .get(pat_idx)
+            .copied()
+            .or(fn_range)
+            .map(|range| range_to_span(range, file_name))
+            .unwrap_or_else(|| range_to_span(TextRange::default(), file_name));
+
+        let ty = inference
+            .pat_types
+            .get(pat_idx)
+            .map(|t| display_ty_with_tree(t, interner, item_tree))
+            .unwrap_or_else(|| "<unknown>".to_owned());
+
+        pat_nodes.push(TypedPatNodeDto {
+            id,
+            kind: pat_kind(pat).to_owned(),
+            span,
+            ty,
+            pat_refs: pat_refs(pat),
+            symbol: pat_symbol(fn_id, pat_idx, pat),
+        });
+    }
+    pat_nodes.sort_by_key(|node| node.id);
+
+    TypedFnAstDto {
+        id: fn_id.to_owned(),
+        name: fn_name.to_owned(),
+        root_expr: expr_idx_to_u32(body.root),
+        expr_nodes,
+        pat_nodes,
+    }
+}
+
+fn expr_kind(expr: &Expr) -> &'static str {
+    match expr {
+        Expr::Literal(_) => "Literal",
+        Expr::Path(_) => "Path",
+        Expr::Binary { .. } => "Binary",
+        Expr::Unary { .. } => "Unary",
+        Expr::Call { .. } => "Call",
+        Expr::Field { .. } => "Field",
+        Expr::Index { .. } => "Index",
+        Expr::If { .. } => "If",
+        Expr::Match { .. } => "Match",
+        Expr::Block { .. } => "Block",
+        Expr::Return(_) => "Return",
+        Expr::RecordLit { .. } => "RecordLit",
+        Expr::Lambda { .. } => "Lambda",
+        Expr::Old(_) => "Old",
+        Expr::Hole => "Hole",
+        Expr::Missing => "Missing",
+    }
+}
+
+fn pat_kind(pat: &Pat) -> &'static str {
+    match pat {
+        Pat::Bind { .. } => "Bind",
+        Pat::Wildcard => "Wildcard",
+        Pat::Literal(_) => "Literal",
+        Pat::Constructor { .. } => "Constructor",
+        Pat::Record { .. } => "Record",
+        Pat::Missing => "Missing",
+    }
+}
+
+fn expr_expr_refs(expr: &Expr) -> Vec<u32> {
+    let mut refs = Vec::new();
+    match expr {
+        Expr::Binary { lhs, rhs, .. } => {
+            refs.push(expr_idx_to_u32(*lhs));
+            refs.push(expr_idx_to_u32(*rhs));
+        }
+        Expr::Unary { operand, .. } => refs.push(expr_idx_to_u32(*operand)),
+        Expr::Call { callee, args } => {
+            refs.push(expr_idx_to_u32(*callee));
+            for arg in args {
+                match arg {
+                    CallArg::Positional(expr) => refs.push(expr_idx_to_u32(*expr)),
+                    CallArg::Named { value, .. } => refs.push(expr_idx_to_u32(*value)),
+                }
+            }
+        }
+        Expr::Field { base, .. } => refs.push(expr_idx_to_u32(*base)),
+        Expr::Index { base, index } => {
+            refs.push(expr_idx_to_u32(*base));
+            refs.push(expr_idx_to_u32(*index));
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            refs.push(expr_idx_to_u32(*condition));
+            refs.push(expr_idx_to_u32(*then_branch));
+            if let Some(else_expr) = else_branch {
+                refs.push(expr_idx_to_u32(*else_expr));
+            }
+        }
+        Expr::Match { scrutinee, arms } => {
+            refs.push(expr_idx_to_u32(*scrutinee));
+            for MatchArm { body, .. } in arms {
+                refs.push(expr_idx_to_u32(*body));
+            }
+        }
+        Expr::Block { stmts, tail } => {
+            for stmt in stmts {
+                match stmt {
+                    Stmt::Let { init, .. } => refs.push(expr_idx_to_u32(*init)),
+                    Stmt::While { condition, body } => {
+                        refs.push(expr_idx_to_u32(*condition));
+                        refs.push(expr_idx_to_u32(*body));
+                    }
+                    Stmt::For { source, body, .. } => {
+                        refs.push(expr_idx_to_u32(*source));
+                        refs.push(expr_idx_to_u32(*body));
+                    }
+                    Stmt::Expr(expr) => refs.push(expr_idx_to_u32(*expr)),
+                    Stmt::Break | Stmt::Continue => {}
+                }
+            }
+            if let Some(expr) = tail {
+                refs.push(expr_idx_to_u32(*expr));
+            }
+        }
+        Expr::Return(value) => {
+            if let Some(expr) = value {
+                refs.push(expr_idx_to_u32(*expr));
+            }
+        }
+        Expr::RecordLit { fields, .. } => {
+            for (_, value) in fields {
+                refs.push(expr_idx_to_u32(*value));
+            }
+        }
+        Expr::Lambda { body, .. } => refs.push(expr_idx_to_u32(*body)),
+        Expr::Old(inner) => refs.push(expr_idx_to_u32(*inner)),
+        Expr::Literal(_) | Expr::Path(_) | Expr::Hole | Expr::Missing => {}
+    }
+    refs
+}
+
+fn expr_pat_refs(expr: &Expr) -> Vec<u32> {
+    let mut refs = Vec::new();
+    match expr {
+        Expr::Match { arms, .. } => {
+            for MatchArm { pat, .. } in arms {
+                refs.push(pat_idx_to_u32(*pat));
+            }
+        }
+        Expr::Block { stmts, .. } => {
+            for stmt in stmts {
+                match stmt {
+                    Stmt::Let { pat, .. } | Stmt::For { pat, .. } => {
+                        refs.push(pat_idx_to_u32(*pat))
+                    }
+                    Stmt::While { .. } | Stmt::Break | Stmt::Continue | Stmt::Expr(_) => {}
+                }
+            }
+        }
+        Expr::Lambda { params, .. } => {
+            for (pat, _) in params {
+                refs.push(pat_idx_to_u32(*pat));
+            }
+        }
+        _ => {}
+    }
+    refs
+}
+
+fn pat_refs(pat: &Pat) -> Vec<u32> {
+    match pat {
+        Pat::Constructor { args, .. } => args.iter().map(|p| pat_idx_to_u32(*p)).collect(),
+        Pat::Bind { .. } | Pat::Wildcard | Pat::Literal(_) | Pat::Record { .. } | Pat::Missing => {
+            Vec::new()
+        }
+    }
+}
+
+fn pat_symbol(fn_id: &str, pat_idx: PatIdx, pat: &Pat) -> Option<String> {
+    match pat {
+        Pat::Bind { .. } => Some(local_symbol_id(fn_id, pat_idx)),
+        Pat::Wildcard
+        | Pat::Literal(_)
+        | Pat::Constructor { .. }
+        | Pat::Record { .. }
+        | Pat::Missing => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn expr_symbol(
+    expr_idx: ExprIdx,
+    expr: &Expr,
+    body: &kyokara_hir::Body,
+    module_scope: &ModuleScope,
+    item_tree: &ItemTree,
+    interner: &Interner,
+    fn_id: &str,
+    fn_id_map: &FxHashMap<FnItemIdx, String>,
+    module_prefix: Option<&str>,
+) -> Option<String> {
+    let Expr::Path(path) = expr else {
+        return None;
+    };
+    if !path.is_single() {
+        return None;
+    }
+    let name = path.segments[0];
+    let resolved = body.resolve_name_at(module_scope, expr_idx, name)?;
+    if let Some((pat_idx, _)) = resolved.local_binding {
+        return Some(local_symbol_id(fn_id, pat_idx));
+    }
+    resolved_symbol_id(
+        &resolved.resolved,
+        item_tree,
+        fn_id,
+        fn_id_map,
+        interner,
+        module_prefix,
+    )
+}
+
+fn resolved_symbol_id(
+    resolved: &ResolvedName,
+    item_tree: &ItemTree,
+    fn_id: &str,
+    fn_id_map: &FxHashMap<FnItemIdx, String>,
+    interner: &Interner,
+    module_prefix: Option<&str>,
+) -> Option<String> {
+    match resolved {
+        ResolvedName::Local(ScopeDef::Local(pat_idx)) => Some(local_symbol_id(fn_id, *pat_idx)),
+        ResolvedName::Fn(fn_idx) => fn_id_map.get(fn_idx).cloned(),
+        ResolvedName::Type(type_idx) => {
+            let name = item_tree.types[*type_idx].name.resolve(interner);
+            Some(symbol_id("type", name, module_prefix))
+        }
+        ResolvedName::Effect(effect_idx) => {
+            let name = item_tree.effects[*effect_idx].name.resolve(interner);
+            Some(symbol_id("cap", name, module_prefix))
+        }
+        ResolvedName::Constructor {
+            type_idx,
+            variant_idx,
+        } => {
+            let type_item = &item_tree.types[*type_idx];
+            let TypeDefKind::Adt { variants } = &type_item.kind else {
+                return None;
+            };
+            let variant = variants.get(*variant_idx)?;
+            Some(nested_symbol_id(
+                "type",
+                type_item.name.resolve(interner),
+                variant.name.resolve(interner),
+                module_prefix,
+            ))
+        }
+        ResolvedName::Import(_)
+        | ResolvedName::Module(_)
+        | ResolvedName::StaticMethodType(_)
+        | ResolvedName::Local(_) => None,
     }
 }
 
