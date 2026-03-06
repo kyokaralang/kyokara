@@ -586,8 +586,8 @@ a canonical API surface: method calls for value-owned behavior, module-qualified
 for no-owner utilities and effects, and type-namespaced constructors.
 
 Canonical visibility matrix:
-* Prelude builtin value types (no import): `List.new()`, `Map.new()`, `Set.new()`, value methods.
-* Pure specialized collections (imported module): `collections.Deque.new()`, `collections.MutableList.new()`, `collections.MutableList.from_list(xs)`
+* Prelude builtin value types (no import): `List<T>`, `Map<K, V>`, `Set<T>` type names and value methods.
+* Pure collection constructors (imported module): `collections.List.new()`, `collections.Map.new()`, `collections.Set.new()`, `collections.Deque.new()`, `collections.MutableList.new()`, `collections.MutableList.from_list(xs)`
 * Prelude traversal constructors (no import): `start..<end`, `seed.unfold(step)`.
 * Pure no-owner utilities (imported module): `math.*`
 * Effectful utilities (imported capability modules): `io.*`, `fs.*`
@@ -606,7 +606,7 @@ Runtime soundness invariants for core APIs:
 * Follow-up: add qualified constructors/patterns (`Type.Variant`) and remove the temporary reservation ([#293](https://github.com/kyokaralang/kyokara/issues/293)).
 
 Mental model: `List`/`Map`/`Set` are prelude value types (type/value namespace),
-`collections` is the pure module namespace for specialized collection constructors (including `Deque` and `MutableList`),
+`collections` is the pure module namespace for collection constructors (`List`/`Map`/`Set` plus specialized collections like `Deque` and `MutableList`),
 while `io`/`fs` are module namespaces for effectful operations.
 
 **Implemented (v0.1+):**
@@ -616,7 +616,7 @@ while `io`/`fs` are module namespaces for effectful operations.
   * Methods: `r.unwrap_or(fallback)`, `r.map_or(fallback, f)`, `r.map(f)`, `r.and_then(f)`, `r.map_err(f)`
 * `ParseError` — builtin ADT (`InvalidInt(String) | InvalidFloat(String)`), used as error type for `parse_int`/`parse_float` ✓
 * `List<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<Vec<Value>>`) ✓
-  * Constructor: `List.new()`
+  * Constructor: `collections.List.new()` (requires `import collections`)
   * Methods (storage/random-access): `xs.push(v)`, `xs.len()`, `xs.get(i)` → `Option<T>`, `xs.head()` → `Option<T>`, `xs.tail()`, `xs.is_empty()`, `xs.reverse()`, `xs.concat(ys)`, `xs.set(i, v)`, `xs.update(i, f)`, `xs.sort()`, `xs.sort_by(f)`, `xs.binary_search(x)`
   * Methods (traversal): `xs.map(f)`, `xs.filter(f)`, `xs.scan(init, f)`, `xs.enumerate()`, `xs.zip(other)`, `xs.chunks(n)`, `xs.windows(n)`, `xs.fold(init, f)`, `xs.count()`, `xs.any(f)`, `xs.all(f)`, `xs.find(f)`, `xs.to_list()`
   * Index update semantics: `set/update` require `0 <= i < len`; out-of-bounds is a direct runtime error.
@@ -642,10 +642,10 @@ while `io`/`fs` are module namespaces for effectful operations.
   * Evaluation model: each terminal re-runs the traversal pipeline from source (no single-use consumption state)
   * Implementation note: traversal is backed by an internal runtime/compiler engine type and is not nameable in user code
 * `Map<K, V>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<IndexMap<MapKey, Value>>`, insertion-order-preserving hash map, O(1) lookup). Keys must be hashable types (Int, String, Char, Bool, Unit); invalid key types are rejected at compile time for typed map operations (E0024). `m.keys()` and `m.values()` return deterministic insertion order traversal values. ✓
-  * Constructor: `Map.new()`
+  * Constructor: `collections.Map.new()` (requires `import collections`)
   * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()`, `m.values()`, `m.is_empty()`
 * `Set<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<IndexSet<MapKey>>`, insertion-order-preserving hash set). Elements must be hashable types (Int, String, Char, Bool, Unit); invalid element types are rejected at compile time for typed set operations (E0028). `s.values()` returns deterministic insertion-order traversal values. ✓
-  * Constructor: `Set.new()`
+  * Constructor: `collections.Set.new()` (requires `import collections`)
   * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()`
 * String methods ✓ — `s.len()` (char count), `s.contains(t)`, `s.starts_with(t)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)`, `s.substring(a, b)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()`, `s.chars()`, `s.parse_int()` → `Result<Int, ParseError>`, `s.parse_float()` → `Result<Float, ParseError>`
 * Char methods ✓ — `c.to_string()`

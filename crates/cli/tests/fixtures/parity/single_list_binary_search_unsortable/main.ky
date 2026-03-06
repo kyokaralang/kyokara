@@ -1,5 +1,7 @@
+import collections
+
 fn main() -> Int {
-  let needle = List.new().push(1)
-  let xs = List.new().push(needle)
+  let needle = collections.List.new().push(1)
+  let xs = collections.List.new().push(needle)
   xs.binary_search(needle)
 }

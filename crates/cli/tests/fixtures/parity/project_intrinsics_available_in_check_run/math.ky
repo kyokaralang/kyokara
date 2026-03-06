@@ -1,4 +1,6 @@
+import collections
+
 pub fn size() -> Int {
-  let xs = List.new()
+  let xs = collections.List.new()
   xs.len()
 }

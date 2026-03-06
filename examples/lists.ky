@@ -1,10 +1,12 @@
+import collections
+
 // List storage + direct traversal methods.
 
 fn double(x: Int) -> Int { x * 2 }
 
 fn main() -> Int {
   // Build a list [1, 2, 3, 4, 5]
-  let xs = List.new().push(1).push(2).push(3).push(4).push(5)
+  let xs = collections.List.new().push(1).push(2).push(3).push(4).push(5)
 
   // Map: [2, 4, 6, 8, 10]
   let doubled = xs.map(double)

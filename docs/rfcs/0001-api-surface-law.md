@@ -83,7 +83,7 @@ Constructors/factories are namespaced under types.
 
 Examples:
 
-- `List.new()`, `Map.new()`, `Set.new()`
+- `collections.List.new()`, `collections.Map.new()`, `collections.Set.new()`
 
 ### L5.1 Core value types vs capability modules (`MUST`)
 
@@ -92,7 +92,7 @@ imported capability modules.
 
 Implications:
 
-- constructors live in the type namespace (`List.new()`, `Map.new()`, `Set.new()`)
+- constructors are module-qualified under `collections` with type ownership (`collections.List.new()`, `collections.Map.new()`, `collections.Set.new()`)
 - value-owned behavior is exposed as methods (`xs.push`, `m.insert`, `s.contains`)
 - no free global aliases (e.g. `list_new`, `map_new`, `set_new`) in user-facing API
 
@@ -222,7 +222,8 @@ Kyokara uses this intrinsic visibility matrix:
 
 | Category | Canonical form | Import required | Example |
 |---|---|---|---|
-| Prelude builtin value types | Type namespace + methods | No | `List.new()`, `Map.new()`, `Set.new()`, `xs.len()` |
+| Prelude builtin value types | Type names + methods | No | `let xs: List<Int> = ...`, `xs.len()` |
+| Pure collection constructors | Module-qualified under `collections` | Yes | `collections.List.new()`, `collections.Map.new()`, `collections.Set.new()` |
 | Pure no-owner utilities | Module-qualified | Yes | `math.min(a, b)` |
 | Effectful utilities | Capability module-qualified | Yes | `io.println("x")`, `fs.read_file(path)` |
 | Internal intrinsic IDs | Not user-visible | N/A | `list_new`, `map_insert`, `set_contains` |

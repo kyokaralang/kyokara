@@ -1,7 +1,9 @@
+import collections
+
 // Map operations: insert, lookup, keys/values.
 
 fn main() -> Int {
-  let m = Map.new().insert("x", 10).insert("y", 20).insert("z", 30)
+  let m = collections.Map.new().insert("x", 10).insert("y", 20).insert("z", 30)
 
   // Lookup
   let x_val = match (m.get("x")) {
