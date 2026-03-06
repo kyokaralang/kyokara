@@ -3106,6 +3106,11 @@ impl Interpreter {
                 .core_types
                 .get(CoreType::MutableMap)
                 .map(|_| ReceiverKey::Core(CoreType::MutableMap)),
+            Value::MutableSet(_) => self
+                .module_scope
+                .core_types
+                .get(CoreType::MutableSet)
+                .map(|_| ReceiverKey::Core(CoreType::MutableSet)),
             Value::Deque(_) => self
                 .module_scope
                 .core_types

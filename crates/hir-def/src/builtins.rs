@@ -31,6 +31,7 @@ fn core_hidden_type_name(interner: &mut Interner, core: CoreType) -> Name {
         CoreType::List => "$core_List",
         CoreType::MutableList => "$core_MutableList",
         CoreType::MutableMap => "$core_MutableMap",
+        CoreType::MutableSet => "$core_MutableSet",
         CoreType::Deque => "$core_Deque",
         CoreType::Seq => "$core_Seq",
         CoreType::Map => "$core_Map",
@@ -47,6 +48,7 @@ fn core_public_type_name(interner: &mut Interner, core: CoreType) -> Name {
         CoreType::List => "List",
         CoreType::MutableList => "MutableList",
         CoreType::MutableMap => "MutableMap",
+        CoreType::MutableSet => "MutableSet",
         CoreType::Deque => "Deque",
         CoreType::Seq => "Seq",
         CoreType::Map => "Map",
@@ -90,8 +92,9 @@ fn register_core_type_item(
     (idx, type_name)
 }
 
-/// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`, `MutableMap<K,V>`, `Deque<T>`,
-/// `Seq<T>`, `Map<K,V>`, `Set<T>`, and `ParseError` into the item tree
+/// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`, `MutableMap<K,V>`,
+/// `MutableSet<T>`, `Deque<T>`, `Seq<T>`, `Map<K,V>`, `Set<T>`, and `ParseError` into the
+/// item tree
 /// and module scope.
 ///
 /// Core types are always registered with stable identities. If a user type
@@ -107,6 +110,7 @@ pub fn register_builtin_types(
     register_list(tree, scope, interner);
     register_mutable_list(tree, scope, interner);
     register_mutable_map(tree, scope, interner);
+    register_mutable_set(tree, scope, interner);
     register_deque(tree, scope, interner);
     register_seq(tree, scope, interner);
     register_map(tree, scope, interner);
@@ -185,6 +189,19 @@ fn register_mutable_map(tree: &mut ItemTree, scope: &mut ModuleScope, interner: 
         interner,
         CoreType::MutableMap,
         vec![k_name, v_name],
+        TypeDefKind::Adt { variants: vec![] },
+    );
+}
+
+/// `MutableSet<T>` — opaque builtin type (no variants, no pattern matching).
+fn register_mutable_set(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
+    let t_name = Name::new(interner, "T");
+    let _ = register_core_type_item(
+        tree,
+        scope,
+        interner,
+        CoreType::MutableSet,
+        vec![t_name],
         TypeDefKind::Adt { variants: vec![] },
     );
 }
@@ -360,6 +377,10 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         mutable_map: scope
             .core_types
             .get(CoreType::MutableMap)
+            .map(|t| t.type_name),
+        mutable_set: scope
+            .core_types
+            .get(CoreType::MutableSet)
             .map(|t| t.type_name),
         deque: scope.core_types.get(CoreType::Deque).map(|t| t.type_name),
         seq: scope.core_types.get(CoreType::Seq).map(|t| t.type_name),
@@ -550,6 +571,37 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             "mutable_map_is_empty",
             ReceiverKey::Core(CoreType::MutableMap),
             "is_empty",
+        ),
+        // MutableSet methods
+        (
+            "mutable_set_insert",
+            ReceiverKey::Core(CoreType::MutableSet),
+            "insert",
+        ),
+        (
+            "mutable_set_contains",
+            ReceiverKey::Core(CoreType::MutableSet),
+            "contains",
+        ),
+        (
+            "mutable_set_remove",
+            ReceiverKey::Core(CoreType::MutableSet),
+            "remove",
+        ),
+        (
+            "mutable_set_len",
+            ReceiverKey::Core(CoreType::MutableSet),
+            "len",
+        ),
+        (
+            "mutable_set_is_empty",
+            ReceiverKey::Core(CoreType::MutableSet),
+            "is_empty",
+        ),
+        (
+            "mutable_set_values",
+            ReceiverKey::Core(CoreType::MutableSet),
+            "values",
         ),
         ("seq_map", ReceiverKey::Core(CoreType::MutableList), "map"),
         (
@@ -973,12 +1025,14 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     let deque = Name::new(interner, "Deque");
     let mutable_list = Name::new(interner, "MutableList");
     let mutable_map = Name::new(interner, "MutableMap");
+    let mutable_set = Name::new(interner, "MutableSet");
     let new = Name::new(interner, "new");
     let from_list = Name::new(interner, "from_list");
     let deque_new = Name::new(interner, "deque_new");
     let mutable_list_new = Name::new(interner, "mutable_list_new");
     let mutable_list_from_list = Name::new(interner, "mutable_list_from_list");
     let mutable_map_new = Name::new(interner, "mutable_map_new");
+    let mutable_set_new = Name::new(interner, "mutable_set_new");
     if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&deque_new) {
         scope
             .synthetic_module_static_methods
@@ -998,6 +1052,11 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
         scope
             .synthetic_module_static_methods
             .insert((collections, mutable_map, new), fn_idx);
+    }
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_set_new) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, mutable_set, new), fn_idx);
     }
 }
 
@@ -1077,6 +1136,11 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         .get(CoreType::MutableMap)
         .map(|info| info.type_name)
         .unwrap_or_else(|| Name::new(interner, "MutableMap"));
+    let mutable_set_core_name = scope
+        .core_types
+        .get(CoreType::MutableSet)
+        .map(|info| info.type_name)
+        .unwrap_or_else(|| Name::new(interner, "MutableSet"));
     let deque_core_name = scope
         .core_types
         .get(CoreType::Deque)
@@ -1222,6 +1286,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     };
     let set_t = TypeRef::Path {
         path: Path::single(set_core_name),
+        args: vec![t_ref.clone()],
+    };
+    let mutable_set_t = TypeRef::Path {
+        path: Path::single(mutable_set_core_name),
         args: vec![t_ref.clone()],
     };
     let option_t = TypeRef::Path {
@@ -1575,6 +1643,62 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![k_name, v_name],
             vec![("m", mutable_map_kv.clone())],
             bool_ty.clone(),
+        ),
+        // mutable_set_new<T>() -> MutableSet<T>
+        mk_intrinsic(
+            interner,
+            "mutable_set_new",
+            vec![t_name],
+            vec![],
+            mutable_set_t.clone(),
+        ),
+        // mutable_set_insert<T>(s: MutableSet<T>, x: T) -> MutableSet<T>
+        mk_intrinsic(
+            interner,
+            "mutable_set_insert",
+            vec![t_name],
+            vec![("s", mutable_set_t.clone()), ("x", t_ref.clone())],
+            mutable_set_t.clone(),
+        ),
+        // mutable_set_contains<T>(s: MutableSet<T>, x: T) -> Bool
+        mk_intrinsic(
+            interner,
+            "mutable_set_contains",
+            vec![t_name],
+            vec![("s", mutable_set_t.clone()), ("x", t_ref.clone())],
+            bool_ty.clone(),
+        ),
+        // mutable_set_remove<T>(s: MutableSet<T>, x: T) -> MutableSet<T>
+        mk_intrinsic(
+            interner,
+            "mutable_set_remove",
+            vec![t_name],
+            vec![("s", mutable_set_t.clone()), ("x", t_ref.clone())],
+            mutable_set_t.clone(),
+        ),
+        // mutable_set_len<T>(s: MutableSet<T>) -> Int
+        mk_intrinsic(
+            interner,
+            "mutable_set_len",
+            vec![t_name],
+            vec![("s", mutable_set_t.clone())],
+            int_ty.clone(),
+        ),
+        // mutable_set_is_empty<T>(s: MutableSet<T>) -> Bool
+        mk_intrinsic(
+            interner,
+            "mutable_set_is_empty",
+            vec![t_name],
+            vec![("s", mutable_set_t.clone())],
+            bool_ty.clone(),
+        ),
+        // mutable_set_values<T>(s: MutableSet<T>) -> Seq<T>
+        mk_intrinsic(
+            interner,
+            "mutable_set_values",
+            vec![t_name],
+            vec![("s", mutable_set_t.clone())],
+            seq_t.clone(),
         ),
         // deque_new<T>() -> Deque<T>
         mk_intrinsic(interner, "deque_new", vec![t_name], vec![], deque_t.clone()),

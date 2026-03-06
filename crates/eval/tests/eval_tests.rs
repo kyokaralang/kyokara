@@ -1916,6 +1916,83 @@ fn eval_mutable_map_invalid_key_type_is_compile_error() {
 }
 
 #[test]
+fn eval_collections_mutable_set_constructor_surface_rfc_0008() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let s = collections.MutableSet.new().insert(\"a\").insert(\"b\")
+           s.len()
+         }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_collections_mutable_set_alias_constructor_surface_rfc_0008() {
+    let val = run_ok(
+        "import collections as c
+         fn main() -> Int {
+           let s: MutableSet<String> = c.MutableSet.new().insert(\"x\")
+           if (s.contains(\"x\")) { 1 } else { 0 }
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_global_mutable_set_constructor_surface_is_removed_rfc_0008() {
+    let err = run_err("fn main() -> Int { MutableSet.new().len() }");
+    assert!(
+        err.contains("no method `new`")
+            || err.contains("unresolved name")
+            || err.contains("import name"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn eval_mutable_set_aliases_observe_in_place_mutation() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let s = collections.MutableSet.new().insert(\"a\").insert(\"b\")
+           let alias = s
+           s.remove(\"a\")
+           (if (alias.contains(\"a\")) { 10 } else { 0 }) + alias.len()
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_mutable_set_values_order_is_deterministic() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let s = collections.MutableSet.new()
+             .insert(\"b\")
+             .insert(\"a\")
+             .remove(\"b\")
+             .insert(\"b\")
+           let values = s.values().to_list()
+           if (values[0] == \"a\" && values[1] == \"b\") { 1 } else { 0 }
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_mutable_set_invalid_element_type_is_compile_error() {
+    assert!(check_has_compile_errors(
+        "import collections
+         fn main() -> Int {
+           let s = collections.MutableSet.new().insert(3.14)
+           s.len()
+         }"
+    ));
+}
+
+#[test]
 fn eval_mutable_list_aliases_observe_in_place_mutation() {
     let val = run_ok(
         "import collections

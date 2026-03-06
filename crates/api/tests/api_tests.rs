@@ -4744,6 +4744,65 @@ fn check_mutable_map_invalid_key_type_reports_e0024() {
 }
 
 #[test]
+fn check_collections_mutable_set_constructor_surface_has_no_diagnostics_rfc_0008() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+fn main() -> Int {
+    let s = collections.MutableSet.new().insert("a").insert("b")
+    s.len()
+}"#,
+        "collections.MutableSet constructor canonical surface",
+    );
+}
+
+#[test]
+fn check_collections_mutable_set_alias_constructor_surface_has_no_diagnostics_rfc_0008() {
+    assert_check_no_diagnostics(
+        r#"import collections as c
+
+fn main() -> Int {
+    let s: MutableSet<String> = c.MutableSet.new().insert("x")
+    if (s.contains("x")) { 1 } else { 0 }
+}"#,
+        "collections.MutableSet alias constructor canonical surface",
+    );
+}
+
+#[test]
+fn check_global_mutable_set_constructor_surface_is_removed_rfc_0008() {
+    let output = check("fn main() -> Int { MutableSet.new().len() }", "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("no method") || d.message.contains("unresolved name")),
+        "expected removed constructor-surface diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_mutable_set_invalid_element_type_reports_e0028() {
+    let src = r#"
+        import collections
+        fn main() -> Int {
+            let s = collections.MutableSet.new().insert(3.14)
+            s.len()
+        }
+    "#;
+    let output = check(src, "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0028" && d.message.contains("set element")),
+        "expected E0028 set element diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_effect_module_alias_still_resolves_rfc_0004() {
     let output = check(
         r#"import io as i

@@ -1636,9 +1636,17 @@ impl<'a> InferenceCtx<'a> {
 
             // Check Set element type: methods that take an element (insert, contains, remove)
             // must have a hashable element type.
-            if core == Some(CoreType::Set)
+            if matches!(core, Some(CoreType::Set | CoreType::MutableSet))
                 && !args.is_empty()
-                && matches!(method_str, "set_insert" | "set_contains" | "set_remove")
+                && matches!(
+                    method_str,
+                    "set_insert"
+                        | "set_contains"
+                        | "set_remove"
+                        | "mutable_set_insert"
+                        | "mutable_set_contains"
+                        | "mutable_set_remove"
+                )
             {
                 let elem_ty = self.table.resolve_deep(&args[0]);
                 if !elem_ty.is_hashable_collection_key() {
