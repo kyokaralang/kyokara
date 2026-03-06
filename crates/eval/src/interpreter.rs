@@ -2702,6 +2702,19 @@ impl Interpreter {
                     self.make_none()
                 }
             }
+            IntrinsicFn::MutableMapGet => {
+                let Value::MutableMap(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_get expects a MutableMap".into(),
+                    ));
+                };
+                let key = MapKey::from_value(&args[1])?;
+                if let Some(v) = entries.borrow().get(&key) {
+                    self.make_some(v.clone())
+                } else {
+                    self.make_none()
+                }
+            }
             IntrinsicFn::SeqMap => {
                 let plan = self.require_traversal_plan(&args[0], "seq_map")?;
                 Ok(Value::seq_plan(SeqPlan::Map {
@@ -3088,6 +3101,16 @@ impl Interpreter {
                 .core_types
                 .get(CoreType::MutableList)
                 .map(|_| ReceiverKey::Core(CoreType::MutableList)),
+            Value::MutableMap(_) => self
+                .module_scope
+                .core_types
+                .get(CoreType::MutableMap)
+                .map(|_| ReceiverKey::Core(CoreType::MutableMap)),
+            Value::MutableSet(_) => self
+                .module_scope
+                .core_types
+                .get(CoreType::MutableSet)
+                .map(|_| ReceiverKey::Core(CoreType::MutableSet)),
             Value::Deque(_) => self
                 .module_scope
                 .core_types
@@ -3188,8 +3211,16 @@ impl Interpreter {
                 let k = MapKey::from_value(key)?;
                 entries.get(&k).cloned().ok_or(RuntimeError::KeyNotFound)
             }
+            (Value::MutableMap(entries), key) => {
+                let k = MapKey::from_value(key)?;
+                entries
+                    .borrow()
+                    .get(&k)
+                    .cloned()
+                    .ok_or(RuntimeError::KeyNotFound)
+            }
             _ => Err(RuntimeError::TypeError(
-                "indexing requires List, MutableList, String, or Map".into(),
+                "indexing requires List, MutableList, String, Map, or MutableMap".into(),
             )),
         }
     }

@@ -13,7 +13,7 @@ If a topic appears in multiple files, this index decides the source of truth.
 | API shape and naming law | [`docs/rfcs/0001-api-surface-law.md`](rfcs/0001-api-surface-law.md) | Normative API surface constraints. |
 | Compiler API output contract | [`docs/rfcs/0007-optional-typed-ast-api-output.md`](rfcs/0007-optional-typed-ast-api-output.md) | Default diagnostics/holes/symbol_graph + optional `typed_ast` opt-in. |
 | Traversal surface policy | [`docs/rfcs/0002-collection-first-traversal-surface.md`](rfcs/0002-collection-first-traversal-surface.md), [`docs/rfcs/0003-opaque-traversal-constructor-surface.md`](rfcs/0003-opaque-traversal-constructor-surface.md) | Collection-first methods + opaque constructor/type surface. |
-| Mutable collection naming/placement | [`docs/rfcs/0005-mutable-collection-naming-and-placement.md`](rfcs/0005-mutable-collection-naming-and-placement.md) | Canonical `Mutable*` naming and `collections.*` placement rules. |
+| Mutable collection naming/placement | [`docs/rfcs/0005-mutable-collection-naming-and-placement.md`](rfcs/0005-mutable-collection-naming-and-placement.md), [`docs/rfcs/0008-mutable-map-mutableset-surface.md`](rfcs/0008-mutable-map-mutableset-surface.md) | Canonical `Mutable*` naming and `collections.*` placement rules; follow-up draft for `MutableMap`/`MutableSet`. |
 | Token-count workflow | [`docs/token-metrics.md`](token-metrics.md) | Evergreen process doc. |
 
 ## Archived and dated docs

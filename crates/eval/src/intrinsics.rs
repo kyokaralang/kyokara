@@ -43,6 +43,22 @@ pub enum IntrinsicFn {
     MutableListGet,
     MutableListSet,
     MutableListUpdate,
+    MutableMapNew,
+    MutableMapInsert,
+    MutableMapGet,
+    MutableMapContains,
+    MutableMapRemove,
+    MutableMapLen,
+    MutableMapKeys,
+    MutableMapValues,
+    MutableMapIsEmpty,
+    MutableSetNew,
+    MutableSetInsert,
+    MutableSetContains,
+    MutableSetRemove,
+    MutableSetLen,
+    MutableSetIsEmpty,
+    MutableSetValues,
     DequeNew,
     DequePushFront,
     DequePushBack,
@@ -166,6 +182,7 @@ impl IntrinsicFn {
                 | IntrinsicFn::ListUpdate
                 | IntrinsicFn::MutableListGet
                 | IntrinsicFn::MutableListUpdate
+                | IntrinsicFn::MutableMapGet
                 | IntrinsicFn::DequePopFront
                 | IntrinsicFn::DequePopBack
                 | IntrinsicFn::SeqMap
@@ -413,6 +430,159 @@ impl IntrinsicFn {
 
                 xs.borrow_mut()[i as usize] = val;
                 Ok(Value::MutableList(xs))
+            }
+            IntrinsicFn::MutableMapNew => Ok(Value::mutable_map(IndexMap::new())),
+            IntrinsicFn::MutableMapInsert => {
+                let mut args = args;
+                let value = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_map_insert: missing value argument".into(),
+                ))?;
+                let key_value = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_map_insert: missing key argument".into(),
+                ))?;
+                let Value::MutableMap(entries) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_map_insert: missing mutable map argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_insert expects a MutableMap".into(),
+                    ));
+                };
+                let key = MapKey::from_value(&key_value)?;
+                entries.borrow_mut().insert(key, value);
+                Ok(Value::MutableMap(entries))
+            }
+            IntrinsicFn::MutableMapContains => {
+                let Value::MutableMap(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_contains expects a MutableMap".into(),
+                    ));
+                };
+                let key = MapKey::from_value(&args[1])?;
+                Ok(Value::Bool(entries.borrow().contains_key(&key)))
+            }
+            IntrinsicFn::MutableMapRemove => {
+                let mut args = args;
+                let key_value = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_map_remove: missing key argument".into(),
+                ))?;
+                let Value::MutableMap(entries) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_map_remove: missing mutable map argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_remove expects a MutableMap".into(),
+                    ));
+                };
+                let key = MapKey::from_value(&key_value)?;
+                entries.borrow_mut().shift_remove(&key);
+                Ok(Value::MutableMap(entries))
+            }
+            IntrinsicFn::MutableMapLen => {
+                let Value::MutableMap(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_len expects a MutableMap".into(),
+                    ));
+                };
+                Ok(Value::Int(entries.borrow().len() as i64))
+            }
+            IntrinsicFn::MutableMapKeys => {
+                let Value::MutableMap(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_keys expects a MutableMap".into(),
+                    ));
+                };
+                Ok(Value::seq_source(SeqSource::MapKeys(Rc::new(
+                    entries.borrow().clone(),
+                ))))
+            }
+            IntrinsicFn::MutableMapValues => {
+                let Value::MutableMap(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_values expects a MutableMap".into(),
+                    ));
+                };
+                Ok(Value::seq_source(SeqSource::MapValues(Rc::new(
+                    entries.borrow().clone(),
+                ))))
+            }
+            IntrinsicFn::MutableMapIsEmpty => {
+                let Value::MutableMap(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_is_empty expects a MutableMap".into(),
+                    ));
+                };
+                Ok(Value::Bool(entries.borrow().is_empty()))
+            }
+            IntrinsicFn::MutableSetNew => Ok(Value::mutable_set(IndexSet::new())),
+            IntrinsicFn::MutableSetInsert => {
+                let mut args = args;
+                let elem_value = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_set_insert: missing element argument".into(),
+                ))?;
+                let Value::MutableSet(entries) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_set_insert: missing mutable set argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_set_insert expects a MutableSet".into(),
+                    ));
+                };
+                let elem = MapKey::from_value(&elem_value)?;
+                entries.borrow_mut().insert(elem);
+                Ok(Value::MutableSet(entries))
+            }
+            IntrinsicFn::MutableSetContains => {
+                let Value::MutableSet(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_set_contains expects a MutableSet".into(),
+                    ));
+                };
+                let elem = MapKey::from_value(&args[1])?;
+                Ok(Value::Bool(entries.borrow().contains(&elem)))
+            }
+            IntrinsicFn::MutableSetRemove => {
+                let mut args = args;
+                let elem_value = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_set_remove: missing element argument".into(),
+                ))?;
+                let Value::MutableSet(entries) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_set_remove: missing mutable set argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_set_remove expects a MutableSet".into(),
+                    ));
+                };
+                let elem = MapKey::from_value(&elem_value)?;
+                entries.borrow_mut().shift_remove(&elem);
+                Ok(Value::MutableSet(entries))
+            }
+            IntrinsicFn::MutableSetLen => {
+                let Value::MutableSet(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_set_len expects a MutableSet".into(),
+                    ));
+                };
+                Ok(Value::Int(entries.borrow().len() as i64))
+            }
+            IntrinsicFn::MutableSetIsEmpty => {
+                let Value::MutableSet(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_set_is_empty expects a MutableSet".into(),
+                    ));
+                };
+                Ok(Value::Bool(entries.borrow().is_empty()))
+            }
+            IntrinsicFn::MutableSetValues => {
+                let Value::MutableSet(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_set_values expects a MutableSet".into(),
+                    ));
+                };
+                Ok(Value::seq_source(SeqSource::SetValues(Rc::new(
+                    entries.borrow().clone(),
+                ))))
             }
             IntrinsicFn::DequeNew => Ok(Value::deque(VecDeque::new())),
             IntrinsicFn::DequePushFront => {
@@ -1139,6 +1309,7 @@ impl IntrinsicFn {
             IntrinsicFn::ListGet
             | IntrinsicFn::ListHead
             | IntrinsicFn::MutableListGet
+            | IntrinsicFn::MutableMapGet
             | IntrinsicFn::SeqMap
             | IntrinsicFn::SeqFilter
             | IntrinsicFn::SeqFold
@@ -1229,6 +1400,70 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (
             Name::new(interner, "mutable_list_update"),
             IntrinsicFn::MutableListUpdate,
+        ),
+        (
+            Name::new(interner, "mutable_map_new"),
+            IntrinsicFn::MutableMapNew,
+        ),
+        (
+            Name::new(interner, "mutable_map_insert"),
+            IntrinsicFn::MutableMapInsert,
+        ),
+        (
+            Name::new(interner, "mutable_map_get"),
+            IntrinsicFn::MutableMapGet,
+        ),
+        (
+            Name::new(interner, "mutable_map_contains"),
+            IntrinsicFn::MutableMapContains,
+        ),
+        (
+            Name::new(interner, "mutable_map_remove"),
+            IntrinsicFn::MutableMapRemove,
+        ),
+        (
+            Name::new(interner, "mutable_map_len"),
+            IntrinsicFn::MutableMapLen,
+        ),
+        (
+            Name::new(interner, "mutable_map_keys"),
+            IntrinsicFn::MutableMapKeys,
+        ),
+        (
+            Name::new(interner, "mutable_map_values"),
+            IntrinsicFn::MutableMapValues,
+        ),
+        (
+            Name::new(interner, "mutable_map_is_empty"),
+            IntrinsicFn::MutableMapIsEmpty,
+        ),
+        (
+            Name::new(interner, "mutable_set_new"),
+            IntrinsicFn::MutableSetNew,
+        ),
+        (
+            Name::new(interner, "mutable_set_insert"),
+            IntrinsicFn::MutableSetInsert,
+        ),
+        (
+            Name::new(interner, "mutable_set_contains"),
+            IntrinsicFn::MutableSetContains,
+        ),
+        (
+            Name::new(interner, "mutable_set_remove"),
+            IntrinsicFn::MutableSetRemove,
+        ),
+        (
+            Name::new(interner, "mutable_set_len"),
+            IntrinsicFn::MutableSetLen,
+        ),
+        (
+            Name::new(interner, "mutable_set_is_empty"),
+            IntrinsicFn::MutableSetIsEmpty,
+        ),
+        (
+            Name::new(interner, "mutable_set_values"),
+            IntrinsicFn::MutableSetValues,
         ),
         // Deque
         (Name::new(interner, "deque_new"), IntrinsicFn::DequeNew),

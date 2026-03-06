@@ -84,6 +84,8 @@ pub enum Value {
     },
     List(Rc<Vec<Value>>),
     MutableList(Rc<RefCell<Vec<Value>>>),
+    MutableMap(Rc<RefCell<IndexMap<MapKey, Value>>>),
+    MutableSet(Rc<RefCell<IndexSet<MapKey>>>),
     Deque(Rc<VecDeque<Value>>),
     Seq(Rc<SeqPlan>),
     Map(Rc<IndexMap<MapKey, Value>>),
@@ -186,6 +188,8 @@ impl PartialEq for Value {
             (Value::Record { fields: f1, .. }, Value::Record { fields: f2, .. }) => f1 == f2,
             (Value::List(a), Value::List(b)) => a == b,
             (Value::MutableList(a), Value::MutableList(b)) => *a.borrow() == *b.borrow(),
+            (Value::MutableMap(a), Value::MutableMap(b)) => *a.borrow() == *b.borrow(),
+            (Value::MutableSet(a), Value::MutableSet(b)) => *a.borrow() == *b.borrow(),
             (Value::Deque(a), Value::Deque(b)) => a == b,
             // Sequences are lazy plans; do not force-evaluate for equality.
             (Value::Seq(_), Value::Seq(_)) => false,
@@ -207,6 +211,14 @@ impl Value {
 
     pub fn mutable_list(items: Vec<Value>) -> Self {
         Value::MutableList(Rc::new(RefCell::new(items)))
+    }
+
+    pub fn mutable_map(entries: IndexMap<MapKey, Value>) -> Self {
+        Value::MutableMap(Rc::new(RefCell::new(entries)))
+    }
+
+    pub fn mutable_set(entries: IndexSet<MapKey>) -> Self {
+        Value::MutableSet(Rc::new(RefCell::new(entries)))
     }
 
     pub fn seq_source(source: SeqSource) -> Self {
@@ -262,6 +274,22 @@ impl Value {
                 let fs: Vec<String> = items.borrow().iter().map(|v| v.display(interner)).collect();
                 format!("MutableList([{}])", fs.join(", "))
             }
+            Value::MutableMap(entries) => {
+                let fs: Vec<String> = entries
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k.display(interner), v.display(interner)))
+                    .collect();
+                format!("MutableMap({{{}}})", fs.join(", "))
+            }
+            Value::MutableSet(entries) => {
+                let fs: Vec<String> = entries
+                    .borrow()
+                    .iter()
+                    .map(|k| k.display(interner))
+                    .collect();
+                format!("MutableSet(#{{{}}})", fs.join(", "))
+            }
             Value::Deque(items) => {
                 let fs: Vec<String> = items.iter().map(|v| v.display(interner)).collect();
                 format!("Deque([{}])", fs.join(", "))
@@ -310,6 +338,36 @@ mod tests {
         assert!(
             Rc::ptr_eq(a, b),
             "mutable list clone should share storage for alias-visible mutation"
+        );
+    }
+
+    #[test]
+    fn mutable_map_clone_shares_storage() {
+        let mut entries = IndexMap::new();
+        entries.insert(MapKey::Int(1), Value::Int(10));
+        let original = Value::mutable_map(entries);
+        let cloned = original.clone();
+        let (Value::MutableMap(a), Value::MutableMap(b)) = (&original, &cloned) else {
+            panic!("expected mutable map values");
+        };
+        assert!(
+            Rc::ptr_eq(a, b),
+            "mutable map clone should share storage for alias-visible mutation"
+        );
+    }
+
+    #[test]
+    fn mutable_set_clone_shares_storage() {
+        let mut entries = IndexSet::new();
+        entries.insert(MapKey::Int(1));
+        let original = Value::mutable_set(entries);
+        let cloned = original.clone();
+        let (Value::MutableSet(a), Value::MutableSet(b)) = (&original, &cloned) else {
+            panic!("expected mutable set values");
+        };
+        assert!(
+            Rc::ptr_eq(a, b),
+            "mutable set clone should share storage for alias-visible mutation"
         );
     }
 

@@ -1614,11 +1614,18 @@ impl<'a> InferenceCtx<'a> {
             let core = self.module_scope.core_types.kind_for_idx(*def);
             let method_str = method_name.resolve(self.interner);
 
-            if core == Some(CoreType::Map)
+            if matches!(core, Some(CoreType::Map | CoreType::MutableMap))
                 && args.len() >= 2
                 && matches!(
                     method_str,
-                    "map_insert" | "map_get" | "map_contains" | "map_remove"
+                    "map_insert"
+                        | "map_get"
+                        | "map_contains"
+                        | "map_remove"
+                        | "mutable_map_insert"
+                        | "mutable_map_get"
+                        | "mutable_map_contains"
+                        | "mutable_map_remove"
                 )
             {
                 let key_ty = self.table.resolve_deep(&args[0]);
@@ -1629,9 +1636,17 @@ impl<'a> InferenceCtx<'a> {
 
             // Check Set element type: methods that take an element (insert, contains, remove)
             // must have a hashable element type.
-            if core == Some(CoreType::Set)
+            if matches!(core, Some(CoreType::Set | CoreType::MutableSet))
                 && !args.is_empty()
-                && matches!(method_str, "set_insert" | "set_contains" | "set_remove")
+                && matches!(
+                    method_str,
+                    "set_insert"
+                        | "set_contains"
+                        | "set_remove"
+                        | "mutable_set_insert"
+                        | "mutable_set_contains"
+                        | "mutable_set_remove"
+                )
             {
                 let elem_ty = self.table.resolve_deep(&args[0]);
                 if !elem_ty.is_hashable_collection_key() {
@@ -1670,6 +1685,18 @@ impl<'a> InferenceCtx<'a> {
                     args.first().cloned().unwrap_or(Ty::Error)
                 }
                 Some(CoreType::Map) => {
+                    let key_ty = args
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| self.table.fresh_var());
+                    self.infer_expr(index, &Expectation::Has(key_ty.clone()));
+                    let resolved_key = self.table.resolve_deep(&key_ty);
+                    if !resolved_key.is_hashable_collection_key() {
+                        self.push_diag(TyDiagnosticData::InvalidMapKey { ty: resolved_key });
+                    }
+                    args.get(1).cloned().unwrap_or(Ty::Error)
+                }
+                Some(CoreType::MutableMap) => {
                     let key_ty = args
                         .first()
                         .cloned()

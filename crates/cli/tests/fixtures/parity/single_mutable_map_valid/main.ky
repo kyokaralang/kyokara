@@ -1,0 +1,6 @@
+import collections
+
+fn main() -> Int {
+  let m = collections.MutableMap.new().insert("a", 1).insert("b", 2)
+  m.len()
+}
