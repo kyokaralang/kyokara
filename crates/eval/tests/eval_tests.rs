@@ -3452,6 +3452,103 @@ fn eval_named_args_preserve_source_order_evaluation() {
 }
 
 #[test]
+fn eval_positional_args_preserve_source_order_evaluation() {
+    let val = run_ok(
+        "import collections
+         fn tap(log: MutableList<Int>, n: Int) -> Int {
+           log.push(n)
+           n
+         }
+         fn pair(x: Int, y: Int) -> Int { x * 10 + y }
+         fn main() -> Int {
+           let log = collections.MutableList.new()
+           let result = pair(tap(log, 1), tap(log, 2))
+           if (log.len() == 2 && log[0] == 1 && log[1] == 2) { result } else { 0 }
+         }",
+    );
+    assert_eq!(val, Value::Int(12));
+}
+
+#[test]
+fn eval_module_call_positional_args_preserve_source_order_evaluation() {
+    let val = run_ok(
+        "import collections
+         import math
+         fn tap(log: MutableList<Int>, n: Int) -> Int {
+           log.push(n)
+           n
+         }
+         fn main() -> Int {
+           let log = collections.MutableList.new()
+           let result = math.min(tap(log, 3), tap(log, 10))
+           if (log.len() == 2 && log[0] == 3 && log[1] == 10) { result } else { 99 }
+         }",
+    );
+    assert_eq!(val, Value::Int(3));
+}
+
+#[test]
+fn eval_method_call_evaluates_receiver_before_args() {
+    let val = run_ok(
+        "import collections
+         type Box = { value: Int }
+         fn Box.sub(self, n: Int) -> Int { self.value - n }
+         fn build(log: MutableList<Int>) -> Box {
+           log.push(1)
+           Box { value: 10 }
+         }
+         fn tap(log: MutableList<Int>, n: Int) -> Int {
+           log.push(n)
+           n
+         }
+         fn main() -> Int {
+           let log = collections.MutableList.new()
+           let result = build(log).sub(tap(log, 2))
+           if (log.len() == 2 && log[0] == 1 && log[1] == 2) { result } else { 0 }
+         }",
+    );
+    assert_eq!(val, Value::Int(8));
+}
+
+#[test]
+fn eval_local_callable_shadows_top_level_function_on_positional_call() {
+    let val = run_ok(
+        "fn calc(x: Int) -> Int { x + 100 }
+         fn main() -> Int {
+           let calc = fn(x: Int) => x + 1
+           calc(3)
+         }",
+    );
+    assert_eq!(val, Value::Int(4));
+}
+
+#[test]
+fn eval_param_callable_shadows_top_level_function_on_positional_call() {
+    let val = run_ok(
+        "fn apply(x: Int) -> Int { x + 100 }
+         fn run(apply: fn(Int) -> Int) -> Int {
+           apply(3)
+         }
+         fn main() -> Int {
+           run(fn(x: Int) => x + 1)
+         }",
+    );
+    assert_eq!(val, Value::Int(4));
+}
+
+#[test]
+fn eval_local_callable_shadows_top_level_function_on_named_call() {
+    let val = run_ok(
+        "fn sub(x: Int, y: Int) -> Int { x - y }
+         fn main() -> Int {
+           let sub = fn(x: Int, y: Int) => y - x
+           sub(y: 10, x: 3)
+         }",
+    );
+    assert_eq!(val, Value::Int(7));
+}
+
+#[test]
 fn eval_named_args_matrix_happy_paths() {
     struct Case<'a> {
         name: &'a str,
