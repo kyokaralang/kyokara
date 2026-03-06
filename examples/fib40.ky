@@ -1,0 +1,13 @@
+import io
+
+fn fib(n: Int) -> Int {
+  if (n < 2) {
+    n
+  } else {
+    fib(n - 1) + fib(n - 2)
+  }
+}
+
+fn main() -> Unit {
+  io.println(fib(40).to_string())
+}
