@@ -1787,6 +1787,34 @@ fn eval_global_deque_constructor_surface_is_removed_rfc_0004() {
 }
 
 #[test]
+fn eval_collections_list_map_set_constructor_surface_rfc_0009() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let xs = collections.List.new().push(1).push(2)
+           let m = collections.Map.new().insert(\"a\", 10).insert(\"b\", 20)
+           let s = collections.Set.new().insert(\"x\").insert(\"y\")
+           xs.len() * 100 + m.len() * 10 + s.len()
+         }",
+    );
+    assert!(matches!(val, Value::Int(222)));
+}
+
+#[test]
+fn eval_collections_alias_list_map_set_constructor_surface_rfc_0009() {
+    let val = run_ok(
+        "import collections as c
+         fn main() -> Int {
+           let xs: List<Int> = c.List.new().push(7)
+           let m: Map<String, Int> = c.Map.new().insert(\"k\", 3)
+           let s: Set<String> = c.Set.new().insert(\"k\")
+           xs.head().unwrap_or(0) + m.get(\"k\").unwrap_or(0) + if (s.contains(\"k\")) { 1 } else { 0 }
+         }",
+    );
+    assert!(matches!(val, Value::Int(11)));
+}
+
+#[test]
 fn eval_effect_module_alias_call_works_rfc_0004() {
     let val = run_ok(
         "import io as i

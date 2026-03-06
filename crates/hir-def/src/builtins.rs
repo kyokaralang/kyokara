@@ -1020,19 +1020,43 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
         }
     }
 
-    // Specialized collection constructors are module-qualified.
+    // Collection constructors are also module-qualified under `collections.*`.
+    // This enables canonical `collections.List.new()` / `collections.Map.new()`
+    // / `collections.Set.new()` while preserving current unqualified static
+    // constructors during transition.
     let collections = Name::new(interner, "collections");
+    let list = Name::new(interner, "List");
+    let map = Name::new(interner, "Map");
+    let set = Name::new(interner, "Set");
     let deque = Name::new(interner, "Deque");
     let mutable_list = Name::new(interner, "MutableList");
     let mutable_map = Name::new(interner, "MutableMap");
     let mutable_set = Name::new(interner, "MutableSet");
     let new = Name::new(interner, "new");
     let from_list = Name::new(interner, "from_list");
+    let list_new = Name::new(interner, "list_new");
+    let map_new = Name::new(interner, "map_new");
+    let set_new = Name::new(interner, "set_new");
     let deque_new = Name::new(interner, "deque_new");
     let mutable_list_new = Name::new(interner, "mutable_list_new");
     let mutable_list_from_list = Name::new(interner, "mutable_list_from_list");
     let mutable_map_new = Name::new(interner, "mutable_map_new");
     let mutable_set_new = Name::new(interner, "mutable_set_new");
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&list_new) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, list, new), fn_idx);
+    }
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&map_new) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, map, new), fn_idx);
+    }
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&set_new) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, set, new), fn_idx);
+    }
     if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&deque_new) {
         scope
             .synthetic_module_static_methods

@@ -4645,6 +4645,36 @@ fn check_global_deque_constructor_surface_is_removed_rfc_0004() {
 }
 
 #[test]
+fn check_collections_list_map_set_constructor_surface_has_no_diagnostics_rfc_0009() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+fn main() -> Int {
+    let xs = collections.List.new().push(1).push(2)
+    let m = collections.Map.new().insert("a", 10).insert("b", 20)
+    let s = collections.Set.new().insert("x").insert("y")
+    xs.len() + m.len() + s.len()
+}"#,
+        "collections.List/Map/Set constructor canonical surface",
+    );
+}
+
+#[test]
+fn check_collections_alias_list_map_set_constructor_surface_has_no_diagnostics_rfc_0009() {
+    assert_check_no_diagnostics(
+        r#"import collections as c
+
+fn main() -> Int {
+    let xs: List<Int> = c.List.new().push(1)
+    let m: Map<String, Int> = c.Map.new().insert("a", 1)
+    let s: Set<String> = c.Set.new().insert("x")
+    xs.len() + m.len() + s.len()
+}"#,
+        "collections alias List/Map/Set constructor canonical surface",
+    );
+}
+
+#[test]
 fn check_collections_mutable_list_constructor_surface_has_no_diagnostics_rfc_0005() {
     assert_check_no_diagnostics(
         r#"import collections
