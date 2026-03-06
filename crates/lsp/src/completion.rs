@@ -107,19 +107,45 @@ fn try_dot_completion(
     // Get the base expression (first child that's an expr node).
     let base_node = field_expr
         .children()
-        .find(|n| n.kind() == SyntaxKind::PathExpr)?;
-
-    // The base should be a single-segment path (e.g., `io`, `List`).
-    let path_node = base_node
-        .children()
-        .find(|n| n.kind() == SyntaxKind::Path)?;
-    let ident = path_node
-        .children_with_tokens()
-        .filter_map(|c| c.into_token())
-        .find(|t| t.kind() == SyntaxKind::Ident)?;
-    let base_name = ident.text().to_string();
+        .find(|n| matches!(n.kind(), SyntaxKind::PathExpr | SyntaxKind::FieldExpr))?;
+    let base_text = base_node.text().to_string();
 
     let mut items = Vec::new();
+
+    // Check nested module-qualified static methods: collections.List.new, c.List.new, etc.
+    if let Some((module_name, type_name)) = base_text.split_once('.')
+        && !module_name.contains('.')
+        && !type_name.contains('.')
+        && let Some(visible_module) = scope
+            .imported_modules
+            .iter()
+            .find(|name| name.resolve(interner) == module_name)
+            .copied()
+    {
+        for ((module, ty_name, method_name), fn_idx) in &scope.synthetic_module_static_methods {
+            if *module != visible_module || ty_name.resolve(interner) != type_name {
+                continue;
+            }
+            let fn_item = &tree.functions[*fn_idx];
+            let params: Vec<String> = fn_item
+                .params
+                .iter()
+                .map(|p| p.name.resolve(interner).to_string())
+                .collect();
+            let ret = fn_item.ret_type.as_ref().map(|_| " -> ...").unwrap_or("");
+            let detail = format!("fn({params}){ret}", params = params.join(", "));
+            items.push(CompletionItem {
+                label: method_name.resolve(interner).to_string(),
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some(detail),
+                ..Default::default()
+            });
+        }
+
+        return if items.is_empty() { None } else { Some(items) };
+    }
+
+    let base_name = base_text;
 
     // Check synthetic modules: io.println, math.min, fs.read_file, etc.
     for (mod_name, mod_fns) in &scope.synthetic_modules {
@@ -147,7 +173,7 @@ fn try_dot_completion(
         }
     }
 
-    // Check static methods: List.new, Map.new, etc.
+    // Check type-owned static methods on bare type names.
     let base_type_idx = scope.types.iter().find_map(|(ty_name, ty_idx)| {
         let resolved = ty_name.resolve(interner);
         (!resolved.starts_with("$core_") && resolved == base_name).then_some(*ty_idx)
@@ -607,7 +633,7 @@ mod tests {
     #[test]
     fn completion_dot_after_type_shows_static_methods() {
         // Use Int return type to avoid parser issues with List[Int].
-        let source = "fn main() -> Int {\n  let xs = List.new()\n  xs.len()\n}";
+        let source = "import collections\nfn main() -> Int {\n  let xs = collections.List.new()\n  xs.len()\n}";
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
         // Cursor on "new" — inside FieldExpr with base "List".

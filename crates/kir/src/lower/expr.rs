@@ -391,7 +391,7 @@ impl<'a> LoweringCtx<'a> {
                     return self.builder.push_call(target, arg_vals, ty);
                 }
 
-                // Static method call: List.new(), Map.new()
+                // Type-owned static call: bare `Type.method()` if registered.
                 if let Some(&type_idx) = self.module_scope.types.get(&seg) {
                     let owner_key = self.static_owner_key_for_type_idx(type_idx);
                     if let Some(&fn_idx) = self.module_scope.static_methods.get(&(owner_key, field))

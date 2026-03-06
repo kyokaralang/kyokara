@@ -550,7 +550,8 @@ impl<'a> InferenceCtx<'a> {
 
         // ── Module-qualified and static method call resolution ───────
         // Before method call resolution, check if callee is `module.fn()`
-        // or `Type.static_method()` (e.g., `io.println(s)`, `List.new()`).
+        // or a type-owned static call (e.g., `io.println(s)`,
+        // `collections.List.new()`).
         if let Some((base, field)) = field_callee
             && let Some(result) = self.try_infer_qualified_call(callee, base, field, args)
         {
@@ -1263,7 +1264,8 @@ impl<'a> InferenceCtx<'a> {
 
     /// Try to resolve `base.field(args)` as a module-qualified or static method call.
     ///
-    /// Handles patterns like `io.println(s)`, `math.min(a, b)`, `List.new()`.
+    /// Handles patterns like `io.println(s)`, `math.min(a, b)`,
+    /// `collections.List.new()`.
     /// Returns `Some(return_type)` if resolved, `None` to fall through.
     fn try_infer_qualified_call(
         &mut self,
@@ -1342,7 +1344,7 @@ impl<'a> InferenceCtx<'a> {
             return Some(Ty::Error);
         }
 
-        // Static method call: List.new(), Map.new()
+        // Type-owned static call: bare `Type.method()` if registered.
         if let Some(&type_idx) = self.module_scope.types.get(&name) {
             let owner_key = self.static_owner_key_for_type_idx(type_idx);
             if let Some(&fn_idx) = self.module_scope.static_methods.get(&(owner_key, field)) {

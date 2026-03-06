@@ -791,7 +791,7 @@ impl Interpreter {
                             return self.call_value(fn_val, arg_vals).map(ControlFlow::Value);
                         }
 
-                        // Static method call: List.new(), Map.new()
+                        // Type-owned static call: bare `Type.method()` if registered.
                         if let Some(owner_key) = self.static_owner_key_for_name(seg)
                             && let Some(&fn_idx) = self
                                 .module_scope
@@ -1161,7 +1161,7 @@ impl Interpreter {
                             return self.call_value(fn_val, arg_vals).map(ControlFlow::Value);
                         }
 
-                        // Static method call: List.new()
+                        // Type-owned static call: bare `Type.method()` if registered.
                         if let Some(owner_key) = self.static_owner_key_for_name(seg)
                             && let Some(&fn_idx) = self
                                 .module_scope

@@ -2,10 +2,32 @@
 #![allow(clippy::unwrap_used)]
 
 use kyokara_api::{
-    CheckOptions, check, check_project, check_project_with_options, check_with_options, refactor,
-    refactor_project,
+    CheckOptions, CheckOutput, check as raw_check, check_project, check_project_with_options,
+    check_with_options as raw_check_with_options, refactor, refactor_project,
 };
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+
+fn normalize_immutable_collection_constructor_import(source: &str) -> Cow<'_, str> {
+    let uses_canonical_immutable_constructor = source.contains("collections.List.new(")
+        || source.contains("collections.Map.new(")
+        || source.contains("collections.Set.new(");
+    if uses_canonical_immutable_constructor && !source.contains("import collections") {
+        Cow::Owned(format!("import collections\n{source}"))
+    } else {
+        Cow::Borrowed(source)
+    }
+}
+
+fn check(source: &str, file_name: &str) -> CheckOutput {
+    let source = normalize_immutable_collection_constructor_import(source);
+    raw_check(source.as_ref(), file_name)
+}
+
+fn check_with_options(source: &str, file_name: &str, options: &CheckOptions) -> CheckOutput {
+    let source = normalize_immutable_collection_constructor_import(source);
+    raw_check_with_options(source.as_ref(), file_name, options)
+}
 
 #[test]
 fn check_clean_program_no_diagnostics() {
@@ -4169,7 +4191,7 @@ fn diagnostic_delta_type_mismatch_adds_one_e0001() {
 fn check_set_invalid_element_type_reports_e0028() {
     let output = check(
         r#"fn main() -> Int {
-            let s = Set.new().insert(3.14)
+            let s = collections.Set.new().insert(3.14)
             s.len()
         }"#,
         "test.ky",
@@ -4189,10 +4211,10 @@ fn check_set_invalid_element_type_reports_e0028() {
 fn check_set_valid_element_types_have_no_set_diagnostic() {
     let output = check(
         r#"fn helper() -> Bool {
-            let i = Set.new().insert(1)
-            let s = Set.new().insert("x")
-            let c = Set.new().insert('z')
-            let b = Set.new().insert(true)
+            let i = collections.Set.new().insert(1)
+            let s = collections.Set.new().insert("x")
+            let c = collections.Set.new().insert('z')
+            let b = collections.Set.new().insert(true)
             i.len() == 1 && s.len() == 1 && c.len() == 1 && b.len() == 1
         }"#,
         "test.ky",
@@ -4211,7 +4233,7 @@ fn check_set_valid_element_types_have_no_set_diagnostic() {
 fn check_map_invalid_key_type_reports_e0024() {
     let output = check(
         r#"fn main() -> Int {
-            let m = Map.new().insert(3.14, 1)
+            let m = collections.Map.new().insert(3.14, 1)
             m.len()
         }"#,
         "test.ky",
@@ -4231,10 +4253,10 @@ fn check_map_invalid_key_type_reports_e0024() {
 fn check_map_valid_key_types_have_no_map_key_diagnostic() {
     let output = check(
         r#"fn helper() -> Bool {
-            let i = Map.new().insert(1, "x")
-            let s = Map.new().insert("k", 1)
-            let c = Map.new().insert('a', 1)
-            let b = Map.new().insert(true, 1)
+            let i = collections.Map.new().insert(1, "x")
+            let s = collections.Map.new().insert("k", 1)
+            let c = collections.Map.new().insert('a', 1)
+            let b = collections.Map.new().insert(true, 1)
             i.len() == 1 && s.len() == 1 && c.len() == 1 && b.len() == 1
         }"#,
         "test.ky",
@@ -4253,8 +4275,8 @@ fn check_map_valid_key_types_have_no_map_key_diagnostic() {
 fn check_list_binary_search_unsortable_element_reports_e0025() {
     let output = check(
         r#"fn main() -> Int {
-            let needle = List.new().push(1)
-            let xs = List.new().push(needle)
+            let needle = collections.List.new().push(1)
+            let xs = collections.List.new().push(needle)
             xs.binary_search(needle)
         }"#,
         "test.ky",
@@ -4274,7 +4296,7 @@ fn check_list_binary_search_unsortable_element_reports_e0025() {
 fn check_list_binary_search_sortable_elements_have_no_e0025() {
     let output = check(
         r#"fn main() -> Int {
-            let xs = List.new().push(1).push(3).push(5)
+            let xs = collections.List.new().push(1).push(3).push(5)
             xs.binary_search(3)
         }"#,
         "test.ky",
@@ -4295,7 +4317,7 @@ fn check_iteration_ergonomics_canonical_surface_has_no_diagnostics() {
         r#"fn main() -> Bool {
             let xs = (0..<5)
             let e = xs.enumerate().to_list()
-            let z = xs.zip(List.new().push(10).push(20)).to_list()
+            let z = xs.zip(collections.List.new().push(10).push(20)).to_list()
             let c = xs.chunks(2).to_list()
             let w = xs.windows(3).to_list()
             e[0].index == 0 && e[0].value == 0 && z.len() == 2 && c.len() == 3 && w.len() == 3
@@ -4308,15 +4330,15 @@ fn check_iteration_ergonomics_canonical_surface_has_no_diagnostics() {
 fn check_iteration_ergonomics_chains_from_map_set_string_have_no_diagnostics() {
     assert_check_no_diagnostics(
         r#"fn main() -> Bool {
-            let m = Map.new().insert("x", 1).insert("y", 2)
+            let m = collections.Map.new().insert("x", 1).insert("y", 2)
             let km = m.keys().enumerate().to_list()
             let map_ok = km.len() == 2 && km[0].index == 0
 
-            let s = Set.new().insert("a").insert("b").insert("c")
+            let s = collections.Set.new().insert("a").insert("b").insert("c")
             let sc = s.values().chunks(2).to_list()
             let set_ok = sc.len() == 2 && sc[1].len() == 1
 
-            let p = "abc".chars().zip(List.new().push(1).push(2)).to_list()
+            let p = "abc".chars().zip(collections.List.new().push(1).push(2)).to_list()
             let str_ok = p.len() == 2 && p[0].left == 'a' && p[1].right == 2
 
             map_ok && set_ok && str_ok
@@ -4456,10 +4478,10 @@ fn check_result_ergonomics_canonical_surface_has_no_diagnostics() {
 fn check_option_result_combinator_parity_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
         r#"fn main() -> Int {
-            let o0 = List.new().head().unwrap_or(1)
-            let o1 = List.new().push(41).head().map_or(0, fn(n: Int) => n + 1)
-            let o2 = List.new().push(41).head().map(fn(n: Int) => n + 1).unwrap_or(0)
-            let o3 = List.new().push(41).head().and_then(fn(n: Int) => Some(n + 1)).unwrap_or(0)
+            let o0 = collections.List.new().head().unwrap_or(1)
+            let o1 = collections.List.new().push(41).head().map_or(0, fn(n: Int) => n + 1)
+            let o2 = collections.List.new().push(41).head().map(fn(n: Int) => n + 1).unwrap_or(0)
+            let o3 = collections.List.new().push(41).head().and_then(fn(n: Int) => Some(n + 1)).unwrap_or(0)
             let r1 = "41".parse_int().map(fn(n: Int) => n + 1).unwrap_or(0)
             let r2 = "41".parse_int().and_then(fn(n: Int) => Ok(n + 1)).unwrap_or(0)
             let r3 = match ("oops".parse_int().map_err(fn(_e: ParseError) => 7)) {
@@ -4476,7 +4498,7 @@ fn check_option_result_combinator_parity_canonical_surface_has_no_diagnostics() 
 fn check_option_and_then_wrong_mapper_result_reports_type_mismatch() {
     let output = check(
         r#"fn main() -> Int {
-            List.new().push(1).head().and_then(fn(n: Int) => n + 1).unwrap_or(0)
+            collections.List.new().push(1).head().and_then(fn(n: Int) => n + 1).unwrap_or(0)
         }"#,
         "test.ky",
     );
@@ -4551,9 +4573,9 @@ fn check_seq_surface_canonical_has_no_diagnostics() {
                 .filter(fn(n: Int) => n > 2)
             let a = xs.count()
             let b = xs.to_list().len()
-            let c = List.new().push(1).push(2).count()
-            let d = Map.new().insert("a", 1).insert("b", 2).keys().count()
-            let e = Set.new().insert("x").insert("y").values().count()
+            let c = collections.List.new().push(1).push(2).count()
+            let d = collections.Map.new().insert("a", 1).insert("b", 2).keys().count()
+            let e = collections.Set.new().insert("x").insert("y").values().count()
             let f = "a,b,c".split(",").count()
             let g = "x\ny".lines().count()
             let h = "abc".chars().count()
@@ -4568,7 +4590,7 @@ fn check_removed_list_traversal_surface_reports_diagnostics() {
     let output = check(
         r#"fn main() -> Int {
             let a = List.range(0, 5).len()
-            let b = List.new().push(1).seq().len()
+            let b = collections.List.new().push(1).seq().len()
             a + b
         }"#,
         "test.ky",
@@ -4590,16 +4612,16 @@ fn check_collection_first_traversal_surface_has_no_diagnostics_rfc_0002() {
         r#"import collections
 
 fn main() -> Int {
-            let list_count = List.new().push(1).push(2).push(3)
+            let list_count = collections.List.new().push(1).push(2).push(3)
                 .map(fn(n: Int) => n + 1)
                 .filter(fn(n: Int) => n > 2)
                 .count()
             let deque_count = collections.Deque.new().push_back(1).push_back(2).push_back(3)
                 .map(fn(n: Int) => n * 2)
                 .count()
-            let z1 = List.new().push(1).push(2).zip((10..<13)).count()
-            let z2 = (0..<3).zip(List.new().push(7).push(8)).count()
-            let z3 = collections.Deque.new().push_back(1).push_back(2).zip(List.new().push(9)).count()
+            let z1 = collections.List.new().push(1).push(2).zip((10..<13)).count()
+            let z2 = (0..<3).zip(collections.List.new().push(7).push(8)).count()
+            let z3 = collections.Deque.new().push_back(1).push_back(2).zip(collections.List.new().push(9)).count()
             list_count + deque_count + z1 + z2 + z3
         }"#,
         "collection-first traversal canonical surface",
@@ -4675,13 +4697,32 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_global_immutable_list_map_set_constructor_surface_is_removed_rfc_0009() {
+    for src in [
+        "fn main() -> Int { List.new().len() }",
+        "fn main() -> Int { Map.new().len() }",
+        "fn main() -> Int { Set.new().len() }",
+    ] {
+        let output = check(src, "test.ky");
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("no method") || d.message.contains("unresolved name")),
+            "expected removed constructor-surface diagnostics for `{src}`, got: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn check_collections_mutable_list_constructor_surface_has_no_diagnostics_rfc_0005() {
     assert_check_no_diagnostics(
         r#"import collections
 
 fn main() -> Int {
     let xs = collections.MutableList.new().push(1).push(2)
-    let ys = collections.MutableList.from_list(List.new().push(3).push(4)).set(0, 9)
+    let ys = collections.MutableList.from_list(collections.List.new().push(3).push(4)).set(0, 9)
     xs.update(1, fn(n: Int) => n + 10).len() + ys.get(0).unwrap_or(0)
 }"#,
         "collections.MutableList constructor canonical surface",
@@ -4915,7 +4956,7 @@ fn check_seq_type_annotation_is_rejected_rfc_0003() {
 fn check_list_seq_bridge_is_rejected_rfc_0002() {
     let output = check(
         r#"fn main() -> Int {
-            List.new().push(1).seq().count()
+            collections.List.new().push(1).seq().count()
         }"#,
         "test.ky",
     );
@@ -4934,7 +4975,7 @@ fn check_non_traversal_seq_param_still_rejects_list_rfc_0002() {
     let output = check(
         r#"fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }
 fn main() -> Int {
-    let xs = List.new().push(1).push(2)
+    let xs = collections.List.new().push(1).push(2)
     takes_seq(xs)
 }"#,
         "test.ky",
@@ -4961,7 +5002,7 @@ fn main() -> Int {
                 None => q0
             }
 
-            let xs = List.new().push(10).push(20).set(1, 99)
+            let xs = collections.List.new().push(10).push(20).set(1, 99)
             let ys = xs.update(0, fn(n: Int) => n + 1)
             ys.get(0).unwrap_or(0) + ys.get(1).unwrap_or(0) + q1.len()
         }"#,
@@ -4995,7 +5036,7 @@ fn check_non_canonical_free_deque_list_set_update_functions_report_unresolved_na
             let q = deque_new()
             let q = deque_push_back(q, 1)
             let _ = deque_pop_back(q)
-            let xs = list_set(List.new().push(1), 0, 2)
+            let xs = list_set(collections.List.new().push(1), 0, 2)
             let ys = list_update(xs, 0, fn(n: Int) => n + 1)
             q.len() + ys.len()
         }"#,
@@ -5015,7 +5056,7 @@ fn check_non_canonical_free_deque_list_set_update_functions_report_unresolved_na
 fn check_list_update_wrong_mapper_type_reports_type_mismatch() {
     let output = check(
         r#"fn main() -> Int {
-            List.new().push(1).update(0, fn(n: Int) => "x").len()
+            collections.List.new().push(1).update(0, fn(n: Int) => "x").len()
         }"#,
         "test.ky",
     );

@@ -1,6 +1,8 @@
 //! End-to-end type inference tests: parse → collect item tree → lower → type check → assert.
 #![allow(clippy::unwrap_used)]
 
+use std::borrow::Cow;
+
 use kyokara_hir_def::builtins::{
     activate_synthetic_imports, register_builtin_intrinsics, register_builtin_methods,
     register_builtin_types, register_static_methods, register_synthetic_modules,
@@ -23,9 +25,21 @@ fn parse_source(src: &str) -> SyntaxNode {
     SyntaxNode::new_root(parse.green)
 }
 
+fn normalize_immutable_collection_constructor_import(source: &str) -> Cow<'_, str> {
+    let uses_canonical_immutable_constructor = source.contains("collections.List.new(")
+        || source.contains("collections.Map.new(")
+        || source.contains("collections.Set.new(");
+    if uses_canonical_immutable_constructor && !source.contains("import collections") {
+        Cow::Owned(format!("import collections\n{source}"))
+    } else {
+        Cow::Borrowed(source)
+    }
+}
+
 /// Parse, collect, and type-check, returning the result.
 fn check(src: &str) -> (TypeCheckResult, Interner) {
-    let root = parse_source(src);
+    let src = normalize_immutable_collection_constructor_import(src);
+    let root = parse_source(src.as_ref());
     let sf = SourceFile::cast(root.clone()).unwrap();
     let mut interner = Interner::new();
     let mut item_result = collect_item_tree(&sf, file_id(), &mut interner);
@@ -194,7 +208,7 @@ fn infer_binary_equality() {
 #[test]
 fn infer_binary_equality_rejects_non_comparable_types() {
     check_err(
-        "fn foo() -> Bool { List.new() == List.new() }",
+        "fn foo() -> Bool { collections.List.new() == collections.List.new() }",
         "equality operator requires",
     );
 }
@@ -754,7 +768,7 @@ fn infer_iteration_ergonomics_happy_paths() {
     let cases = ["fn main() -> Bool {
             let xs = (0..<5)
             let e = xs.enumerate().to_list()
-            let z = xs.zip(List.new().push(10).push(20)).to_list()
+            let z = xs.zip(collections.List.new().push(10).push(20)).to_list()
             let c = xs.chunks(2).to_list()
             let w = xs.windows(3).to_list()
             e.len() > 0 && z.len() == 2 && c.len() == 3 && w.len() == 3
@@ -867,10 +881,10 @@ fn infer_result_ergonomics_happy_paths() {
 #[test]
 fn infer_option_result_combinator_parity_happy_paths() {
     let cases = [
-        "fn main() -> Int { List.new().push(41).head().unwrap_or(0) }",
-        "fn main() -> Int { List.new().push(41).head().map_or(0, fn(n: Int) => n + 1) }",
-        "fn main() -> Int { List.new().push(41).head().map(fn(n: Int) => n + 1).unwrap_or(0) }",
-        "fn main() -> Int { List.new().push(41).head().and_then(fn(n: Int) => Some(n + 1)).unwrap_or(0) }",
+        "fn main() -> Int { collections.List.new().push(41).head().unwrap_or(0) }",
+        "fn main() -> Int { collections.List.new().push(41).head().map_or(0, fn(n: Int) => n + 1) }",
+        "fn main() -> Int { collections.List.new().push(41).head().map(fn(n: Int) => n + 1).unwrap_or(0) }",
+        "fn main() -> Int { collections.List.new().push(41).head().and_then(fn(n: Int) => Some(n + 1)).unwrap_or(0) }",
         "fn main() -> Int { \"41\".parse_int().map(fn(n: Int) => n + 1).unwrap_or(0) }",
         "fn main() -> Int { \"41\".parse_int().and_then(fn(n: Int) => Ok(n + 1)).unwrap_or(0) }",
         "fn main() -> Int {
@@ -1046,19 +1060,19 @@ fn err_option_result_combinator_wrong_types_or_arity() {
 
     let cases = [
         Case {
-            src: "fn main() -> Int { List.new().head().unwrap_or() }",
+            src: "fn main() -> Int { collections.List.new().head().unwrap_or() }",
             expected_fragment: "expected 1 argument(s)",
         },
         Case {
-            src: "fn main() -> Int { List.new().head().map_or(0) }",
+            src: "fn main() -> Int { collections.List.new().head().map_or(0) }",
             expected_fragment: "expected 2 argument(s)",
         },
         Case {
-            src: "fn main() -> Int { List.new().head().map(fn(n: Int) => n + 1, 0).unwrap_or(0) }",
+            src: "fn main() -> Int { collections.List.new().head().map(fn(n: Int) => n + 1, 0).unwrap_or(0) }",
             expected_fragment: "expected 1 argument(s)",
         },
         Case {
-            src: "fn main() -> Int { List.new().push(1).head().and_then(fn(n: Int) => n + 1).unwrap_or(0) }",
+            src: "fn main() -> Int { collections.List.new().push(1).head().and_then(fn(n: Int) => n + 1).unwrap_or(0) }",
             expected_fragment: "type mismatch",
         },
         Case {
@@ -1112,15 +1126,15 @@ fn err_iteration_ergonomics_wrong_arity_or_type() {
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { List.new().push(1).zip(1).count() }",
+            src: "fn main() -> Int { collections.List.new().push(1).zip(1).count() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { List.new().push(1).chunks(true).count() }",
+            src: "fn main() -> Int { collections.List.new().push(1).chunks(true).count() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { List.new().push(1).windows(false).count() }",
+            src: "fn main() -> Int { collections.List.new().push(1).windows(false).count() }",
             expected_fragment: "type mismatch",
         },
     ];
@@ -1159,7 +1173,7 @@ fn infer_deque_and_list_index_update_happy_paths() {
                 None => q0
             }
 
-            let xs = List.new().push(10).push(20).set(1, 99)
+            let xs = collections.List.new().push(10).push(20).set(1, 99)
             let ys = xs.update(0, fn(n: Int) => n + 1)
             ys.get(0).unwrap_or(0) + ys.get(1).unwrap_or(0) + q1.len()
         }"#];
@@ -1240,12 +1254,31 @@ fn err_global_deque_constructor_surface_is_removed_rfc_0004() {
 }
 
 #[test]
+fn err_global_immutable_list_map_set_constructor_surface_is_removed_rfc_0009() {
+    for src in [
+        "fn main() -> Int { List.new().len() }",
+        "fn main() -> Int { Map.new().len() }",
+        "fn main() -> Int { Set.new().len() }",
+    ] {
+        let (result, _) = check(src);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("no method") || d.message.contains("unresolved")),
+            "expected removed-surface diagnostic for `{src}`, got: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
 fn infer_collections_mutable_list_constructor_happy_paths_rfc_0005() {
     let cases = [
         r#"import collections
         fn main() -> Int {
             let xs = collections.MutableList.new().push(1).push(2).set(0, 9)
-            let ys = collections.MutableList.from_list(List.new().push(3).push(4))
+            let ys = collections.MutableList.from_list(collections.List.new().push(3).push(4))
             xs.get(0).unwrap_or(0) + ys.len()
         }"#,
         r#"import collections as c
@@ -1255,9 +1288,9 @@ fn infer_collections_mutable_list_constructor_happy_paths_rfc_0005() {
         }"#,
         r#"import collections
         fn main() -> Int {
-            collections.MutableList.from_list(List.new().push(1).push(2).push(3))
+            collections.MutableList.from_list(collections.List.new().push(1).push(2).push(3))
                 .map(fn(n: Int) => n * 2)
-                .zip(List.new().push(10))
+                .zip(collections.List.new().push(10))
                 .count()
         }"#,
     ];
@@ -1364,19 +1397,19 @@ fn err_deque_and_list_index_update_wrong_arity_or_type() {
             expected_fragment: "expected 0 argument(s)",
         },
         Case {
-            src: "fn main() -> Int { List.new().push(1).set(true, 2).len() }",
+            src: "fn main() -> Int { collections.List.new().push(1).set(true, 2).len() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { List.new().push(1).set(0, \"x\").len() }",
+            src: "fn main() -> Int { collections.List.new().push(1).set(0, \"x\").len() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { List.new().push(1).update(0, fn(n: Int) => \"x\").len() }",
+            src: "fn main() -> Int { collections.List.new().push(1).update(0, fn(n: Int) => \"x\").len() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { List.new().push(1).update(0).len() }",
+            src: "fn main() -> Int { collections.List.new().push(1).update(0).len() }",
             expected_fragment: "expected 2 argument(s)",
         },
     ];
@@ -1432,11 +1465,11 @@ fn infer_seq_surface_happy_paths() {
                 .count()
         }"#,
         r#"fn main() -> Int {
-            let xs = List.new().push(1).push(2).push(3)
+            let xs = collections.List.new().push(1).push(2).push(3)
             xs.map(fn(n: Int) => n * 2).to_list().len()
         }"#,
         r#"fn main() -> Int {
-            let keys = Map.new().insert("a", 1).insert("b", 2).keys()
+            let keys = collections.Map.new().insert("a", 1).insert("b", 2).keys()
             keys.count()
         }"#,
         r#"fn main() -> Int {
@@ -1458,7 +1491,7 @@ fn infer_seq_surface_happy_paths() {
 fn err_list_traversal_surface_is_removed() {
     let cases = [
         "fn main() -> Int { List.range(0, 5).len() }",
-        "fn main() -> Int { List.new().push(1).seq().count() }",
+        "fn main() -> Int { collections.List.new().push(1).seq().count() }",
     ];
 
     for src in cases {
@@ -1478,7 +1511,7 @@ fn err_list_traversal_surface_is_removed() {
 fn infer_collection_first_traversal_surface_happy_paths_rfc_0002() {
     let cases = [
         r#"fn main() -> Int {
-            let xs = List.new().push(1).push(2).push(3)
+            let xs = collections.List.new().push(1).push(2).push(3)
             xs.map(fn(n: Int) => n + 1)
                 .filter(fn(n: Int) => n > 2)
                 .count()
@@ -1490,9 +1523,9 @@ fn infer_collection_first_traversal_surface_happy_paths_rfc_0002() {
         }"#,
         r#"import collections
         fn main() -> Int {
-            let a = List.new().push(1).push(2).zip((10..<13)).count()
-            let b = (0..<3).zip(List.new().push(7).push(8)).count()
-            let c = collections.Deque.new().push_back(1).push_back(2).zip(List.new().push(9)).count()
+            let a = collections.List.new().push(1).push(2).zip((10..<13)).count()
+            let b = (0..<3).zip(collections.List.new().push(7).push(8)).count()
+            let c = collections.Deque.new().push_back(1).push_back(2).zip(collections.List.new().push(9)).count()
             a + b + c
         }"#,
     ];
@@ -1586,7 +1619,7 @@ fn err_seq_type_annotation_is_rejected_rfc_0003() {
 
 #[test]
 fn err_list_seq_bridge_is_removed_rfc_0002() {
-    let (result, _) = check("fn main() -> Int { List.new().push(1).seq().count() }");
+    let (result, _) = check("fn main() -> Int { collections.List.new().push(1).seq().count() }");
     assert!(
         result
             .diagnostics
@@ -1601,7 +1634,7 @@ fn err_list_seq_bridge_is_removed_rfc_0002() {
 fn err_non_traversal_seq_param_still_rejects_list_rfc_0002() {
     let src = r#"fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }
 fn main() -> Int {
-    let xs = List.new().push(1).push(2)
+    let xs = collections.List.new().push(1).push(2)
     takes_seq(xs)
 }"#;
     let (result, _) = check(src);

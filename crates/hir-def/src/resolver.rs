@@ -189,7 +189,7 @@ pub struct ModuleScope {
     /// `collections.Deque.new()`.
     pub synthetic_module_static_methods: FxHashMap<(Name, Name, Name), FnItemIdx>,
     /// Static methods: `(owner_identity, method_name)` → `FnItemIdx`.
-    /// Type-namespaced constructors like `List.new()` resolve through this.
+    /// Type-owned static methods resolve through this.
     pub static_methods: FxHashMap<(StaticOwnerKey, Name), FnItemIdx>,
     /// Internal lookup table: intrinsic name → FnItemIdx.
     /// Populated by `register_builtin_intrinsics`, used by method/module/static registration.
@@ -234,7 +234,7 @@ pub enum ResolvedName {
     Import(usize),
     /// A synthetic module (io, math, fs).
     Module(Name),
-    /// A static method target type (e.g., `List` in `List.new()`).
+    /// A static method target type (e.g., `List` in `collections.List.new()`).
     StaticMethodType(Name),
 }
 

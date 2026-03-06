@@ -9,7 +9,7 @@ use crate::item_tree::{FnItem, FnParam, ItemTree, TypeDefKind, TypeItem, TypeIte
 use crate::name::Name;
 use crate::path::Path;
 use crate::resolver::{
-    CoreType, CoreTypeInfo, ModuleScope, PrimitiveType, ReceiverKey, StaticOwnerKey, WellKnownNames,
+    CoreType, CoreTypeInfo, ModuleScope, PrimitiveType, ReceiverKey, WellKnownNames,
 };
 use crate::type_ref::TypeRef;
 use kyokara_intern::Interner;
@@ -998,32 +998,13 @@ fn mk_module_intrinsic(
     }
 }
 
-/// Register static methods (`List.new()`, `Map.new()`, `Set.new()`) in
-/// `scope.static_methods`.
+/// Register collection constructor entrypoints.
 ///
-/// Static methods are always available (no import needed) since the types they
-/// belong to are always in scope.
+/// RFC 0009 makes collection constructors canonical under `collections.*`, so
+/// immutable `List`/`Map`/`Set` no longer populate unqualified type static
+/// methods. They remain reachable through `scope.synthetic_module_static_methods`.
 pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner) {
-    // (intrinsic_fn_name, owner_key, static_method_name)
-    let mappings: &[(&str, StaticOwnerKey, &str)] = &[
-        ("list_new", StaticOwnerKey::Core(CoreType::List), "new"),
-        ("map_new", StaticOwnerKey::Core(CoreType::Map), "new"),
-        ("set_new", StaticOwnerKey::Core(CoreType::Set), "new"),
-    ];
-
-    for &(intrinsic_name, owner_key, method_name) in mappings {
-        let intr_name = Name::new(interner, intrinsic_name);
-        let meth_name = Name::new(interner, method_name);
-
-        if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&intr_name) {
-            scope.static_methods.insert((owner_key, meth_name), fn_idx);
-        }
-    }
-
-    // Collection constructors are also module-qualified under `collections.*`.
-    // This enables canonical `collections.List.new()` / `collections.Map.new()`
-    // / `collections.Set.new()` while preserving current unqualified static
-    // constructors during transition.
+    // Collection constructors are module-qualified under `collections.*`.
     let collections = Name::new(interner, "collections");
     let list = Name::new(interner, "List");
     let map = Name::new(interner, "Map");

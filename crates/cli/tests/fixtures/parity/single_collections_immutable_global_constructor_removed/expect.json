@@ -1,0 +1,10 @@
+{
+  "check": {
+    "ok": false,
+    "messages_all": ["no method"]
+  },
+  "run": {
+    "ok": false,
+    "stderr_contains": ["no method"]
+  }
+}
