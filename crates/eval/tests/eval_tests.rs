@@ -596,6 +596,21 @@ fn eval_lambda_capture() {
     assert!(matches!(val, Value::Int(15)));
 }
 
+#[test]
+fn eval_lambda_shadowing_and_nested_capture() {
+    let val = run_ok(
+        "fn make(x: Int) -> fn(Int) -> Int {
+           let y = x + 1
+           fn(x: Int) => {
+             let z = y + x
+             z
+           }
+         }
+         fn main() -> Int { make(10)(5) }",
+    );
+    assert!(matches!(val, Value::Int(16)));
+}
+
 // ── String intrinsic tests ───────────────────────────────────────────
 
 #[test]

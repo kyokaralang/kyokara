@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use kyokara_hir_def::body::Body;
+use kyokara_hir_def::body::{Body, LocalSlotRef};
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, MatchArm, Stmt, UnaryOp};
 use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree, TypeDefKind, TypeItemIdx};
 use kyokara_hir_def::name::Name;
@@ -15,6 +15,7 @@ use kyokara_hir_def::resolver::{
 use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_intern::Interner;
 use kyokara_stdx::FxHashMap;
+use la_arena::ArenaMap;
 
 use crate::env::Env;
 use crate::error::RuntimeError;
@@ -27,6 +28,7 @@ pub struct Interpreter {
     item_tree: ItemTree,
     module_scope: ModuleScope,
     fn_bodies: FxHashMap<FnItemIdx, Rc<Body>>,
+    body_local_accesses: FxHashMap<usize, ArenaMap<ExprIdx, LocalSlotRef>>,
     /// Per-function module-level function overrides used for project mode.
     /// Maps `current_fn_idx -> (name -> resolved fn_idx)`.
     fn_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, FnItemIdx>>,
@@ -289,6 +291,29 @@ impl Interpreter {
         Some((type_idx, variant_idx))
     }
 
+    fn body_key(body: &Body) -> usize {
+        body as *const Body as usize
+    }
+
+    fn collect_body_local_accesses(
+        body: &Body,
+        module_scope: &ModuleScope,
+    ) -> ArenaMap<ExprIdx, LocalSlotRef> {
+        let mut accesses = ArenaMap::default();
+        for (expr_idx, expr) in body.exprs.iter() {
+            let Expr::Path(path) = expr else {
+                continue;
+            };
+            let Some(&name) = path.segments.first() else {
+                continue;
+            };
+            if let Some(access) = body.resolve_local_access_at(module_scope, expr_idx, name) {
+                accesses.insert(expr_idx, access);
+            }
+        }
+        accesses
+    }
+
     pub fn new(
         item_tree: ItemTree,
         module_scope: ModuleScope,
@@ -343,14 +368,25 @@ impl Interpreter {
             &mut interner,
             "InvalidFloat",
         );
+        let fn_bodies = fn_bodies
+            .into_iter()
+            .map(|(fn_idx, body)| (fn_idx, Rc::new(body)))
+            .collect::<FxHashMap<_, _>>();
+        let body_local_accesses = fn_bodies
+            .values()
+            .map(|body| {
+                (
+                    Self::body_key(body),
+                    Self::collect_body_local_accesses(body, &module_scope),
+                )
+            })
+            .collect();
 
         Interpreter {
             item_tree,
             module_scope,
-            fn_bodies: fn_bodies
-                .into_iter()
-                .map(|(fn_idx, body)| (fn_idx, Rc::new(body)))
-                .collect(),
+            fn_bodies,
+            body_local_accesses,
             fn_scope_overrides,
             interner,
             intrinsics,
@@ -401,6 +437,17 @@ impl Interpreter {
     /// Borrow the function bodies map.
     pub fn fn_bodies(&self) -> &FxHashMap<FnItemIdx, Rc<Body>> {
         &self.fn_bodies
+    }
+
+    fn local_accesses_for_body(&mut self, body: &Body) -> &ArenaMap<ExprIdx, LocalSlotRef> {
+        let key = Self::body_key(body);
+        self.body_local_accesses
+            .entry(key)
+            .or_insert_with(|| Self::collect_body_local_accesses(body, &self.module_scope))
+    }
+
+    fn local_access_for_expr(&mut self, body: &Body, expr_idx: ExprIdx) -> Option<LocalSlotRef> {
+        self.local_accesses_for_body(body).get(expr_idx).copied()
     }
 
     /// Find and run the `main` function.
@@ -639,9 +686,26 @@ impl Interpreter {
 
                 if has_ensures {
                     let result_name = Name::new(&mut self.interner, "result");
-                    self.env.bind(result_name, return_val.clone());
                     for ens_idx in body.ensures.iter().copied() {
-                        let val = self.eval_expr_shared(&body, ens_idx)?.into_value();
+                        self.env.push_scope();
+                        self.env.bind(result_name, return_val.clone());
+                        if let Some(old_env) = self.old_env.as_mut() {
+                            old_env.push_scope();
+                        }
+                        let val = match self.eval_expr_shared(&body, ens_idx) {
+                            Ok(value) => value.into_value(),
+                            Err(err) => {
+                                self.env.pop_scope();
+                                if let Some(old_env) = self.old_env.as_mut() {
+                                    old_env.pop_scope();
+                                }
+                                return Err(err);
+                            }
+                        };
+                        self.env.pop_scope();
+                        if let Some(old_env) = self.old_env.as_mut() {
+                            old_env.pop_scope();
+                        }
                         if !matches!(val, Value::Bool(true)) {
                             Err(RuntimeError::PostconditionFailed(fn_name_str.clone()))?;
                         }
@@ -677,8 +741,7 @@ impl Interpreter {
             Expr::Path(path) => {
                 // First segment is the variable/function name.
                 // Additional segments are field accesses (e.g., `p.x.y`).
-                let name = path.segments[0];
-                let mut val = self.resolve_name(env, name)?;
+                let mut val = self.resolve_path_value(env, body, idx, path)?;
                 for &field in &path.segments[1..] {
                     val = self.eval_field(val, field)?;
                 }
@@ -1042,7 +1105,13 @@ impl Interpreter {
 
             Expr::Path(path) => {
                 let name = path.segments[0];
-                let mut val = self.resolve_name_shared(name)?;
+                let mut val = if let Some(access) = self.local_access_for_expr(body, idx)
+                    && let Some(value) = self.env.lookup_slot(access.depth, access.slot)
+                {
+                    value.clone()
+                } else {
+                    self.resolve_name(&self.env, name)?
+                };
                 for &field in &path.segments[1..] {
                     val = self.eval_field(val, field)?;
                 }
@@ -1392,6 +1461,23 @@ impl Interpreter {
             Literal::Char(c) => Value::Char(*c),
             Literal::Bool(b) => Value::Bool(*b),
         }
+    }
+
+    #[inline(always)]
+    fn resolve_path_value(
+        &mut self,
+        env: &Env,
+        body: &Body,
+        expr_idx: ExprIdx,
+        path: &kyokara_hir_def::path::Path,
+    ) -> Result<Value, RuntimeError> {
+        let name = path.segments[0];
+        if let Some(access) = self.local_access_for_expr(body, expr_idx)
+            && let Some(value) = env.lookup_slot(access.depth, access.slot)
+        {
+            return Ok(value.clone());
+        }
+        self.resolve_name(env, name)
     }
 
     #[inline(always)]
@@ -3570,12 +3656,6 @@ impl Interpreter {
     }
 
     // --- Shared-env variants of helper methods ---
-
-    /// Name resolution using `self.env`.
-    #[inline(always)]
-    fn resolve_name_shared(&self, name: Name) -> Result<Value, RuntimeError> {
-        self.resolve_name(&self.env, name)
-    }
 
     fn eval_match_shared(
         &mut self,

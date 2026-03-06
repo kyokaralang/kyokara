@@ -43,6 +43,7 @@ pub fn lower_body(
         exprs: Arena::new(),
         pats: Arena::new(),
         scopes: ScopeTree::default(),
+        scope_slot_counts: ArenaMap::default(),
         pat_scopes: Vec::new(),
         expr_scopes: ArenaMap::default(),
         expr_source_map: ArenaMap::default(),
@@ -59,6 +60,8 @@ pub fn lower_body(
     // Create root scope
     let root_scope = ctx.scopes.new_root();
     ctx.current_scope = Some(root_scope);
+    let param_count = fn_def.param_list().map(|pl| pl.params().count()).unwrap_or(0);
+    ctx.scope_slot_counts.insert(root_scope, param_count);
 
     // Register function parameters in scope
     if let Some(param_list) = fn_def.param_list() {
@@ -161,6 +164,7 @@ pub fn lower_property_body(
         exprs: Arena::new(),
         pats: Arena::new(),
         scopes: ScopeTree::default(),
+        scope_slot_counts: ArenaMap::default(),
         pat_scopes: Vec::new(),
         expr_scopes: ArenaMap::default(),
         expr_source_map: ArenaMap::default(),
@@ -177,6 +181,11 @@ pub fn lower_property_body(
     // Create root scope.
     let root_scope = ctx.scopes.new_root();
     ctx.current_scope = Some(root_scope);
+    let param_count = prop_def
+        .property_param_list()
+        .map(|pl| pl.params().count())
+        .unwrap_or(0);
+    ctx.scope_slot_counts.insert(root_scope, param_count);
 
     // Register parameters in scope from PropertyParamList.
     if let Some(param_list) = prop_def.property_param_list() {
@@ -237,6 +246,7 @@ struct BodyLowerCtx<'a> {
     exprs: Arena<Expr>,
     pats: Arena<pat::Pat>,
     scopes: ScopeTree,
+    scope_slot_counts: ArenaMap<ScopeIdx, usize>,
     pat_scopes: Vec<(PatIdx, ScopeIdx)>,
     expr_scopes: ArenaMap<ExprIdx, ScopeIdx>,
     expr_source_map: ArenaMap<ExprIdx, TextRange>,
@@ -290,6 +300,7 @@ impl BodyLowerCtx<'_> {
         origin: LocalBindingOrigin,
     ) {
         if let Some(scope) = self.current_scope {
+            let slot = self.scope_slot_counts.get(scope).copied().unwrap_or(0);
             self.scopes.define(scope, name, ScopeDef::Local(pat_idx));
             self.pat_scopes.push((pat_idx, scope));
             self.local_binding_meta.insert(
@@ -298,8 +309,10 @@ impl BodyLowerCtx<'_> {
                     origin,
                     decl_range,
                     scope,
+                    slot,
                 },
             );
+            self.scope_slot_counts.insert(scope, slot + 1);
         }
     }
 

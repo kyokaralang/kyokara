@@ -167,6 +167,41 @@ fn lower_named_fn_body(
     (body_result.body, body_result.diagnostics, interner)
 }
 
+fn lower_named_fn_body_with_scope(
+    src: &str,
+    name: Option<&str>,
+) -> (
+    kyokara_hir_def::body::Body,
+    kyokara_hir_def::resolver::ModuleScope,
+    Vec<kyokara_diagnostics::Diagnostic>,
+    Interner,
+) {
+    let root = parse_source(src);
+    let sf = SourceFile::cast(root.clone()).unwrap();
+    let mut interner = Interner::new();
+    let item_result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    let fn_def = if let Some(target) = name {
+        root.descendants()
+            .filter_map(FnDef::cast)
+            .find(|f: &FnDef| f.name_token().map(|t| t.text() == target).unwrap_or(false))
+            .expect("named FnDef not found")
+    } else {
+        root.descendants()
+            .filter_map(FnDef::cast)
+            .last()
+            .expect("no FnDef found")
+    };
+
+    let body_result = lower_body(&fn_def, &item_result.module_scope, file_id(), &mut interner);
+    (
+        body_result.body,
+        item_result.module_scope,
+        body_result.diagnostics,
+        interner,
+    )
+}
+
 #[test]
 fn lower_literal_expr() {
     let (body, diags, _) = lower_fn_body("fn foo() { 42 }");
@@ -737,6 +772,128 @@ fn lambda_params_in_scope() {
     let (_body, diags, _) = lower_fn_body("fn foo() { fn(x: Int) => x }");
     assert!(diags.is_empty());
     // x should be resolvable in the lambda body
+}
+
+#[test]
+fn resolve_local_access_tracks_param_and_shadow_slots() {
+    let src = r#"
+fn foo(x: Int) -> Int {
+    let y = x
+    let z = {
+        let x = y
+        x
+    }
+    z
+}
+"#;
+    let (body, module_scope, diags, interner) = lower_named_fn_body_with_scope(src, Some("foo"));
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+    let mut path_accesses = body
+        .exprs
+        .iter()
+        .filter_map(|(expr_idx, expr)| {
+            let Expr::Path(path) = expr else {
+                return None;
+            };
+            let access =
+                body.resolve_local_access_at(&module_scope, expr_idx, path.segments[0])?;
+            let range = *body.expr_source_map.get(expr_idx)?;
+            Some((
+                range.start(),
+                path.segments[0].resolve(&interner).to_string(),
+                access,
+            ))
+        })
+        .collect::<Vec<_>>();
+    path_accesses.sort_by_key(|(start, _, _)| *start);
+
+    assert_eq!(
+        path_accesses,
+        vec![
+            (
+                path_accesses[0].0,
+                "x".to_string(),
+                kyokara_hir_def::body::LocalSlotRef { depth: 1, slot: 0 },
+            ),
+            (
+                path_accesses[1].0,
+                "y".to_string(),
+                kyokara_hir_def::body::LocalSlotRef { depth: 1, slot: 0 },
+            ),
+            (
+                path_accesses[2].0,
+                "x".to_string(),
+                kyokara_hir_def::body::LocalSlotRef { depth: 0, slot: 0 },
+            ),
+            (
+                path_accesses[3].0,
+                "z".to_string(),
+                kyokara_hir_def::body::LocalSlotRef { depth: 0, slot: 1 },
+            ),
+        ]
+    );
+
+    let mut local_slots = body
+        .local_binding_meta
+        .iter()
+        .map(|(_pat_idx, meta)| (meta.decl_range.start(), meta.slot))
+        .collect::<Vec<_>>();
+    local_slots.sort_by_key(|(start, _)| *start);
+    assert_eq!(
+        local_slots.into_iter().map(|(_, slot)| slot).collect::<Vec<_>>(),
+        vec![0, 1, 0]
+    );
+}
+
+#[test]
+fn resolve_local_access_tracks_ensures_result_scope() {
+    let src = r#"
+fn foo(x: Int) -> Int
+  contract ensures (result == x + 1)
+{
+  x + 1
+}
+"#;
+    let (body, module_scope, diags, interner) = lower_named_fn_body_with_scope(src, Some("foo"));
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+    let ensure_range = *body.expr_source_map.get(body.ensures[0]).expect("ensure range");
+    let mut path_accesses = body
+        .exprs
+        .iter()
+        .filter_map(|(expr_idx, expr)| {
+            let Expr::Path(path) = expr else {
+                return None;
+            };
+            let range = *body.expr_source_map.get(expr_idx)?;
+            if range.start() < ensure_range.start() || range.end() > ensure_range.end() {
+                return None;
+            }
+            let access =
+                body.resolve_local_access_at(&module_scope, expr_idx, path.segments[0])?;
+            Some((
+                range.start(),
+                path.segments[0].resolve(&interner).to_string(),
+                access,
+            ))
+        })
+        .collect::<Vec<_>>();
+    path_accesses.sort_by_key(|(start, _, _)| *start);
+
+    assert_eq!(
+        path_accesses,
+        vec![
+            (
+                path_accesses[0].0,
+                "result".to_string(),
+                kyokara_hir_def::body::LocalSlotRef { depth: 0, slot: 0 },
+            ),
+            (
+                path_accesses[1].0,
+                "x".to_string(),
+                kyokara_hir_def::body::LocalSlotRef { depth: 1, slot: 0 },
+            ),
+        ]
+    );
 }
 
 // ── Diagnostic tests ───────────────────────────────────────────────

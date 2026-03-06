@@ -54,6 +54,14 @@ pub struct LocalBindingMeta {
     pub origin: LocalBindingOrigin,
     pub decl_range: kyokara_span::TextRange,
     pub scope: ScopeIdx,
+    pub slot: usize,
+}
+
+/// Resolved local access coordinates for runtime lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalSlotRef {
+    pub depth: usize,
+    pub slot: usize,
 }
 
 /// Canonical usage-position name-resolution output for body consumers.
@@ -104,5 +112,42 @@ impl Body {
             resolved,
             local_binding,
         })
+    }
+
+    /// Resolve a local or parameter usage to runtime `(depth, slot)` coordinates.
+    pub fn resolve_local_access_at(
+        &self,
+        module_scope: &ModuleScope,
+        expr_idx: ExprIdx,
+        name: Name,
+    ) -> Option<LocalSlotRef> {
+        let usage_scope = self.expr_scopes.get(expr_idx).copied().or(self.scopes.root)?;
+        let resolved = self.resolve_name_at(module_scope, expr_idx, name)?;
+        match resolved.resolved {
+            ResolvedName::Local(ScopeDef::Local(pat_idx)) => {
+                let meta = self.local_binding_meta.get(pat_idx)?;
+                let depth = self.scope_distance(usage_scope, meta.scope)?;
+                Some(LocalSlotRef {
+                    depth,
+                    slot: meta.slot,
+                })
+            }
+            ResolvedName::Local(ScopeDef::Param(slot)) => {
+                let depth = self.scope_distance(usage_scope, self.scopes.root?)?;
+                Some(LocalSlotRef { depth, slot })
+            }
+            _ => None,
+        }
+    }
+
+    fn scope_distance(&self, mut usage_scope: ScopeIdx, target_scope: ScopeIdx) -> Option<usize> {
+        let mut depth = 0;
+        loop {
+            if usage_scope == target_scope {
+                return Some(depth);
+            }
+            usage_scope = self.scopes.scopes[usage_scope].parent?;
+            depth += 1;
+        }
     }
 }

@@ -59,4 +59,58 @@ impl Env {
         }
         None
     }
+
+    /// Look up a value by lexical `(depth, slot)` coordinates.
+    #[inline(always)]
+    pub fn lookup_slot(&self, depth: usize, slot: usize) -> Option<&Value> {
+        let scope_idx = self.scope_starts.len().checked_sub(depth + 1)?;
+        let binding_idx = self.scope_starts[scope_idx].checked_add(slot)?;
+        let scope_end = self
+            .scope_starts
+            .get(scope_idx + 1)
+            .copied()
+            .unwrap_or(self.bindings.len());
+        if binding_idx >= scope_end {
+            return None;
+        }
+        self.bindings.get(binding_idx).map(|(_, value)| value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use kyokara_intern::Interner;
+
+    use super::*;
+
+    #[test]
+    fn lookup_slot_reads_current_and_outer_scopes() {
+        let mut interner = Interner::new();
+        let outer = Name::new(&mut interner, "outer");
+        let inner = Name::new(&mut interner, "inner");
+
+        let mut env = Env::new();
+        env.push_scope();
+        env.bind(outer, Value::Int(10));
+        env.push_scope();
+        env.bind(inner, Value::Int(20));
+
+        assert_eq!(env.lookup_slot(0, 0), Some(&Value::Int(20)));
+        assert_eq!(env.lookup_slot(1, 0), Some(&Value::Int(10)));
+    }
+
+    #[test]
+    fn lookup_slot_returns_none_for_out_of_bounds_slot() {
+        let mut interner = Interner::new();
+        let x = Name::new(&mut interner, "x");
+
+        let mut env = Env::new();
+        env.push_scope();
+        env.bind(x, Value::Int(1));
+
+        assert_eq!(env.lookup_slot(0, 1), None);
+        assert_eq!(env.lookup_slot(1, 0), None);
+    }
 }
