@@ -581,6 +581,21 @@ impl Interpreter {
         }
     }
 
+    fn resolve_direct_user_fn_idx(&self, name: Name) -> Option<FnItemIdx> {
+        if let Some(cur_fn) = self.current_fn
+            && let Some(overrides) = self.fn_scope_overrides.get(&cur_fn)
+            && let Some(&fn_idx) = overrides.get(&name)
+        {
+            return Some(fn_idx);
+        }
+
+        self.module_scope
+            .functions
+            .get(&name)
+            .copied()
+            .filter(|fn_idx| self.fn_bodies.contains_key(fn_idx))
+    }
+
     fn lambda_param_names(
         &self,
         body: &Body,
@@ -781,6 +796,23 @@ impl Interpreter {
             Expr::Call { callee, args } => {
                 let callee_idx = *callee;
                 let args = args.clone();
+
+                if args.iter().all(|arg| matches!(arg, CallArg::Positional(_)))
+                    && let Expr::Path(path) = &body.exprs[callee_idx]
+                    && path.is_single()
+                    && self.local_access_for_expr(body, callee_idx).is_none()
+                    && let Some(fn_idx) = self.resolve_direct_user_fn_idx(path.segments[0])
+                {
+                    let mut arg_vals = Args::with_capacity(args.len());
+                    for arg in &args {
+                        let CallArg::Positional(arg_idx) = arg else {
+                            unreachable!("guard ensures all args are positional");
+                        };
+                        let value = eval_propagate!(self, env, body, *arg_idx);
+                        arg_vals.push(value);
+                    }
+                    return self.call_fn(fn_idx, arg_vals).map(ControlFlow::Value);
+                }
 
                 // ── Module-qualified / static method / method call resolution ──
                 if let Expr::Field { base, field } = &body.exprs[callee_idx] {
@@ -1150,6 +1182,23 @@ impl Interpreter {
 
             Expr::Call { callee, args } => {
                 let callee_idx = *callee;
+
+                if args.iter().all(|arg| matches!(arg, CallArg::Positional(_)))
+                    && let Expr::Path(path) = &body.exprs[callee_idx]
+                    && path.is_single()
+                    && self.local_access_for_expr(body, callee_idx).is_none()
+                    && let Some(fn_idx) = self.resolve_direct_user_fn_idx(path.segments[0])
+                {
+                    let mut arg_vals = Args::with_capacity(args.len());
+                    for arg in args {
+                        let CallArg::Positional(arg_idx) = arg else {
+                            unreachable!("guard ensures all args are positional");
+                        };
+                        let value = eval_propagate_shared!(self, body, *arg_idx);
+                        arg_vals.push(value);
+                    }
+                    return self.call_fn(fn_idx, arg_vals).map(ControlFlow::Value);
+                }
 
                 // ── Module-qualified / static method / method call resolution (shared path) ──
                 if let Expr::Field { base, field } = &body.exprs[callee_idx] {
