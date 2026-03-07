@@ -387,6 +387,132 @@ fn import_keyword_alias_reports_single_targeted_error() {
 }
 
 #[test]
+fn keyword_identifier_role_grammar_matrix_reports_targeted_messages() {
+    struct Case {
+        name: &'static str,
+        tokens: Vec<SyntaxKind>,
+        message: &'static str,
+        node: SyntaxKind,
+    }
+
+    let cases = vec![
+        Case {
+            name: "path segment",
+            tokens: vec![ModuleKw, WhileKw],
+            message: "reserved keyword `while` cannot be used as a path segment",
+            node: ModuleDecl,
+        },
+        Case {
+            name: "import alias",
+            tokens: vec![ImportKw, Ident, AsKw, WhileKw],
+            message: "reserved keyword `while` cannot be used as an import alias",
+            node: ImportAlias,
+        },
+        Case {
+            name: "type name",
+            tokens: vec![TypeKw, WhileKw, Eq, Ident],
+            message: "reserved keyword `while` cannot be used as a type name",
+            node: TypeDef,
+        },
+        Case {
+            name: "variant name",
+            tokens: vec![TypeKw, Ident, Eq, WhileKw, LParen, Ident, RParen],
+            message: "reserved keyword `while` cannot be used as a variant name",
+            node: Variant,
+        },
+        Case {
+            name: "function name",
+            tokens: vec![FnKw, WhileKw, LParen, RParen, LBrace, IntLiteral, RBrace],
+            message: "reserved keyword `while` cannot be used as a function name",
+            node: FnDef,
+        },
+        Case {
+            name: "method name",
+            tokens: vec![FnKw, Ident, Dot, WhileKw, LParen, RParen, LBrace, IntLiteral, RBrace],
+            message: "reserved keyword `while` cannot be used as a method name",
+            node: FnDef,
+        },
+        Case {
+            name: "effect name",
+            tokens: vec![EffectKw, WhileKw],
+            message: "reserved keyword `while` cannot be used as an effect name",
+            node: EffectDef,
+        },
+        Case {
+            name: "property name",
+            tokens: vec![PropertyKw, WhileKw, LParen, RParen, LBrace, TrueKw, RBrace],
+            message: "reserved keyword `while` cannot be used as a property name",
+            node: PropertyDef,
+        },
+        Case {
+            name: "type parameter",
+            tokens: vec![TypeKw, Ident, Lt, WhileKw, Gt, Eq, Ident],
+            message: "reserved keyword `while` cannot be used as a type parameter name",
+            node: TypeParamList,
+        },
+        Case {
+            name: "parameter",
+            tokens: vec![
+                FnKw, Ident, LParen, WhileKw, Colon, Ident, RParen, LBrace, IntLiteral, RBrace,
+            ],
+            message: "reserved keyword `while` cannot be used as a parameter name",
+            node: Param,
+        },
+        Case {
+            name: "local binding",
+            tokens: vec![LetKw, WhileKw, Eq, IntLiteral],
+            message: "reserved keyword `while` cannot be used as a local binding name",
+            node: LetBinding,
+        },
+        Case {
+            name: "field",
+            tokens: vec![TypeKw, Ident, Eq, LBrace, WhileKw, Colon, Ident, RBrace],
+            message: "reserved keyword `while` cannot be used as a field name",
+            node: RecordType,
+        },
+        Case {
+            name: "argument",
+            tokens: vec![
+                FnKw, Ident, LParen, RParen, LBrace, Ident, LParen, WhileKw, Colon, IntLiteral,
+                RParen, RBrace,
+            ],
+            message: "reserved keyword `while` cannot be used as an argument name",
+            node: NamedArg,
+        },
+        Case {
+            name: "pattern",
+            tokens: vec![
+                FnKw, Ident, LParen, RParen, LBrace, MatchKw, LParen, Ident, RParen, LBrace,
+                WhileKw, FatArrow, IntLiteral, RBrace, RBrace,
+            ],
+            message: "reserved keyword `while` cannot be used as a pattern name",
+            node: MatchArm,
+        },
+    ];
+
+    for case in cases {
+        let (events, errors) = parse_tokens(&case.tokens);
+        assert_eq!(
+            errors.len(),
+            1,
+            "expected one targeted error for {}, got: {errors:?}",
+            case.name
+        );
+        assert_eq!(
+            errors[0].message, case.message,
+            "unexpected message for {}",
+            case.name
+        );
+        assert!(
+            has_node(&events, case.node),
+            "expected node {:?} for {}, events: {events:?}",
+            case.node,
+            case.name
+        );
+    }
+}
+
+#[test]
 fn fn_def_contract_requires_then_invariant_is_allowed() {
     // fn f() -> Int contract requires (x) invariant (y) { 1 }
     let (events, errors) = parse_tokens(&[

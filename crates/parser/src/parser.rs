@@ -453,3 +453,102 @@ impl CompletedMarker {
         Marker { pos: new_pos }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{IdentifierRole, Parser};
+    use crate::{Input, SyntaxKind};
+
+    #[test]
+    fn expect_identifier_reports_exact_keyword_lexeme_for_all_roles() {
+        let keywords = [
+            SyntaxKind::ModuleKw,
+            SyntaxKind::ImportKw,
+            SyntaxKind::AsKw,
+            SyntaxKind::TypeKw,
+            SyntaxKind::FnKw,
+            SyntaxKind::LetKw,
+            SyntaxKind::MatchKw,
+            SyntaxKind::CapKw,
+            SyntaxKind::EffectKw,
+            SyntaxKind::WithKw,
+            SyntaxKind::RequiresKw,
+            SyntaxKind::EnsuresKw,
+            SyntaxKind::InvariantKw,
+            SyntaxKind::ContractKw,
+            SyntaxKind::PropertyKw,
+            SyntaxKind::ForKw,
+            SyntaxKind::InKw,
+            SyntaxKind::WhileKw,
+            SyntaxKind::BreakKw,
+            SyntaxKind::ContinueKw,
+            SyntaxKind::WhereKw,
+            SyntaxKind::OldKw,
+            SyntaxKind::TrueKw,
+            SyntaxKind::FalseKw,
+            SyntaxKind::IfKw,
+            SyntaxKind::ElseKw,
+            SyntaxKind::ReturnKw,
+            SyntaxKind::PubKw,
+        ];
+        let roles = [
+            IdentifierRole::PathSegment,
+            IdentifierRole::ImportAlias,
+            IdentifierRole::TypeName,
+            IdentifierRole::VariantName,
+            IdentifierRole::FunctionName,
+            IdentifierRole::MethodName,
+            IdentifierRole::EffectName,
+            IdentifierRole::PropertyName,
+            IdentifierRole::TypeParameterName,
+            IdentifierRole::ParameterName,
+            IdentifierRole::LocalBindingName,
+            IdentifierRole::FieldName,
+            IdentifierRole::ArgumentName,
+            IdentifierRole::PatternName,
+        ];
+
+        for keyword in keywords {
+            for role in roles {
+                let input = Input::new(vec![keyword]);
+                let mut parser = Parser::new(&input);
+
+                assert!(
+                    parser.at_ident_like(),
+                    "keyword should be ident-like: {keyword:?}"
+                );
+                assert!(
+                    !parser.expect_identifier(role),
+                    "keyword should not be accepted as identifier: {keyword:?} / {role:?}"
+                );
+                assert!(
+                    parser.at_eof(),
+                    "keyword recovery should consume exactly one token: {keyword:?} / {role:?}"
+                );
+
+                let (_events, errors) = parser.finish();
+                assert_eq!(
+                    errors.len(),
+                    1,
+                    "expected one parse error for {keyword:?} / {role:?}, got: {errors:?}"
+                );
+
+                let expected = format!(
+                    "reserved keyword `{}` cannot be used as {}",
+                    keyword
+                        .keyword_text()
+                        .expect("keyword_text should exist for every keyword"),
+                    role.description()
+                );
+                assert_eq!(
+                    errors[0].message, expected,
+                    "unexpected message for {keyword:?} / {role:?}"
+                );
+                assert_eq!(
+                    errors[0].token_pos, 0,
+                    "error should point at offending keyword for {keyword:?} / {role:?}"
+                );
+            }
+        }
+    }
+}

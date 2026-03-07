@@ -536,6 +536,51 @@ mod tests {
     use super::SyntaxKind;
 
     #[test]
+    fn lexed_keyword_text_roundtrips_with_from_keyword() {
+        let keywords = [
+            SyntaxKind::ModuleKw,
+            SyntaxKind::ImportKw,
+            SyntaxKind::AsKw,
+            SyntaxKind::TypeKw,
+            SyntaxKind::FnKw,
+            SyntaxKind::LetKw,
+            SyntaxKind::MatchKw,
+            SyntaxKind::CapKw,
+            SyntaxKind::EffectKw,
+            SyntaxKind::WithKw,
+            SyntaxKind::RequiresKw,
+            SyntaxKind::EnsuresKw,
+            SyntaxKind::InvariantKw,
+            SyntaxKind::ContractKw,
+            SyntaxKind::PropertyKw,
+            SyntaxKind::ForKw,
+            SyntaxKind::InKw,
+            SyntaxKind::WhileKw,
+            SyntaxKind::BreakKw,
+            SyntaxKind::ContinueKw,
+            SyntaxKind::WhereKw,
+            SyntaxKind::OldKw,
+            SyntaxKind::TrueKw,
+            SyntaxKind::FalseKw,
+            SyntaxKind::IfKw,
+            SyntaxKind::ElseKw,
+            SyntaxKind::ReturnKw,
+            SyntaxKind::PubKw,
+        ];
+
+        for keyword in keywords {
+            let text = keyword
+                .keyword_text()
+                .expect("keyword_text should exist for every keyword kind");
+            assert_eq!(
+                SyntaxKind::from_keyword(text),
+                Some(keyword),
+                "keyword_text/from_keyword drift for {keyword:?}"
+            );
+        }
+    }
+
+    #[test]
     fn unary_prefix_operators_are_classified() {
         assert!(SyntaxKind::Bang.is_unary_prefix_operator());
         assert!(SyntaxKind::Minus.is_unary_prefix_operator());
