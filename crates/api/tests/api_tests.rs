@@ -2655,6 +2655,41 @@ fn nested_constructor_pattern_binding_is_in_scope() {
 }
 
 #[test]
+fn recursive_adt_nested_packet_matches_check_cleanly() {
+    let src = r#"
+import collections
+
+type Packet = Num(Int) | Lst(List<Packet>)
+
+fn cmp(a: Packet, b: Packet) -> Int {
+  match (a) {
+    Num(av) => match (b) {
+      Num(bv) => av - bv,
+      Lst(_bs) => -1,
+    },
+    Lst(items) => if (items.len() == 0) {
+      match (b) {
+        Num(_bv) => 1,
+        Lst(other_items) => if (other_items.len() == 0) { 0 } else { -1 },
+      }
+    } else {
+      match (items[0]) {
+        Num(head) => head,
+        Lst(inner) => inner.len(),
+      }
+    },
+  }
+}
+
+fn main() -> Int {
+  let nested = Lst(collections.List.new().push(Lst(collections.List.new().push(Num(7)))))
+  cmp(nested, Num(0))
+}
+"#;
+    assert_check_no_diagnostics(src, "recursive ADT nested packet matches");
+}
+
+#[test]
 fn duplicate_record_field_in_type_alias_produces_diagnostic() {
     let src = "type P = { x: Int, x: Int }\nfn main() -> Int { 1 }";
     let output = check(src, "test.ky");
