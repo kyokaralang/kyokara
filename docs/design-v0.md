@@ -673,8 +673,8 @@ while `io`/`fs` are module namespaces for effectful operations.
 * `Set<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<IndexSet<MapKey>>`, insertion-order-preserving hash set). Elements must be hashable types (Int, String, Char, Bool, Unit); invalid element types are rejected at compile time for typed set operations (E0028). `s.values()` returns deterministic insertion-order traversal values. ✓
   * Constructor: `collections.Set.new()` (requires `import collections`)
   * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()`
-* String methods ✓ — `s.len()` (char count), `s.contains(t)`, `s.starts_with(t)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)`, `s.substring(a, b)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()`, `s.chars()`, `s.parse_int()` → `Result<Int, ParseError>`, `s.parse_float()` → `Result<Float, ParseError>`
-* Char methods ✓ — `c.to_string()`
+* String methods ✓ — scalar-based (`s.len()` counts Unicode scalars; `s[i]`, `s.substring(a, b)`, and `s.chars()` operate on Unicode scalars), plus `s.contains(t)`, `s.starts_with(t)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()`, `s.parse_int()` → `Result<Int, ParseError>`, `s.parse_float()` → `Result<Float, ParseError>`
+* Char methods ✓ — `c.to_string()`, `c.code()` (Unicode scalar / code point value; e.g. `let bucket = ch.code() % 256`)
 * Int surface ✓ — native bitwise operators `&`, `|`, `^`, `~`, `<<`, `>>` (`Int` only, arithmetic `>>`, shift counts `0..63`) plus methods `n.abs()`, `n.pow(exp)` (`exp >= 0`, overflow checked), `n.to_string()`, `n.to_float()`
 * Float methods ✓ — `f.abs()`, `f.to_int()`
 * Module-qualified math ✓ — `math.min(a, b)`, `math.max(a, b)`, `math.gcd(a, b)`, `math.lcm(a, b)`, `math.fmin(a, b)`, `math.fmax(a, b)`

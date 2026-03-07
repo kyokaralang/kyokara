@@ -2475,6 +2475,18 @@ fn eval_char_to_string() {
     }
 }
 
+#[test]
+fn eval_char_code_ascii_and_unicode() {
+    let ascii = run_ok("fn main() -> Int { 'A'.code() }");
+    assert_eq!(ascii, Value::Int(65));
+
+    let latin = run_ok("fn main() -> Int { 'é'.code() }");
+    assert_eq!(latin, Value::Int(233));
+
+    let emoji = run_ok("fn main() -> Int { '😀'.code() }");
+    assert_eq!(emoji, Value::Int(128512));
+}
+
 // ── Int/Float math tests ────────────────────────────────────────────
 
 #[test]
@@ -7214,6 +7226,15 @@ fn eval_method_char_to_string() {
         Value::String(s) => assert_eq!(s, "a"),
         other => panic!("expected String, got {other:?}"),
     }
+}
+
+#[test]
+fn eval_method_char_code_on_indexed_string_chars() {
+    let ascii = run_ok(r#"fn main() -> Int { "A"[0].code() }"#);
+    assert_eq!(ascii, Value::Int(65));
+
+    let emoji = run_ok(r#"fn main() -> Int { "😀"[0].code() }"#);
+    assert_eq!(emoji, Value::Int(128512));
 }
 
 #[test]

@@ -328,6 +328,12 @@ fn test_named_args_reordered_method_call() {
     );
 }
 
+#[test]
+fn test_char_code_method_lowers_to_intrinsic() {
+    let out = lower_and_display("fn main() -> Int { 'é'.code() }");
+    assert!(out.contains("call intrinsic:char_code"), "output:\n{out}");
+}
+
 // ── Field access ─────────────────────────────────────────────────
 
 #[test]

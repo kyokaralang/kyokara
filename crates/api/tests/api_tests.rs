@@ -102,6 +102,16 @@ fn check_else_if_missing_final_else_matches_nested_form_diagnostics() {
 }
 
 #[test]
+fn check_char_code_surface_typechecks() {
+    let output = check("fn main() -> Int { '😀'.code() }", "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_hole_produces_spec() {
     let output = check("fn foo() -> Int { _ }", "test.ky");
     assert_eq!(output.holes.len(), 1);
