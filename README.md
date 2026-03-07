@@ -164,7 +164,7 @@ fn main() -> Int {
 }
 ```
 
-Pure by default. Private by default — use `pub` to export. No null — use `Option<T>`. No exceptions — use `Result<T, E>`. Exhaustive pattern matching enforced by the compiler. Pipeline operator (`|>`) and error propagation (`?`) for clean data flow. Convention-based modules — file path determines module path, `import` brings public names into scope. Collection constructors live under `collections.*`: `collections.List.new()`, `collections.Map.new()`, `collections.Set.new()`, plus specialized `collections.MutableList.new()`, `collections.MutableList.from_list(xs)`, `collections.MutableMap.new()`, `collections.MutableSet.new()`, and `collections.Deque.new()`. `List` includes immutable index updates (`set`/`update`) and direct traversal (`map/filter/fold/...`). `collections.Deque` provides persistent queue-style operations (`push_front`/`push_back`/`pop_front`/`pop_back`) plus the same traversal surface. `collections.MutableList` provides alias-visible in-place updates for dense-index workloads (`push`/`set`/`update`). `collections.MutableMap` and `collections.MutableSet` provide alias-visible mutable key/value and set storage. Traversal constructors are surface-level expressions: `start..<end` for half-open integer ranges and `seed.unfold(step)` for stateful generation. Canonical traversal style is collection-first (`xs.map(...).filter(...).count()`). For predicate/search traversal, default to `any`/`all`/`find` (short-circuit) and reserve `fold` for true accumulation/reduction. Loop control syntax is statement-only: `while (cond) { ... }`, `for (pattern in source) { ... }`, `break`, `continue`; `for` patterns support destructuring but must be irrefutable. `Int` includes `pow` as the canonical integer exponentiation method.
+Pure by default. Private by default — use `pub` to export. No null — use `Option<T>`. No exceptions — use `Result<T, E>`. Exhaustive pattern matching enforced by the compiler. Pipeline operator (`|>`) and error propagation (`?`) for clean data flow. Convention-based modules — file path determines module path, `import` brings public names into scope. Collection constructors live under `collections.*`: `collections.List.new()`, `collections.Map.new()`, `collections.Set.new()`, plus specialized `collections.MutableList.new()`, `collections.MutableList.from_list(xs)`, `collections.MutableMap.new()`, `collections.MutableSet.new()`, and `collections.Deque.new()`. `List` includes immutable index updates (`set`/`update`) and direct traversal (`map/filter/fold/...`). `collections.Deque` provides persistent queue-style operations (`push_front`/`push_back`/`pop_front`/`pop_back`) plus the same traversal surface. `collections.MutableList` provides alias-visible in-place updates for dense-index workloads (`push`/`set`/`update`). `collections.MutableMap` and `collections.MutableSet` provide alias-visible mutable key/value and set storage. Traversal constructors are surface-level expressions: `start..<end` for half-open integer ranges and `seed.unfold(step)` for stateful generation. Canonical traversal style is collection-first (`xs.map(...).filter(...).count()`). For predicate/search traversal, default to `any`/`all`/`find` (short-circuit) and reserve `fold` for true accumulation/reduction. Loop control syntax is statement-only: `while (cond) { ... }`, `for (pattern in source) { ... }`, `break`, `continue`; `for` patterns support destructuring but must be irrefutable. `Int` includes `pow` as the canonical integer exponentiation method and native bitwise operators `&`, `|`, `^`, `~`, `<<`, `>>` (`>>` is arithmetic; shifts require counts in `0..63`).
 
 ```kyokara
 import collections
@@ -177,6 +177,16 @@ fn loop_examples(xs: List<Int>, s: String) -> Int {
   for (line in s.lines()) { if (line.len() > 0) { acc.set(0, acc[0] + 1) } } // producer
 
   acc[0]
+}
+```
+
+Bitwise operators are native on `Int`, so small machine simulators and binary-state code map directly:
+
+```kyokara
+fn step(state: Int) -> Int {
+  let mixed = state ^ (state << 6)
+  let masked = mixed & ~(1 << 1)
+  masked | (mixed >> 5)
 }
 ```
 
