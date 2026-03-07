@@ -134,27 +134,31 @@ enum SeqSourceIter {
         idx: usize,
     },
     StringSplit {
-        parts: Vec<String>,
-        idx: usize,
+        s: Rc<String>,
+        delim: Rc<String>,
+        next_start: usize,
+        emitted_empty_leading: bool,
+        emitted_empty_trailing: bool,
     },
     StringLines {
-        lines: Vec<String>,
-        idx: usize,
+        s: Rc<String>,
+        next_start: usize,
+        finished: bool,
     },
     StringChars {
-        chars: Vec<char>,
-        idx: usize,
+        s: Rc<String>,
+        next_start: usize,
     },
     MapKeys {
-        keys: Vec<MapKey>,
+        entries: Rc<indexmap::IndexMap<MapKey, Value>>,
         idx: usize,
     },
     MapValues {
-        values: Vec<Value>,
+        entries: Rc<indexmap::IndexMap<MapKey, Value>>,
         idx: usize,
     },
     SetValues {
-        values: Vec<MapKey>,
+        entries: Rc<indexmap::IndexSet<MapKey>>,
         idx: usize,
     },
 }
@@ -2123,9 +2127,9 @@ impl Interpreter {
         match value {
             Value::Seq(plan) => Ok(plan.clone()),
             Value::List(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromList(xs.clone())))),
-            Value::MutableList(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromList(Rc::new(
-                xs.borrow().clone(),
-            ))))),
+            Value::MutableList(xs) => {
+                Ok(Rc::new(SeqPlan::Source(SeqSource::FromList(xs.snapshot()))))
+            }
             Value::Deque(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromDeque(xs.clone())))),
             _ => Err(RuntimeError::TypeError(format!(
                 "{intrinsic_name} expects a traversal source"
@@ -2150,27 +2154,31 @@ impl Interpreter {
                         idx: 0,
                     },
                     SeqSource::StringSplit { s, delim } => SeqSourceIter::StringSplit {
-                        parts: s.split(delim.as_str()).map(str::to_owned).collect(),
-                        idx: 0,
+                        s: s.clone(),
+                        delim: delim.clone(),
+                        next_start: 0,
+                        emitted_empty_leading: false,
+                        emitted_empty_trailing: false,
                     },
                     SeqSource::StringLines { s } => SeqSourceIter::StringLines {
-                        lines: s.lines().map(str::to_owned).collect(),
-                        idx: 0,
+                        s: s.clone(),
+                        next_start: 0,
+                        finished: false,
                     },
                     SeqSource::StringChars { s } => SeqSourceIter::StringChars {
-                        chars: s.chars().collect(),
-                        idx: 0,
+                        s: s.clone(),
+                        next_start: 0,
                     },
                     SeqSource::MapKeys(entries) => SeqSourceIter::MapKeys {
-                        keys: entries.keys().cloned().collect(),
+                        entries: entries.clone(),
                         idx: 0,
                     },
                     SeqSource::MapValues(entries) => SeqSourceIter::MapValues {
-                        values: entries.values().cloned().collect(),
+                        entries: entries.clone(),
                         idx: 0,
                     },
                     SeqSource::SetValues(entries) => SeqSourceIter::SetValues {
-                        values: entries.iter().cloned().collect(),
+                        entries: entries.clone(),
                         idx: 0,
                     },
                 };
@@ -2229,6 +2237,85 @@ impl Interpreter {
         }
     }
 
+    fn next_string_split_part(
+        s: &str,
+        delim: &str,
+        next_start: &mut usize,
+        emitted_empty_leading: &mut bool,
+        emitted_empty_trailing: &mut bool,
+    ) -> Option<String> {
+        if delim.is_empty() {
+            if !*emitted_empty_leading {
+                *emitted_empty_leading = true;
+                return Some(String::new());
+            }
+            if *next_start < s.len() {
+                let ch = s[*next_start..].chars().next()?;
+                *next_start += ch.len_utf8();
+                return Some(ch.to_string());
+            }
+            if !*emitted_empty_trailing {
+                *emitted_empty_trailing = true;
+                return Some(String::new());
+            }
+            return None;
+        }
+
+        if *next_start > s.len() {
+            return None;
+        }
+
+        let rest = &s[*next_start..];
+        if let Some(rel) = rest.find(delim) {
+            let end = *next_start + rel;
+            let out = s[*next_start..end].to_string();
+            *next_start = end + delim.len();
+            Some(out)
+        } else {
+            let out = s[*next_start..].to_string();
+            *next_start = s.len() + 1;
+            Some(out)
+        }
+    }
+
+    fn next_string_line(s: &str, next_start: &mut usize, finished: &mut bool) -> Option<String> {
+        if *finished {
+            return None;
+        }
+        if *next_start >= s.len() {
+            *finished = true;
+            return None;
+        }
+
+        let rest = &s[*next_start..];
+        if let Some(rel) = rest.find('\n') {
+            let line_end = *next_start + rel;
+            let trimmed_end = if line_end > *next_start && s.as_bytes()[line_end - 1] == b'\r' {
+                line_end - 1
+            } else {
+                line_end
+            };
+            let out = s[*next_start..trimmed_end].to_string();
+            *next_start = line_end + 1;
+            if *next_start >= s.len() {
+                *finished = true;
+            }
+            Some(out)
+        } else {
+            *finished = true;
+            Some(s[*next_start..].to_string())
+        }
+    }
+
+    fn next_string_char(s: &str, next_start: &mut usize) -> Option<char> {
+        if *next_start >= s.len() {
+            return None;
+        }
+        let ch = s[*next_start..].chars().next()?;
+        *next_start += ch.len_utf8();
+        Some(ch)
+    }
+
     fn seq_source_iter_next(source: &mut SeqSourceIter) -> Option<Value> {
         match source {
             SeqSourceIter::Range { current, end } => {
@@ -2254,43 +2341,44 @@ impl Interpreter {
                 }
                 out
             }
-            SeqSourceIter::StringSplit { parts, idx } => {
-                let out = parts.get(*idx).cloned().map(Value::String);
+            SeqSourceIter::StringSplit {
+                s,
+                delim,
+                next_start,
+                emitted_empty_leading,
+                emitted_empty_trailing,
+            } => Self::next_string_split_part(
+                s.as_str(),
+                delim.as_str(),
+                next_start,
+                emitted_empty_leading,
+                emitted_empty_trailing,
+            )
+            .map(Value::String),
+            SeqSourceIter::StringLines {
+                s,
+                next_start,
+                finished,
+            } => Self::next_string_line(s.as_str(), next_start, finished).map(Value::String),
+            SeqSourceIter::StringChars { s, next_start } => {
+                Self::next_string_char(s.as_str(), next_start).map(Value::Char)
+            }
+            SeqSourceIter::MapKeys { entries, idx } => {
+                let out = entries.get_index(*idx).map(|(key, _)| key.to_value());
                 if out.is_some() {
                     *idx += 1;
                 }
                 out
             }
-            SeqSourceIter::StringLines { lines, idx } => {
-                let out = lines.get(*idx).cloned().map(Value::String);
+            SeqSourceIter::MapValues { entries, idx } => {
+                let out = entries.get_index(*idx).map(|(_, value)| value.clone());
                 if out.is_some() {
                     *idx += 1;
                 }
                 out
             }
-            SeqSourceIter::StringChars { chars, idx } => {
-                let out = chars.get(*idx).copied().map(Value::Char);
-                if out.is_some() {
-                    *idx += 1;
-                }
-                out
-            }
-            SeqSourceIter::MapKeys { keys, idx } => {
-                let out = keys.get(*idx).map(MapKey::to_value);
-                if out.is_some() {
-                    *idx += 1;
-                }
-                out
-            }
-            SeqSourceIter::MapValues { values, idx } => {
-                let out = values.get(*idx).cloned();
-                if out.is_some() {
-                    *idx += 1;
-                }
-                out
-            }
-            SeqSourceIter::SetValues { values, idx } => {
-                let out = values.get(*idx).map(MapKey::to_value);
+            SeqSourceIter::SetValues { entries, idx } => {
+                let out = entries.get_index(*idx).map(MapKey::to_value);
                 if out.is_some() {
                     *idx += 1;
                 }
@@ -2750,8 +2838,8 @@ impl Interpreter {
                     ));
                 };
                 let idx = *i as usize;
-                if let Some(val) = xs.borrow().get(idx) {
-                    self.make_some(val.clone())
+                if let Some(val) = xs.get_cloned(idx) {
+                    self.make_some(val)
                 } else {
                     self.make_none()
                 }
@@ -2810,7 +2898,7 @@ impl Interpreter {
                         "mutable_list_update expects an Int index".into(),
                     ));
                 };
-                let len = xs.borrow().len();
+                let len = xs.len();
                 if *i < 0 || *i as usize >= len {
                     return Err(RuntimeError::IndexOutOfBounds {
                         index: *i,
@@ -2819,9 +2907,11 @@ impl Interpreter {
                 }
                 let idx = *i as usize;
                 let updater = args[2].clone();
-                let current = xs.borrow()[idx].clone();
+                let current = xs
+                    .get_cloned(idx)
+                    .expect("bounds checked mutable list element should exist");
                 let updated = self.call_value(updater, smallvec::smallvec![current])?;
-                xs.borrow_mut()[idx] = updated;
+                xs.set(idx, updated);
                 Ok(Value::MutableList(xs.clone()))
             }
             IntrinsicFn::MapGet => {
@@ -3310,16 +3400,16 @@ impl Interpreter {
                 if i < 0 {
                     return Err(RuntimeError::IndexOutOfBounds {
                         index: i,
-                        len: items.borrow().len() as i64,
+                        len: items.len() as i64,
                     });
                 }
                 let idx = i as usize;
-                if let Some(item) = items.borrow().get(idx) {
-                    Ok(item.clone())
+                if let Some(item) = items.get_cloned(idx) {
+                    Ok(item)
                 } else {
                     Err(RuntimeError::IndexOutOfBounds {
                         index: i,
-                        len: items.borrow().len() as i64,
+                        len: items.len() as i64,
                     })
                 }
             }
@@ -4677,6 +4767,79 @@ mod tests {
         assert!(
             comparisons <= envelope,
             "expected O(n log n)-like comparator calls, got {comparisons} for n={n} (envelope={envelope})"
+        );
+    }
+
+    #[test]
+    fn mutable_list_traversal_plan_snapshots_current_backing_without_vec_clone() {
+        let interp = make_checked_interpreter("fn main() -> Int { 0 }");
+        let value = Value::mutable_list(vec![Value::Int(1), Value::Int(2)]);
+        let Value::MutableList(items) = &value else {
+            panic!("expected mutable list value");
+        };
+
+        let current_ptr = items.current_backing_ptr();
+        let plan = interp
+            .require_traversal_plan(&value, "seq_any")
+            .expect("mutable list should be a traversal source");
+        let SeqPlan::Source(SeqSource::FromList(snapshot)) = plan.as_ref() else {
+            panic!("expected mutable list traversal plan to snapshot as FromList");
+        };
+
+        assert_eq!(
+            current_ptr,
+            Rc::as_ptr(snapshot),
+            "mutable list traversal plan should reuse the current backing Rc"
+        );
+    }
+
+    #[test]
+    fn seq_iter_from_plan_reuses_string_map_and_set_source_storage() {
+        let mut interp = make_checked_interpreter("fn main() -> Int { 0 }");
+
+        let string_source = Rc::new("a\nb".to_string());
+        let lines_plan = SeqPlan::Source(SeqSource::StringLines {
+            s: string_source.clone(),
+        });
+        let SeqIterState::Source(SeqSourceIter::StringLines { s, .. }) = interp
+            .seq_iter_from_plan(&lines_plan)
+            .expect("string lines iterator should build")
+        else {
+            panic!("expected string-lines source iterator");
+        };
+        assert!(
+            Rc::ptr_eq(&string_source, &s),
+            "string lines iterator should reuse the source string"
+        );
+
+        let mut map_entries = indexmap::IndexMap::new();
+        map_entries.insert(MapKey::Int(1), Value::Int(10));
+        let map_entries = Rc::new(map_entries);
+        let map_plan = SeqPlan::Source(SeqSource::MapKeys(map_entries.clone()));
+        let SeqIterState::Source(SeqSourceIter::MapKeys { entries, .. }) = interp
+            .seq_iter_from_plan(&map_plan)
+            .expect("map-keys iterator should build")
+        else {
+            panic!("expected map-keys source iterator");
+        };
+        assert!(
+            Rc::ptr_eq(&map_entries, &entries),
+            "map-keys iterator should reuse map storage"
+        );
+
+        let mut set_entries = indexmap::IndexSet::new();
+        set_entries.insert(MapKey::Int(1));
+        let set_entries = Rc::new(set_entries);
+        let set_plan = SeqPlan::Source(SeqSource::SetValues(set_entries.clone()));
+        let SeqIterState::Source(SeqSourceIter::SetValues { entries, .. }) = interp
+            .seq_iter_from_plan(&set_plan)
+            .expect("set-values iterator should build")
+        else {
+            panic!("expected set-values source iterator");
+        };
+        assert!(
+            Rc::ptr_eq(&set_entries, &entries),
+            "set-values iterator should reuse set storage"
         );
     }
 }

@@ -2212,6 +2212,37 @@ fn main() -> Int {
     assert_eq!(val, Value::Int(1));
 }
 
+#[test]
+fn eval_mutable_list_seq_snapshot_excludes_push_after_pipeline_creation() {
+    let val = run_ok(
+        r#"import collections
+
+fn main() -> Int {
+    let xs = collections.MutableList.from_list(collections.List.new().push(1).push(2))
+    let seq = xs.map(fn(n: Int) => n)
+    xs.push(99)
+    seq.count()
+}"#,
+    );
+    assert_eq!(val, Value::Int(2));
+}
+
+#[test]
+fn eval_mutable_list_seq_snapshot_preserves_values_before_in_place_set() {
+    let val = run_ok(
+        r#"import collections
+
+fn main() -> Int {
+    let xs = collections.MutableList.from_list(collections.List.new().push(10).push(20))
+    let seq = xs.map(fn(n: Int) => n)
+    xs.set(0, 99)
+    xs.set(1, 77)
+    seq.fold(0, fn(acc: Int, n: Int) => acc * 100 + n)
+}"#,
+    );
+    assert_eq!(val, Value::Int(1020));
+}
+
 // ── Map tests ───────────────────────────────────────────────────────
 
 #[test]

@@ -379,7 +379,7 @@ impl IntrinsicFn {
                         "mutable_list_push expects a MutableList".into(),
                     ));
                 };
-                xs.borrow_mut().push(val);
+                xs.push(val);
                 Ok(Value::MutableList(xs))
             }
             IntrinsicFn::MutableListLen => {
@@ -388,7 +388,7 @@ impl IntrinsicFn {
                         "mutable_list_len expects a MutableList".into(),
                     ));
                 };
-                Ok(Value::Int(xs.borrow().len() as i64))
+                Ok(Value::Int(xs.len() as i64))
             }
             IntrinsicFn::MutableListIsEmpty => {
                 let Value::MutableList(xs) = &args[0] else {
@@ -396,7 +396,7 @@ impl IntrinsicFn {
                         "mutable_list_is_empty expects a MutableList".into(),
                     ));
                 };
-                Ok(Value::Bool(xs.borrow().is_empty()))
+                Ok(Value::Bool(xs.is_empty()))
             }
             IntrinsicFn::MutableListSet => {
                 let mut args = args;
@@ -420,7 +420,7 @@ impl IntrinsicFn {
                     ));
                 };
 
-                let len = xs.borrow().len();
+                let len = xs.len();
                 if i < 0 || i as usize >= len {
                     return Err(RuntimeError::IndexOutOfBounds {
                         index: i,
@@ -428,7 +428,7 @@ impl IntrinsicFn {
                     });
                 }
 
-                xs.borrow_mut()[i as usize] = val;
+                xs.set(i as usize, val);
                 Ok(Value::MutableList(xs))
             }
             IntrinsicFn::MutableMapNew => Ok(Value::mutable_map(IndexMap::new())),
@@ -852,8 +852,8 @@ impl IntrinsicFn {
                     ));
                 };
                 Ok(Value::seq_source(SeqSource::StringSplit {
-                    s: s.clone(),
-                    delim: delim.clone(),
+                    s: Rc::new(s.clone()),
+                    delim: Rc::new(delim.clone()),
                 }))
             }
             IntrinsicFn::StringSubstring => {
@@ -1077,7 +1077,9 @@ impl IntrinsicFn {
                         "string_lines expects a String argument".into(),
                     ));
                 };
-                Ok(Value::seq_source(SeqSource::StringLines { s: s.clone() }))
+                Ok(Value::seq_source(SeqSource::StringLines {
+                    s: Rc::new(s.clone()),
+                }))
             }
             IntrinsicFn::StringChars => {
                 let Value::String(s) = &args[0] else {
@@ -1085,7 +1087,9 @@ impl IntrinsicFn {
                         "string_chars expects a String argument".into(),
                     ));
                 };
-                Ok(Value::seq_source(SeqSource::StringChars { s: s.clone() }))
+                Ok(Value::seq_source(SeqSource::StringChars {
+                    s: Rc::new(s.clone()),
+                }))
             }
 
             // ── File I/O ──────────────────────────────────────────

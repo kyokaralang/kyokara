@@ -60,6 +60,59 @@ impl MapKey {
     }
 }
 
+/// Mutable list runtime storage.
+///
+/// Aliases share the outer `RefCell`, so mutation is visible across aliases.
+/// Sequence pipelines snapshot the current inner `Rc<Vec<_>>` cheaply.
+#[derive(Debug, Clone)]
+pub struct MutableListValue {
+    items: Rc<RefCell<Rc<Vec<Value>>>>,
+}
+
+impl MutableListValue {
+    pub fn new(items: Vec<Value>) -> Self {
+        Self {
+            items: Rc::new(RefCell::new(Rc::new(items))),
+        }
+    }
+
+    pub fn snapshot(&self) -> Rc<Vec<Value>> {
+        self.items.borrow().clone()
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.borrow().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.borrow().is_empty()
+    }
+
+    pub fn get_cloned(&self, idx: usize) -> Option<Value> {
+        self.items.borrow().get(idx).cloned()
+    }
+
+    pub fn push(&self, value: Value) {
+        let mut items = self.items.borrow_mut();
+        Rc::make_mut(&mut *items).push(value);
+    }
+
+    pub fn set(&self, idx: usize, value: Value) {
+        let mut items = self.items.borrow_mut();
+        Rc::make_mut(&mut *items)[idx] = value;
+    }
+
+    pub fn shares_alias_storage_with(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.items, &other.items)
+    }
+
+    #[cfg(test)]
+    pub fn current_backing_ptr(&self) -> *const Vec<Value> {
+        let items = self.items.borrow();
+        Rc::as_ptr(&*items)
+    }
+}
+
 /// A runtime value.
 ///
 /// Kept small (32 bytes) by boxing heap-heavy variants behind indirection.
@@ -83,7 +136,7 @@ pub enum Value {
         type_idx: Option<TypeItemIdx>,
     },
     List(Rc<Vec<Value>>),
-    MutableList(Rc<RefCell<Vec<Value>>>),
+    MutableList(MutableListValue),
     MutableMap(Rc<RefCell<IndexMap<MapKey, Value>>>),
     MutableSet(Rc<RefCell<IndexSet<MapKey>>>),
     Deque(Rc<VecDeque<Value>>),
@@ -118,9 +171,9 @@ pub enum SeqSource {
     Range { start: i64, end: i64 },
     FromList(Rc<Vec<Value>>),
     FromDeque(Rc<VecDeque<Value>>),
-    StringSplit { s: String, delim: String },
-    StringLines { s: String },
-    StringChars { s: String },
+    StringSplit { s: Rc<String>, delim: Rc<String> },
+    StringLines { s: Rc<String> },
+    StringChars { s: Rc<String> },
     MapKeys(Rc<IndexMap<MapKey, Value>>),
     MapValues(Rc<IndexMap<MapKey, Value>>),
     SetValues(Rc<IndexSet<MapKey>>),
@@ -187,7 +240,11 @@ impl PartialEq for Value {
             ) => t1 == t2 && v1 == v2 && f1 == f2,
             (Value::Record { fields: f1, .. }, Value::Record { fields: f2, .. }) => f1 == f2,
             (Value::List(a), Value::List(b)) => a == b,
-            (Value::MutableList(a), Value::MutableList(b)) => *a.borrow() == *b.borrow(),
+            (Value::MutableList(a), Value::MutableList(b)) => {
+                let a_items = a.items.borrow();
+                let b_items = b.items.borrow();
+                *a_items == *b_items
+            }
             (Value::MutableMap(a), Value::MutableMap(b)) => *a.borrow() == *b.borrow(),
             (Value::MutableSet(a), Value::MutableSet(b)) => *a.borrow() == *b.borrow(),
             (Value::Deque(a), Value::Deque(b)) => a == b,
@@ -210,7 +267,7 @@ impl Value {
     }
 
     pub fn mutable_list(items: Vec<Value>) -> Self {
-        Value::MutableList(Rc::new(RefCell::new(items)))
+        Value::MutableList(MutableListValue::new(items))
     }
 
     pub fn mutable_map(entries: IndexMap<MapKey, Value>) -> Self {
@@ -271,7 +328,8 @@ impl Value {
                 format!("[{}]", fs.join(", "))
             }
             Value::MutableList(items) => {
-                let fs: Vec<String> = items.borrow().iter().map(|v| v.display(interner)).collect();
+                let snapshot = items.snapshot();
+                let fs: Vec<String> = snapshot.iter().map(|v| v.display(interner)).collect();
                 format!("MutableList([{}])", fs.join(", "))
             }
             Value::MutableMap(entries) => {
@@ -336,8 +394,28 @@ mod tests {
             panic!("expected mutable list values");
         };
         assert!(
-            Rc::ptr_eq(a, b),
+            a.shares_alias_storage_with(b),
             "mutable list clone should share storage for alias-visible mutation"
+        );
+    }
+
+    #[test]
+    fn mutable_list_snapshot_preserves_old_backing_after_mutation() {
+        let value = Value::mutable_list(vec![Value::Int(1), Value::Int(2)]);
+        let Value::MutableList(items) = &value else {
+            panic!("expected mutable list value");
+        };
+
+        let snapshot = items.snapshot();
+        let snapshot_ptr = Rc::as_ptr(&snapshot);
+
+        items.set(0, Value::Int(99));
+
+        assert_eq!(snapshot.as_ref(), &vec![Value::Int(1), Value::Int(2)]);
+        assert_ne!(
+            snapshot_ptr,
+            items.current_backing_ptr(),
+            "mutation should move aliases to a new current backing while preserving the old snapshot"
         );
     }
 
