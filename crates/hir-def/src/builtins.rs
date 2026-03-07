@@ -29,9 +29,11 @@ fn core_hidden_type_name(interner: &mut Interner, core: CoreType) -> Name {
         CoreType::Option => "$core_Option",
         CoreType::Result => "$core_Result",
         CoreType::List => "$core_List",
+        CoreType::BitSet => "$core_BitSet",
         CoreType::MutableList => "$core_MutableList",
         CoreType::MutableMap => "$core_MutableMap",
         CoreType::MutableSet => "$core_MutableSet",
+        CoreType::MutableBitSet => "$core_MutableBitSet",
         CoreType::Deque => "$core_Deque",
         CoreType::Seq => "$core_Seq",
         CoreType::Map => "$core_Map",
@@ -46,9 +48,11 @@ fn core_public_type_name(interner: &mut Interner, core: CoreType) -> Name {
         CoreType::Option => "Option",
         CoreType::Result => "Result",
         CoreType::List => "List",
+        CoreType::BitSet => "BitSet",
         CoreType::MutableList => "MutableList",
         CoreType::MutableMap => "MutableMap",
         CoreType::MutableSet => "MutableSet",
+        CoreType::MutableBitSet => "MutableBitSet",
         CoreType::Deque => "Deque",
         CoreType::Seq => "Seq",
         CoreType::Map => "Map",
@@ -108,9 +112,11 @@ pub fn register_builtin_types(
     register_option(tree, scope, interner);
     register_result(tree, scope, interner);
     register_list(tree, scope, interner);
+    register_bitset(tree, scope, interner);
     register_mutable_list(tree, scope, interner);
     register_mutable_map(tree, scope, interner);
     register_mutable_set(tree, scope, interner);
+    register_mutable_bitset(tree, scope, interner);
     register_deque(tree, scope, interner);
     register_seq(tree, scope, interner);
     register_map(tree, scope, interner);
@@ -166,6 +172,18 @@ fn register_list(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut In
     );
 }
 
+/// `BitSet` — opaque builtin type (no variants, no pattern matching).
+fn register_bitset(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
+    let _ = register_core_type_item(
+        tree,
+        scope,
+        interner,
+        CoreType::BitSet,
+        vec![],
+        TypeDefKind::Adt { variants: vec![] },
+    );
+}
+
 /// `MutableList<T>` — opaque builtin type (no variants, no pattern matching).
 fn register_mutable_list(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
     let t_name = Name::new(interner, "T");
@@ -202,6 +220,22 @@ fn register_mutable_set(tree: &mut ItemTree, scope: &mut ModuleScope, interner: 
         interner,
         CoreType::MutableSet,
         vec![t_name],
+        TypeDefKind::Adt { variants: vec![] },
+    );
+}
+
+/// `MutableBitSet` — opaque builtin type (no variants, no pattern matching).
+fn register_mutable_bitset(
+    tree: &mut ItemTree,
+    scope: &mut ModuleScope,
+    interner: &mut Interner,
+) {
+    let _ = register_core_type_item(
+        tree,
+        scope,
+        interner,
+        CoreType::MutableBitSet,
+        vec![],
         TypeDefKind::Adt { variants: vec![] },
     );
 }
@@ -370,6 +404,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         bool_: Some(Name::new(interner, "Bool")),
         char_: Some(Name::new(interner, "Char")),
         list: scope.core_types.get(CoreType::List).map(|t| t.type_name),
+        bitset: scope.core_types.get(CoreType::BitSet).map(|t| t.type_name),
         mutable_list: scope
             .core_types
             .get(CoreType::MutableList)
@@ -381,6 +416,10 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         mutable_set: scope
             .core_types
             .get(CoreType::MutableSet)
+            .map(|t| t.type_name),
+        mutable_bitset: scope
+            .core_types
+            .get(CoreType::MutableBitSet)
             .map(|t| t.type_name),
         deque: scope.core_types.get(CoreType::Deque).map(|t| t.type_name),
         seq: scope.core_types.get(CoreType::Seq).map(|t| t.type_name),
@@ -483,6 +522,31 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             ReceiverKey::Core(CoreType::List),
             "binary_search",
         ),
+        // BitSet methods
+        ("bitset_test", ReceiverKey::Core(CoreType::BitSet), "test"),
+        ("bitset_set", ReceiverKey::Core(CoreType::BitSet), "set"),
+        ("bitset_reset", ReceiverKey::Core(CoreType::BitSet), "reset"),
+        ("bitset_flip", ReceiverKey::Core(CoreType::BitSet), "flip"),
+        ("bitset_count", ReceiverKey::Core(CoreType::BitSet), "count"),
+        ("bitset_size", ReceiverKey::Core(CoreType::BitSet), "size"),
+        (
+            "bitset_is_empty",
+            ReceiverKey::Core(CoreType::BitSet),
+            "is_empty",
+        ),
+        ("bitset_values", ReceiverKey::Core(CoreType::BitSet), "values"),
+        ("bitset_union", ReceiverKey::Core(CoreType::BitSet), "union"),
+        (
+            "bitset_intersection",
+            ReceiverKey::Core(CoreType::BitSet),
+            "intersection",
+        ),
+        (
+            "bitset_difference",
+            ReceiverKey::Core(CoreType::BitSet),
+            "difference",
+        ),
+        ("bitset_xor", ReceiverKey::Core(CoreType::BitSet), "xor"),
         ("seq_map", ReceiverKey::Core(CoreType::List), "map"),
         ("seq_filter", ReceiverKey::Core(CoreType::List), "filter"),
         ("seq_fold", ReceiverKey::Core(CoreType::List), "fold"),
@@ -603,6 +667,67 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             "mutable_set_values",
             ReceiverKey::Core(CoreType::MutableSet),
             "values",
+        ),
+        // MutableBitSet methods
+        (
+            "mutable_bitset_test",
+            ReceiverKey::Core(CoreType::MutableBitSet),
+            "test",
+        ),
+        (
+            "mutable_bitset_set",
+            ReceiverKey::Core(CoreType::MutableBitSet),
+            "set",
+        ),
+        (
+            "mutable_bitset_reset",
+            ReceiverKey::Core(CoreType::MutableBitSet),
+            "reset",
+        ),
+        (
+            "mutable_bitset_flip",
+            ReceiverKey::Core(CoreType::MutableBitSet),
+            "flip",
+        ),
+        (
+            "mutable_bitset_count",
+            ReceiverKey::Core(CoreType::MutableBitSet),
+            "count",
+        ),
+        (
+            "mutable_bitset_size",
+            ReceiverKey::Core(CoreType::MutableBitSet),
+            "size",
+        ),
+        (
+            "mutable_bitset_is_empty",
+            ReceiverKey::Core(CoreType::MutableBitSet),
+            "is_empty",
+        ),
+        (
+            "mutable_bitset_values",
+            ReceiverKey::Core(CoreType::MutableBitSet),
+            "values",
+        ),
+        (
+            "mutable_bitset_union",
+            ReceiverKey::Core(CoreType::MutableBitSet),
+            "union",
+        ),
+        (
+            "mutable_bitset_intersection",
+            ReceiverKey::Core(CoreType::MutableBitSet),
+            "intersection",
+        ),
+        (
+            "mutable_bitset_difference",
+            ReceiverKey::Core(CoreType::MutableBitSet),
+            "difference",
+        ),
+        (
+            "mutable_bitset_xor",
+            ReceiverKey::Core(CoreType::MutableBitSet),
+            "xor",
         ),
         ("seq_map", ReceiverKey::Core(CoreType::MutableList), "map"),
         (
@@ -1021,15 +1146,18 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     // Collection constructors are module-qualified under `collections.*`.
     let collections = Name::new(interner, "collections");
     let list = Name::new(interner, "List");
+    let bitset = Name::new(interner, "BitSet");
     let map = Name::new(interner, "Map");
     let set = Name::new(interner, "Set");
     let deque = Name::new(interner, "Deque");
     let mutable_list = Name::new(interner, "MutableList");
     let mutable_map = Name::new(interner, "MutableMap");
     let mutable_set = Name::new(interner, "MutableSet");
+    let mutable_bitset = Name::new(interner, "MutableBitSet");
     let new = Name::new(interner, "new");
     let from_list = Name::new(interner, "from_list");
     let list_new = Name::new(interner, "list_new");
+    let bitset_new = Name::new(interner, "bitset_new");
     let map_new = Name::new(interner, "map_new");
     let set_new = Name::new(interner, "set_new");
     let deque_new = Name::new(interner, "deque_new");
@@ -1037,10 +1165,16 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     let mutable_list_from_list = Name::new(interner, "mutable_list_from_list");
     let mutable_map_new = Name::new(interner, "mutable_map_new");
     let mutable_set_new = Name::new(interner, "mutable_set_new");
+    let mutable_bitset_new = Name::new(interner, "mutable_bitset_new");
     if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&list_new) {
         scope
             .synthetic_module_static_methods
             .insert((collections, list, new), fn_idx);
+    }
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&bitset_new) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, bitset, new), fn_idx);
     }
     if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&map_new) {
         scope
@@ -1076,6 +1210,11 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
         scope
             .synthetic_module_static_methods
             .insert((collections, mutable_set, new), fn_idx);
+    }
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_bitset_new) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, mutable_bitset, new), fn_idx);
     }
 }
 
@@ -1145,6 +1284,11 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         .get(CoreType::List)
         .map(|info| info.type_name)
         .unwrap_or_else(|| Name::new(interner, "List"));
+    let bitset_core_name = scope
+        .core_types
+        .get(CoreType::BitSet)
+        .map(|info| info.type_name)
+        .unwrap_or_else(|| Name::new(interner, "BitSet"));
     let mutable_list_core_name = scope
         .core_types
         .get(CoreType::MutableList)
@@ -1160,6 +1304,11 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         .get(CoreType::MutableSet)
         .map(|info| info.type_name)
         .unwrap_or_else(|| Name::new(interner, "MutableSet"));
+    let mutable_bitset_core_name = scope
+        .core_types
+        .get(CoreType::MutableBitSet)
+        .map(|info| info.type_name)
+        .unwrap_or_else(|| Name::new(interner, "MutableBitSet"));
     let deque_core_name = scope
         .core_types
         .get(CoreType::Deque)
@@ -1234,6 +1383,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     let list_t = TypeRef::Path {
         path: Path::single(list_core_name),
         args: vec![t_ref.clone()],
+    };
+    let bitset_t = TypeRef::Path {
+        path: Path::single(bitset_core_name),
+        args: Vec::new(),
     };
     let mutable_list_t = TypeRef::Path {
         path: Path::single(mutable_list_core_name),
@@ -1310,6 +1463,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     let mutable_set_t = TypeRef::Path {
         path: Path::single(mutable_set_core_name),
         args: vec![t_ref.clone()],
+    };
+    let mutable_bitset_t = TypeRef::Path {
+        path: Path::single(mutable_bitset_core_name),
+        args: Vec::new(),
     };
     let option_t = TypeRef::Path {
         path: Path::single(option_core_name),
@@ -1515,6 +1672,110 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             ],
             list_t.clone(),
         ),
+        // bitset_new(size: Int) -> BitSet
+        mk_intrinsic(
+            interner,
+            "bitset_new",
+            vec![],
+            vec![("size", int_ty.clone())],
+            bitset_t.clone(),
+        ),
+        // bitset_test(bs: BitSet, i: Int) -> Bool
+        mk_intrinsic(
+            interner,
+            "bitset_test",
+            vec![],
+            vec![("bs", bitset_t.clone()), ("i", int_ty.clone())],
+            bool_ty.clone(),
+        ),
+        // bitset_set(bs: BitSet, i: Int) -> BitSet
+        mk_intrinsic(
+            interner,
+            "bitset_set",
+            vec![],
+            vec![("bs", bitset_t.clone()), ("i", int_ty.clone())],
+            bitset_t.clone(),
+        ),
+        // bitset_reset(bs: BitSet, i: Int) -> BitSet
+        mk_intrinsic(
+            interner,
+            "bitset_reset",
+            vec![],
+            vec![("bs", bitset_t.clone()), ("i", int_ty.clone())],
+            bitset_t.clone(),
+        ),
+        // bitset_flip(bs: BitSet, i: Int) -> BitSet
+        mk_intrinsic(
+            interner,
+            "bitset_flip",
+            vec![],
+            vec![("bs", bitset_t.clone()), ("i", int_ty.clone())],
+            bitset_t.clone(),
+        ),
+        // bitset_count(bs: BitSet) -> Int
+        mk_intrinsic(
+            interner,
+            "bitset_count",
+            vec![],
+            vec![("bs", bitset_t.clone())],
+            int_ty.clone(),
+        ),
+        // bitset_size(bs: BitSet) -> Int
+        mk_intrinsic(
+            interner,
+            "bitset_size",
+            vec![],
+            vec![("bs", bitset_t.clone())],
+            int_ty.clone(),
+        ),
+        // bitset_is_empty(bs: BitSet) -> Bool
+        mk_intrinsic(
+            interner,
+            "bitset_is_empty",
+            vec![],
+            vec![("bs", bitset_t.clone())],
+            bool_ty.clone(),
+        ),
+        // bitset_values(bs: BitSet) -> Seq<Int>
+        mk_intrinsic(
+            interner,
+            "bitset_values",
+            vec![],
+            vec![("bs", bitset_t.clone())],
+            seq_int.clone(),
+        ),
+        // bitset_union(lhs: BitSet, rhs: BitSet) -> BitSet
+        mk_intrinsic(
+            interner,
+            "bitset_union",
+            vec![],
+            vec![("lhs", bitset_t.clone()), ("rhs", bitset_t.clone())],
+            bitset_t.clone(),
+        ),
+        // bitset_intersection(lhs: BitSet, rhs: BitSet) -> BitSet
+        mk_intrinsic(
+            interner,
+            "bitset_intersection",
+            vec![],
+            vec![("lhs", bitset_t.clone()), ("rhs", bitset_t.clone())],
+            bitset_t.clone(),
+        ),
+        // bitset_difference(lhs: BitSet, rhs: BitSet) -> BitSet
+        mk_intrinsic(
+            interner,
+            "bitset_difference",
+            vec![],
+            vec![("lhs", bitset_t.clone()), ("rhs", bitset_t.clone())],
+            bitset_t.clone(),
+        ),
+        // bitset_xor(lhs: BitSet, rhs: BitSet) -> BitSet
+        mk_intrinsic(
+            interner,
+            "bitset_xor",
+            vec![],
+            vec![("lhs", bitset_t.clone()), ("rhs", bitset_t.clone())],
+            bitset_t.clone(),
+        ),
         // mutable_list_new<T>() -> MutableList<T>
         mk_intrinsic(
             interner,
@@ -1718,6 +1979,122 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![t_name],
             vec![("s", mutable_set_t.clone())],
             seq_t.clone(),
+        ),
+        // mutable_bitset_new(size: Int) -> MutableBitSet
+        mk_intrinsic(
+            interner,
+            "mutable_bitset_new",
+            vec![],
+            vec![("size", int_ty.clone())],
+            mutable_bitset_t.clone(),
+        ),
+        // mutable_bitset_test(bs: MutableBitSet, i: Int) -> Bool
+        mk_intrinsic(
+            interner,
+            "mutable_bitset_test",
+            vec![],
+            vec![("bs", mutable_bitset_t.clone()), ("i", int_ty.clone())],
+            bool_ty.clone(),
+        ),
+        // mutable_bitset_set(bs: MutableBitSet, i: Int) -> MutableBitSet
+        mk_intrinsic(
+            interner,
+            "mutable_bitset_set",
+            vec![],
+            vec![("bs", mutable_bitset_t.clone()), ("i", int_ty.clone())],
+            mutable_bitset_t.clone(),
+        ),
+        // mutable_bitset_reset(bs: MutableBitSet, i: Int) -> MutableBitSet
+        mk_intrinsic(
+            interner,
+            "mutable_bitset_reset",
+            vec![],
+            vec![("bs", mutable_bitset_t.clone()), ("i", int_ty.clone())],
+            mutable_bitset_t.clone(),
+        ),
+        // mutable_bitset_flip(bs: MutableBitSet, i: Int) -> MutableBitSet
+        mk_intrinsic(
+            interner,
+            "mutable_bitset_flip",
+            vec![],
+            vec![("bs", mutable_bitset_t.clone()), ("i", int_ty.clone())],
+            mutable_bitset_t.clone(),
+        ),
+        // mutable_bitset_count(bs: MutableBitSet) -> Int
+        mk_intrinsic(
+            interner,
+            "mutable_bitset_count",
+            vec![],
+            vec![("bs", mutable_bitset_t.clone())],
+            int_ty.clone(),
+        ),
+        // mutable_bitset_size(bs: MutableBitSet) -> Int
+        mk_intrinsic(
+            interner,
+            "mutable_bitset_size",
+            vec![],
+            vec![("bs", mutable_bitset_t.clone())],
+            int_ty.clone(),
+        ),
+        // mutable_bitset_is_empty(bs: MutableBitSet) -> Bool
+        mk_intrinsic(
+            interner,
+            "mutable_bitset_is_empty",
+            vec![],
+            vec![("bs", mutable_bitset_t.clone())],
+            bool_ty.clone(),
+        ),
+        // mutable_bitset_values(bs: MutableBitSet) -> Seq<Int>
+        mk_intrinsic(
+            interner,
+            "mutable_bitset_values",
+            vec![],
+            vec![("bs", mutable_bitset_t.clone())],
+            seq_int.clone(),
+        ),
+        // mutable_bitset_union(lhs: MutableBitSet, rhs: MutableBitSet) -> MutableBitSet
+        mk_intrinsic(
+            interner,
+            "mutable_bitset_union",
+            vec![],
+            vec![
+                ("lhs", mutable_bitset_t.clone()),
+                ("rhs", mutable_bitset_t.clone()),
+            ],
+            mutable_bitset_t.clone(),
+        ),
+        // mutable_bitset_intersection(lhs: MutableBitSet, rhs: MutableBitSet) -> MutableBitSet
+        mk_intrinsic(
+            interner,
+            "mutable_bitset_intersection",
+            vec![],
+            vec![
+                ("lhs", mutable_bitset_t.clone()),
+                ("rhs", mutable_bitset_t.clone()),
+            ],
+            mutable_bitset_t.clone(),
+        ),
+        // mutable_bitset_difference(lhs: MutableBitSet, rhs: MutableBitSet) -> MutableBitSet
+        mk_intrinsic(
+            interner,
+            "mutable_bitset_difference",
+            vec![],
+            vec![
+                ("lhs", mutable_bitset_t.clone()),
+                ("rhs", mutable_bitset_t.clone()),
+            ],
+            mutable_bitset_t.clone(),
+        ),
+        // mutable_bitset_xor(lhs: MutableBitSet, rhs: MutableBitSet) -> MutableBitSet
+        mk_intrinsic(
+            interner,
+            "mutable_bitset_xor",
+            vec![],
+            vec![
+                ("lhs", mutable_bitset_t.clone()),
+                ("rhs", mutable_bitset_t.clone()),
+            ],
+            mutable_bitset_t.clone(),
         ),
         // deque_new<T>() -> Deque<T>
         mk_intrinsic(interner, "deque_new", vec![t_name], vec![], deque_t.clone()),

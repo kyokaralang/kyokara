@@ -300,8 +300,10 @@ fn add_builtin_completions(items: &mut Vec<CompletionItem>) {
         "Option",
         "Result",
         "List",
+        "BitSet",
         "Map",
         "Set",
+        "MutableBitSet",
         "ParseError",
     ] {
         items.push(CompletionItem {
@@ -648,6 +650,35 @@ mod tests {
         assert!(
             !items.iter().any(|i| i.label == "Int"),
             "dot-completion should not include builtins: {items:?}"
+        );
+    }
+
+    #[test]
+    fn completion_dot_after_bitset_type_shows_new() {
+        let source = "import collections\nfn main() -> Int {\n  let xs = collections.BitSet.new(8)\n  xs.count()\n}";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let new_pos = source.find("new").expect("new offset");
+        let offset = TextSize::from(new_pos as u32);
+        let items = completion_items(&analysis, source, offset);
+        assert!(
+            items.iter().any(|i| i.label == "new"),
+            "expected 'new' in BitSet dot-completion: {items:?}"
+        );
+    }
+
+    #[test]
+    fn completion_dot_after_mutable_bitset_type_shows_new() {
+        let source =
+            "import collections\nfn main() -> Int {\n  let xs = collections.MutableBitSet.new(8)\n  xs.count()\n}";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let new_pos = source.find("new").expect("new offset");
+        let offset = TextSize::from(new_pos as u32);
+        let items = completion_items(&analysis, source, offset);
+        assert!(
+            items.iter().any(|i| i.label == "new"),
+            "expected 'new' in MutableBitSet dot-completion: {items:?}"
         );
     }
 

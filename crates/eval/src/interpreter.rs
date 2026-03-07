@@ -12,6 +12,7 @@ use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::resolver::{
     CoreType, ModuleScope, PrimitiveType, ReceiverKey, StaticOwnerKey,
 };
+use kyokara_hir_def::scope::ScopeIdx;
 use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_intern::Interner;
 use kyokara_stdx::FxHashMap;
@@ -130,6 +131,11 @@ enum SeqSourceIter {
     FromList {
         items: Rc<Vec<Value>>,
         idx: usize,
+    },
+    BitSetValues {
+        bitset: crate::value::BitSetValue,
+        word_idx: usize,
+        pending_word: u64,
     },
     FromDeque {
         items: Rc<VecDeque<Value>>,
@@ -591,7 +597,26 @@ impl Interpreter {
         }
     }
 
-    fn consuming_local_for_dead_expr(
+    fn stmt_scope(body: &Body, stmt: &Stmt) -> Option<ScopeIdx> {
+        let expr_idx = match stmt {
+            Stmt::Let { init, .. } => *init,
+            Stmt::While { condition, .. } => *condition,
+            Stmt::For { source, .. } => *source,
+            Stmt::Expr(idx) => *idx,
+            Stmt::Break | Stmt::Continue => return None,
+        };
+        body.expr_scopes.get(expr_idx).copied()
+    }
+
+    fn root_block_scope(body: &Body) -> Option<ScopeIdx> {
+        let Expr::Block { stmts, tail } = &body.exprs[body.root] else {
+            return None;
+        };
+        tail.and_then(|idx| body.expr_scopes.get(idx).copied())
+            .or_else(|| stmts.iter().find_map(|stmt| Self::stmt_scope(body, stmt)))
+    }
+
+    fn consuming_local_for_terminal_expr(
         &mut self,
         body: &Body,
         expr_idx: ExprIdx,
@@ -610,34 +635,146 @@ impl Interpreter {
             return None;
         };
         let (_, access, receiver_name) = self.leftmost_method_chain_receiver(body, expr_idx)?;
+        let pat_scope = body.local_binding_meta.get(pat_idx)?.scope;
+        let allow_root_block_shadow = Self::root_block_scope(body) == Some(pat_scope);
+        if access.depth != 0 && !allow_root_block_shadow {
+            return None;
+        }
         if receiver_name != name {
             return None;
         }
         (self.count_local_access_uses(body, expr_idx, access) == 1).then_some(access)
     }
 
-    fn eval_dead_expr_shared(
+    fn eval_consuming_expr_shared(
         &mut self,
         body: &Body,
         expr_idx: ExprIdx,
     ) -> Result<ControlFlow, RuntimeError> {
-        if let Some(access) = self.consuming_local_for_dead_expr(body, expr_idx) {
+        if let Some(access) = self.consuming_local_for_terminal_expr(body, expr_idx) {
             self.with_consuming_local(access, |this| this.eval_expr_shared(body, expr_idx))
         } else {
             self.eval_expr_shared(body, expr_idx)
         }
     }
 
-    fn eval_dead_expr(
+    fn eval_consuming_expr(
         &mut self,
         env: &mut Env,
         body: &Body,
         expr_idx: ExprIdx,
     ) -> Result<ControlFlow, RuntimeError> {
-        if let Some(access) = self.consuming_local_for_dead_expr(body, expr_idx) {
+        if let Some(access) = self.consuming_local_for_terminal_expr(body, expr_idx) {
             self.with_consuming_local(access, |this| this.eval_expr(env, body, expr_idx))
         } else {
             self.eval_expr(env, body, expr_idx)
+        }
+    }
+
+    fn eval_terminal_expr_shared(
+        &mut self,
+        body: &Body,
+        idx: ExprIdx,
+    ) -> Result<ControlFlow, RuntimeError> {
+        match &body.exprs[idx] {
+            Expr::Block { stmts, tail } => self.eval_block_shared(body, stmts, *tail, true),
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let cond = eval_propagate_shared!(self, body, *condition);
+                match cond {
+                    Value::Bool(true) => self.eval_terminal_expr_shared(body, *then_branch),
+                    Value::Bool(false) => {
+                        if let Some(else_idx) = else_branch {
+                            self.eval_terminal_expr_shared(body, *else_idx)
+                        } else {
+                            Ok(ControlFlow::Value(Value::Unit))
+                        }
+                    }
+                    _ => Err(RuntimeError::TypeError("if condition must be Bool".into())),
+                }
+            }
+            Expr::Match { scrutinee, arms } => {
+                let scrutinee_val = eval_propagate_shared!(self, body, *scrutinee);
+                self.eval_match_terminal_shared(body, scrutinee_val, arms)
+            }
+            Expr::Return(val) => {
+                let v = if let Some(idx) = *val {
+                    match self.eval_terminal_expr_shared(body, idx)? {
+                        ControlFlow::Value(v) | ControlFlow::Return(v) => v,
+                        ControlFlow::Break => {
+                            return Err(RuntimeError::TypeError(
+                                "`break` used outside loop".into(),
+                            ));
+                        }
+                        ControlFlow::Continue => {
+                            return Err(RuntimeError::TypeError(
+                                "`continue` used outside loop".into(),
+                            ));
+                        }
+                    }
+                } else {
+                    Value::Unit
+                };
+                Ok(ControlFlow::Return(v))
+            }
+            _ => self.eval_consuming_expr_shared(body, idx),
+        }
+    }
+
+    fn eval_terminal_expr(
+        &mut self,
+        env: &mut Env,
+        body: &Body,
+        idx: ExprIdx,
+    ) -> Result<ControlFlow, RuntimeError> {
+        match &body.exprs[idx] {
+            Expr::Block { stmts, tail } => self.eval_block(env, body, stmts, *tail, true),
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let cond = eval_propagate!(self, env, body, *condition);
+                match cond {
+                    Value::Bool(true) => self.eval_terminal_expr(env, body, *then_branch),
+                    Value::Bool(false) => {
+                        if let Some(else_idx) = else_branch {
+                            self.eval_terminal_expr(env, body, *else_idx)
+                        } else {
+                            Ok(ControlFlow::Value(Value::Unit))
+                        }
+                    }
+                    _ => Err(RuntimeError::TypeError("if condition must be Bool".into())),
+                }
+            }
+            Expr::Match { scrutinee, arms } => {
+                let scrutinee_val = eval_propagate!(self, env, body, *scrutinee);
+                self.eval_match_terminal(env, body, scrutinee_val, arms)
+            }
+            Expr::Return(val) => {
+                let v = if let Some(idx) = *val {
+                    match self.eval_terminal_expr(env, body, idx)? {
+                        ControlFlow::Value(v) | ControlFlow::Return(v) => v,
+                        ControlFlow::Break => {
+                            return Err(RuntimeError::TypeError(
+                                "`break` used outside loop".into(),
+                            ));
+                        }
+                        ControlFlow::Continue => {
+                            return Err(RuntimeError::TypeError(
+                                "`continue` used outside loop".into(),
+                            ));
+                        }
+                    }
+                } else {
+                    Value::Unit
+                };
+                Ok(ControlFlow::Return(v))
+            }
+            _ => self.eval_consuming_expr(env, body, idx),
         }
     }
 
@@ -850,7 +987,7 @@ impl Interpreter {
     }
 
     fn eval_fn_body_value(&mut self, body: &Body) -> Result<Value, RuntimeError> {
-        match self.eval_dead_expr_shared(body, body.root)? {
+        match self.eval_terminal_expr_shared(body, body.root)? {
             ControlFlow::Value(v) | ControlFlow::Return(v) => Ok(v),
             ControlFlow::Break => Err(RuntimeError::TypeError("`break` used outside loop".into())),
             ControlFlow::Continue => Err(RuntimeError::TypeError(
@@ -1289,13 +1426,13 @@ impl Interpreter {
             Expr::Block { stmts, tail } => {
                 let stmts = stmts.clone();
                 let tail = *tail;
-                self.eval_block(env, body, &stmts, tail)
+                self.eval_block(env, body, &stmts, tail, false)
             }
 
             Expr::Return(val) => {
                 let val = *val;
                 let v = if let Some(idx) = val {
-                    match self.eval_dead_expr(env, body, idx)? {
+                    match self.eval_terminal_expr(env, body, idx)? {
                         ControlFlow::Value(v) | ControlFlow::Return(v) => v,
                         ControlFlow::Break => {
                             return Err(RuntimeError::TypeError(
@@ -1688,13 +1825,13 @@ impl Interpreter {
 
             Expr::Block { stmts, tail } => {
                 let tail = *tail;
-                self.eval_block_shared(body, stmts, tail)
+                self.eval_block_shared(body, stmts, tail, false)
             }
 
             Expr::Return(val) => {
                 let val = *val;
                 let v = if let Some(idx) = val {
-                    match self.eval_dead_expr_shared(body, idx)? {
+                    match self.eval_terminal_expr_shared(body, idx)? {
                         ControlFlow::Value(v) | ControlFlow::Return(v) => v,
                         ControlFlow::Break => {
                             return Err(RuntimeError::TypeError(
@@ -2030,7 +2167,7 @@ impl Interpreter {
                         for (pat_idx, val) in params.iter().zip(args) {
                             self.bind_pat(&body, *pat_idx, &val, &mut env)?;
                         }
-                        let result = self.eval_dead_expr(&mut env, &body, body_expr)?;
+                        let result = self.eval_terminal_expr(&mut env, &body, body_expr)?;
                         Ok(result.into_value())
                     })();
                     self.current_body = prev_body;
@@ -2405,6 +2542,11 @@ impl Interpreter {
                         items: xs.clone(),
                         idx: 0,
                     },
+                    SeqSource::BitSetValues(bitset) => SeqSourceIter::BitSetValues {
+                        bitset: bitset.clone(),
+                        word_idx: 0,
+                        pending_word: bitset.words().first().copied().unwrap_or(0),
+                    },
                     SeqSource::FromDeque(xs) => SeqSourceIter::FromDeque {
                         items: xs.clone(),
                         idx: 0,
@@ -2590,6 +2732,27 @@ impl Interpreter {
                 }
                 out
             }
+            SeqSourceIter::BitSetValues {
+                bitset,
+                word_idx,
+                pending_word,
+            } => loop {
+                let words = bitset.words();
+                if *word_idx >= words.len() {
+                    return None;
+                }
+                if *pending_word == 0 {
+                    *word_idx += 1;
+                    *pending_word = words.get(*word_idx).copied().unwrap_or(0);
+                    continue;
+                }
+                let bit = pending_word.trailing_zeros() as usize;
+                *pending_word &= *pending_word - 1;
+                let idx = *word_idx * 64 + bit;
+                if idx < bitset.size_bits() {
+                    return Some(Value::Int(idx as i64));
+                }
+            },
             SeqSourceIter::FromDeque { items, idx } => {
                 let out = items.get(*idx).cloned();
                 if out.is_some() {
@@ -2812,6 +2975,25 @@ impl Interpreter {
                         match emit(self, item)? {
                             Continue => {}
                             Break => return Ok(()),
+                        }
+                    }
+                    Ok(())
+                }
+                SeqSource::BitSetValues(bitset) => {
+                    let words = bitset.words();
+                    for (word_idx, word) in words.iter().enumerate() {
+                        let mut remaining = *word;
+                        while remaining != 0 {
+                            let bit = remaining.trailing_zeros() as usize;
+                            remaining &= remaining - 1;
+                            let idx = word_idx * 64 + bit;
+                            if idx >= bitset.size_bits() {
+                                continue;
+                            }
+                            match emit(self, Value::Int(idx as i64))? {
+                                Continue => {}
+                                Break => return Ok(()),
+                            }
                         }
                     }
                     Ok(())
@@ -3594,6 +3776,11 @@ impl Interpreter {
                 .core_types
                 .get(CoreType::List)
                 .map(|_| ReceiverKey::Core(CoreType::List)),
+            Value::BitSet(_) => self
+                .module_scope
+                .core_types
+                .get(CoreType::BitSet)
+                .map(|_| ReceiverKey::Core(CoreType::BitSet)),
             Value::MutableList(_) => self
                 .module_scope
                 .core_types
@@ -3609,6 +3796,11 @@ impl Interpreter {
                 .core_types
                 .get(CoreType::MutableSet)
                 .map(|_| ReceiverKey::Core(CoreType::MutableSet)),
+            Value::MutableBitSet(_) => self
+                .module_scope
+                .core_types
+                .get(CoreType::MutableBitSet)
+                .map(|_| ReceiverKey::Core(CoreType::MutableBitSet)),
             Value::Deque(_) => self
                 .module_scope
                 .core_types
@@ -3745,6 +3937,28 @@ impl Interpreter {
         Err(RuntimeError::PatternMatchFailure)
     }
 
+    fn eval_match_terminal(
+        &mut self,
+        env: &mut Env,
+        body: &Body,
+        scrutinee: Value,
+        arms: &[MatchArm],
+    ) -> Result<ControlFlow, RuntimeError> {
+        for arm in arms {
+            let mut bindings = Vec::new();
+            if self.match_pat(body, arm.pat, &scrutinee, &mut bindings) {
+                env.push_scope();
+                for (name, val) in bindings {
+                    env.bind(name, val);
+                }
+                let result = self.eval_terminal_expr(env, body, arm.body);
+                env.pop_scope();
+                return result;
+            }
+        }
+        Err(RuntimeError::PatternMatchFailure)
+    }
+
     fn match_pat(
         &self,
         body: &Body,
@@ -3840,6 +4054,7 @@ impl Interpreter {
         body: &Body,
         stmts: &[Stmt],
         tail: Option<ExprIdx>,
+        tail_is_terminal: bool,
     ) -> Result<ControlFlow, RuntimeError> {
         env.push_scope();
         for stmt in stmts {
@@ -3930,7 +4145,11 @@ impl Interpreter {
             }
         }
         let result = if let Some(tail_idx) = tail {
-            self.eval_dead_expr(env, body, tail_idx)
+            if tail_is_terminal {
+                self.eval_terminal_expr(env, body, tail_idx)
+            } else {
+                self.eval_expr(env, body, tail_idx)
+            }
         } else {
             Ok(ControlFlow::Value(Value::Unit))
         };
@@ -4099,11 +4318,33 @@ impl Interpreter {
         Err(RuntimeError::PatternMatchFailure)
     }
 
+    fn eval_match_terminal_shared(
+        &mut self,
+        body: &Body,
+        scrutinee: Value,
+        arms: &[MatchArm],
+    ) -> Result<ControlFlow, RuntimeError> {
+        for arm in arms {
+            let mut bindings = Vec::new();
+            if self.match_pat(body, arm.pat, &scrutinee, &mut bindings) {
+                self.env.push_scope();
+                for (name, val) in bindings {
+                    self.env.bind(name, val);
+                }
+                let result = self.eval_terminal_expr_shared(body, arm.body);
+                self.env.pop_scope();
+                return result;
+            }
+        }
+        Err(RuntimeError::PatternMatchFailure)
+    }
+
     fn eval_block_shared(
         &mut self,
         body: &Body,
         stmts: &[Stmt],
         tail: Option<ExprIdx>,
+        tail_is_terminal: bool,
     ) -> Result<ControlFlow, RuntimeError> {
         self.env.push_scope();
         for stmt in stmts {
@@ -4195,7 +4436,11 @@ impl Interpreter {
             }
         }
         let result = if let Some(tail_idx) = tail {
-            self.eval_dead_expr_shared(body, tail_idx)
+            if tail_is_terminal {
+                self.eval_terminal_expr_shared(body, tail_idx)
+            } else {
+                self.eval_expr_shared(body, tail_idx)
+            }
         } else {
             Ok(ControlFlow::Value(Value::Unit))
         };

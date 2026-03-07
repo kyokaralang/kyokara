@@ -63,6 +63,7 @@ First-class specification:
 API/stdlib surface consistency rules are specified in RFC 0001:
 - [API Surface Law (AI-first)](rfcs/0001-api-surface-law.md)
 - [Mutable Collection Naming and Placement](rfcs/0005-mutable-collection-naming-and-placement.md)
+- [BitSet and MutableBitSet Surface](rfcs/0010-bitset-surface.md)
 
 ### 2.2 Modules and imports
 
@@ -603,14 +604,14 @@ a canonical API surface: method calls for value-owned behavior, module-qualified
 for no-owner utilities and effects, and type-namespaced constructors.
 
 Canonical visibility matrix:
-* Prelude builtin value types (no import): `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `Deque<T>`, `Map<K, V>`, `Set<T>` type names and value methods.
-* Pure collection constructors (imported module): `collections.List.new()`, `collections.Map.new()`, `collections.Set.new()`, `collections.MutableList.new()`, `collections.MutableList.from_list(xs)`, `collections.MutableMap.new()`, `collections.MutableSet.new()`, `collections.Deque.new()`
+* Prelude builtin value types (no import): `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `Deque<T>`, `Map<K, V>`, `Set<T>`, `BitSet`, `MutableBitSet` type names and value methods.
+* Pure collection constructors (imported module): `collections.List.new()`, `collections.Map.new()`, `collections.Set.new()`, `collections.MutableList.new()`, `collections.MutableList.from_list(xs)`, `collections.MutableMap.new()`, `collections.MutableSet.new()`, `collections.Deque.new()`, `collections.BitSet.new(size)`, `collections.MutableBitSet.new(size)`
 * Prelude traversal constructors (no import): `start..<end`, `seed.unfold(step)`.
 * Pure no-owner utilities (imported module): `math.*`
 * Effectful utilities (imported capability modules): `io.*`, `fs.*`
 * Internal intrinsic IDs (`list_new`, `map_insert`, etc.) are implementation detail only.
 
-Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `Deque<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
+Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `Deque<T>`, `Map<K, V>`, `Set<T>`, `BitSet`, `MutableBitSet`, and `ParseError` are
 injected as synthetic types before type-checking. Synthetic modules (`collections`, `io`, `math`, `fs`)
 require explicit `import collections` / `import io` / `import math` / `import fs` in all modes.
 Zero intrinsic free functions exist in user scope.
@@ -622,8 +623,8 @@ Runtime soundness invariants for core APIs:
 * Temporary safety rule: unqualified user ADT variants named `Some`, `None`, `Ok`, `Err`, `InvalidInt`, and `InvalidFloat` are rejected until qualified constructors are implemented.
 * Follow-up: add qualified constructors/patterns (`Type.Variant`) and remove the temporary reservation ([#293](https://github.com/kyokaralang/kyokara/issues/293)).
 
-Mental model: `List`/`MutableList`/`MutableMap`/`MutableSet`/`Deque`/`Map`/`Set` are prelude value types (type/value namespace),
-`collections` is the pure module namespace for collection constructors (`List`/`Map`/`Set` plus specialized collections like `MutableList`, `MutableMap`, `MutableSet`, and `Deque`),
+Mental model: `List`/`MutableList`/`MutableMap`/`MutableSet`/`Deque`/`Map`/`Set`/`BitSet`/`MutableBitSet` are prelude value types (type/value namespace),
+`collections` is the pure module namespace for collection constructors (`List`/`Map`/`Set` plus specialized collections like `MutableList`, `MutableMap`, `MutableSet`, `Deque`, `BitSet`, and `MutableBitSet`),
 while `io`/`fs` are module namespaces for effectful operations.
 
 **Implemented (v0.1+):**
@@ -652,6 +653,17 @@ while `io`/`fs` are module namespaces for effectful operations.
 * `MutableSet<T>` — opaque builtin type with alias-visible mutable set storage. Elements must be hashable types (Int, String, Char, Bool, Unit); invalid element types are rejected at compile time for typed mutable-set operations (E0028). ✓
   * Constructor: `collections.MutableSet.new()` (requires `import collections`)
   * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()`
+* `BitSet` — opaque builtin dense bitset with COW-backed packed-word runtime storage (`Rc<Vec<u64>>`). This is the canonical dense bounded-bit tool; `MutableList<Bool>` remains valid but is not the intended representation for dense relation/set workloads. ✓
+  * Constructor: `collections.BitSet.new(size)` (requires `import collections`)
+  * Domain: valid indices are `0..size-1`; `size` is fixed at construction; negative sizes are runtime errors.
+  * Per-bit methods: `bs.test(i)`, `bs.set(i)`, `bs.reset(i)`, `bs.flip(i)`
+  * Whole-set methods: `bs.union(other)`, `bs.intersection(other)`, `bs.difference(other)`, `bs.xor(other)`
+  * Metadata/traversal: `bs.count()`, `bs.size()`, `bs.is_empty()`, `bs.values()` (ascending index order, lazy traversal)
+  * Runtime errors: out-of-range indices and binary ops on mismatched sizes are direct runtime errors.
+* `MutableBitSet` — opaque builtin dense bitset with alias-visible packed-word runtime storage (`Rc<RefCell<Rc<Vec<u64>>>>`). ✓
+  * Constructor: `collections.MutableBitSet.new(size)` (requires `import collections`)
+  * Surface mirrors `BitSet`: `test/set/reset/flip/union/intersection/difference/xor/count/size/is_empty/values`
+  * Mutation semantics: updates and whole-set ops mutate in place, are alias-visible, and return the receiver for chaining.
 * `Deque<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<VecDeque<Value>>`) ✓
   * Constructor: `collections.Deque.new()` (requires `import collections`)
   * Methods (queue/storage): `q.push_front(v)`, `q.push_back(v)`, `q.pop_front()` → `Option<{ value: T, rest: Deque<T> }>`, `q.pop_back()` → `Option<{ value: T, rest: Deque<T> }>`, `q.len()`, `q.is_empty()`
@@ -706,7 +718,7 @@ while `io`/`fs` are module namespaces for effectful operations.
 * Canonical formatter (`kyokara fmt`, `kyokara-fmt` crate, Wadler-Lindig Doc IR) ✓
 * Stable symbol IDs (`kind::name` / `kind::parent::child` format, unique across symbol kinds) ✓
 * Runtime contract checks (requires/ensures/old) ✓
-* Core stdlib (List, MutableList, MutableMap, MutableSet, Deque, Map, Set, String, Int/Float, io, math, fs — intrinsic functions exposed via canonical method/module API) ✓
+* Core stdlib (List, MutableList, MutableMap, MutableSet, Deque, Map, Set, BitSet, MutableBitSet, String, Int/Float, io, math, fs — intrinsic functions exposed via canonical method/module API) ✓
 
 **v0.2 — Refactoring + LSP + Capabilities**
 * Module system: convention-based file layout, `pub` visibility, flat imports ✓

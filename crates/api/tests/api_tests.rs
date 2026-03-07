@@ -4931,6 +4931,128 @@ fn check_mutable_set_invalid_element_type_reports_e0028() {
 }
 
 #[test]
+fn check_collections_bitset_constructor_surface_has_no_diagnostics_rfc_0010() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+fn main() -> Int {
+    let bs = collections.BitSet.new(16).set(1).set(3)
+    if (bs.test(3)) { bs.count() + bs.size() } else { 0 }
+}"#,
+        "collections.BitSet constructor canonical surface",
+    );
+}
+
+#[test]
+fn check_collections_mutable_bitset_constructor_surface_has_no_diagnostics_rfc_0010() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+fn main() -> Int {
+    let bs = collections.MutableBitSet.new(16).set(1).flip(3)
+    if (bs.test(3)) { bs.count() + bs.size() } else { 0 }
+}"#,
+        "collections.MutableBitSet constructor canonical surface",
+    );
+}
+
+#[test]
+fn check_collections_alias_bitset_constructor_surface_has_no_diagnostics_rfc_0010() {
+    assert_check_no_diagnostics(
+        r#"import collections as c
+
+fn main() -> Int {
+    let a: BitSet = c.BitSet.new(8).set(2)
+    let b: MutableBitSet = c.MutableBitSet.new(8).set(4)
+    if (a.test(2) && b.test(4)) { 1 } else { 0 }
+}"#,
+        "collections alias bitset constructor canonical surface",
+    );
+}
+
+#[test]
+fn check_global_bitset_constructor_surface_is_removed_rfc_0010() {
+    for src in [
+        "fn main() -> Int { BitSet.new(8).count() }",
+        "fn main() -> Int { MutableBitSet.new(8).count() }",
+    ] {
+        let output = check(src, "test.ky");
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("no method") || d.message.contains("unresolved name")),
+            "expected removed constructor-surface diagnostics for `{src}`, got: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn check_bitset_non_int_index_reports_type_mismatch() {
+    let output = check(
+        r#"import collections
+fn main() -> Int {
+    collections.BitSet.new(8).set("x").count()
+}"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0001" && d.message.contains("type mismatch")),
+        "expected E0001 type mismatch for non-Int bitset index, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_bitset_binary_ops_wrong_rhs_type_reports_type_mismatch() {
+    let output = check(
+        r#"import collections
+fn main() -> Int {
+    let bs = collections.BitSet.new(8)
+    bs.union(collections.Set.new().insert(1)).count()
+}"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0001" && d.message.contains("type mismatch")),
+        "expected E0001 type mismatch for wrong bitset rhs type, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_bitset_surface_excludes_get_insert_remove_len() {
+    let output = check(
+        r#"import collections
+fn main() -> Int {
+    let a = collections.BitSet.new(8).get(1)
+    let b = collections.BitSet.new(8).insert(1)
+    let c = collections.BitSet.new(8).remove(1)
+    let d = collections.BitSet.new(8).len()
+    if (a) { b.count() + c.count() + d } else { 0 }
+}"#,
+        "test.ky",
+    );
+    let no_method_count = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0023" && d.message.contains("no method"))
+        .count();
+    assert!(
+        no_method_count >= 4,
+        "expected no-such-method diagnostics for non-canonical bitset surface, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_effect_module_alias_still_resolves_rfc_0004() {
     let output = check(
         r#"import io as i

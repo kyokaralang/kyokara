@@ -2243,6 +2243,41 @@ fn main() -> Int {
     assert_eq!(val, Value::Int(1020));
 }
 
+#[test]
+fn eval_mutable_list_loop_if_tail_does_not_consume_outer_binding() {
+    let val = run_ok(
+        r#"import collections
+
+fn main() -> Int {
+    let xs = collections.MutableList.new().push(0)
+    for (_i in 0..<3) {
+        if (true) {
+            xs.push(1)
+        }
+    }
+    xs.len()
+}"#,
+    );
+    assert_eq!(val, Value::Int(4));
+}
+
+#[test]
+fn eval_nested_scope_shadow_rebind_preserves_outer_binding() {
+    let val = run_ok(
+        r#"import collections
+
+fn main() -> Int {
+    let xs = collections.List.new().push(1)
+    {
+        let xs = xs.push(2)
+        xs.len()
+    }
+    xs.len()
+}"#,
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
 // ── Map tests ───────────────────────────────────────────────────────
 
 #[test]
@@ -8014,6 +8049,172 @@ fn eval_set_rebinding_chain_preserves_prior_versions() {
         }"#,
     );
     assert!(matches!(val, Value::Bool(true)));
+}
+
+// ── BitSet / MutableBitSet behavior tests ─────────────────────────────
+
+#[test]
+fn eval_bitset_new_is_empty_and_has_fixed_size() {
+    let val = run_ok(
+        r#"import collections
+fn main() -> Bool {
+    let bs = collections.BitSet.new(8)
+    bs.is_empty() && bs.count() == 0 && bs.size() == 8
+}"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_bitset_set_reset_flip_test_and_values() {
+    let val = run_ok(
+        r#"import collections
+fn main() -> Bool {
+    let bs = collections.BitSet.new(10).set(3).set(1).flip(3).set(7).reset(1)
+    let vals = bs.values().to_list()
+    bs.count() == 1
+        && bs.test(7)
+        && !bs.test(1)
+        && !bs.test(3)
+        && vals.len() == 1
+        && vals.get(0).unwrap_or(-1) == 7
+}"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_bitset_values_are_ascending() {
+    let val = run_ok(
+        r#"import collections
+fn main() -> Bool {
+    let vals = collections.BitSet.new(16).set(9).set(1).set(12).set(3).values().to_list()
+    vals.get(0).unwrap_or(-1) == 1
+        && vals.get(1).unwrap_or(-1) == 3
+        && vals.get(2).unwrap_or(-1) == 9
+        && vals.get(3).unwrap_or(-1) == 12
+}"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_bitset_algebra_is_correct() {
+    let val = run_ok(
+        r#"import collections
+fn main() -> Bool {
+    let a = collections.BitSet.new(16).set(1).set(3).set(5)
+    let b = collections.BitSet.new(16).set(3).set(4).set(5)
+    let u = a.union(b)
+    let i = a.intersection(b)
+    let d = a.difference(b)
+    let x = a.xor(b)
+    u.count() == 4
+        && i.count() == 2
+        && d.count() == 1 && d.test(1)
+        && x.count() == 2 && x.test(1) && x.test(4)
+}"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_bitset_is_immutable() {
+    let val = run_ok(
+        r#"import collections
+fn main() -> Bool {
+    let a = collections.BitSet.new(8).set(1)
+    let b = a.set(2)
+    a.count() == 1 && b.count() == 2 && !a.test(2) && b.test(2)
+}"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_mutable_bitset_aliases_observe_in_place_mutation() {
+    let val = run_ok(
+        r#"import collections
+fn main() -> Bool {
+    let a = collections.MutableBitSet.new(8)
+    let b = a
+    a.set(1)
+    b.flip(2)
+    a.test(1) && a.test(2) && b.count() == 2
+}"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_mutable_bitset_algebra_is_alias_visible_and_returns_self() {
+    let val = run_ok(
+        r#"import collections
+fn main() -> Bool {
+    let a = collections.MutableBitSet.new(8).set(1).set(3)
+    let b = collections.MutableBitSet.new(8).set(3).set(4)
+    let alias = a
+    a.union(b)
+    alias.count() == 3 && alias.test(1) && alias.test(3) && alias.test(4)
+}"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_bitset_zero_size_is_valid() {
+    let val = run_ok(
+        r#"import collections
+fn main() -> Bool {
+    let bs = collections.BitSet.new(0)
+    bs.size() == 0 && bs.count() == 0 && bs.is_empty() && bs.values().count() == 0
+}"#,
+    );
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_bitset_out_of_bounds_runtime_error() {
+    let err = run_err(
+        r#"import collections
+fn main() -> Int {
+    collections.BitSet.new(4).set(4).count()
+}"#,
+    );
+    assert!(
+        err.contains("bitset index out of bounds"),
+        "expected bitset bounds error, got: {err}"
+    );
+}
+
+#[test]
+fn eval_bitset_negative_index_runtime_error() {
+    let err = run_err(
+        r#"import collections
+fn main() -> Bool {
+    collections.BitSet.new(4).test(0 - 1)
+}"#,
+    );
+    assert!(
+        err.contains("bitset index out of bounds"),
+        "expected bitset negative-index bounds error, got: {err}"
+    );
+}
+
+#[test]
+fn eval_bitset_binary_size_mismatch_runtime_error() {
+    let err = run_err(
+        r#"import collections
+fn main() -> Int {
+    let a = collections.BitSet.new(4).set(1)
+    let b = collections.BitSet.new(8).set(1)
+    a.union(b).count()
+}"#,
+    );
+    assert!(
+        err.contains("bitset size mismatch"),
+        "expected bitset size mismatch error, got: {err}"
+    );
 }
 
 // ── List.sort() element type compile-time rejection ─────────────

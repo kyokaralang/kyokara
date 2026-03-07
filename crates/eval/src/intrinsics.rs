@@ -35,6 +35,19 @@ pub enum IntrinsicFn {
     ListConcat,
     ListSet,
     ListUpdate,
+    BitSetNew,
+    BitSetTest,
+    BitSetSet,
+    BitSetReset,
+    BitSetFlip,
+    BitSetCount,
+    BitSetSize,
+    BitSetIsEmpty,
+    BitSetValues,
+    BitSetUnion,
+    BitSetIntersection,
+    BitSetDifference,
+    BitSetXor,
     MutableListNew,
     MutableListFromList,
     MutableListPush,
@@ -59,6 +72,19 @@ pub enum IntrinsicFn {
     MutableSetLen,
     MutableSetIsEmpty,
     MutableSetValues,
+    MutableBitSetNew,
+    MutableBitSetTest,
+    MutableBitSetSet,
+    MutableBitSetReset,
+    MutableBitSetFlip,
+    MutableBitSetCount,
+    MutableBitSetSize,
+    MutableBitSetIsEmpty,
+    MutableBitSetValues,
+    MutableBitSetUnion,
+    MutableBitSetIntersection,
+    MutableBitSetDifference,
+    MutableBitSetXor,
     DequeNew,
     DequePushFront,
     DequePushBack,
@@ -359,6 +385,150 @@ impl IntrinsicFn {
                 Rc::make_mut(&mut xs)[i as usize] = val;
                 Ok(Value::List(xs))
             }
+            IntrinsicFn::BitSetNew => {
+                let Value::Int(size) = &args[0] else {
+                    return Err(RuntimeError::TypeError("bitset_new expects an Int".into()));
+                };
+                let size = usize::try_from(*size)
+                    .map_err(|_| RuntimeError::TypeError("bitset size must be >= 0".into()))?;
+                Ok(Value::bitset(size))
+            }
+            IntrinsicFn::BitSetTest => {
+                let Value::BitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_test expects a BitSet".into(),
+                    ));
+                };
+                let Value::Int(idx) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_test expects an Int index".into(),
+                    ));
+                };
+                Ok(Value::Bool(bitset.test(*idx)?))
+            }
+            IntrinsicFn::BitSetSet => {
+                let Value::BitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_set expects a BitSet".into(),
+                    ));
+                };
+                let Value::Int(idx) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_set expects an Int index".into(),
+                    ));
+                };
+                Ok(Value::BitSet(bitset.set(*idx)?))
+            }
+            IntrinsicFn::BitSetReset => {
+                let Value::BitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_reset expects a BitSet".into(),
+                    ));
+                };
+                let Value::Int(idx) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_reset expects an Int index".into(),
+                    ));
+                };
+                Ok(Value::BitSet(bitset.reset(*idx)?))
+            }
+            IntrinsicFn::BitSetFlip => {
+                let Value::BitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_flip expects a BitSet".into(),
+                    ));
+                };
+                let Value::Int(idx) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_flip expects an Int index".into(),
+                    ));
+                };
+                Ok(Value::BitSet(bitset.flip(*idx)?))
+            }
+            IntrinsicFn::BitSetCount => {
+                let Value::BitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_count expects a BitSet".into(),
+                    ));
+                };
+                Ok(Value::Int(bitset.count() as i64))
+            }
+            IntrinsicFn::BitSetSize => {
+                let Value::BitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_size expects a BitSet".into(),
+                    ));
+                };
+                Ok(Value::Int(bitset.size_bits() as i64))
+            }
+            IntrinsicFn::BitSetIsEmpty => {
+                let Value::BitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_is_empty expects a BitSet".into(),
+                    ));
+                };
+                Ok(Value::Bool(bitset.is_empty()))
+            }
+            IntrinsicFn::BitSetValues => {
+                let Value::BitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_values expects a BitSet".into(),
+                    ));
+                };
+                Ok(Value::seq_source(SeqSource::BitSetValues(bitset.clone())))
+            }
+            IntrinsicFn::BitSetUnion => {
+                let Value::BitSet(lhs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_union expects BitSet arguments".into(),
+                    ));
+                };
+                let Value::BitSet(rhs) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_union expects BitSet arguments".into(),
+                    ));
+                };
+                Ok(Value::BitSet(lhs.union(rhs)?))
+            }
+            IntrinsicFn::BitSetIntersection => {
+                let Value::BitSet(lhs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_intersection expects BitSet arguments".into(),
+                    ));
+                };
+                let Value::BitSet(rhs) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_intersection expects BitSet arguments".into(),
+                    ));
+                };
+                Ok(Value::BitSet(lhs.intersection(rhs)?))
+            }
+            IntrinsicFn::BitSetDifference => {
+                let Value::BitSet(lhs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_difference expects BitSet arguments".into(),
+                    ));
+                };
+                let Value::BitSet(rhs) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_difference expects BitSet arguments".into(),
+                    ));
+                };
+                Ok(Value::BitSet(lhs.difference(rhs)?))
+            }
+            IntrinsicFn::BitSetXor => {
+                let Value::BitSet(lhs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_xor expects BitSet arguments".into(),
+                    ));
+                };
+                let Value::BitSet(rhs) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "bitset_xor expects BitSet arguments".into(),
+                    ));
+                };
+                Ok(Value::BitSet(lhs.xor(rhs)?))
+            }
             IntrinsicFn::MutableListNew => Ok(Value::mutable_list(Vec::new())),
             IntrinsicFn::MutableListFromList => {
                 let Value::List(xs) = &args[0] else {
@@ -585,6 +755,159 @@ impl IntrinsicFn {
                 Ok(Value::seq_source(SeqSource::SetValues(Rc::new(
                     entries.borrow().clone(),
                 ))))
+            }
+            IntrinsicFn::MutableBitSetNew => {
+                let Value::Int(size) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_new expects an Int".into(),
+                    ));
+                };
+                let size = usize::try_from(*size)
+                    .map_err(|_| RuntimeError::TypeError("bitset size must be >= 0".into()))?;
+                Ok(Value::mutable_bitset(size))
+            }
+            IntrinsicFn::MutableBitSetTest => {
+                let Value::MutableBitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_test expects a MutableBitSet".into(),
+                    ));
+                };
+                let Value::Int(idx) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_test expects an Int index".into(),
+                    ));
+                };
+                Ok(Value::Bool(bitset.test(*idx)?))
+            }
+            IntrinsicFn::MutableBitSetSet => {
+                let Value::MutableBitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_set expects a MutableBitSet".into(),
+                    ));
+                };
+                let Value::Int(idx) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_set expects an Int index".into(),
+                    ));
+                };
+                bitset.set(*idx)?;
+                Ok(Value::MutableBitSet(bitset.clone()))
+            }
+            IntrinsicFn::MutableBitSetReset => {
+                let Value::MutableBitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_reset expects a MutableBitSet".into(),
+                    ));
+                };
+                let Value::Int(idx) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_reset expects an Int index".into(),
+                    ));
+                };
+                bitset.reset(*idx)?;
+                Ok(Value::MutableBitSet(bitset.clone()))
+            }
+            IntrinsicFn::MutableBitSetFlip => {
+                let Value::MutableBitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_flip expects a MutableBitSet".into(),
+                    ));
+                };
+                let Value::Int(idx) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_flip expects an Int index".into(),
+                    ));
+                };
+                bitset.flip(*idx)?;
+                Ok(Value::MutableBitSet(bitset.clone()))
+            }
+            IntrinsicFn::MutableBitSetCount => {
+                let Value::MutableBitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_count expects a MutableBitSet".into(),
+                    ));
+                };
+                Ok(Value::Int(bitset.count() as i64))
+            }
+            IntrinsicFn::MutableBitSetSize => {
+                let Value::MutableBitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_size expects a MutableBitSet".into(),
+                    ));
+                };
+                Ok(Value::Int(bitset.size_bits() as i64))
+            }
+            IntrinsicFn::MutableBitSetIsEmpty => {
+                let Value::MutableBitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_is_empty expects a MutableBitSet".into(),
+                    ));
+                };
+                Ok(Value::Bool(bitset.is_empty()))
+            }
+            IntrinsicFn::MutableBitSetValues => {
+                let Value::MutableBitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_values expects a MutableBitSet".into(),
+                    ));
+                };
+                Ok(Value::seq_source(SeqSource::BitSetValues(bitset.snapshot())))
+            }
+            IntrinsicFn::MutableBitSetUnion => {
+                let Value::MutableBitSet(lhs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_union expects MutableBitSet arguments".into(),
+                    ));
+                };
+                let Value::MutableBitSet(rhs) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_union expects MutableBitSet arguments".into(),
+                    ));
+                };
+                lhs.union_assign(rhs)?;
+                Ok(Value::MutableBitSet(lhs.clone()))
+            }
+            IntrinsicFn::MutableBitSetIntersection => {
+                let Value::MutableBitSet(lhs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_intersection expects MutableBitSet arguments".into(),
+                    ));
+                };
+                let Value::MutableBitSet(rhs) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_intersection expects MutableBitSet arguments".into(),
+                    ));
+                };
+                lhs.intersection_assign(rhs)?;
+                Ok(Value::MutableBitSet(lhs.clone()))
+            }
+            IntrinsicFn::MutableBitSetDifference => {
+                let Value::MutableBitSet(lhs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_difference expects MutableBitSet arguments".into(),
+                    ));
+                };
+                let Value::MutableBitSet(rhs) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_difference expects MutableBitSet arguments".into(),
+                    ));
+                };
+                lhs.difference_assign(rhs)?;
+                Ok(Value::MutableBitSet(lhs.clone()))
+            }
+            IntrinsicFn::MutableBitSetXor => {
+                let Value::MutableBitSet(lhs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_xor expects MutableBitSet arguments".into(),
+                    ));
+                };
+                let Value::MutableBitSet(rhs) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_xor expects MutableBitSet arguments".into(),
+                    ));
+                };
+                lhs.xor_assign(rhs)?;
+                Ok(Value::MutableBitSet(lhs.clone()))
             }
             IntrinsicFn::DequeNew => Ok(Value::deque(VecDeque::new())),
             IntrinsicFn::DequePushFront => {
@@ -1376,6 +1699,31 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (Name::new(interner, "list_concat"), IntrinsicFn::ListConcat),
         (Name::new(interner, "list_set"), IntrinsicFn::ListSet),
         (Name::new(interner, "list_update"), IntrinsicFn::ListUpdate),
+        (Name::new(interner, "bitset_new"), IntrinsicFn::BitSetNew),
+        (Name::new(interner, "bitset_test"), IntrinsicFn::BitSetTest),
+        (Name::new(interner, "bitset_set"), IntrinsicFn::BitSetSet),
+        (Name::new(interner, "bitset_reset"), IntrinsicFn::BitSetReset),
+        (Name::new(interner, "bitset_flip"), IntrinsicFn::BitSetFlip),
+        (Name::new(interner, "bitset_count"), IntrinsicFn::BitSetCount),
+        (Name::new(interner, "bitset_size"), IntrinsicFn::BitSetSize),
+        (
+            Name::new(interner, "bitset_is_empty"),
+            IntrinsicFn::BitSetIsEmpty,
+        ),
+        (
+            Name::new(interner, "bitset_values"),
+            IntrinsicFn::BitSetValues,
+        ),
+        (Name::new(interner, "bitset_union"), IntrinsicFn::BitSetUnion),
+        (
+            Name::new(interner, "bitset_intersection"),
+            IntrinsicFn::BitSetIntersection,
+        ),
+        (
+            Name::new(interner, "bitset_difference"),
+            IntrinsicFn::BitSetDifference,
+        ),
+        (Name::new(interner, "bitset_xor"), IntrinsicFn::BitSetXor),
         (
             Name::new(interner, "mutable_list_new"),
             IntrinsicFn::MutableListNew,
@@ -1471,6 +1819,58 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (
             Name::new(interner, "mutable_set_values"),
             IntrinsicFn::MutableSetValues,
+        ),
+        (
+            Name::new(interner, "mutable_bitset_new"),
+            IntrinsicFn::MutableBitSetNew,
+        ),
+        (
+            Name::new(interner, "mutable_bitset_test"),
+            IntrinsicFn::MutableBitSetTest,
+        ),
+        (
+            Name::new(interner, "mutable_bitset_set"),
+            IntrinsicFn::MutableBitSetSet,
+        ),
+        (
+            Name::new(interner, "mutable_bitset_reset"),
+            IntrinsicFn::MutableBitSetReset,
+        ),
+        (
+            Name::new(interner, "mutable_bitset_flip"),
+            IntrinsicFn::MutableBitSetFlip,
+        ),
+        (
+            Name::new(interner, "mutable_bitset_count"),
+            IntrinsicFn::MutableBitSetCount,
+        ),
+        (
+            Name::new(interner, "mutable_bitset_size"),
+            IntrinsicFn::MutableBitSetSize,
+        ),
+        (
+            Name::new(interner, "mutable_bitset_is_empty"),
+            IntrinsicFn::MutableBitSetIsEmpty,
+        ),
+        (
+            Name::new(interner, "mutable_bitset_values"),
+            IntrinsicFn::MutableBitSetValues,
+        ),
+        (
+            Name::new(interner, "mutable_bitset_union"),
+            IntrinsicFn::MutableBitSetUnion,
+        ),
+        (
+            Name::new(interner, "mutable_bitset_intersection"),
+            IntrinsicFn::MutableBitSetIntersection,
+        ),
+        (
+            Name::new(interner, "mutable_bitset_difference"),
+            IntrinsicFn::MutableBitSetDifference,
+        ),
+        (
+            Name::new(interner, "mutable_bitset_xor"),
+            IntrinsicFn::MutableBitSetXor,
         ),
         // Deque
         (Name::new(interner, "deque_new"), IntrinsicFn::DequeNew),

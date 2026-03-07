@@ -113,6 +113,270 @@ impl MutableListValue {
     }
 }
 
+fn bitset_word_len(size_bits: usize) -> usize {
+    if size_bits == 0 {
+        0
+    } else {
+        size_bits.div_ceil(64)
+    }
+}
+
+fn bitset_last_word_mask(size_bits: usize) -> u64 {
+    let remainder = size_bits % 64;
+    if remainder == 0 {
+        u64::MAX
+    } else {
+        (1u64 << remainder) - 1
+    }
+}
+
+fn bitset_index(size_bits: usize, idx: i64) -> Result<(usize, u64), RuntimeError> {
+    let idx = usize::try_from(idx)
+        .ok()
+        .filter(|&idx| idx < size_bits)
+        .ok_or_else(|| RuntimeError::TypeError("bitset index out of bounds".into()))?;
+    Ok((idx / 64, 1u64 << (idx % 64)))
+}
+
+#[derive(Debug, Clone)]
+pub struct BitSetValue {
+    size_bits: usize,
+    words: Rc<Vec<u64>>,
+}
+
+impl PartialEq for BitSetValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.size_bits == other.size_bits && self.words == other.words
+    }
+}
+
+impl Eq for BitSetValue {}
+
+impl BitSetValue {
+    pub fn new(size_bits: usize) -> Self {
+        Self {
+            size_bits,
+            words: Rc::new(vec![0; bitset_word_len(size_bits)]),
+        }
+    }
+
+    pub fn size_bits(&self) -> usize {
+        self.size_bits
+    }
+
+    pub fn words(&self) -> Rc<Vec<u64>> {
+        self.words.clone()
+    }
+
+    pub fn count(&self) -> usize {
+        self.words.iter().map(|word| word.count_ones() as usize).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.words.iter().all(|word| *word == 0)
+    }
+
+    pub fn test(&self, idx: i64) -> Result<bool, RuntimeError> {
+        let (word_idx, mask) = bitset_index(self.size_bits, idx)?;
+        Ok(self.words[word_idx] & mask != 0)
+    }
+
+    pub fn set(&self, idx: i64) -> Result<Self, RuntimeError> {
+        let (word_idx, mask) = bitset_index(self.size_bits, idx)?;
+        if self.words[word_idx] & mask != 0 {
+            return Ok(self.clone());
+        }
+        let mut words = self.words.clone();
+        Rc::make_mut(&mut words)[word_idx] |= mask;
+        Ok(Self {
+            size_bits: self.size_bits,
+            words,
+        })
+    }
+
+    pub fn reset(&self, idx: i64) -> Result<Self, RuntimeError> {
+        let (word_idx, mask) = bitset_index(self.size_bits, idx)?;
+        if self.words[word_idx] & mask == 0 {
+            return Ok(self.clone());
+        }
+        let mut words = self.words.clone();
+        Rc::make_mut(&mut words)[word_idx] &= !mask;
+        Ok(Self {
+            size_bits: self.size_bits,
+            words,
+        })
+    }
+
+    pub fn flip(&self, idx: i64) -> Result<Self, RuntimeError> {
+        let (word_idx, mask) = bitset_index(self.size_bits, idx)?;
+        let mut words = self.words.clone();
+        Rc::make_mut(&mut words)[word_idx] ^= mask;
+        Ok(Self {
+            size_bits: self.size_bits,
+            words,
+        })
+    }
+
+    pub fn union(&self, other: &Self) -> Result<Self, RuntimeError> {
+        self.binary_op(other, |lhs, rhs| lhs | rhs)
+    }
+
+    pub fn intersection(&self, other: &Self) -> Result<Self, RuntimeError> {
+        self.binary_op(other, |lhs, rhs| lhs & rhs)
+    }
+
+    pub fn difference(&self, other: &Self) -> Result<Self, RuntimeError> {
+        self.binary_op(other, |lhs, rhs| lhs & !rhs)
+    }
+
+    pub fn xor(&self, other: &Self) -> Result<Self, RuntimeError> {
+        self.binary_op(other, |lhs, rhs| lhs ^ rhs)
+    }
+
+    fn binary_op<F>(&self, other: &Self, mut op: F) -> Result<Self, RuntimeError>
+    where
+        F: FnMut(u64, u64) -> u64,
+    {
+        if self.size_bits != other.size_bits {
+            return Err(RuntimeError::TypeError("bitset size mismatch".into()));
+        }
+
+        let mut words = Vec::with_capacity(self.words.len());
+        for (&lhs, &rhs) in self.words.iter().zip(other.words.iter()) {
+            words.push(op(lhs, rhs));
+        }
+        if let Some(last) = words.last_mut() {
+            *last &= bitset_last_word_mask(self.size_bits);
+        }
+        Ok(Self {
+            size_bits: self.size_bits,
+            words: Rc::new(words),
+        })
+    }
+
+    pub fn shares_word_storage_with(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.words, &other.words)
+    }
+
+    #[cfg(test)]
+    pub fn current_words_ptr(&self) -> *const Vec<u64> {
+        Rc::as_ptr(&self.words)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MutableBitSetValue {
+    size_bits: usize,
+    words: Rc<RefCell<Rc<Vec<u64>>>>,
+}
+
+impl MutableBitSetValue {
+    pub fn new(size_bits: usize) -> Self {
+        Self {
+            size_bits,
+            words: Rc::new(RefCell::new(Rc::new(vec![0; bitset_word_len(size_bits)]))),
+        }
+    }
+
+    pub fn snapshot(&self) -> BitSetValue {
+        BitSetValue {
+            size_bits: self.size_bits,
+            words: self.words.borrow().clone(),
+        }
+    }
+
+    pub fn size_bits(&self) -> usize {
+        self.size_bits
+    }
+
+    pub fn count(&self) -> usize {
+        self.words
+            .borrow()
+            .iter()
+            .map(|word| word.count_ones() as usize)
+            .sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.words.borrow().iter().all(|word| *word == 0)
+    }
+
+    pub fn test(&self, idx: i64) -> Result<bool, RuntimeError> {
+        let (word_idx, mask) = bitset_index(self.size_bits, idx)?;
+        Ok(self.words.borrow()[word_idx] & mask != 0)
+    }
+
+    pub fn set(&self, idx: i64) -> Result<(), RuntimeError> {
+        let (word_idx, mask) = bitset_index(self.size_bits, idx)?;
+        let mut words = self.words.borrow_mut();
+        let words_mut = Rc::make_mut(&mut *words);
+        words_mut[word_idx] |= mask;
+        Ok(())
+    }
+
+    pub fn reset(&self, idx: i64) -> Result<(), RuntimeError> {
+        let (word_idx, mask) = bitset_index(self.size_bits, idx)?;
+        let mut words = self.words.borrow_mut();
+        let words_mut = Rc::make_mut(&mut *words);
+        words_mut[word_idx] &= !mask;
+        Ok(())
+    }
+
+    pub fn flip(&self, idx: i64) -> Result<(), RuntimeError> {
+        let (word_idx, mask) = bitset_index(self.size_bits, idx)?;
+        let mut words = self.words.borrow_mut();
+        let words_mut = Rc::make_mut(&mut *words);
+        words_mut[word_idx] ^= mask;
+        Ok(())
+    }
+
+    pub fn union_assign(&self, other: &Self) -> Result<(), RuntimeError> {
+        self.binary_assign(other, |lhs, rhs| lhs | rhs)
+    }
+
+    pub fn intersection_assign(&self, other: &Self) -> Result<(), RuntimeError> {
+        self.binary_assign(other, |lhs, rhs| lhs & rhs)
+    }
+
+    pub fn difference_assign(&self, other: &Self) -> Result<(), RuntimeError> {
+        self.binary_assign(other, |lhs, rhs| lhs & !rhs)
+    }
+
+    pub fn xor_assign(&self, other: &Self) -> Result<(), RuntimeError> {
+        self.binary_assign(other, |lhs, rhs| lhs ^ rhs)
+    }
+
+    fn binary_assign<F>(&self, other: &Self, mut op: F) -> Result<(), RuntimeError>
+    where
+        F: FnMut(u64, u64) -> u64,
+    {
+        if self.size_bits != other.size_bits {
+            return Err(RuntimeError::TypeError("bitset size mismatch".into()));
+        }
+
+        let other_words = other.words.borrow().clone();
+        let mut words = self.words.borrow_mut();
+        let words_mut = Rc::make_mut(&mut *words);
+        for (lhs, &rhs) in words_mut.iter_mut().zip(other_words.iter()) {
+            *lhs = op(*lhs, rhs);
+        }
+        if let Some(last) = words_mut.last_mut() {
+            *last &= bitset_last_word_mask(self.size_bits);
+        }
+        Ok(())
+    }
+
+    pub fn shares_alias_storage_with(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.words, &other.words)
+    }
+
+    #[cfg(test)]
+    pub fn current_words_ptr(&self) -> *const Vec<u64> {
+        let words = self.words.borrow();
+        Rc::as_ptr(&*words)
+    }
+}
+
 /// A runtime value.
 ///
 /// Kept small (32 bytes) by boxing heap-heavy variants behind indirection.
@@ -136,9 +400,11 @@ pub enum Value {
         type_idx: Option<TypeItemIdx>,
     },
     List(Rc<Vec<Value>>),
+    BitSet(BitSetValue),
     MutableList(MutableListValue),
     MutableMap(Rc<RefCell<IndexMap<MapKey, Value>>>),
     MutableSet(Rc<RefCell<IndexSet<MapKey>>>),
+    MutableBitSet(MutableBitSetValue),
     Deque(Rc<VecDeque<Value>>),
     Seq(Rc<SeqPlan>),
     Map(Rc<IndexMap<MapKey, Value>>),
@@ -177,6 +443,7 @@ pub enum SeqSource {
     MapKeys(Rc<IndexMap<MapKey, Value>>),
     MapValues(Rc<IndexMap<MapKey, Value>>),
     SetValues(Rc<IndexSet<MapKey>>),
+    BitSetValues(BitSetValue),
 }
 
 /// Lazy, re-iterable sequence plan.
@@ -240,6 +507,7 @@ impl PartialEq for Value {
             ) => t1 == t2 && v1 == v2 && f1 == f2,
             (Value::Record { fields: f1, .. }, Value::Record { fields: f2, .. }) => f1 == f2,
             (Value::List(a), Value::List(b)) => a == b,
+            (Value::BitSet(a), Value::BitSet(b)) => a == b,
             (Value::MutableList(a), Value::MutableList(b)) => {
                 let a_items = a.items.borrow();
                 let b_items = b.items.borrow();
@@ -247,6 +515,7 @@ impl PartialEq for Value {
             }
             (Value::MutableMap(a), Value::MutableMap(b)) => *a.borrow() == *b.borrow(),
             (Value::MutableSet(a), Value::MutableSet(b)) => *a.borrow() == *b.borrow(),
+            (Value::MutableBitSet(a), Value::MutableBitSet(b)) => a.snapshot() == b.snapshot(),
             (Value::Deque(a), Value::Deque(b)) => a == b,
             // Sequences are lazy plans; do not force-evaluate for equality.
             (Value::Seq(_), Value::Seq(_)) => false,
@@ -270,12 +539,20 @@ impl Value {
         Value::MutableList(MutableListValue::new(items))
     }
 
+    pub fn bitset(size_bits: usize) -> Self {
+        Value::BitSet(BitSetValue::new(size_bits))
+    }
+
     pub fn mutable_map(entries: IndexMap<MapKey, Value>) -> Self {
         Value::MutableMap(Rc::new(RefCell::new(entries)))
     }
 
     pub fn mutable_set(entries: IndexSet<MapKey>) -> Self {
         Value::MutableSet(Rc::new(RefCell::new(entries)))
+    }
+
+    pub fn mutable_bitset(size_bits: usize) -> Self {
+        Value::MutableBitSet(MutableBitSetValue::new(size_bits))
     }
 
     pub fn seq_source(source: SeqSource) -> Self {
@@ -327,6 +604,28 @@ impl Value {
                 let fs: Vec<String> = items.iter().map(|v| v.display(interner)).collect();
                 format!("[{}]", fs.join(", "))
             }
+            Value::BitSet(bitset) => {
+                let fs: Vec<String> = bitset
+                    .words()
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(word_idx, word)| {
+                        let size_bits = bitset.size_bits();
+                        let mut bits = Vec::new();
+                        let mut remaining = *word;
+                        while remaining != 0 {
+                            let bit = remaining.trailing_zeros() as usize;
+                            let idx = word_idx * 64 + bit;
+                            if idx < size_bits {
+                                bits.push(idx.to_string());
+                            }
+                            remaining &= remaining - 1;
+                        }
+                        bits
+                    })
+                    .collect();
+                format!("BitSet(size={}, #{{{}}})", bitset.size_bits(), fs.join(", "))
+            }
             Value::MutableList(items) => {
                 let snapshot = items.snapshot();
                 let fs: Vec<String> = snapshot.iter().map(|v| v.display(interner)).collect();
@@ -347,6 +646,10 @@ impl Value {
                     .map(|k| k.display(interner))
                     .collect();
                 format!("MutableSet(#{{{}}})", fs.join(", "))
+            }
+            Value::MutableBitSet(bitset) => {
+                let snapshot = bitset.snapshot();
+                Value::BitSet(snapshot).display(interner).replace("BitSet", "MutableBitSet")
             }
             Value::Deque(items) => {
                 let fs: Vec<String> = items.iter().map(|v| v.display(interner)).collect();
@@ -387,6 +690,19 @@ mod tests {
     }
 
     #[test]
+    fn bitset_clone_shares_storage_for_cow() {
+        let original = Value::bitset(16);
+        let cloned = original.clone();
+        let (Value::BitSet(a), Value::BitSet(b)) = (&original, &cloned) else {
+            panic!("expected bitset values");
+        };
+        assert!(
+            a.shares_word_storage_with(b),
+            "bitset clone should share packed word storage before mutation in COW model"
+        );
+    }
+
+    #[test]
     fn mutable_list_clone_shares_storage() {
         let original = Value::mutable_list(vec![Value::Int(1), Value::Int(2)]);
         let cloned = original.clone();
@@ -396,6 +712,19 @@ mod tests {
         assert!(
             a.shares_alias_storage_with(b),
             "mutable list clone should share storage for alias-visible mutation"
+        );
+    }
+
+    #[test]
+    fn mutable_bitset_clone_shares_storage() {
+        let original = Value::mutable_bitset(16);
+        let cloned = original.clone();
+        let (Value::MutableBitSet(a), Value::MutableBitSet(b)) = (&original, &cloned) else {
+            panic!("expected mutable bitset values");
+        };
+        assert!(
+            a.shares_alias_storage_with(b),
+            "mutable bitset clone should share storage for alias-visible mutation"
         );
     }
 
@@ -415,6 +744,34 @@ mod tests {
         assert_ne!(
             snapshot_ptr,
             items.current_backing_ptr(),
+            "mutation should move aliases to a new current backing while preserving the old snapshot"
+        );
+    }
+
+    #[test]
+    fn mutable_bitset_snapshot_preserves_old_backing_after_mutation() {
+        let value = Value::mutable_bitset(16);
+        let Value::MutableBitSet(items) = &value else {
+            panic!("expected mutable bitset value");
+        };
+
+        items.set(3).expect("initial set should succeed");
+        let snapshot = items.snapshot();
+        let snapshot_ptr = snapshot.current_words_ptr();
+
+        items.flip(5).expect("flip should succeed");
+
+        assert!(
+            snapshot.test(3).expect("snapshot read should succeed"),
+            "snapshot should preserve pre-mutation bits"
+        );
+        assert!(
+            !snapshot.test(5).expect("snapshot read should succeed"),
+            "snapshot should not observe later mutation"
+        );
+        assert_ne!(
+            snapshot_ptr,
+            items.current_words_ptr(),
             "mutation should move aliases to a new current backing while preserving the old snapshot"
         );
     }

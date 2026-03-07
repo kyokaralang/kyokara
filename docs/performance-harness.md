@@ -68,6 +68,7 @@ Rules:
 - case discovery order is lexical by directory name
 
 Representative v1 cases:
+- `bitset_dense_relation_run` intentionally stresses dense `(before, after)` precedence lookups backed by `MutableBitSet`, so regressions in the packed-bit path are visible without falling back to `MutableList<Bool>` proxies.
 - `cow_collection_chain_run` intentionally stresses immutable same-name rebinding on `List`, `Map`, `Set`, and `Deque` so COW-path regressions are visible.
 
 ## Baselines
