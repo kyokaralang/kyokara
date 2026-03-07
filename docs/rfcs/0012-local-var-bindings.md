@@ -1,9 +1,9 @@
 # RFC 0012: Local Mutable Bindings (`var`)
 
-- Status: Draft
+- Status: Implemented
 - Owner: Language Design
-- Tracking issue: TBD
-- Last updated: 2026-03-07
+- Tracking issue: #393
+- Last updated: 2026-03-08
 
 ## Summary
 
@@ -21,6 +21,12 @@ This RFC is intentionally small:
 4. No index assignment.
 5. No top-level `var`.
 6. No change to immutable-by-default collection policy.
+
+Implementation note:
+
+1. This surface is shipped on `main`.
+2. v1 supports typed mutable bindings (`var x: T = expr`).
+3. v1 rejects lambda capture of mutable locals.
 
 ## Motivation
 

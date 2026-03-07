@@ -1,9 +1,9 @@
 # RFC 0006: Loop Control Surface for Hot Paths (`for` / `while`)
 
-- Status: Draft
+- Status: Implemented
 - Owner: Language Design
-- Tracking issue: TBD
-- Last updated: 2026-03-05
+- Tracking issue: #363 (remaining KIR follow-up only)
+- Last updated: 2026-03-08
 
 ## Summary
 
@@ -22,6 +22,12 @@ Add a minimal imperative loop surface to Kyokara for performance-sensitive kerne
 5. Stateful generators (`seed.unfold(step)`)
 
 This RFC is additive and keeps existing combinator APIs (`map/filter/fold/...`) intact.
+
+Implementation note:
+
+1. The core loop surface is shipped on `main`.
+2. RFC 0012 now supplies the local mutable-binding surface (`var` / `x = expr`) that completes the loop-carried-state story for imperative kernels.
+3. `#363` tracks only a remaining KIR lowering follow-up, not the source-language loop surface itself.
 
 ## Motivation
 
@@ -155,7 +161,11 @@ No conflict. `for` consumes the same traversable model already exposed via colle
 
 ### RFC 0005 (Mutable naming/placement)
 
-Complementary. `MutableList` is still the explicit mutable tool; loops make its hot-path usage more ergonomic.
+Complementary. `MutableList` is still the explicit mutable tool for alias-visible container mutation; loops make hot-path iteration ergonomic without changing collection default mutability.
+
+### RFC 0012 (Local mutable bindings)
+
+Complementary. RFC 0012 adds `var` and bare-name reassignment so loop-carried local state no longer needs one-slot mutable wrapper cells.
 
 ## Alternatives Considered
 
@@ -214,6 +224,5 @@ Decision: reject.
 
 ## Open Questions
 
-1. Should `for` support destructuring loop bindings in v0 (`for ({left, right} in xs.zip(ys))`)?
-2. Should there be a future `loop { ... }` form for explicit infinite loops?
-3. Should formatter enforce single-line compact loop heads only, or allow multiline head expressions?
+1. Should there be a future `loop { ... }` form for explicit infinite loops?
+2. Should formatter enforce single-line compact loop heads only, or allow multiline head expressions?
