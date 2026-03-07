@@ -992,6 +992,7 @@ mod tests {
             ids,
             vec![
                 "bitmask_checksum_run",
+                "cow_collection_chain_run",
                 "dp_coin_change_mutable_list_run",
                 "grid_bfs_deque_set_run",
                 "parse_dense_module_check",

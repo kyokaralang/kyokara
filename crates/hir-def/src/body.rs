@@ -88,7 +88,10 @@ impl Body {
                 if let (Some(usage_start), Some(meta)) =
                     (usage_start, self.local_binding_meta.get(*pat_idx))
                 {
-                    meta.decl_range.start() <= usage_start
+                    match meta.origin {
+                        LocalBindingOrigin::LetPattern => meta.decl_range.end() <= usage_start,
+                        _ => meta.decl_range.start() <= usage_start,
+                    }
                 } else {
                     true
                 }

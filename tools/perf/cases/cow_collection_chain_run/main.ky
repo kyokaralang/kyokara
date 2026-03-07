@@ -1,0 +1,27 @@
+import collections
+import io
+
+fn build_list(n: Int) -> List<Int> {
+  ((0)..<n).fold(collections.List.new(), fn(acc: List<Int>, i: Int) => acc.push(i))
+}
+
+fn build_map(n: Int) -> Map<Int, Int> {
+  ((0)..<n).fold(collections.Map.new(), fn(acc: Map<Int, Int>, i: Int) => acc.insert(i, i * 2))
+}
+
+fn build_set(n: Int) -> Set<Int> {
+  ((0)..<n).fold(collections.Set.new(), fn(acc: Set<Int>, i: Int) => acc.insert(i))
+}
+
+fn build_deque(n: Int) -> Deque<Int> {
+  ((0)..<n).fold(collections.Deque.new(), fn(acc: Deque<Int>, i: Int) => acc.push_back(i))
+}
+
+fn main() -> Unit {
+  let n = 10000
+  let xs = build_list(n)
+  let m = build_map(n)
+  let s = build_set(n)
+  let q = build_deque(n)
+  io.println((xs.len() + m.len() + s.len() + q.len()).to_string())
+}

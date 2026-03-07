@@ -316,6 +316,28 @@ impl BodyLowerCtx<'_> {
         }
     }
 
+    fn override_let_binding_decl_range(&mut self, pat_idx: PatIdx, decl_range: TextRange) {
+        let Some(pat_range) = self.pat_source_map.get(pat_idx).copied() else {
+            return;
+        };
+        let affected = self
+            .local_binding_meta
+            .iter()
+            .filter_map(|(candidate_idx, meta)| {
+                let source_range = self.pat_source_map.get(candidate_idx)?;
+                (meta.origin == LocalBindingOrigin::LetPattern
+                    && source_range.start() >= pat_range.start()
+                    && source_range.end() <= pat_range.end())
+                    .then_some(candidate_idx)
+            })
+            .collect::<Vec<_>>();
+        for candidate_idx in affected {
+            if let Some(meta) = self.local_binding_meta.get_mut(candidate_idx) {
+                meta.decl_range = decl_range;
+            }
+        }
+    }
+
     fn validate_numeric_underscores(&mut self, text: &str, range: TextRange) {
         if text.contains('_') && (text.ends_with('_') || text.contains("__")) {
             let span = Span {
@@ -800,15 +822,16 @@ impl BodyLowerCtx<'_> {
             let is_last = i == items.len() - 1;
             match item {
                 BlockItem::LetBinding(lb) => {
-                    let pat = lb
-                        .pat()
-                        .map(|p| self.lower_pat(&p, LocalBindingOrigin::LetPattern))
-                        .unwrap_or_else(|| self.alloc_pat(pat::Pat::Missing));
-                    let ty = lb.type_expr().map(|te| self.lower_type_ref(&te));
                     let init = lb
                         .value()
                         .map(|e| self.lower_expr(&e))
                         .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+                    let pat = lb
+                        .pat()
+                        .map(|p| self.lower_pat(&p, LocalBindingOrigin::LetPattern))
+                        .unwrap_or_else(|| self.alloc_pat(pat::Pat::Missing));
+                    self.override_let_binding_decl_range(pat, lb.syntax().text_range());
+                    let ty = lb.type_expr().map(|te| self.lower_type_ref(&te));
                     stmts.push(Stmt::Let { pat, ty, init });
                 }
                 BlockItem::Expr(expr) => {

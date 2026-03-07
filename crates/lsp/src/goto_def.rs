@@ -142,9 +142,13 @@ pub(crate) fn find_local_def_range(
             && let Some(interned_name) = find_interned_name_in_body(body, &analysis.interner, name)
             && let Some(resolved) =
                 body.resolve_name_at(&analysis.module_scope, expr_idx, interned_name)
-            && let Some((_, meta)) = resolved.local_binding
+            && let Some((pat_idx, meta)) = resolved.local_binding
         {
-            return Some(meta.decl_range);
+            return body
+                .pat_source_map
+                .get(pat_idx)
+                .copied()
+                .or(Some(meta.decl_range));
         }
     }
 

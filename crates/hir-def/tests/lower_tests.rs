@@ -846,6 +846,49 @@ fn foo(x: Int) -> Int {
 }
 
 #[test]
+fn resolve_local_access_uses_outer_binding_in_let_initializer() {
+    let src = r#"
+fn foo(xs: Int) -> Int {
+    let xs = xs + 1
+    xs
+}
+"#;
+    let (body, module_scope, diags, interner) = lower_named_fn_body_with_scope(src, Some("foo"));
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+
+    let mut path_accesses = body
+        .exprs
+        .iter()
+        .filter_map(|(expr_idx, expr)| {
+            let Expr::Path(path) = expr else {
+                return None;
+            };
+            let access =
+                body.resolve_local_access_at(&module_scope, expr_idx, path.segments[0])?;
+            let range = *body.expr_source_map.get(expr_idx)?;
+            Some((
+                range.start(),
+                path.segments[0].resolve(&interner).to_string(),
+                access,
+            ))
+        })
+        .collect::<Vec<_>>();
+    path_accesses.sort_by_key(|(start, _, _)| *start);
+
+    assert_eq!(path_accesses.len(), 2);
+    assert_eq!(
+        path_accesses[0].2,
+        kyokara_hir_def::body::LocalSlotRef { depth: 1, slot: 0 },
+        "initializer should resolve to the outer parameter binding"
+    );
+    assert_eq!(
+        path_accesses[1].2,
+        kyokara_hir_def::body::LocalSlotRef { depth: 0, slot: 0 },
+        "tail use should resolve to the shadowing let binding"
+    );
+}
+
+#[test]
 fn resolve_local_access_tracks_ensures_result_scope() {
     let src = r#"
 fn foo(x: Int) -> Int

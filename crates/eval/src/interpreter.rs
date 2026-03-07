@@ -56,6 +56,8 @@ pub struct Interpreter {
     current_fn: Option<FnItemIdx>,
     /// Current shared body handle being evaluated (used by nested lambda literals).
     current_body: Option<Rc<Body>>,
+    /// Optional local slot to move instead of clone during a dead-after-use eval path.
+    consuming_local: Option<LocalSlotRef>,
 }
 
 /// Used to implement early return from functions.
@@ -405,6 +407,7 @@ impl Interpreter {
             env: Env::new(),
             current_fn: None,
             current_body: None,
+            consuming_local: None,
         }
     }
 
@@ -452,6 +455,188 @@ impl Interpreter {
 
     fn local_access_for_expr(&mut self, body: &Body, expr_idx: ExprIdx) -> Option<LocalSlotRef> {
         self.local_accesses_for_body(body).get(expr_idx).copied()
+    }
+
+    fn with_consuming_local<T>(
+        &mut self,
+        access: LocalSlotRef,
+        f: impl FnOnce(&mut Self) -> Result<T, RuntimeError>,
+    ) -> Result<T, RuntimeError> {
+        let prev = self.consuming_local.replace(access);
+        let result = f(self);
+        self.consuming_local = prev;
+        result
+    }
+
+    fn count_local_access_uses(
+        &mut self,
+        body: &Body,
+        expr_idx: ExprIdx,
+        target: LocalSlotRef,
+    ) -> usize {
+        match &body.exprs[expr_idx] {
+            Expr::Missing | Expr::Hole | Expr::Literal(_) => 0,
+            Expr::Path(_) => usize::from(self.local_access_for_expr(body, expr_idx) == Some(target)),
+            Expr::Binary { lhs, rhs, .. } => {
+                self.count_local_access_uses(body, *lhs, target)
+                    + self.count_local_access_uses(body, *rhs, target)
+            }
+            Expr::Unary { operand, .. } | Expr::Old(operand) => {
+                self.count_local_access_uses(body, *operand, target)
+            }
+            Expr::Call { callee, args } => {
+                let mut count = self.count_local_access_uses(body, *callee, target);
+                for arg in args {
+                    let arg_idx = match arg {
+                        CallArg::Positional(idx) => *idx,
+                        CallArg::Named { value, .. } => *value,
+                    };
+                    count += self.count_local_access_uses(body, arg_idx, target);
+                }
+                count
+            }
+            Expr::Field { base, .. } => self.count_local_access_uses(body, *base, target),
+            Expr::Index { base, index } => {
+                self.count_local_access_uses(body, *base, target)
+                    + self.count_local_access_uses(body, *index, target)
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let mut count = self.count_local_access_uses(body, *condition, target)
+                    + self.count_local_access_uses(body, *then_branch, target);
+                if let Some(else_idx) = else_branch {
+                    count += self.count_local_access_uses(body, *else_idx, target);
+                }
+                count
+            }
+            Expr::Match { scrutinee, arms } => {
+                let mut count = self.count_local_access_uses(body, *scrutinee, target);
+                for arm in arms {
+                    count += self.count_local_access_uses(body, arm.body, target);
+                }
+                count
+            }
+            Expr::Block { stmts, tail } => {
+                let mut count = 0;
+                for stmt in stmts {
+                    count += match stmt {
+                        Stmt::Let { init, .. } => self.count_local_access_uses(body, *init, target),
+                        Stmt::While {
+                            condition,
+                            body: loop_body,
+                        } => {
+                            self.count_local_access_uses(body, *condition, target)
+                                + self.count_local_access_uses(body, *loop_body, target)
+                        }
+                        Stmt::For {
+                            source,
+                            body: loop_body,
+                            ..
+                        } => {
+                            self.count_local_access_uses(body, *source, target)
+                                + self.count_local_access_uses(body, *loop_body, target)
+                        }
+                        Stmt::Expr(idx) => self.count_local_access_uses(body, *idx, target),
+                        Stmt::Break | Stmt::Continue => 0,
+                    };
+                }
+                if let Some(tail_idx) = tail {
+                    count += self.count_local_access_uses(body, *tail_idx, target);
+                }
+                count
+            }
+            Expr::Return(value) => value
+                .map(|idx| self.count_local_access_uses(body, idx, target))
+                .unwrap_or(0),
+            Expr::RecordLit { fields, .. } => fields
+                .iter()
+                .map(|(_, idx)| self.count_local_access_uses(body, *idx, target))
+                .sum(),
+            Expr::Lambda { body: lambda_body, .. } => {
+                self.count_local_access_uses(body, *lambda_body, target)
+            }
+        }
+    }
+
+    fn leftmost_method_chain_receiver(
+        &mut self,
+        body: &Body,
+        expr_idx: ExprIdx,
+    ) -> Option<(ExprIdx, LocalSlotRef, Name)> {
+        let Expr::Call { callee, .. } = &body.exprs[expr_idx] else {
+            return None;
+        };
+        let Expr::Field { base, .. } = &body.exprs[*callee] else {
+            return None;
+        };
+        self.leftmost_method_chain_receiver_from_base(body, *base)
+    }
+
+    fn leftmost_method_chain_receiver_from_base(
+        &mut self,
+        body: &Body,
+        expr_idx: ExprIdx,
+    ) -> Option<(ExprIdx, LocalSlotRef, Name)> {
+        match &body.exprs[expr_idx] {
+            Expr::Path(path) if path.is_single() => self
+                .local_access_for_expr(body, expr_idx)
+                .map(|access| (expr_idx, access, path.segments[0])),
+            Expr::Call { .. } => self.leftmost_method_chain_receiver(body, expr_idx),
+            _ => None,
+        }
+    }
+
+    fn consuming_local_for_dead_expr(
+        &mut self,
+        body: &Body,
+        expr_idx: ExprIdx,
+    ) -> Option<LocalSlotRef> {
+        let (_, access, _) = self.leftmost_method_chain_receiver(body, expr_idx)?;
+        (self.count_local_access_uses(body, expr_idx, access) == 1).then_some(access)
+    }
+
+    fn consuming_local_for_shadow_rebind_init(
+        &mut self,
+        body: &Body,
+        pat_idx: kyokara_hir_def::expr::PatIdx,
+        expr_idx: ExprIdx,
+    ) -> Option<LocalSlotRef> {
+        let Pat::Bind { name } = body.pats[pat_idx] else {
+            return None;
+        };
+        let (_, access, receiver_name) = self.leftmost_method_chain_receiver(body, expr_idx)?;
+        if receiver_name != name {
+            return None;
+        }
+        (self.count_local_access_uses(body, expr_idx, access) == 1).then_some(access)
+    }
+
+    fn eval_dead_expr_shared(
+        &mut self,
+        body: &Body,
+        expr_idx: ExprIdx,
+    ) -> Result<ControlFlow, RuntimeError> {
+        if let Some(access) = self.consuming_local_for_dead_expr(body, expr_idx) {
+            self.with_consuming_local(access, |this| this.eval_expr_shared(body, expr_idx))
+        } else {
+            self.eval_expr_shared(body, expr_idx)
+        }
+    }
+
+    fn eval_dead_expr(
+        &mut self,
+        env: &mut Env,
+        body: &Body,
+        expr_idx: ExprIdx,
+    ) -> Result<ControlFlow, RuntimeError> {
+        if let Some(access) = self.consuming_local_for_dead_expr(body, expr_idx) {
+            self.with_consuming_local(access, |this| this.eval_expr(env, body, expr_idx))
+        } else {
+            self.eval_expr(env, body, expr_idx)
+        }
     }
 
     /// Find and run the `main` function.
@@ -624,7 +809,7 @@ impl Interpreter {
     }
 
     fn eval_fn_body_value(&mut self, body: &Body) -> Result<Value, RuntimeError> {
-        match self.eval_expr_shared(body, body.root)? {
+        match self.eval_dead_expr_shared(body, body.root)? {
             ControlFlow::Value(v) | ControlFlow::Return(v) => Ok(v),
             ControlFlow::Break => Err(RuntimeError::TypeError("`break` used outside loop".into())),
             ControlFlow::Continue => Err(RuntimeError::TypeError(
@@ -1081,7 +1266,19 @@ impl Interpreter {
             Expr::Return(val) => {
                 let val = *val;
                 let v = if let Some(idx) = val {
-                    eval_propagate!(self, env, body, idx)
+                    match self.eval_dead_expr(env, body, idx)? {
+                        ControlFlow::Value(v) | ControlFlow::Return(v) => v,
+                        ControlFlow::Break => {
+                            return Err(RuntimeError::TypeError(
+                                "`break` used outside loop".into(),
+                            ));
+                        }
+                        ControlFlow::Continue => {
+                            return Err(RuntimeError::TypeError(
+                                "`continue` used outside loop".into(),
+                            ));
+                        }
+                    }
                 } else {
                     Value::Unit
                 };
@@ -1142,10 +1339,22 @@ impl Interpreter {
 
             Expr::Path(path) => {
                 let name = path.segments[0];
-                let mut val = if let Some(access) = self.local_access_for_expr(body, idx)
-                    && let Some(value) = self.env.lookup_slot(access.depth, access.slot)
-                {
-                    value.clone()
+                let mut val = if let Some(access) = self.local_access_for_expr(body, idx) {
+                    if self.consuming_local == Some(access) {
+                        self.consuming_local = None;
+                        self.env.take_slot(access.depth, access.slot).ok_or_else(|| {
+                            RuntimeError::TypeError(
+                                "internal runtime error: consumed local binding unavailable"
+                                    .into(),
+                            )
+                        })?
+                    } else {
+                        self.env.lookup_slot(access.depth, access.slot).cloned().ok_or_else(|| {
+                            RuntimeError::TypeError(
+                                "internal runtime error: local binding unavailable".into(),
+                            )
+                        })?
+                    }
                 } else {
                     self.resolve_name(&self.env, name)?
                 };
@@ -1463,7 +1672,19 @@ impl Interpreter {
             Expr::Return(val) => {
                 let val = *val;
                 let v = if let Some(idx) = val {
-                    eval_propagate_shared!(self, body, idx)
+                    match self.eval_dead_expr_shared(body, idx)? {
+                        ControlFlow::Value(v) | ControlFlow::Return(v) => v,
+                        ControlFlow::Break => {
+                            return Err(RuntimeError::TypeError(
+                                "`break` used outside loop".into(),
+                            ));
+                        }
+                        ControlFlow::Continue => {
+                            return Err(RuntimeError::TypeError(
+                                "`continue` used outside loop".into(),
+                            ));
+                        }
+                    }
                 } else {
                     Value::Unit
                 };
@@ -1520,16 +1741,24 @@ impl Interpreter {
     #[inline(always)]
     fn resolve_path_value(
         &mut self,
-        env: &Env,
+        env: &mut Env,
         body: &Body,
         expr_idx: ExprIdx,
         path: &kyokara_hir_def::path::Path,
     ) -> Result<Value, RuntimeError> {
         let name = path.segments[0];
-        if let Some(access) = self.local_access_for_expr(body, expr_idx)
-            && let Some(value) = env.lookup_slot(access.depth, access.slot)
-        {
-            return Ok(value.clone());
+        if let Some(access) = self.local_access_for_expr(body, expr_idx) {
+            if self.consuming_local == Some(access) {
+                self.consuming_local = None;
+                return env.take_slot(access.depth, access.slot).ok_or_else(|| {
+                    RuntimeError::TypeError(
+                        "internal runtime error: consumed local binding unavailable".into(),
+                    )
+                });
+            }
+            return env.lookup_slot(access.depth, access.slot).cloned().ok_or_else(|| {
+                RuntimeError::TypeError("internal runtime error: local binding unavailable".into())
+            });
         }
         self.resolve_name(env, name)
     }
@@ -1774,7 +2003,7 @@ impl Interpreter {
                         for (pat_idx, val) in params.iter().zip(args) {
                             self.bind_pat(&body, *pat_idx, &val, &mut env)?;
                         }
-                        let result = self.eval_expr(&mut env, &body, body_expr)?;
+                        let result = self.eval_dead_expr(&mut env, &body, body_expr)?;
                         Ok(result.into_value())
                     })();
                     self.current_body = prev_body;
@@ -3570,7 +3799,14 @@ impl Interpreter {
         for stmt in stmts {
             match stmt {
                 Stmt::Let { pat, init, .. } => {
-                    let result = match self.eval_expr(env, body, *init) {
+                    let result = match match self
+                        .consuming_local_for_shadow_rebind_init(body, *pat, *init)
+                    {
+                        Some(access) => {
+                            self.with_consuming_local(access, |this| this.eval_expr(env, body, *init))
+                        }
+                        None => self.eval_expr(env, body, *init),
+                    } {
                         Ok(result) => result,
                         Err(err) => {
                             env.pop_scope();
@@ -3649,7 +3885,7 @@ impl Interpreter {
             }
         }
         let result = if let Some(tail_idx) = tail {
-            self.eval_expr(env, body, tail_idx)
+            self.eval_dead_expr(env, body, tail_idx)
         } else {
             Ok(ControlFlow::Value(Value::Unit))
         };
@@ -3828,7 +4064,13 @@ impl Interpreter {
         for stmt in stmts {
             match stmt {
                 Stmt::Let { pat, init, .. } => {
-                    let result = match self.eval_expr_shared(body, *init) {
+                    let result = match match self
+                        .consuming_local_for_shadow_rebind_init(body, *pat, *init)
+                    {
+                        Some(access) => self
+                            .with_consuming_local(access, |this| this.eval_expr_shared(body, *init)),
+                        None => self.eval_expr_shared(body, *init),
+                    } {
                         Ok(result) => result,
                         Err(err) => {
                             self.env.pop_scope();
@@ -3907,7 +4149,7 @@ impl Interpreter {
             }
         }
         let result = if let Some(tail_idx) = tail {
-            self.eval_expr_shared(body, tail_idx)
+            self.eval_dead_expr_shared(body, tail_idx)
         } else {
             Ok(ControlFlow::Value(Value::Unit))
         };
@@ -4355,6 +4597,59 @@ mod tests {
     }
 
     #[test]
+    fn lambda_method_chain_tail_reuses_param_storage_when_unique() {
+        let mut interp = make_checked_interpreter(
+            "import collections\n\
+             fn make() -> fn(List<Int>) -> List<Int> { fn(xs: List<Int>) => xs.push(1).push(2) }\n\
+             fn main() -> Unit {}",
+        );
+        let make_idx = fn_idx_by_name(&mut interp, "make");
+        let lambda = interp
+            .call_fn_by_idx(make_idx, Args::new())
+            .expect("factory should return lambda");
+        let original = Value::list(vec![Value::Int(0)]);
+        let before_ptr = match &original {
+            Value::List(xs) => Rc::as_ptr(xs),
+            _ => panic!("expected list"),
+        };
+
+        let out = interp
+            .call_value(lambda, smallvec![original])
+            .expect("lambda tail method chain should succeed");
+
+        let Value::List(updated) = &out else {
+            panic!("expected list output");
+        };
+        assert_eq!(updated.as_ref(), &[Value::Int(0), Value::Int(1), Value::Int(2)]);
+        assert!(
+            std::ptr::eq(before_ptr, Rc::as_ptr(updated)),
+            "lambda tail method chain should reuse uniquely owned param storage"
+        );
+    }
+
+    #[test]
+    fn lambda_tail_method_chain_does_not_consume_duplicate_receiver_use() {
+        let mut interp = make_checked_interpreter(
+            "import collections\n\
+             fn make() -> fn(List<Int>) -> Int {\n\
+               fn(xs: List<Int>) => xs.push(xs.len()).len() + xs.len()\n\
+             }\n\
+             fn main() -> Unit {}",
+        );
+        let make_idx = fn_idx_by_name(&mut interp, "make");
+        let lambda = interp
+            .call_fn_by_idx(make_idx, Args::new())
+            .expect("factory should return lambda");
+        let original = Value::list(vec![Value::Int(10), Value::Int(20)]);
+
+        let out = interp
+            .call_value(lambda, smallvec![original])
+            .expect("duplicate receiver use in lambda should still succeed");
+
+        assert_eq!(out, Value::Int(5));
+    }
+
+    #[test]
     fn constructor_call_reports_arity_mismatch() {
         let (mut interp, _body, type_idx, _a_name, _some_name) = make_test_interpreter_and_body();
 
@@ -4747,6 +5042,196 @@ mod tests {
             !std::ptr::eq(alias_ptr, Rc::as_ptr(updated)),
             "list_update must detach when mutation occurs on shared storage"
         );
+    }
+
+    #[test]
+    fn list_method_chain_tail_reuses_param_storage_when_unique() {
+        let mut interp = make_checked_interpreter(
+            "import collections\n\
+             fn extend(xs: List<Int>) -> List<Int> { xs.push(1).push(2) }\n\
+             fn main() -> Unit {}",
+        );
+        let extend_idx = fn_idx_by_name(&mut interp, "extend");
+        let original = Value::list(vec![Value::Int(0)]);
+        let before_ptr = match &original {
+            Value::List(xs) => Rc::as_ptr(xs),
+            _ => panic!("expected list"),
+        };
+
+        let out = interp
+            .call_fn_by_idx(extend_idx, smallvec![original])
+            .expect("tail method chain should succeed");
+
+        let Value::List(updated) = &out else {
+            panic!("expected list output");
+        };
+        assert_eq!(updated.as_ref(), &[Value::Int(0), Value::Int(1), Value::Int(2)]);
+        assert!(
+            std::ptr::eq(before_ptr, Rc::as_ptr(updated)),
+            "tail list method chain should reuse uniquely owned param storage"
+        );
+    }
+
+    #[test]
+    fn map_method_chain_tail_reuses_param_storage_when_unique() {
+        let mut interp = make_checked_interpreter(
+            "import collections\n\
+             fn extend(m: Map<String, Int>) -> Map<String, Int> {\n\
+               m.insert(\"a\", 1).insert(\"b\", 2)\n\
+             }\n\
+             fn main() -> Unit {}",
+        );
+        let extend_idx = fn_idx_by_name(&mut interp, "extend");
+        let original = Value::map(indexmap::IndexMap::new());
+        let before_ptr = match &original {
+            Value::Map(entries) => Rc::as_ptr(entries),
+            _ => panic!("expected map"),
+        };
+
+        let out = interp
+            .call_fn_by_idx(extend_idx, smallvec![original])
+            .expect("tail map method chain should succeed");
+
+        let Value::Map(updated) = &out else {
+            panic!("expected map output");
+        };
+        assert_eq!(updated.len(), 2);
+        assert!(
+            std::ptr::eq(before_ptr, Rc::as_ptr(updated)),
+            "tail map method chain should reuse uniquely owned param storage"
+        );
+    }
+
+    #[test]
+    fn set_method_chain_tail_reuses_param_storage_when_unique() {
+        let mut interp = make_checked_interpreter(
+            "import collections\n\
+             fn extend(s: Set<Int>) -> Set<Int> { s.insert(1).insert(2) }\n\
+             fn main() -> Unit {}",
+        );
+        let extend_idx = fn_idx_by_name(&mut interp, "extend");
+        let original = Value::set(indexmap::IndexSet::new());
+        let before_ptr = match &original {
+            Value::Set(entries) => Rc::as_ptr(entries),
+            _ => panic!("expected set"),
+        };
+
+        let out = interp
+            .call_fn_by_idx(extend_idx, smallvec![original])
+            .expect("tail set method chain should succeed");
+
+        let Value::Set(updated) = &out else {
+            panic!("expected set output");
+        };
+        assert_eq!(updated.len(), 2);
+        assert!(
+            std::ptr::eq(before_ptr, Rc::as_ptr(updated)),
+            "tail set method chain should reuse uniquely owned param storage"
+        );
+    }
+
+    #[test]
+    fn deque_pop_front_tail_reuses_param_storage_when_unique() {
+        let mut interp = make_checked_interpreter(
+            "import collections\n\
+             fn pop(q: Deque<Int>) -> Option<{ value: Int, rest: Deque<Int> }> { q.pop_front() }\n\
+             fn main() -> Unit {}",
+        );
+        let pop_idx = fn_idx_by_name(&mut interp, "pop");
+        let original = Value::deque(VecDeque::from([Value::Int(1), Value::Int(2)]));
+        let before_ptr = match &original {
+            Value::Deque(items) => Rc::as_ptr(items),
+            _ => panic!("expected deque"),
+        };
+
+        let out = interp
+            .call_fn_by_idx(pop_idx, smallvec![original])
+            .expect("tail deque pop should succeed");
+
+        let payload = interp
+            .decode_option_some_payload(&out, "deque pop tail")
+            .expect("decode should succeed")
+            .expect("expected Some payload");
+        let Value::Record { fields, .. } = payload else {
+            panic!("expected record payload");
+        };
+        let Value::Deque(rest) = &fields[1].1 else {
+            panic!("expected deque rest");
+        };
+        assert_eq!(rest.len(), 1);
+        assert!(
+            std::ptr::eq(before_ptr, Rc::as_ptr(rest)),
+            "tail deque pop should reuse uniquely owned param storage"
+        );
+    }
+
+    #[test]
+    fn shadow_rebind_method_chain_reuses_storage_when_old_binding_dies() {
+        let mut interp = make_checked_interpreter(
+            "import collections\n\
+             fn extend(xs: List<Int>) -> List<Int> {\n\
+               let xs = xs.push(1)\n\
+               let xs = xs.push(2)\n\
+               xs\n\
+             }\n\
+             fn main() -> Unit {}",
+        );
+        let extend_idx = fn_idx_by_name(&mut interp, "extend");
+        let original = Value::list(vec![Value::Int(0)]);
+        let before_ptr = match &original {
+            Value::List(xs) => Rc::as_ptr(xs),
+            _ => panic!("expected list"),
+        };
+
+        let out = interp
+            .call_fn_by_idx(extend_idx, smallvec![original])
+            .expect("shadow rebinding should succeed");
+
+        let Value::List(updated) = &out else {
+            panic!("expected list output");
+        };
+        assert_eq!(updated.as_ref(), &[Value::Int(0), Value::Int(1), Value::Int(2)]);
+        assert!(
+            std::ptr::eq(before_ptr, Rc::as_ptr(updated)),
+            "shadow rebinding chain should preserve unique ownership across updates"
+        );
+    }
+
+    #[test]
+    fn tail_method_chain_does_not_consume_duplicate_receiver_use() {
+        let mut interp = make_checked_interpreter(
+            "import collections\n\
+             fn measure(xs: List<Int>) -> Int { xs.push(xs.len()).len() + xs.len() }\n\
+             fn main() -> Unit {}",
+        );
+        let measure_idx = fn_idx_by_name(&mut interp, "measure");
+        let original = Value::list(vec![Value::Int(10), Value::Int(20)]);
+
+        let out = interp
+            .call_fn_by_idx(measure_idx, smallvec![original])
+            .expect("duplicate receiver use should still succeed");
+
+        assert_eq!(out, Value::Int(5));
+    }
+
+    #[test]
+    fn shadow_rebind_init_does_not_consume_duplicate_receiver_use() {
+        let mut interp = make_checked_interpreter(
+            "import collections\n\
+             fn extend(xs: List<Int>) -> Int {\n\
+               let xs = xs.push(xs.len())\n\
+               xs.len()\n\
+             }\n\
+             fn main() -> Unit {}",
+        );
+        let extend_idx = fn_idx_by_name(&mut interp, "extend");
+        let original = Value::list(vec![Value::Int(10), Value::Int(20)]);
+
+        let out = interp
+            .call_fn_by_idx(extend_idx, smallvec![original])
+            .expect("duplicate receiver use in rebinding should still succeed");
+
+        assert_eq!(out, Value::Int(3));
     }
 
     #[test]
