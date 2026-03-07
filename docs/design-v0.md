@@ -586,14 +586,14 @@ a canonical API surface: method calls for value-owned behavior, module-qualified
 for no-owner utilities and effects, and type-namespaced constructors.
 
 Canonical visibility matrix:
-* Prelude builtin value types (no import): `List<T>`, `Map<K, V>`, `Set<T>` type names and value methods.
-* Pure collection constructors (imported module): `collections.List.new()`, `collections.Map.new()`, `collections.Set.new()`, `collections.Deque.new()`, `collections.MutableList.new()`, `collections.MutableList.from_list(xs)`
+* Prelude builtin value types (no import): `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `Deque<T>`, `Map<K, V>`, `Set<T>` type names and value methods.
+* Pure collection constructors (imported module): `collections.List.new()`, `collections.Map.new()`, `collections.Set.new()`, `collections.MutableList.new()`, `collections.MutableList.from_list(xs)`, `collections.MutableMap.new()`, `collections.MutableSet.new()`, `collections.Deque.new()`
 * Prelude traversal constructors (no import): `start..<end`, `seed.unfold(step)`.
 * Pure no-owner utilities (imported module): `math.*`
 * Effectful utilities (imported capability modules): `io.*`, `fs.*`
 * Internal intrinsic IDs (`list_new`, `map_insert`, etc.) are implementation detail only.
 
-Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`, `Deque<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
+Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `Deque<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
 injected as synthetic types before type-checking. Synthetic modules (`collections`, `io`, `math`, `fs`)
 require explicit `import collections` / `import io` / `import math` / `import fs` in all modes.
 Zero intrinsic free functions exist in user scope.
@@ -605,8 +605,8 @@ Runtime soundness invariants for core APIs:
 * Temporary safety rule: unqualified user ADT variants named `Some`, `None`, `Ok`, `Err`, `InvalidInt`, and `InvalidFloat` are rejected until qualified constructors are implemented.
 * Follow-up: add qualified constructors/patterns (`Type.Variant`) and remove the temporary reservation ([#293](https://github.com/kyokaralang/kyokara/issues/293)).
 
-Mental model: `List`/`Map`/`Set` are prelude value types (type/value namespace),
-`collections` is the pure module namespace for collection constructors (`List`/`Map`/`Set` plus specialized collections like `Deque` and `MutableList`),
+Mental model: `List`/`MutableList`/`MutableMap`/`MutableSet`/`Deque`/`Map`/`Set` are prelude value types (type/value namespace),
+`collections` is the pure module namespace for collection constructors (`List`/`Map`/`Set` plus specialized collections like `MutableList`, `MutableMap`, `MutableSet`, and `Deque`),
 while `io`/`fs` are module namespaces for effectful operations.
 
 **Implemented (v0.1+):**
@@ -629,6 +629,12 @@ while `io`/`fs` are module namespaces for effectful operations.
   * Methods (storage/random-access): `xs.push(v)`, `xs.len()`, `xs.is_empty()`, `xs.get(i)` → `Option<T>`, `xs.set(i, v)`, `xs.update(i, f)`, `xs[i]`
   * Methods (traversal): `xs.map(f)`, `xs.filter(f)`, `xs.scan(init, f)`, `xs.enumerate()`, `xs.zip(other)`, `xs.chunks(n)`, `xs.windows(n)`, `xs.fold(init, f)`, `xs.count()`, `xs.any(f)`, `xs.all(f)`, `xs.find(f)`, `xs.to_list()`
   * Mutation semantics: updates are visible across aliases that reference the same `MutableList`.
+* `MutableMap<K, V>` — opaque builtin type with alias-visible mutable key/value storage. Keys must be hashable types (Int, String, Char, Bool, Unit); invalid key types are rejected at compile time for typed mutable-map operations (E0024). ✓
+  * Constructor: `collections.MutableMap.new()` (requires `import collections`)
+  * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()`, `m.values()`, `m.is_empty()`
+* `MutableSet<T>` — opaque builtin type with alias-visible mutable set storage. Elements must be hashable types (Int, String, Char, Bool, Unit); invalid element types are rejected at compile time for typed mutable-set operations (E0028). ✓
+  * Constructor: `collections.MutableSet.new()` (requires `import collections`)
+  * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()`
 * `Deque<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<VecDeque<Value>>`) ✓
   * Constructor: `collections.Deque.new()` (requires `import collections`)
   * Methods (queue/storage): `q.push_front(v)`, `q.push_back(v)`, `q.pop_front()` → `Option<{ value: T, rest: Deque<T> }>`, `q.pop_back()` → `Option<{ value: T, rest: Deque<T> }>`, `q.len()`, `q.is_empty()`
@@ -683,7 +689,7 @@ while `io`/`fs` are module namespaces for effectful operations.
 * Canonical formatter (`kyokara fmt`, `kyokara-fmt` crate, Wadler-Lindig Doc IR) ✓
 * Stable symbol IDs (`kind::name` / `kind::parent::child` format, unique across symbol kinds) ✓
 * Runtime contract checks (requires/ensures/old) ✓
-* Core stdlib (List, Map, Set, String, Int/Float, io, math, fs — intrinsic functions exposed via canonical method/module API) ✓
+* Core stdlib (List, MutableList, MutableMap, MutableSet, Deque, Map, Set, String, Int/Float, io, math, fs — intrinsic functions exposed via canonical method/module API) ✓
 
 **v0.2 — Refactoring + LSP + Capabilities**
 * Module system: convention-based file layout, `pub` visibility, flat imports ✓
