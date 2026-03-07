@@ -77,7 +77,20 @@ Canonical user forms:
 10. `xs.all(f)`
 11. `xs.find(f)`
 12. `xs.count()`
-13. `xs.to_list()`
+13. `xs.count(f)`
+14. `xs.to_list()`
+
+Predicate terminal query family:
+
+1. `xs.any(f)` asks whether any element matches
+2. `xs.all(f)` asks whether all elements match
+3. `xs.find(f)` returns the first matching element
+4. `xs.count()` counts all elements
+5. `xs.count(f)` counts matching elements
+
+`xs.filter(f).count()` remains valid composition when the filtered traversal is
+also reused, but `xs.count(f)` is the canonical direct count query because it
+completes the terminal predicate family and satisfies RFC 0001 `L7A`.
 
 These operations are available on traversal-capable values, including:
 
@@ -168,6 +181,20 @@ After:
 let ok = ranges.any(fn(r: IdRange) => id >= r.start && id <= r.end)
 ```
 
+### Example C: predicate count
+
+Before:
+
+```kyokara
+let fits = pairs.filter(fn(p: Pair) => p.left <= p.right).count()
+```
+
+After:
+
+```kyokara
+let fits = pairs.count(fn(p: Pair) => p.left <= p.right)
+```
+
 ## RFC 0001 Amendment
 
 This RFC supersedes RFC 0001 `L18` as currently written.
@@ -221,7 +248,8 @@ Decision: reject permanent dual surface.
 1. Day-to-day traversal code never requires `seq()`.
 2. Common previous near-miss (`List.enumerate`) is valid by construction.
 3. No loss of traversal expressiveness compared with current `Seq` surface.
-4. RFC 0001 law text updated to reflect canonical model.
+4. `count()` and `count(predicate)` are both explicitly documented as the terminal count family.
+5. RFC 0001 law text updated to reflect canonical model and the `L7A` family-completion rule.
 
 ## Follow-up
 
