@@ -78,6 +78,7 @@ fn format_node_inner(node: &SyntaxNode) -> Doc {
         SyntaxKind::CallExpr => format_call_expr(node),
         SyntaxKind::NamedArg => format_named_arg(node),
         SyntaxKind::ArgList => format_arg_list(node),
+        SyntaxKind::IndexExpr => format_index_expr(node),
         SyntaxKind::FieldExpr => format_field_expr(node),
         SyntaxKind::PipelineExpr => format_pipeline_expr(node),
         SyntaxKind::PropagateExpr => format_propagate_expr(node),
@@ -359,6 +360,7 @@ fn is_expr(kind: SyntaxKind) -> bool {
             | SyntaxKind::BinaryExpr
             | SyntaxKind::UnaryExpr
             | SyntaxKind::CallExpr
+            | SyntaxKind::IndexExpr
             | SyntaxKind::FieldExpr
             | SyntaxKind::PipelineExpr
             | SyntaxKind::PropagateExpr
@@ -982,6 +984,20 @@ fn format_call_expr(node: &SyntaxNode) -> Doc {
         parts.push(format_node(&al));
     }
     Doc::concat(parts)
+}
+
+fn format_index_expr(node: &SyntaxNode) -> Doc {
+    let exprs: Vec<SyntaxNode> = node.children().filter(|c| is_expr(c.kind())).collect();
+    if exprs.len() == 2 {
+        Doc::concat(vec![
+            format_node(&exprs[0]),
+            Doc::text("["),
+            format_node(&exprs[1]),
+            Doc::text("]"),
+        ])
+    } else {
+        verbatim(node)
+    }
 }
 
 fn format_arg_list(node: &SyntaxNode) -> Doc {
