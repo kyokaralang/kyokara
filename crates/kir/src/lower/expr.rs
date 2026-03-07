@@ -164,6 +164,20 @@ impl<'a> LoweringCtx<'a> {
             .collect()
     }
 
+    fn select_method_candidate_by_arity(
+        &self,
+        candidates: &[kyokara_hir_def::item_tree::FnItemIdx],
+        actual_arg_count: usize,
+    ) -> Option<kyokara_hir_def::item_tree::FnItemIdx> {
+        candidates.iter().copied().find(|&fn_idx| {
+            self.item_tree.functions[fn_idx]
+                .params
+                .len()
+                .saturating_sub(1)
+                == actual_arg_count
+        })
+    }
+
     fn lower_call_args_source_order(&mut self, args: &[CallArg]) -> Vec<ValueId> {
         args.iter()
             .map(|arg| {
@@ -421,13 +435,17 @@ impl<'a> LoweringCtx<'a> {
                         self.module_scope
                             .methods
                             .get(&(receiver_key, field))
-                            .copied()
+                            .and_then(|candidates| {
+                                self.select_method_candidate_by_arity(candidates, args.len())
+                            })
                     })
                     .or_else(|| {
                         self.module_scope
                             .methods
                             .get(&(ReceiverKey::Any, field))
-                            .copied()
+                            .and_then(|candidates| {
+                                self.select_method_candidate_by_arity(candidates, args.len())
+                            })
                     })
             };
             if let Some(fn_idx) = method_fn_idx {

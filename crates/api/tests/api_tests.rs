@@ -4463,6 +4463,63 @@ fn check_seq_any_all_find_wrong_predicate_type_reports_type_mismatch() {
 }
 
 #[test]
+fn check_seq_count_predicate_canonical_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+        fn main() -> Int {
+            let a = (0..<6).count(fn(n: Int) => n % 2 == 0)
+            let b = collections.List.new().push(1).push(2).push(3).count(fn(n: Int) => n >= 2)
+            let c = "a,b,,c".split(",").count(fn(part: String) => part != "")
+            let d = collections.MutableList.from_list(collections.List.new().push(1).push(2).push(3))
+                .count(fn(n: Int) => n != 2)
+            let e = collections.Deque.new().push_back(1).push_back(2).push_back(3)
+                .count(fn(n: Int) => n < 3)
+            a + b + c + d + e
+        }"#,
+        "seq count predicate canonical surface",
+    );
+}
+
+#[test]
+fn check_seq_count_predicate_wrong_predicate_type_reports_type_mismatch() {
+    let output = check(
+        r#"fn main() -> Int {
+            (0..<3).count(fn(n: Int) => n)
+        }"#,
+        "test.ky",
+    );
+
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0001" && d.message.contains("type mismatch")),
+        "expected E0001 type mismatch for seq count predicate type, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_seq_count_predicate_wrong_arity_reports_e0007() {
+    let output = check(
+        r#"fn main() -> Int {
+            (0..<3).count(fn(n: Int) => n == 1, fn(n: Int) => n == 2)
+        }"#,
+        "test.ky",
+    );
+
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0007" && d.message.contains("expected 0 or 1 argument(s)")),
+        "expected E0007 arg count mismatch for seq count predicate arity, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_result_ergonomics_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
         r#"fn main() -> Int {

@@ -26,6 +26,8 @@ pub enum TyDiagnosticData {
     NotAFunction { ty: Ty },
     /// Wrong number of arguments in function call.
     ArgCountMismatch { expected: usize, actual: usize },
+    /// Wrong number of arguments where a fixed small arity family is allowed.
+    ArgCountMismatchOneOf { expected: Vec<usize>, actual: usize },
     /// Unknown named argument in function call.
     UnknownNamedArg { name: String },
     /// Duplicate named argument in function call.
@@ -87,7 +89,8 @@ impl TyDiagnosticData {
             TyDiagnosticData::InvalidNegationOperand { .. } => "E0004",
             TyDiagnosticData::InvalidNotOperand { .. } => "E0005",
             TyDiagnosticData::NotAFunction { .. } => "E0006",
-            TyDiagnosticData::ArgCountMismatch { .. } => "E0007",
+            TyDiagnosticData::ArgCountMismatch { .. }
+            | TyDiagnosticData::ArgCountMismatchOneOf { .. } => "E0007",
             TyDiagnosticData::UnknownNamedArg { .. } => "E0018",
             TyDiagnosticData::DuplicateNamedArg { .. } => "E0019",
             TyDiagnosticData::MissingNamedArg { .. } => "E0020",
@@ -175,6 +178,19 @@ impl TyDiagnosticData {
                 format!("called expression is not a function: `{}`", dt(ty),)
             }
             TyDiagnosticData::ArgCountMismatch { expected, actual } => {
+                format!("expected {expected} argument(s), found {actual}")
+            }
+            TyDiagnosticData::ArgCountMismatchOneOf { expected, actual } => {
+                let expected = match expected.as_slice() {
+                    [] => "no valid arities".to_owned(),
+                    [only] => format!("{only}"),
+                    [a, b] => format!("{a} or {b}"),
+                    many => {
+                        let mut parts: Vec<String> = many.iter().map(|n| n.to_string()).collect();
+                        let last = parts.pop().expect("non-empty slice handled above");
+                        format!("{}, or {}", parts.join(", "), last)
+                    }
+                };
                 format!("expected {expected} argument(s), found {actual}")
             }
             TyDiagnosticData::UnknownNamedArg { name } => {

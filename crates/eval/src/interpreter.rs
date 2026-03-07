@@ -476,7 +476,9 @@ impl Interpreter {
     ) -> usize {
         match &body.exprs[expr_idx] {
             Expr::Missing | Expr::Hole | Expr::Literal(_) => 0,
-            Expr::Path(_) => usize::from(self.local_access_for_expr(body, expr_idx) == Some(target)),
+            Expr::Path(_) => {
+                usize::from(self.local_access_for_expr(body, expr_idx) == Some(target))
+            }
             Expr::Binary { lhs, rhs, .. } => {
                 self.count_local_access_uses(body, *lhs, target)
                     + self.count_local_access_uses(body, *rhs, target)
@@ -555,9 +557,9 @@ impl Interpreter {
                 .iter()
                 .map(|(_, idx)| self.count_local_access_uses(body, *idx, target))
                 .sum(),
-            Expr::Lambda { body: lambda_body, .. } => {
-                self.count_local_access_uses(body, *lambda_body, target)
-            }
+            Expr::Lambda {
+                body: lambda_body, ..
+            } => self.count_local_access_uses(body, *lambda_body, target),
         }
     }
 
@@ -667,6 +669,45 @@ impl Interpreter {
             .iter()
             .map(|p| p.name)
             .collect()
+    }
+
+    fn select_method_candidate_by_arity(
+        &self,
+        candidates: &[FnItemIdx],
+        actual_arg_count: usize,
+    ) -> Option<FnItemIdx> {
+        candidates.iter().copied().find(|&fn_idx| {
+            self.item_tree.functions[fn_idx]
+                .params
+                .len()
+                .saturating_sub(1)
+                == actual_arg_count
+        })
+    }
+
+    fn method_candidate_for_value(
+        &self,
+        base_val: &Value,
+        field_name: Name,
+        actual_arg_count: usize,
+    ) -> Option<FnItemIdx> {
+        self.receiver_key_for_value(base_val)
+            .and_then(|receiver_key| {
+                self.module_scope
+                    .methods
+                    .get(&(receiver_key, field_name))
+                    .and_then(|candidates| {
+                        self.select_method_candidate_by_arity(candidates, actual_arg_count)
+                    })
+            })
+            .or_else(|| {
+                self.module_scope
+                    .methods
+                    .get(&(ReceiverKey::Any, field_name))
+                    .and_then(|candidates| {
+                        self.select_method_candidate_by_arity(candidates, actual_arg_count)
+                    })
+            })
     }
 
     fn param_names_for_fn_value(&self, fv: &FnValue) -> Option<Vec<Name>> {
@@ -1126,19 +1167,7 @@ impl Interpreter {
                     let method_fn_idx = if base_has_field {
                         None
                     } else {
-                        self.receiver_key_for_value(&base_val)
-                            .and_then(|receiver_key| {
-                                self.module_scope
-                                    .methods
-                                    .get(&(receiver_key, field_name))
-                                    .copied()
-                            })
-                            .or_else(|| {
-                                self.module_scope
-                                    .methods
-                                    .get(&(ReceiverKey::Any, field_name))
-                                    .copied()
-                            })
+                        self.method_candidate_for_value(&base_val, field_name, args.len())
                     };
 
                     if let Some(fn_idx) = method_fn_idx {
@@ -1342,18 +1371,23 @@ impl Interpreter {
                 let mut val = if let Some(access) = self.local_access_for_expr(body, idx) {
                     if self.consuming_local == Some(access) {
                         self.consuming_local = None;
-                        self.env.take_slot(access.depth, access.slot).ok_or_else(|| {
-                            RuntimeError::TypeError(
-                                "internal runtime error: consumed local binding unavailable"
-                                    .into(),
-                            )
-                        })?
+                        self.env
+                            .take_slot(access.depth, access.slot)
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError(
+                                    "internal runtime error: consumed local binding unavailable"
+                                        .into(),
+                                )
+                            })?
                     } else {
-                        self.env.lookup_slot(access.depth, access.slot).cloned().ok_or_else(|| {
-                            RuntimeError::TypeError(
-                                "internal runtime error: local binding unavailable".into(),
-                            )
-                        })?
+                        self.env
+                            .lookup_slot(access.depth, access.slot)
+                            .cloned()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError(
+                                    "internal runtime error: local binding unavailable".into(),
+                                )
+                            })?
                     }
                 } else {
                     self.resolve_name(&self.env, name)?
@@ -1534,19 +1568,7 @@ impl Interpreter {
                     let method_fn_idx = if base_has_field {
                         None
                     } else {
-                        self.receiver_key_for_value(&base_val)
-                            .and_then(|receiver_key| {
-                                self.module_scope
-                                    .methods
-                                    .get(&(receiver_key, field_name))
-                                    .copied()
-                            })
-                            .or_else(|| {
-                                self.module_scope
-                                    .methods
-                                    .get(&(ReceiverKey::Any, field_name))
-                                    .copied()
-                            })
+                        self.method_candidate_for_value(&base_val, field_name, args.len())
                     };
 
                     if let Some(fn_idx) = method_fn_idx {
@@ -1756,9 +1778,14 @@ impl Interpreter {
                     )
                 });
             }
-            return env.lookup_slot(access.depth, access.slot).cloned().ok_or_else(|| {
-                RuntimeError::TypeError("internal runtime error: local binding unavailable".into())
-            });
+            return env
+                .lookup_slot(access.depth, access.slot)
+                .cloned()
+                .ok_or_else(|| {
+                    RuntimeError::TypeError(
+                        "internal runtime error: local binding unavailable".into(),
+                    )
+                });
         }
         self.resolve_name(env, name)
     }
@@ -3250,6 +3277,25 @@ impl Interpreter {
                 })?;
                 Ok(Value::Int(count))
             }
+            IntrinsicFn::SeqCountBy => {
+                let plan = self.require_traversal_plan(&args[0], "seq_count_by")?;
+                let predicate = args[1].clone();
+                let mut count: i64 = 0;
+                self.seq_for_each(&plan, &mut |interp, item| {
+                    let keep = interp.call_value(predicate.clone(), smallvec::smallvec![item])?;
+                    match keep {
+                        Value::Bool(true) => {
+                            count = count.checked_add(1).ok_or(RuntimeError::IntegerOverflow)?;
+                            Ok(())
+                        }
+                        Value::Bool(false) => Ok(()),
+                        _ => Err(RuntimeError::TypeError(
+                            "seq_count_by: predicate must return Bool".into(),
+                        )),
+                    }
+                })?;
+                Ok(Value::Int(count))
+            }
             IntrinsicFn::SeqAny => {
                 let plan = self.require_traversal_plan(&args[0], "seq_any")?;
                 let predicate = args[1].clone();
@@ -3802,9 +3848,8 @@ impl Interpreter {
                     let result = match match self
                         .consuming_local_for_shadow_rebind_init(body, *pat, *init)
                     {
-                        Some(access) => {
-                            self.with_consuming_local(access, |this| this.eval_expr(env, body, *init))
-                        }
+                        Some(access) => self
+                            .with_consuming_local(access, |this| this.eval_expr(env, body, *init)),
                         None => self.eval_expr(env, body, *init),
                     } {
                         Ok(result) => result,
@@ -4067,8 +4112,9 @@ impl Interpreter {
                     let result = match match self
                         .consuming_local_for_shadow_rebind_init(body, *pat, *init)
                     {
-                        Some(access) => self
-                            .with_consuming_local(access, |this| this.eval_expr_shared(body, *init)),
+                        Some(access) => self.with_consuming_local(access, |this| {
+                            this.eval_expr_shared(body, *init)
+                        }),
                         None => self.eval_expr_shared(body, *init),
                     } {
                         Ok(result) => result,
@@ -4620,7 +4666,10 @@ mod tests {
         let Value::List(updated) = &out else {
             panic!("expected list output");
         };
-        assert_eq!(updated.as_ref(), &[Value::Int(0), Value::Int(1), Value::Int(2)]);
+        assert_eq!(
+            updated.as_ref(),
+            &[Value::Int(0), Value::Int(1), Value::Int(2)]
+        );
         assert!(
             std::ptr::eq(before_ptr, Rc::as_ptr(updated)),
             "lambda tail method chain should reuse uniquely owned param storage"
@@ -5065,7 +5114,10 @@ mod tests {
         let Value::List(updated) = &out else {
             panic!("expected list output");
         };
-        assert_eq!(updated.as_ref(), &[Value::Int(0), Value::Int(1), Value::Int(2)]);
+        assert_eq!(
+            updated.as_ref(),
+            &[Value::Int(0), Value::Int(1), Value::Int(2)]
+        );
         assert!(
             std::ptr::eq(before_ptr, Rc::as_ptr(updated)),
             "tail list method chain should reuse uniquely owned param storage"
@@ -5190,7 +5242,10 @@ mod tests {
         let Value::List(updated) = &out else {
             panic!("expected list output");
         };
-        assert_eq!(updated.as_ref(), &[Value::Int(0), Value::Int(1), Value::Int(2)]);
+        assert_eq!(
+            updated.as_ref(),
+            &[Value::Int(0), Value::Int(1), Value::Int(2)]
+        );
         assert!(
             std::ptr::eq(before_ptr, Rc::as_ptr(updated)),
             "shadow rebinding chain should preserve unique ownership across updates"

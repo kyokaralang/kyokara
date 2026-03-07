@@ -358,7 +358,7 @@ pub fn register_builtin_intrinsics(
 /// Register built-in methods that map existing intrinsics to method-call syntax.
 ///
 /// For example, `string_len` becomes callable as `s.len()` by registering
-/// `(ReceiverKey, "len") → FnItemIdx` in `scope.methods`.
+/// `(ReceiverKey, "len") → [FnItemIdx]` in `scope.methods`.
 ///
 /// Also populates `scope.well_known_names` with cached primitive type names.
 pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner) {
@@ -496,6 +496,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_chunks", ReceiverKey::Core(CoreType::List), "chunks"),
         ("seq_windows", ReceiverKey::Core(CoreType::List), "windows"),
         ("seq_count", ReceiverKey::Core(CoreType::List), "count"),
+        ("seq_count_by", ReceiverKey::Core(CoreType::List), "count"),
         ("seq_any", ReceiverKey::Core(CoreType::List), "any"),
         ("seq_all", ReceiverKey::Core(CoreType::List), "all"),
         ("seq_find", ReceiverKey::Core(CoreType::List), "find"),
@@ -632,6 +633,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             ReceiverKey::Core(CoreType::MutableList),
             "count",
         ),
+        (
+            "seq_count_by",
+            ReceiverKey::Core(CoreType::MutableList),
+            "count",
+        ),
         ("seq_any", ReceiverKey::Core(CoreType::MutableList), "any"),
         ("seq_all", ReceiverKey::Core(CoreType::MutableList), "all"),
         ("seq_find", ReceiverKey::Core(CoreType::MutableList), "find"),
@@ -680,6 +686,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_chunks", ReceiverKey::Core(CoreType::Deque), "chunks"),
         ("seq_windows", ReceiverKey::Core(CoreType::Deque), "windows"),
         ("seq_count", ReceiverKey::Core(CoreType::Deque), "count"),
+        ("seq_count_by", ReceiverKey::Core(CoreType::Deque), "count"),
         ("seq_any", ReceiverKey::Core(CoreType::Deque), "any"),
         ("seq_all", ReceiverKey::Core(CoreType::Deque), "all"),
         ("seq_find", ReceiverKey::Core(CoreType::Deque), "find"),
@@ -698,6 +705,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_chunks", ReceiverKey::Core(CoreType::Seq), "chunks"),
         ("seq_windows", ReceiverKey::Core(CoreType::Seq), "windows"),
         ("seq_count", ReceiverKey::Core(CoreType::Seq), "count"),
+        ("seq_count_by", ReceiverKey::Core(CoreType::Seq), "count"),
         ("seq_any", ReceiverKey::Core(CoreType::Seq), "any"),
         ("seq_all", ReceiverKey::Core(CoreType::Seq), "all"),
         ("seq_find", ReceiverKey::Core(CoreType::Seq), "find"),
@@ -790,12 +798,18 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ),
     ];
 
+    let mut seen_builtin_keys = kyokara_stdx::FxHashSet::default();
     for &(intrinsic_name, receiver_key, method_name) in mappings {
         let intr_name = Name::new(interner, intrinsic_name);
         let meth_name = Name::new(interner, method_name);
+        let key = (receiver_key, meth_name);
 
         if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&intr_name) {
-            scope.methods.insert((receiver_key, meth_name), fn_idx);
+            if seen_builtin_keys.insert(key) {
+                scope.methods.insert(key, vec![fn_idx]);
+            } else {
+                scope.methods.entry(key).or_default().push(fn_idx);
+            }
         }
     }
 }
@@ -1852,6 +1866,14 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             "seq_count",
             vec![t_name],
             vec![("s", seq_t.clone())],
+            int_ty.clone(),
+        ),
+        // seq_count_by<T>(s: Seq<T>, f: fn(T) -> Bool) -> Int
+        mk_intrinsic(
+            interner,
+            "seq_count_by",
+            vec![t_name],
+            vec![("s", seq_t.clone()), ("f", fn_t_to_bool.clone())],
             int_ty.clone(),
         ),
         // seq_any<T>(s: Seq<T>, f: fn(T) -> Bool) -> Bool

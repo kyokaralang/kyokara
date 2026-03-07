@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, Stmt, UnaryOp};
-use kyokara_hir_def::item_tree::TypeDefKind;
+use kyokara_hir_def::item_tree::{FnItemIdx, TypeDefKind};
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::resolver::{
     CoreType, PrimitiveType, ReceiverKey, ResolvedName, StaticOwnerKey,
@@ -1441,11 +1441,61 @@ impl<'a> InferenceCtx<'a> {
                 | "seq_chunks"
                 | "seq_windows"
                 | "seq_count"
+                | "seq_count_by"
                 | "seq_any"
                 | "seq_all"
                 | "seq_find"
                 | "seq_to_list"
         )
+    }
+
+    fn method_candidates_for_name(
+        &self,
+        base_ty: &Ty,
+        field: kyokara_hir_def::name::Name,
+    ) -> Option<&[FnItemIdx]> {
+        self.receiver_key_for_ty(base_ty)
+            .and_then(|receiver_key| {
+                self.module_scope
+                    .methods
+                    .get(&(receiver_key, field))
+                    .map(Vec::as_slice)
+            })
+            .or_else(|| {
+                self.module_scope
+                    .methods
+                    .get(&(ReceiverKey::Any, field))
+                    .map(Vec::as_slice)
+            })
+    }
+
+    fn select_method_candidate_by_arity(
+        &self,
+        candidates: &[FnItemIdx],
+        actual_arg_count: usize,
+    ) -> Result<FnItemIdx, Vec<usize>> {
+        if let Some(&fn_idx) = candidates.iter().find(|&&fn_idx| {
+            self.item_tree.functions[fn_idx]
+                .params
+                .len()
+                .saturating_sub(1)
+                == actual_arg_count
+        }) {
+            return Ok(fn_idx);
+        }
+
+        let mut expected: Vec<usize> = candidates
+            .iter()
+            .map(|&fn_idx| {
+                self.item_tree.functions[fn_idx]
+                    .params
+                    .len()
+                    .saturating_sub(1)
+            })
+            .collect();
+        expected.sort_unstable();
+        expected.dedup();
+        Err(expected)
     }
 
     /// Try to resolve `base.field(args)` as a method call.
@@ -1490,21 +1540,8 @@ impl<'a> InferenceCtx<'a> {
         }
 
         // Look up method in the registry: exact receiver method first, Any fallback second.
-        let fn_idx = match self
-            .receiver_key_for_ty(&base_ty_resolved)
-            .and_then(|receiver_key| {
-                self.module_scope
-                    .methods
-                    .get(&(receiver_key, field))
-                    .copied()
-            })
-            .or_else(|| {
-                self.module_scope
-                    .methods
-                    .get(&(ReceiverKey::Any, field))
-                    .copied()
-            }) {
-            Some(idx) => idx,
+        let candidates = match self.method_candidates_for_name(&base_ty_resolved, field) {
+            Some(candidates) => candidates,
             None => {
                 // Type has a name but no such method exists — emit diagnostic.
                 self.push_diag(TyDiagnosticData::NoSuchMethod {
@@ -1522,6 +1559,24 @@ impl<'a> InferenceCtx<'a> {
                         }
                     }
                 }
+                return Some(Ty::Error);
+            }
+        };
+        let fn_idx = match self.select_method_candidate_by_arity(candidates, args.len()) {
+            Ok(fn_idx) => fn_idx,
+            Err(expected) => {
+                self.push_diag(TyDiagnosticData::ArgCountMismatchOneOf {
+                    expected,
+                    actual: args.len(),
+                });
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(e) | CallArg::Named { value: e, .. } => {
+                            self.infer_expr(*e, &Expectation::None);
+                        }
+                    }
+                }
+                self.expr_types.insert(callee, Ty::Error);
                 return Some(Ty::Error);
             }
         };

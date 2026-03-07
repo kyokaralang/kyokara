@@ -952,6 +952,39 @@ fn err_seq_any_all_find_wrong_arity_or_predicate_type() {
 }
 
 #[test]
+fn err_seq_count_predicate_wrong_arity_or_predicate_type() {
+    struct Case<'a> {
+        src: &'a str,
+        expected_fragment: &'a str,
+    }
+
+    let cases = [
+        Case {
+            src: "fn main() -> Int { (0..<3).count(fn(n: Int) => n) }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "fn main() -> Int { (0..<3).count(fn(n: Int) => n == 1, fn(n: Int) => n == 2) }",
+            expected_fragment: "expected 0 or 1 argument(s)",
+        },
+    ];
+
+    for case in cases {
+        let (result, _) = check(case.src);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains(case.expected_fragment)),
+            "expected diagnostic containing `{}`; got: {:?}\nsource:\n{}",
+            case.expected_fragment,
+            result.diagnostics,
+            case.src
+        );
+    }
+}
+
+#[test]
 fn err_seq_scan_unfold_int_pow_wrong_arity_or_types() {
     struct Case<'a> {
         src: &'a str,
@@ -1548,6 +1581,16 @@ fn infer_opaque_traversal_surface_happy_paths_rfc_0003() {
             let b = (5..<5).count()
             let c = (5..<2).count()
             a + b + c
+        }"#,
+        r#"fn main() -> Int {
+            let a = (0..<6).count(fn(n: Int) => n % 2 == 0)
+            let b = collections.List.new().push(1).push(2).push(3).count(fn(n: Int) => n >= 2)
+            let c = "a,b,,c".split(",").count(fn(part: String) => part != "")
+            let d = collections.MutableList.from_list(collections.List.new().push(1).push(2).push(3))
+                .count(fn(n: Int) => n != 2)
+            let e = collections.Deque.new().push_back(1).push_back(2).push_back(3)
+                .count(fn(n: Int) => n < 3)
+            a + b + c + d + e
         }"#,
         r#"fn main() -> Int {
             let xs = (0).unfold(fn(state: Int) =>
