@@ -1003,6 +1003,35 @@ mod tests {
     }
 
     #[test]
+    fn cow_collection_chain_case_exercises_shadow_rebinding() -> Result<()> {
+        let root = workspace_root()?;
+        let source = fs::read_to_string(
+            root.join("tools")
+                .join("perf")
+                .join("cases")
+                .join("cow_collection_chain_run")
+                .join("main.ky"),
+        )?;
+        assert!(
+            source.contains("let xs = xs.push("),
+            "case must use same-name list shadow rebinding"
+        );
+        assert!(
+            source.contains("let m = m.insert(") && source.contains("let m = m.remove("),
+            "case must use same-name map shadow rebinding"
+        );
+        assert!(
+            source.contains("let s = s.insert(") && source.contains("let s = s.remove("),
+            "case must use same-name set shadow rebinding"
+        );
+        assert!(
+            source.contains("let q = q.push_back("),
+            "case must use same-name deque shadow rebinding"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn discover_cases_rejects_invalid_run_manifest() -> Result<()> {
         let temp = TempDir::new()?;
         let cases_root = temp.path().join("cases");

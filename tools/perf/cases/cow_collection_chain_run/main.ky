@@ -1,27 +1,74 @@
 import collections
 import io
 
-fn build_list(n: Int) -> List<Int> {
+// Stress immutable same-name rebinding so the harness actually exercises the
+// dead-after-use local consumption path behind #333.
+
+fn seed_list(n: Int) -> List<Int> {
   ((0)..<n).fold(collections.List.new(), fn(acc: List<Int>, i: Int) => acc.push(i))
 }
 
-fn build_map(n: Int) -> Map<Int, Int> {
-  ((0)..<n).fold(collections.Map.new(), fn(acc: Map<Int, Int>, i: Int) => acc.insert(i, i * 2))
+fn seed_map(n: Int) -> Map<Int, Int> {
+  ((0)..<n).fold(collections.Map.new(), fn(acc: Map<Int, Int>, i: Int) => acc.insert(i, i))
 }
 
-fn build_set(n: Int) -> Set<Int> {
+fn seed_set(n: Int) -> Set<Int> {
   ((0)..<n).fold(collections.Set.new(), fn(acc: Set<Int>, i: Int) => acc.insert(i))
 }
 
-fn build_deque(n: Int) -> Deque<Int> {
+fn seed_deque(n: Int) -> Deque<Int> {
   ((0)..<n).fold(collections.Deque.new(), fn(acc: Deque<Int>, i: Int) => acc.push_back(i))
 }
 
+fn step_list(xs: List<Int>, i: Int) -> List<Int> {
+  let xs = xs.push(i)
+  let xs = xs.push(i + 1)
+  let xs = xs.push(i + 2)
+  xs
+}
+
+fn step_map(m: Map<Int, Int>, i: Int) -> Map<Int, Int> {
+  let m = m.remove(i)
+  let m = m.insert(100000 + i, i)
+  let m = m.insert(200000 + i, i + 1)
+  m
+}
+
+fn step_set(s: Set<Int>, i: Int) -> Set<Int> {
+  let s = s.remove(i)
+  let s = s.insert(400000 + i)
+  let s = s.insert(500000 + i)
+  s
+}
+
+fn step_deque(q: Deque<Int>, i: Int) -> Deque<Int> {
+  let q = q.push_back(i)
+  let q = q.push_back(i + 1)
+  let q = q.push_back(i + 2)
+  q
+}
+
+fn churn_list(xs: List<Int>, rounds: Int) -> List<Int> {
+  ((0)..<rounds).fold(xs, fn(acc: List<Int>, i: Int) => step_list(acc, i))
+}
+
+fn churn_map(m: Map<Int, Int>, rounds: Int) -> Map<Int, Int> {
+  ((0)..<rounds).fold(m, fn(acc: Map<Int, Int>, i: Int) => step_map(acc, i))
+}
+
+fn churn_set(s: Set<Int>, rounds: Int) -> Set<Int> {
+  ((0)..<rounds).fold(s, fn(acc: Set<Int>, i: Int) => step_set(acc, i))
+}
+
+fn churn_deque(q: Deque<Int>, rounds: Int) -> Deque<Int> {
+  ((0)..<rounds).fold(q, fn(acc: Deque<Int>, i: Int) => step_deque(acc, i))
+}
+
 fn main() -> Unit {
-  let n = 10000
-  let xs = build_list(n)
-  let m = build_map(n)
-  let s = build_set(n)
-  let q = build_deque(n)
+  let rounds = 250
+  let xs = churn_list(seed_list(8000), rounds)
+  let m = churn_map(seed_map(4000), rounds)
+  let s = churn_set(seed_set(4000), rounds)
+  let q = churn_deque(seed_deque(6000), rounds)
   io.println((xs.len() + m.len() + s.len() + q.len()).to_string())
 }

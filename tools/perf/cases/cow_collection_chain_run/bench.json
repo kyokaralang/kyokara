@@ -3,7 +3,7 @@
   "mode": "run",
   "entry": "main.ky",
   "project": false,
-  "expected_stdout": "40000\n",
+  "expected_stdout": "24000\n",
   "warmup_runs": 1,
   "measured_runs": 5,
   "max_regression_pct": 20.0,

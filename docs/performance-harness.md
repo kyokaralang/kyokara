@@ -67,6 +67,9 @@ Rules:
 - `check` cases must set `expected_ok: true` and must not set `expected_stdout`
 - case discovery order is lexical by directory name
 
+Representative v1 cases:
+- `cow_collection_chain_run` intentionally stresses immutable same-name rebinding on `List`, `Map`, `Set`, and `Deque` so COW-path regressions are visible.
+
 ## Baselines
 
 Committed baselines live under:
