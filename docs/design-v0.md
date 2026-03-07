@@ -342,7 +342,24 @@ let body = Http.get(url: "...")?
 
 Desugars to a `match` returning early on `Err`.
 
-### 3.3 Contracts lowering
+### 3.3 Integer bitwise operators
+
+Bitwise operators are native on `Int`:
+
+```kyokara
+let mixed = state ^ (state << 6)
+let masked = mixed & ~(1 << 1)
+let next = masked | (mixed >> 5)
+```
+
+Rules:
+* supported operators: `&`, `|`, `^`, `~`, `<<`, `>>`
+* operands are `Int` only
+* `>>` is arithmetic right shift (sign-extending)
+* shift counts must be in `0..63`; out-of-range counts are errors/traps
+* this is the canonical surface for VM-style and binary-state code; do not reimplement XOR or shifts in userland
+
+### 3.4 Contracts lowering
 
 * `requires`: pre-state checks
 * `ensures`: post-state obligations referencing saved `old(...)` values
@@ -655,7 +672,7 @@ while `io`/`fs` are module namespaces for effectful operations.
   * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()`
 * String methods ✓ — `s.len()` (char count), `s.contains(t)`, `s.starts_with(t)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)`, `s.substring(a, b)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()`, `s.chars()`, `s.parse_int()` → `Result<Int, ParseError>`, `s.parse_float()` → `Result<Float, ParseError>`
 * Char methods ✓ — `c.to_string()`
-* Int methods ✓ — `n.abs()`, `n.pow(exp)` (`exp >= 0`, overflow checked), `n.to_string()`, `n.to_float()`
+* Int surface ✓ — native bitwise operators `&`, `|`, `^`, `~`, `<<`, `>>` (`Int` only, arithmetic `>>`, shift counts `0..63`) plus methods `n.abs()`, `n.pow(exp)` (`exp >= 0`, overflow checked), `n.to_string()`, `n.to_float()`
 * Float methods ✓ — `f.abs()`, `f.to_int()`
 * Module-qualified math ✓ — `math.min(a, b)`, `math.max(a, b)`, `math.gcd(a, b)`, `math.lcm(a, b)`, `math.fmin(a, b)`, `math.fmax(a, b)`
 * Module-qualified I/O ✓ — `io.print(s)`, `io.println(s)`, `io.read_line()`, `io.read_stdin()` (require `io` capability)
