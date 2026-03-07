@@ -245,6 +245,14 @@ fn fmt_call_expr() {
 }
 
 #[test]
+fn fmt_zero_arg_call_expr() {
+    assert_fmt_parse_ok(
+        "fn main(xs: List<Int>) -> List<Int> { xs.to_list() }",
+        "fn main(xs: List<Int>) -> List<Int> {\n  xs.to_list()\n}\n",
+    );
+}
+
+#[test]
 fn fmt_index_expr_simple_parse_ok() {
     assert_fmt_parse_ok(
         "fn main(xs: List<Int>) -> Int { xs[0] }",
@@ -273,6 +281,14 @@ fn fmt_lambda_body_index_expr_preserved() {
     assert_fmt_parse_ok(
         "fn keep(xs: List<Int>, ys: MutableList<Bool>, v: Int, n: Int) -> List<Int> { xs.filter(fn(x: Int) => ys[v * n + x]).to_list() }",
         "fn keep(xs: List<Int>, ys: MutableList<Bool>, v: Int, n: Int) -> List<Int> {\n  xs.filter(fn(x: Int) => ys[v * n + x]).to_list()\n}\n",
+    );
+}
+
+#[test]
+fn fmt_zero_arg_call_after_wrapped_chain_preserved() {
+    assert_fmt_parse_ok(
+        "fn main(input: String) -> List<String> { input.lines().map(fn(line: String) => line.trim()).filter(fn(line: String) => line.len() > 0).to_list() }",
+        "fn main(input: String) -> List<String> {\n  input.lines().map(fn(line: String) => line.trim()).filter(fn(line: String) => line.len() > 0).to_list()\n}\n",
     );
 }
 
