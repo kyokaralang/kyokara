@@ -310,7 +310,9 @@ fn format_path(node: &SyntaxNode) -> Doc {
 // ── Type definitions ────────────────────────────────────────────────
 
 fn format_type_def(node: &SyntaxNode) -> Doc {
-    let mut parts = vec![Doc::text("type"), Doc::text(" ")];
+    let mut parts = item_visibility_prefix(node);
+    parts.push(Doc::text("type"));
+    parts.push(Doc::text(" "));
 
     if let Some(name) = find_ident(node) {
         parts.push(format_token(&name));
@@ -390,12 +392,14 @@ fn is_pat(kind: SyntaxKind) -> bool {
 fn format_variant_list(node: &SyntaxNode) -> Doc {
     let variants = child_nodes(node, SyntaxKind::Variant);
     let mut parts = Vec::new();
-    for v in &variants {
-        parts.push(Doc::concat(vec![
-            Doc::HardLine,
-            Doc::text("  | "),
-            format_node(v),
-        ]));
+    for (idx, v) in variants.iter().enumerate() {
+        parts.push(Doc::HardLine);
+        if idx == 0 {
+            parts.push(Doc::text("  "));
+        } else {
+            parts.push(Doc::text("  | "));
+        }
+        parts.push(format_node(v));
     }
     Doc::concat(parts)
 }
@@ -473,7 +477,9 @@ fn format_record_field(node: &SyntaxNode) -> Doc {
 // ── Function definitions ────────────────────────────────────────────
 
 fn format_fn_def(node: &SyntaxNode) -> Doc {
-    let mut parts = vec![Doc::text("fn"), Doc::text(" ")];
+    let mut parts = item_visibility_prefix(node);
+    parts.push(Doc::text("fn"));
+    parts.push(Doc::text(" "));
     let mut has_sections = false;
 
     if let Some(name) = find_ident(node) {
@@ -641,7 +647,9 @@ fn format_cap_def(node: &SyntaxNode) -> Doc {
         return verbatim(node);
     }
 
-    let mut parts = vec![Doc::text("effect"), Doc::text(" ")];
+    let mut parts = item_visibility_prefix(node);
+    parts.push(Doc::text("effect"));
+    parts.push(Doc::text(" "));
 
     if let Some(name) = find_ident(node) {
         parts.push(format_token(&name));
@@ -672,6 +680,18 @@ fn format_property_def(node: &SyntaxNode) -> Doc {
     }
 
     Doc::concat(parts)
+}
+
+fn item_visibility_prefix(node: &SyntaxNode) -> Vec<Doc> {
+    if node
+        .children_with_tokens()
+        .filter_map(|it| it.into_token())
+        .any(|tok| tok.kind() == SyntaxKind::PubKw)
+    {
+        vec![Doc::text("pub"), Doc::text(" ")]
+    } else {
+        Vec::new()
+    }
 }
 
 fn format_property_param_list(node: &SyntaxNode) -> Doc {

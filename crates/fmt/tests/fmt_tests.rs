@@ -111,6 +111,14 @@ fn fmt_fn_multiple() {
 }
 
 #[test]
+fn fmt_pub_fn_preserved() {
+    assert_fmt_parse_ok(
+        "pub fn add(x: Int, y: Int) -> Int { x + y }",
+        "pub fn add(x: Int, y: Int) -> Int {\n  x + y\n}\n",
+    );
+}
+
+#[test]
 fn fmt_fn_with_contract_section() {
     assert_fmt(
         "fn inc(x: Int) -> Int contract requires (x > 0) ensures (result > x) { x + 1 }",
@@ -137,7 +145,7 @@ fn fmt_type_alias() {
 fn fmt_type_adt() {
     assert_fmt(
         "type Option = Some(Int) | None",
-        "type Option =\n  | Some(Int)\n  | None\n",
+        "type Option =\n  Some(Int)\n  | None\n",
     );
 }
 
@@ -145,8 +153,21 @@ fn fmt_type_adt() {
 fn fmt_type_adt_multiple_fields() {
     assert_fmt(
         "type Result = Ok(Int) | Err(String)",
-        "type Result =\n  | Ok(Int)\n  | Err(String)\n",
+        "type Result =\n  Ok(Int)\n  | Err(String)\n",
     );
+}
+
+#[test]
+fn fmt_pub_type_preserved() {
+    assert_fmt_parse_ok(
+        "pub type Result = Ok(Int) | Err(String)",
+        "pub type Result =\n  Ok(Int)\n  | Err(String)\n",
+    );
+}
+
+#[test]
+fn fmt_pub_effect_preserved() {
+    assert_fmt_parse_ok("pub effect Net", "pub effect Net\n");
 }
 
 // ── Expressions ─────────────────────────────────────────────────────
