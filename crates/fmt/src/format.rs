@@ -1010,6 +1010,10 @@ fn format_arg_list(node: &SyntaxNode) -> Doc {
         }
     }
 
+    if arg_docs.is_empty() {
+        return Doc::text("()");
+    }
+
     Doc::group(Doc::concat(vec![
         Doc::text("("),
         Doc::indent(
