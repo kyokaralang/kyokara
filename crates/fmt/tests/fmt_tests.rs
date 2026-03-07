@@ -245,6 +245,54 @@ fn fmt_call_expr() {
 }
 
 #[test]
+fn fmt_index_expr_simple_parse_ok() {
+    assert_fmt_parse_ok(
+        "fn main(xs: List<Int>) -> Int { xs[0] }",
+        "fn main(xs: List<Int>) -> Int {\n  xs[0]\n}\n",
+    );
+}
+
+#[test]
+fn fmt_method_receiver_with_index_expr_preserved() {
+    assert_fmt_parse_ok(
+        "fn main() -> String { let out = collections.MutableList.new().push(\"\") let _o = out.set(0, out[0].concat(\"x\")) out[0] }",
+        "fn main() -> String {\n  let out = collections.MutableList.new().push(\"\")\n  let _o = out.set(0, out[0].concat(\"x\"))\n  out[0]\n}\n",
+    );
+}
+
+#[test]
+fn fmt_call_arg_index_expr_preserved() {
+    assert_fmt_parse_ok(
+        "fn main() -> Int { let best = collections.MutableList.new().push(0) let cost = collections.MutableList.new().push(42) let _b = best.set(0, cost[0]) best[0] }",
+        "fn main() -> Int {\n  let best = collections.MutableList.new().push(0)\n  let cost = collections.MutableList.new().push(42)\n  let _b = best.set(0, cost[0])\n  best[0]\n}\n",
+    );
+}
+
+#[test]
+fn fmt_lambda_body_index_expr_preserved() {
+    assert_fmt_parse_ok(
+        "fn keep(xs: List<Int>, ys: MutableList<Bool>, v: Int, n: Int) -> List<Int> { xs.filter(fn(x: Int) => ys[v * n + x]).to_list() }",
+        "fn keep(xs: List<Int>, ys: MutableList<Bool>, v: Int, n: Int) -> List<Int> {\n  xs.filter(fn(x: Int) => ys[v * n + x]).to_list()\n}\n",
+    );
+}
+
+#[test]
+fn fmt_unary_operand_index_expr_preserved() {
+    assert_fmt_parse_ok(
+        "fn main(feeds: MutableList<Bool>) -> Bool { !feeds[0] }",
+        "fn main(feeds: MutableList<Bool>) -> Bool {\n  !feeds[0]\n}\n",
+    );
+}
+
+#[test]
+fn fmt_record_field_index_expr_preserved() {
+    assert_fmt_parse_ok(
+        "fn main(part1: MutableList<Int>) -> Totals { Totals { part1: part1[0], part2: 0 } }",
+        "fn main(part1: MutableList<Int>) -> Totals {\n  Totals { part1: part1[0], part2: 0 }\n}\n",
+    );
+}
+
+#[test]
 fn fmt_if_expr() {
     assert_fmt(
         "fn main() -> Int { if (true) { 1 } else { 2 } }",
