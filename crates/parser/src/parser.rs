@@ -20,6 +20,45 @@ pub struct ParseError {
     pub token_pos: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IdentifierRole {
+    PathSegment,
+    ImportAlias,
+    TypeName,
+    VariantName,
+    FunctionName,
+    MethodName,
+    EffectName,
+    PropertyName,
+    TypeParameterName,
+    ParameterName,
+    LocalBindingName,
+    FieldName,
+    ArgumentName,
+    PatternName,
+}
+
+impl IdentifierRole {
+    fn description(self) -> &'static str {
+        match self {
+            Self::PathSegment => "a path segment",
+            Self::ImportAlias => "an import alias",
+            Self::TypeName => "a type name",
+            Self::VariantName => "a variant name",
+            Self::FunctionName => "a function name",
+            Self::MethodName => "a method name",
+            Self::EffectName => "an effect name",
+            Self::PropertyName => "a property name",
+            Self::TypeParameterName => "a type parameter name",
+            Self::ParameterName => "a parameter name",
+            Self::LocalBindingName => "a local binding name",
+            Self::FieldName => "a field name",
+            Self::ArgumentName => "an argument name",
+            Self::PatternName => "a pattern name",
+        }
+    }
+}
+
 /// The parser engine. Grammar functions receive `&mut Parser` and call
 /// methods to inspect and consume tokens, emitting events.
 pub struct Parser<'i> {
@@ -73,6 +112,12 @@ impl<'i> Parser<'i> {
     /// Returns `true` if the current token matches `kind`.
     pub fn at(&self, kind: SyntaxKind) -> bool {
         self.current() == kind
+    }
+
+    /// Returns `true` when the current token can lexically occupy an
+    /// identifier slot (either a true identifier or a reserved keyword).
+    pub fn at_ident_like(&self) -> bool {
+        self.at(SyntaxKind::Ident) || self.current().is_keyword()
     }
 
     /// Peek at the token after the current one (used to look past `pub`).
@@ -149,6 +194,29 @@ impl<'i> Parser<'i> {
             self.error_recover(&format!("expected {kind:?}"), TokenSet::EMPTY);
             false
         }
+    }
+
+    /// Consume an identifier or emit a targeted reserved-keyword diagnostic.
+    pub fn expect_identifier(&mut self, role: IdentifierRole) -> bool {
+        self.expect_identifier_recover(role, TokenSet::EMPTY)
+    }
+
+    /// Consume an identifier or emit a targeted reserved-keyword diagnostic,
+    /// falling back to generic recovery for non-identifier tokens.
+    pub fn expect_identifier_recover(
+        &mut self,
+        role: IdentifierRole,
+        recovery: TokenSet,
+    ) -> bool {
+        if self.eat(SyntaxKind::Ident) {
+            return true;
+        }
+        if self.current().is_keyword() {
+            self.error_keyword_as_identifier(role);
+            return false;
+        }
+        self.error_recover("expected Ident", recovery);
+        false
     }
 
     /// Consume one right-angle token for type-argument parsing.
@@ -303,6 +371,20 @@ impl<'i> Parser<'i> {
                 break;
             }
         }
+    }
+
+    fn error_keyword_as_identifier(&mut self, role: IdentifierRole) {
+        let keyword = self.current();
+        let keyword_text = keyword
+            .keyword_text()
+            .expect("keyword diagnostic should only be used for keyword tokens");
+        let err = self.open();
+        self.error(&format!(
+            "reserved keyword `{keyword_text}` cannot be used as {}",
+            role.description()
+        ));
+        self.bump();
+        err.complete(self, SyntaxKind::ErrorNode);
     }
 }
 

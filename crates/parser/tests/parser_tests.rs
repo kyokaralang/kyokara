@@ -105,6 +105,24 @@ fn let_binding_with_type() {
     assert!(has_node(&events, NameType));
 }
 
+#[test]
+fn let_binding_keyword_name_reports_single_targeted_error() {
+    // let module = 42
+    let (events, errors) = parse_tokens(&[LetKw, ModuleKw, Eq, IntLiteral]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted keyword diagnostic, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("reserved keyword `module` cannot be used as a local binding name"),
+        "expected targeted local-binding message, got: {errors:?}"
+    );
+    assert!(has_node(&events, LetBinding));
+}
+
 // ── Type definitions ────────────────────────────────────────────────
 
 #[test]
@@ -220,6 +238,42 @@ fn type_with_leading_pipe_is_rejected() {
     assert!(has_node(&events, VariantList));
 }
 
+#[test]
+fn type_keyword_name_reports_single_targeted_error() {
+    // type match = Int
+    let (events, errors) = parse_tokens(&[TypeKw, MatchKw, Eq, Ident]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted keyword diagnostic, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("reserved keyword `match` cannot be used as a type name"),
+        "expected targeted type-name message, got: {errors:?}"
+    );
+    assert!(has_node(&events, TypeDef));
+}
+
+#[test]
+fn type_record_keyword_field_reports_single_targeted_error() {
+    // type Point = { with: Int }
+    let (events, errors) = parse_tokens(&[TypeKw, Ident, Eq, LBrace, WithKw, Colon, Ident, RBrace]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted keyword diagnostic, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("reserved keyword `with` cannot be used as a field name"),
+        "expected targeted field-name message, got: {errors:?}"
+    );
+    assert!(has_node(&events, RecordType));
+}
+
 // ── Function definitions ────────────────────────────────────────────
 
 #[test]
@@ -255,6 +309,81 @@ fn fn_def_with_contract() {
     assert!(has_no_errors(&errors));
     assert!(has_node(&events, ContractSection));
     assert!(has_node(&events, RequiresClause));
+}
+
+#[test]
+fn fn_def_keyword_name_reports_single_targeted_error() {
+    // fn effect() { 1 }
+    let (events, errors) = parse_tokens(&[FnKw, EffectKw, LParen, RParen, LBrace, IntLiteral, RBrace]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted keyword diagnostic, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("reserved keyword `effect` cannot be used as a function name"),
+        "expected targeted function-name message, got: {errors:?}"
+    );
+    assert!(has_node(&events, FnDef));
+}
+
+#[test]
+fn fn_def_keyword_param_reports_single_targeted_error() {
+    // fn foo(with: Int) { 1 }
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, WithKw, Colon, Ident, RParen, LBrace, IntLiteral, RBrace,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted keyword diagnostic, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("reserved keyword `with` cannot be used as a parameter name"),
+        "expected targeted parameter-name message, got: {errors:?}"
+    );
+    assert!(has_node(&events, FnDef));
+    assert!(has_node(&events, Param));
+}
+
+#[test]
+fn import_keyword_path_segment_reports_single_targeted_error() {
+    // import Foo.match
+    let (events, errors) = parse_tokens(&[ImportKw, Ident, Dot, MatchKw]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted keyword diagnostic, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("reserved keyword `match` cannot be used as a path segment"),
+        "expected targeted path-segment message, got: {errors:?}"
+    );
+    assert!(has_node(&events, ImportDecl));
+}
+
+#[test]
+fn import_keyword_alias_reports_single_targeted_error() {
+    // import Foo as with
+    let (events, errors) = parse_tokens(&[ImportKw, Ident, AsKw, WithKw]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted keyword diagnostic, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("reserved keyword `with` cannot be used as an import alias"),
+        "expected targeted import-alias message, got: {errors:?}"
+    );
+    assert!(has_node(&events, ImportAlias));
 }
 
 #[test]
@@ -1508,6 +1637,28 @@ fn property_missing_lparen() {
     ]);
     assert!(!has_no_errors(&errors), "missing ( should error");
     assert!(has_node(&events, PropertyDef));
+}
+
+#[test]
+fn property_keyword_param_reports_single_targeted_error() {
+    // property p(in: Int <- Gen.auto()) { true }
+    let (events, errors) = parse_tokens(&[
+        PropertyKw, Ident, LParen, InKw, Colon, Ident, LeftArrow, Ident, Dot, Ident, LParen,
+        RParen, RParen, LBrace, TrueKw, RBrace,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted keyword diagnostic, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("reserved keyword `in` cannot be used as a parameter name"),
+        "expected targeted property-parameter message, got: {errors:?}"
+    );
+    assert!(has_node(&events, PropertyDef));
+    assert!(has_node(&events, PropertyParam));
 }
 
 #[test]

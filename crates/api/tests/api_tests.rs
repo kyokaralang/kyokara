@@ -230,6 +230,158 @@ fn check_parse_error_code() {
 }
 
 #[test]
+fn check_keyword_local_binding_reports_single_targeted_parse_error() {
+    let src = "fn main() -> Int { let module = 1\n1 }";
+    let output = check(src, "test.ky");
+    let parse_diags: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0100")
+        .collect();
+    assert_eq!(
+        parse_diags.len(),
+        1,
+        "expected one targeted parse diagnostic, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        parse_diags[0]
+            .message
+            .contains("reserved keyword `module` cannot be used as a local binding name"),
+        "expected targeted local-binding message, got: {:?}",
+        parse_diags[0]
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|d| !d.message.contains("expected Eq") && !d.message.contains("expected expression")),
+        "unexpected cascade diagnostics: {:?}",
+        output.diagnostics
+    );
+    assert_eq!(parse_diags[0].span.start, 23);
+    assert_eq!(parse_diags[0].span.end, 29);
+}
+
+#[test]
+fn check_keyword_for_binder_reports_single_targeted_parse_error() {
+    let src = "fn main() -> Int { for (module in 0..<1) { }\n0 }";
+    let output = check(src, "test.ky");
+    let parse_diags: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0100")
+        .collect();
+    assert_eq!(
+        parse_diags.len(),
+        1,
+        "expected one targeted parse diagnostic, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        parse_diags[0]
+            .message
+            .contains("reserved keyword `module` cannot be used as a local binding name"),
+        "expected targeted loop-binder message, got: {:?}",
+        parse_diags[0]
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|d| !d.message.contains("for loop requires 'in'")),
+        "unexpected loop-head cascade: {:?}",
+        output.diagnostics
+    );
+    assert_eq!(parse_diags[0].span.start, 24);
+    assert_eq!(parse_diags[0].span.end, 30);
+}
+
+#[test]
+fn check_keyword_lambda_param_reports_single_targeted_parse_error() {
+    let src = "fn main() -> Int { let f = fn(module: Int) => 0\nf(1) }";
+    let output = check(src, "test.ky");
+    let parse_diags: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0100")
+        .collect();
+    assert_eq!(
+        parse_diags.len(),
+        1,
+        "expected one targeted parse diagnostic, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        parse_diags[0]
+            .message
+            .contains("reserved keyword `module` cannot be used as a parameter name"),
+        "expected targeted lambda-parameter message, got: {:?}",
+        parse_diags[0]
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|d| !d.message.contains("expected item") && !d.message.contains("expected FatArrow")),
+        "unexpected lambda cascade diagnostics: {:?}",
+        output.diagnostics
+    );
+    assert_eq!(parse_diags[0].span.start, 30);
+    assert_eq!(parse_diags[0].span.end, 36);
+}
+
+#[test]
+fn check_keyword_function_name_reports_single_targeted_parse_error() {
+    let output = check("fn effect() -> Int { 1 }", "test.ky");
+    let parse_diags: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0100")
+        .collect();
+    assert_eq!(
+        parse_diags.len(),
+        1,
+        "expected one targeted parse diagnostic, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        parse_diags[0]
+            .message
+            .contains("reserved keyword `effect` cannot be used as a function name"),
+        "expected targeted function-name message, got: {:?}",
+        parse_diags[0]
+    );
+    assert_eq!(parse_diags[0].span.start, 3);
+    assert_eq!(parse_diags[0].span.end, 9);
+}
+
+#[test]
+fn check_keyword_type_name_reports_single_targeted_parse_error() {
+    let output = check("type match = Int", "test.ky");
+    let parse_diags: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0100")
+        .collect();
+    assert_eq!(
+        parse_diags.len(),
+        1,
+        "expected one targeted parse diagnostic, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        parse_diags[0]
+            .message
+            .contains("reserved keyword `match` cannot be used as a type name"),
+        "expected targeted type-name message, got: {:?}",
+        parse_diags[0]
+    );
+    assert_eq!(parse_diags[0].span.start, 5);
+    assert_eq!(parse_diags[0].span.end, 10);
+}
+
+#[test]
 fn check_newline_parenthesized_range_after_let_has_no_call_cascade() {
     let src = r#"
 fn main() -> Int {

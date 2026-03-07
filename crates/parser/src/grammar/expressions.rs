@@ -16,7 +16,7 @@
 //! - Postfix `?` `.` `()` `[]` : left_bp 25
 
 use crate::SyntaxKind::*;
-use crate::parser::{CompletedMarker, Parser};
+use crate::parser::{CompletedMarker, IdentifierRole, Parser};
 use crate::token_set::TokenSet;
 
 /// Tokens that signal we should stop parsing an expression (recovery).
@@ -52,7 +52,7 @@ fn expr_bp(p: &mut Parser<'_>, min_bp: u8) -> Option<CompletedMarker> {
             Dot if 25 >= min_bp => {
                 let m = lhs.precede(p);
                 p.bump(); // .
-                p.expect(Ident);
+                p.expect_identifier(IdentifierRole::FieldName);
                 m.complete(p, FieldExpr)
             }
             LParen if 25 >= min_bp && !p.has_line_break_before_current() => {
@@ -259,7 +259,7 @@ fn for_stmt(p: &mut Parser<'_>) -> CompletedMarker {
     let m = p.open();
     p.bump(); // for
     if p.eat(LParen) {
-        super::patterns::pattern(p);
+        super::patterns::binding_pattern(p);
         if p.eat(InKw) {
             expr(p);
         } else {
@@ -321,7 +321,7 @@ fn match_arm_list(p: &mut Parser<'_>) {
     p.expect(LBrace);
     while !p.at(RBrace) && !p.at_eof() {
         let start_pos = p.token_pos();
-        if super::patterns::PATTERN_START.contains(p.current()) {
+        if super::patterns::can_start_pattern(p.current()) {
             match_arm(p);
             // Optional comma between arms
             p.eat(Comma);
@@ -395,7 +395,7 @@ fn lambda_expr(p: &mut Parser<'_>) -> CompletedMarker {
 
 fn lambda_param(p: &mut Parser<'_>) {
     let m = p.open();
-    p.expect(Ident);
+    p.expect_identifier(IdentifierRole::ParameterName);
     if p.eat(Colon) {
         super::types::type_expr(p);
     }
@@ -443,7 +443,7 @@ fn record_expr_field_list(p: &mut Parser<'_>) {
 
 fn record_expr_field(p: &mut Parser<'_>) {
     let m = p.open();
-    p.expect(Ident);
+    p.expect_identifier(IdentifierRole::FieldName);
     p.expect(Colon);
     expr(p);
     m.complete(p, RecordExprField);
@@ -468,9 +468,9 @@ fn arg_list(p: &mut Parser<'_>) {
 /// Parse an argument: either `Ident ':' Expr` (named) or `Expr`.
 fn arg(p: &mut Parser<'_>) {
     // Lookahead for named argument: `Ident ':'`
-    if p.at(Ident) && p.nth(1) == Colon {
+    if p.at_ident_like() && p.nth(1) == Colon {
         let m = p.open();
-        p.bump(); // ident
+        p.expect_identifier(IdentifierRole::ArgumentName);
         p.bump(); // :
         expr(p);
         m.complete(p, NamedArg);

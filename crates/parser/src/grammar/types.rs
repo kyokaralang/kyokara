@@ -9,13 +9,14 @@
 //! ```
 
 use crate::SyntaxKind::*;
-use crate::parser::{CompletedMarker, Parser};
+use crate::parser::{CompletedMarker, IdentifierRole, Parser};
 
 pub(super) fn type_expr(p: &mut Parser<'_>) -> Option<CompletedMarker> {
     match p.current() {
         FnKw => Some(fn_type(p)),
         LBrace => Some(brace_type(p)),
         Ident => Some(name_type(p)),
+        _ if p.current().is_keyword() => Some(name_type(p)),
         _ => {
             p.error("expected type expression");
             None
@@ -57,7 +58,7 @@ fn brace_type(p: &mut Parser<'_>) -> CompletedMarker {
     }
 
     // Parse first field: `Ident : TypeExpr`
-    if !p.at(Ident) {
+    if !p.at_ident_like() {
         p.error("expected field name");
         p.expect(RBrace);
         return m.complete(p, RecordType);
@@ -66,7 +67,7 @@ fn brace_type(p: &mut Parser<'_>) -> CompletedMarker {
     // We need lookahead. Parse `Ident : TypeExpr` then check for `|`.
     // Use a nested marker for the first field.
     let field_m = p.open();
-    p.bump(); // Ident
+    p.expect_identifier(IdentifierRole::FieldName);
     p.expect(Colon);
     type_expr(p);
 
@@ -93,7 +94,7 @@ fn brace_type(p: &mut Parser<'_>) -> CompletedMarker {
 
 fn record_field(p: &mut Parser<'_>) {
     let m = p.open();
-    p.expect(Ident);
+    p.expect_identifier(IdentifierRole::FieldName);
     p.expect(Colon);
     type_expr(p);
     m.complete(p, RecordField);

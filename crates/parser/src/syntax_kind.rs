@@ -395,6 +395,42 @@ impl SyntaxKind {
         )
     }
 
+    /// Returns the source text for keyword tokens.
+    pub fn keyword_text(self) -> Option<&'static str> {
+        match self {
+            Self::ModuleKw => Some("module"),
+            Self::ImportKw => Some("import"),
+            Self::AsKw => Some("as"),
+            Self::TypeKw => Some("type"),
+            Self::FnKw => Some("fn"),
+            Self::LetKw => Some("let"),
+            Self::MatchKw => Some("match"),
+            Self::CapKw => Some("cap"),
+            Self::EffectKw => Some("effect"),
+            Self::WithKw => Some("with"),
+            Self::RequiresKw => Some("requires"),
+            Self::EnsuresKw => Some("ensures"),
+            Self::InvariantKw => Some("invariant"),
+            Self::ContractKw => Some("contract"),
+            Self::PropertyKw => Some("property"),
+            Self::ForKw => Some("for"),
+            Self::InKw => Some("in"),
+            Self::WhileKw => Some("while"),
+            Self::BreakKw => Some("break"),
+            Self::ContinueKw => Some("continue"),
+            Self::AllKw => Some("all"),
+            Self::WhereKw => Some("where"),
+            Self::OldKw => Some("old"),
+            Self::TrueKw => Some("true"),
+            Self::FalseKw => Some("false"),
+            Self::IfKw => Some("if"),
+            Self::ElseKw => Some("else"),
+            Self::ReturnKw => Some("return"),
+            Self::PubKw => Some("pub"),
+            _ => None,
+        }
+    }
+
     /// Returns `true` for literal tokens.
     pub fn is_literal(self) -> bool {
         matches!(

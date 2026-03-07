@@ -11,7 +11,7 @@
 //! ```
 
 use crate::SyntaxKind::*;
-use crate::parser::{CompletedMarker, Parser};
+use crate::parser::{CompletedMarker, IdentifierRole, Parser};
 use crate::token_set::TokenSet;
 
 /// Tokens that can start a pattern.
@@ -28,6 +28,18 @@ pub(super) const PATTERN_START: TokenSet = TokenSet::new(&[
 ]);
 
 pub(super) fn pattern(p: &mut Parser<'_>) -> Option<CompletedMarker> {
+    pattern_with_role(p, IdentifierRole::PatternName)
+}
+
+pub(super) fn binding_pattern(p: &mut Parser<'_>) -> Option<CompletedMarker> {
+    pattern_with_role(p, IdentifierRole::LocalBindingName)
+}
+
+pub(super) fn can_start_pattern(kind: crate::SyntaxKind) -> bool {
+    PATTERN_START.contains(kind) || kind.is_keyword()
+}
+
+fn pattern_with_role(p: &mut Parser<'_>, keyword_role: IdentifierRole) -> Option<CompletedMarker> {
     let cm = match p.current() {
         Underscore => wildcard_pat(p),
         IntLiteral | FloatLiteral | StringLiteral | CharLiteral | TrueKw | FalseKw => {
@@ -35,6 +47,10 @@ pub(super) fn pattern(p: &mut Parser<'_>) -> Option<CompletedMarker> {
         }
         LBrace => record_pat(p, None),
         Ident => ident_or_constructor_pat(p),
+        _ if p.current().is_keyword() => {
+            p.expect_identifier(keyword_role);
+            return None;
+        }
         _ => {
             p.error("expected pattern");
             return None;
@@ -88,13 +104,13 @@ fn record_pat(p: &mut Parser<'_>, path: Option<CompletedMarker>) -> CompletedMar
         None => p.open(),
     };
     p.expect(LBrace);
-    if p.at(Ident) {
-        p.bump();
+    if p.at_ident_like() {
+        p.expect_identifier(IdentifierRole::FieldName);
         while p.eat(Comma) {
             if p.at(RBrace) {
                 break; // trailing comma
             }
-            p.expect(Ident);
+            p.expect_identifier(IdentifierRole::FieldName);
         }
     }
     p.expect(RBrace);

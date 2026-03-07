@@ -10,7 +10,7 @@ pub(crate) mod patterns;
 pub(crate) mod types;
 
 use crate::SyntaxKind::*;
-use crate::parser::{CompletedMarker, Parser};
+use crate::parser::{CompletedMarker, IdentifierRole, Parser};
 
 /// Parse a complete source file.
 ///
@@ -45,9 +45,9 @@ pub(crate) fn source_file(p: &mut Parser<'_>) {
 /// Parse a dotted path: `Ident ('.' Ident)*`
 pub(crate) fn parse_path(p: &mut Parser<'_>) -> CompletedMarker {
     let m = p.open();
-    p.expect(Ident);
+    p.expect_identifier(IdentifierRole::PathSegment);
     while p.eat(Dot) {
-        p.expect(Ident);
+        p.expect_identifier(IdentifierRole::PathSegment);
     }
     m.complete(p, Path)
 }
@@ -59,6 +59,6 @@ pub(crate) fn parse_path(p: &mut Parser<'_>) -> CompletedMarker {
 /// two-segment path.
 pub(crate) fn parse_single_path(p: &mut Parser<'_>) -> CompletedMarker {
     let m = p.open();
-    p.expect(Ident);
+    p.expect_identifier(IdentifierRole::PathSegment);
     m.complete(p, Path)
 }

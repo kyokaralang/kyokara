@@ -5,7 +5,7 @@
 //! let bindings.
 
 use crate::SyntaxKind::*;
-use crate::parser::{CompletedMarker, Parser};
+use crate::parser::{CompletedMarker, IdentifierRole, Parser};
 use crate::token_set::TokenSet;
 
 /// Tokens that can start an item — used for error recovery.
@@ -89,7 +89,7 @@ pub(super) fn import_decl(p: &mut Parser<'_>) -> CompletedMarker {
 fn import_alias(p: &mut Parser<'_>) {
     let m = p.open();
     p.bump(); // as
-    p.expect(Ident);
+    p.expect_identifier(IdentifierRole::ImportAlias);
     m.complete(p, ImportAlias);
 }
 
@@ -102,7 +102,7 @@ fn type_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
         p.bump(); // pub
     }
     p.bump(); // type
-    p.expect(Ident);
+    p.expect_identifier(IdentifierRole::TypeName);
     if p.at(Lt) {
         type_param_list(p);
     }
@@ -144,7 +144,7 @@ fn variant_list(p: &mut Parser<'_>) {
 /// `Ident VariantFieldList?`
 fn variant(p: &mut Parser<'_>) {
     let m = p.open();
-    p.expect(Ident);
+    p.expect_identifier(IdentifierRole::VariantName);
     if p.at(LParen) {
         variant_field_list(p);
     }
@@ -152,7 +152,8 @@ fn variant(p: &mut Parser<'_>) {
 }
 
 fn starts_variant_list(p: &Parser<'_>) -> bool {
-    p.at(Ident) && matches!(p.nth(1), Pipe | LParen)
+    (p.at(Ident) || (p.current().is_keyword() && p.current() != FnKw))
+        && matches!(p.nth(1), Pipe | LParen)
 }
 
 /// `'(' TypeExpr (',' TypeExpr)* ','? ')'`
@@ -189,11 +190,16 @@ pub(super) fn fn_def(p: &mut Parser<'_>, is_pub: bool, allow_bodyless: bool) -> 
         p.bump(); // pub
     }
     p.bump(); // fn
-    p.expect(Ident); // function name, or receiver type name for methods
+    let first_name_role = if p.nth(1) == Dot {
+        IdentifierRole::TypeName
+    } else {
+        IdentifierRole::FunctionName
+    };
+    p.expect_identifier(first_name_role);
     // Method syntax: fn Type.method(...)
     if p.at(Dot) {
         p.bump(); // .
-        p.expect(Ident); // method name
+        p.expect_identifier(IdentifierRole::MethodName);
     }
     if p.at(Lt) {
         type_param_list(p);
@@ -229,7 +235,7 @@ fn param_list(p: &mut Parser<'_>) {
 
 fn param(p: &mut Parser<'_>) {
     let m = p.open();
-    p.expect(Ident);
+    p.expect_identifier(IdentifierRole::ParameterName);
     // The `: Type` part is optional to support bare `self` in method defs.
     // Semantic validation ensures only `self` can omit the type annotation.
     if p.eat(Colon) {
@@ -416,7 +422,7 @@ fn effect_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
         p.bump(); // pub
     }
     p.bump(); // effect
-    p.expect(Ident);
+    p.expect_identifier(IdentifierRole::EffectName);
 
     if p.at(Lt) {
         p.error("effect declarations cannot have type parameters");
@@ -442,7 +448,7 @@ fn effect_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
 fn property_def(p: &mut Parser<'_>) -> CompletedMarker {
     let m = p.open();
     p.bump(); // property
-    p.expect(Ident);
+    p.expect_identifier(IdentifierRole::PropertyName);
     property_param_list(p);
     if p.at(WhereKw) {
         where_clause(p);
@@ -473,7 +479,7 @@ fn property_param_list(p: &mut Parser<'_>) {
 /// `Ident ':' TypeExpr '<-' Expr`
 fn property_param(p: &mut Parser<'_>) {
     let m = p.open();
-    p.expect(Ident);
+    p.expect_identifier(IdentifierRole::ParameterName);
     p.expect(Colon);
     super::types::type_expr(p);
     if !p.eat(LeftArrow) {
@@ -501,7 +507,7 @@ fn where_clause(p: &mut Parser<'_>) {
 pub(super) fn let_binding(p: &mut Parser<'_>) -> CompletedMarker {
     let m = p.open();
     p.bump(); // let
-    super::patterns::pattern(p);
+    super::patterns::binding_pattern(p);
     if p.eat(Colon) {
         super::types::type_expr(p);
     }
@@ -529,6 +535,6 @@ pub(super) fn type_param_list(p: &mut Parser<'_>) {
 
 fn type_param(p: &mut Parser<'_>) {
     let m = p.open();
-    p.expect(Ident);
+    p.expect_identifier(IdentifierRole::TypeParameterName);
     m.complete(p, TypeParam);
 }
