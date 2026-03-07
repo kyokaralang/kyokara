@@ -83,15 +83,17 @@ Add one new keyword and one new statement form:
 
 ```kyokara
 var x = expr
+var x: T = expr
 x = expr
 ```
 
 Rules:
 
 1. `var` requires an initializer.
-2. Assignment is statement-only.
-3. Assignment target must be a bare identifier.
-4. `let` remains immutable and unchanged.
+2. Type annotations are allowed in v1: `var x: T = expr`.
+3. Assignment is statement-only.
+4. Assignment target must be a bare identifier.
+5. `let` remains immutable and unchanged.
 
 Examples:
 
@@ -155,6 +157,13 @@ This means:
 3. Values themselves keep their existing semantics:
    - `List`, `Map`, `Set`, `BitSet`, `Deque` stay immutable values
    - `MutableList`, `MutableMap`, `MutableSet`, `MutableBitSet` stay explicit mutable container types
+
+Annotated mutable bindings are also allowed:
+
+```kyokara
+var frontier: List<Int> = start_frontier
+var time: Int = start_t
+```
 
 So this remains valid and meaningful:
 
@@ -363,10 +372,10 @@ Decision: reject for v1.
 3. Assignment to `let` locals is rejected with a targeted diagnostic.
 4. Assignment to fields/indexes remains unsupported.
 5. Existing immutable collection defaults remain unchanged.
-6. RFC 0006 loop examples can be expressed without one-slot mutable wrapper cells where only local rebinding is needed.
+6. `var x: T = expr` is accepted and type-checks like `let x: T = expr`, but with mutable-local semantics.
+7. RFC 0006 loop examples can be expressed without one-slot mutable wrapper cells where only local rebinding is needed.
 
 ## Open Questions
 
-1. Should `var` declarations allow type annotations in v1 (`var x: Int = 0`)?
-2. Should `for` loop binders ever allow a mutable form (`for (var x in xs)`) or should iteration binders remain immutable-only?
-3. If closure-captured mutable locals are later needed, should they use explicit cell semantics or implicit capture-by-reference semantics?
+1. Should `for` loop binders ever allow a mutable form (`for (var x in xs)`) or should iteration binders remain immutable-only?
+2. If closure-captured mutable locals are later needed, should they use explicit cell semantics or implicit capture-by-reference semantics?
