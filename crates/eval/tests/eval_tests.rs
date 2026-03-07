@@ -203,6 +203,18 @@ fn eval_function_call() {
 }
 
 #[test]
+fn eval_function_wrong_arity_is_rejected_at_compile_time() {
+    let err = run_err(
+        "fn add(x: Int, y: Int) -> Int { x + y }
+         fn main() -> Int { add(1) }",
+    );
+    assert_eq!(
+        err,
+        "type error at runtime: compile type errors: expected 2 argument(s), found 1"
+    );
+}
+
+#[test]
 fn eval_nested_calls() {
     let val = run_ok(
         "fn double(x: Int) -> Int { x + x }
@@ -1319,6 +1331,18 @@ fn eval_contract_error_names_function() {
 }
 
 #[test]
+fn eval_precondition_error_message_is_stable() {
+    let err = run_err(
+        "fn my_special_fn(x: Int) -> Int
+           contract
+           requires (x > 100)
+         { x }
+         fn main() -> Int { my_special_fn(1) }",
+    );
+    assert_eq!(err, "precondition failed: my_special_fn");
+}
+
+#[test]
 fn eval_postcondition_error_names_function() {
     let err = run_err(
         "fn another_fn() -> Int
@@ -1331,6 +1355,18 @@ fn eval_postcondition_error_names_function() {
 }
 
 #[test]
+fn eval_postcondition_error_message_is_stable() {
+    let err = run_err(
+        "fn another_fn() -> Int
+           contract
+           ensures (result > 999)
+         { 1 }
+         fn main() -> Int { another_fn() }",
+    );
+    assert_eq!(err, "postcondition failed: another_fn");
+}
+
+#[test]
 fn eval_invariant_error_names_function() {
     let err = run_err(
         "fn inv_fn(x: Int) -> Int
@@ -1340,6 +1376,18 @@ fn eval_invariant_error_names_function() {
          fn main() -> Int { inv_fn(1) }",
     );
     assert!(err.contains("inv_fn"));
+}
+
+#[test]
+fn eval_invariant_error_message_is_stable() {
+    let err = run_err(
+        "fn inv_fn(x: Int) -> Int
+           contract
+           invariant (x > 999)
+         { x }
+         fn main() -> Int { inv_fn(1) }",
+    );
+    assert_eq!(err, "invariant violated: inv_fn");
 }
 
 // ── Reserved core constructor names ──────────────────────────────────

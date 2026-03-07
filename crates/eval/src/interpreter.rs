@@ -619,124 +619,125 @@ impl Interpreter {
         result
     }
 
+    fn eval_fn_body_value(&mut self, body: &Body) -> Result<Value, RuntimeError> {
+        match self.eval_expr_shared(body, body.root)? {
+            ControlFlow::Value(v) | ControlFlow::Return(v) => Ok(v),
+            ControlFlow::Break => Err(RuntimeError::TypeError("`break` used outside loop".into())),
+            ControlFlow::Continue => Err(RuntimeError::TypeError(
+                "`continue` used outside loop".into(),
+            )),
+        }
+    }
+
+    fn call_fn_with_contracts(
+        &mut self,
+        body: &Body,
+        fn_name: Name,
+    ) -> Result<Value, RuntimeError> {
+        let has_ensures = !body.ensures.is_empty();
+        let fn_name_str = fn_name.resolve(&self.interner).to_string();
+        let mut prev_old_env = None;
+        let mut swapped_old_env = false;
+
+        let result = (|| -> Result<Value, RuntimeError> {
+            for req_idx in body.requires.iter().copied() {
+                let val = self.eval_expr_shared(body, req_idx)?.into_value();
+                if !matches!(val, Value::Bool(true)) {
+                    Err(RuntimeError::PreconditionFailed(fn_name_str.clone()))?;
+                }
+            }
+
+            if has_ensures {
+                prev_old_env = self.old_env.replace(self.env.clone());
+                swapped_old_env = true;
+            }
+
+            let return_val = self.eval_fn_body_value(body)?;
+
+            for inv_idx in body.invariant.iter().copied() {
+                let val = self.eval_expr_shared(body, inv_idx)?.into_value();
+                if !matches!(val, Value::Bool(true)) {
+                    Err(RuntimeError::InvariantViolated(fn_name_str.clone()))?;
+                }
+            }
+
+            if has_ensures {
+                let result_name = Name::new(&mut self.interner, "result");
+                for ens_idx in body.ensures.iter().copied() {
+                    self.env.push_scope();
+                    self.env.bind(result_name, return_val.clone());
+                    if let Some(old_env) = self.old_env.as_mut() {
+                        old_env.push_scope();
+                    }
+                    let val = match self.eval_expr_shared(body, ens_idx) {
+                        Ok(value) => value.into_value(),
+                        Err(err) => {
+                            self.env.pop_scope();
+                            if let Some(old_env) = self.old_env.as_mut() {
+                                old_env.pop_scope();
+                            }
+                            return Err(err);
+                        }
+                    };
+                    self.env.pop_scope();
+                    if let Some(old_env) = self.old_env.as_mut() {
+                        old_env.pop_scope();
+                    }
+                    if !matches!(val, Value::Bool(true)) {
+                        Err(RuntimeError::PostconditionFailed(fn_name_str.clone()))?;
+                    }
+                }
+            }
+
+            Ok(return_val)
+        })();
+
+        if swapped_old_env {
+            self.old_env = prev_old_env;
+        }
+
+        result
+    }
+
     fn call_fn_impl(&mut self, fn_idx: FnItemIdx, args: Args) -> Result<Value, RuntimeError> {
         let body = self
             .fn_bodies
             .get(&fn_idx)
             .cloned()
             .ok_or_else(|| RuntimeError::UnresolvedName("function body not found".into()))?;
-
-        let (params, fn_name) = {
+        let actual = args.len();
+        let fn_name = {
             let fn_item = &self.item_tree.functions[fn_idx];
             self.ensure_user_fn_caps_allowed(fn_item)?;
-            (fn_item.params.clone(), fn_item.name)
+            let expected = fn_item.params.len();
+            if expected != actual {
+                return Err(RuntimeError::ArityMismatch {
+                    callee: format!("function `{}`", fn_item.name.resolve(&self.interner)),
+                    expected,
+                    actual,
+                });
+            }
+            self.env.push_scope();
+            for (param, val) in fn_item.params.iter().zip(args.into_iter()) {
+                self.env.bind(param.name, val);
+            }
+            fn_item.name
         };
 
-        self.ensure_arity(
-            &format!("function `{}`", fn_name.resolve(&self.interner)),
-            params.len(),
-            args.len(),
-        )?;
-
-        self.env.push_scope();
-        let prev_body = self.current_body.replace(body.clone());
-
-        for (param, val) in params.iter().zip(args.into_iter()) {
-            self.env.bind(param.name, val);
-        }
-
-        let has_requires = !body.requires.is_empty();
-        let has_ensures = !body.ensures.is_empty();
-        let has_invariant = !body.invariant.is_empty();
-
-        let mut prev_old_env = None;
-        let mut swapped_old_env = false;
-        let fn_name_str = fn_name.resolve(&self.interner).to_string();
-
-        let result = (|| -> Result<Value, RuntimeError> {
-            if !has_requires && !has_ensures && !has_invariant {
-                let return_val = match self.eval_expr_shared(&body, body.root)? {
-                    ControlFlow::Value(v) | ControlFlow::Return(v) => v,
-                    ControlFlow::Break => {
-                        return Err(RuntimeError::TypeError("`break` used outside loop".into()));
-                    }
-                    ControlFlow::Continue => {
-                        return Err(RuntimeError::TypeError(
-                            "`continue` used outside loop".into(),
-                        ));
-                    }
-                };
-                Ok(return_val)
+        let result =
+            if body.requires.is_empty() && body.ensures.is_empty() && body.invariant.is_empty() {
+                let prev_body = self.current_body.replace(body.clone());
+                let result = self.eval_fn_body_value(&body);
+                self.current_body = prev_body;
+                result
             } else {
-                for req_idx in body.requires.iter().copied() {
-                    let val = self.eval_expr_shared(&body, req_idx)?.into_value();
-                    if !matches!(val, Value::Bool(true)) {
-                        Err(RuntimeError::PreconditionFailed(fn_name_str.clone()))?;
-                    }
-                }
-
-                if has_ensures {
-                    prev_old_env = self.old_env.replace(self.env.clone());
-                    swapped_old_env = true;
-                }
-
-                let return_val = match self.eval_expr_shared(&body, body.root)? {
-                    ControlFlow::Value(v) | ControlFlow::Return(v) => v,
-                    ControlFlow::Break => {
-                        return Err(RuntimeError::TypeError("`break` used outside loop".into()));
-                    }
-                    ControlFlow::Continue => {
-                        return Err(RuntimeError::TypeError(
-                            "`continue` used outside loop".into(),
-                        ));
-                    }
-                };
-
-                for inv_idx in body.invariant.iter().copied() {
-                    let val = self.eval_expr_shared(&body, inv_idx)?.into_value();
-                    if !matches!(val, Value::Bool(true)) {
-                        Err(RuntimeError::InvariantViolated(fn_name_str.clone()))?;
-                    }
-                }
-
-                if has_ensures {
-                    let result_name = Name::new(&mut self.interner, "result");
-                    for ens_idx in body.ensures.iter().copied() {
-                        self.env.push_scope();
-                        self.env.bind(result_name, return_val.clone());
-                        if let Some(old_env) = self.old_env.as_mut() {
-                            old_env.push_scope();
-                        }
-                        let val = match self.eval_expr_shared(&body, ens_idx) {
-                            Ok(value) => value.into_value(),
-                            Err(err) => {
-                                self.env.pop_scope();
-                                if let Some(old_env) = self.old_env.as_mut() {
-                                    old_env.pop_scope();
-                                }
-                                return Err(err);
-                            }
-                        };
-                        self.env.pop_scope();
-                        if let Some(old_env) = self.old_env.as_mut() {
-                            old_env.pop_scope();
-                        }
-                        if !matches!(val, Value::Bool(true)) {
-                            Err(RuntimeError::PostconditionFailed(fn_name_str.clone()))?;
-                        }
-                    }
-                }
-
-                Ok(return_val)
-            }
-        })();
+                let prev_body = self.current_body.replace(body.clone());
+                let result = self.call_fn_with_contracts(&body, fn_name);
+                self.current_body = prev_body;
+                result
+            };
 
         self.env.pop_scope();
-        self.current_body = prev_body;
-        if swapped_old_env {
-            self.old_env = prev_old_env;
-        }
-
         result
     }
 
