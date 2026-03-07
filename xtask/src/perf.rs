@@ -996,6 +996,7 @@ mod tests {
                 "cow_collection_chain_run",
                 "dp_coin_change_mutable_list_run",
                 "grid_bfs_deque_set_run",
+                "mutable_bool_dense_relation_run",
                 "parse_dense_module_check",
                 "wordfreq_map_set_run",
             ]
@@ -1028,6 +1029,27 @@ mod tests {
         assert!(
             source.contains("let q = q.push_back("),
             "case must use same-name deque shadow rebinding"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mutable_bool_dense_relation_case_uses_legacy_bool_table() -> Result<()> {
+        let root = workspace_root()?;
+        let source = fs::read_to_string(
+            root.join("tools")
+                .join("perf")
+                .join("cases")
+                .join("mutable_bool_dense_relation_run")
+                .join("main.ky"),
+        )?;
+        assert!(
+            source.contains("MutableList<Bool>"),
+            "comparison case must stay on the legacy dense-bool representation"
+        );
+        assert!(
+            source.contains("collections.MutableList.new().push(false)"),
+            "comparison case must build a mutable bool table"
         );
         Ok(())
     }

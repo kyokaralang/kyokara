@@ -1,5 +1,5 @@
 {
-  "id": "bitset_dense_relation_run",
+  "id": "mutable_bool_dense_relation_run",
   "mode": "run",
   "entry": "main.ky",
   "project": false,

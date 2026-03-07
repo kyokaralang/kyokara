@@ -4,39 +4,45 @@ fn pair_id(page_count: Int, before: Int, after: Int) -> Int {
   before * page_count + after
 }
 
-fn build_rules(page_count: Int) -> MutableBitSet {
-  (0..<page_count).fold(collections.MutableBitSet.new(page_count * page_count), fn(acc: MutableBitSet, page: Int) => {
-    let acc = acc.set(pair_id(page_count, page, (page + 1) % page_count))
-    let acc = acc.set(pair_id(page_count, page, (page * 7 + 3) % page_count))
-    let acc = acc.set(pair_id(page_count, page, (page * 11 + 5) % page_count))
+fn build_rules(page_count: Int) -> MutableList<Bool> {
+  let table_size = page_count * page_count
+  let rules = collections.MutableList.new().push(false)
+  for (_i in 1..<table_size) {
+    rules.push(false)
+  }
+
+  for (page in 0..<page_count) {
+    rules.set(pair_id(page_count, page, (page + 1) % page_count), true)
+    rules.set(pair_id(page_count, page, (page * 7 + 3) % page_count), true)
+    rules.set(pair_id(page_count, page, (page * 11 + 5) % page_count), true)
     if ((page + 13) % 5 == 0) {
-      acc.set(pair_id(page_count, page, (page * 13 + 17) % page_count))
-    } else {
-      acc
+      rules.set(pair_id(page_count, page, (page * 13 + 17) % page_count), true)
     }
-  })
+  }
+
+  rules
 }
 
 fn make_update(page_count: Int, seed: Int) -> List<Int> {
   (0..<18).fold(collections.List.new(), fn(acc: List<Int>, i: Int) => acc.push((seed * 9 + i * 7 + i * i) % page_count))
 }
 
-fn violates_order(rules: MutableBitSet, page_count: Int, left: Int, right: Int) -> Bool {
-  rules.test(pair_id(page_count, right, left))
+fn violates_order(rules: MutableList<Bool>, page_count: Int, left: Int, right: Int) -> Bool {
+  rules[pair_id(page_count, right, left)]
 }
 
-fn ordered_after(update: List<Int>, idx: Int, rules: MutableBitSet, page_count: Int) -> Bool {
+fn ordered_after(update: List<Int>, idx: Int, rules: MutableList<Bool>, page_count: Int) -> Bool {
   let current = update.get(idx).unwrap_or(0)
   ((idx + 1)..<update.len()).all(fn(next: Int) => !violates_order(rules, page_count, current, update.get(next).unwrap_or(0)))
 }
 
-fn is_ordered(update: List<Int>, rules: MutableBitSet, page_count: Int) -> Bool {
+fn is_ordered(update: List<Int>, rules: MutableList<Bool>, page_count: Int) -> Bool {
   (0..<update.len()).all(fn(idx: Int) => ordered_after(update, idx, rules, page_count))
 }
 
-fn insert_sorted(sorted: List<Int>, page: Int, rules: MutableBitSet, page_count: Int) -> List<Int> {
+fn insert_sorted(sorted: List<Int>, page: Int, rules: MutableList<Bool>, page_count: Int) -> List<Int> {
   let insert_at = (0..<sorted.len())
-    .find(fn(idx: Int) => rules.test(pair_id(page_count, page, sorted.get(idx).unwrap_or(0))))
+    .find(fn(idx: Int) => rules[pair_id(page_count, page, sorted.get(idx).unwrap_or(0))])
     .unwrap_or(sorted.len())
 
   let out = (0..<sorted.len()).fold(collections.List.new(), fn(acc: List<Int>, idx: Int) => {
@@ -51,7 +57,7 @@ fn insert_sorted(sorted: List<Int>, page: Int, rules: MutableBitSet, page_count:
   }
 }
 
-fn repair_update(update: List<Int>, rules: MutableBitSet, page_count: Int) -> List<Int> {
+fn repair_update(update: List<Int>, rules: MutableList<Bool>, page_count: Int) -> List<Int> {
   update.fold(collections.List.new(), fn(acc: List<Int>, page: Int) => insert_sorted(acc, page, rules, page_count))
 }
 
@@ -59,7 +65,7 @@ fn middle(update: List<Int>) -> Int {
   update.get(update.len() / 2).unwrap_or(0)
 }
 
-fn score_update(rules: MutableBitSet, page_count: Int, seed: Int) -> Int {
+fn score_update(rules: MutableList<Bool>, page_count: Int, seed: Int) -> Int {
   let update = make_update(page_count, seed)
   if (is_ordered(update, rules, page_count)) {
     middle(update)

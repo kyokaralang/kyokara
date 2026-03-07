@@ -69,6 +69,7 @@ Rules:
 
 Representative v1 cases:
 - `bitset_dense_relation_run` intentionally stresses dense `(before, after)` precedence lookups backed by `MutableBitSet`, so regressions in the packed-bit path are visible without falling back to `MutableList<Bool>` proxies.
+- `mutable_bool_dense_relation_run` keeps the same dense precedence workload on the legacy `MutableList<Bool>` representation, so the packed-bit win is measurable on a like-for-like algorithm.
 - `cow_collection_chain_run` intentionally stresses immutable same-name rebinding on `List`, `Map`, `Set`, and `Deque` so COW-path regressions are visible.
 
 ## Baselines
