@@ -176,6 +176,11 @@ fn infer_char_literal() {
 }
 
 #[test]
+fn infer_char_code_method() {
+    check_ok("fn foo() -> Int { 'a'.code() }");
+}
+
+#[test]
 fn infer_unit_return() {
     check_ok("fn foo() { }");
 }
@@ -1481,6 +1486,12 @@ fn err_unresolved_name() {
 #[test]
 fn err_unresolved_name_in_expr() {
     check_err("fn main() -> Int { foo + 1 }", "unresolved name");
+}
+
+#[test]
+fn err_char_code_wrong_receivers() {
+    check_err(r#"fn main() -> Int { "a".code() }"#, "no method `code` on type `String`");
+    check_err("fn main() -> Int { 1.code() }", "no method `code` on type `Int`");
 }
 
 #[test]

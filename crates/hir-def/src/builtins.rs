@@ -929,6 +929,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             ReceiverKey::Primitive(PrimitiveType::Char),
             "to_string",
         ),
+        (
+            "char_code",
+            ReceiverKey::Primitive(PrimitiveType::Char),
+            "code",
+        ),
     ];
 
     let mut seen_builtin_keys = kyokara_stdx::FxHashSet::default();
@@ -2592,6 +2597,14 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![],
             vec![("c", char_ty.clone())],
             string_ty.clone(),
+        ),
+        // char_code(c: Char) -> Int
+        mk_intrinsic(
+            interner,
+            "char_code",
+            vec![],
+            vec![("c", char_ty.clone())],
+            int_ty.clone(),
         ),
         // ── Int/Float math ──────────────────────────────────────
         // abs(n: Int) -> Int

@@ -151,6 +151,7 @@ pub enum IntrinsicFn {
     StringToUpper,
     StringToLower,
     CharToString,
+    CharCode,
 
     // Int/Float math
     Abs,
@@ -1234,6 +1235,14 @@ impl IntrinsicFn {
                 };
                 Ok(Value::String(c.to_string()))
             }
+            IntrinsicFn::CharCode => {
+                let Value::Char(c) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "char_code expects a Char".into(),
+                    ));
+                };
+                Ok(Value::Int(i64::from(u32::from(*c))))
+            }
 
             // ── Int/Float math ───────────────────────────────────
             IntrinsicFn::Abs => {
@@ -2011,6 +2020,7 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
             Name::new(interner, "char_to_string"),
             IntrinsicFn::CharToString,
         ),
+        (Name::new(interner, "char_code"), IntrinsicFn::CharCode),
         // Int/Float
         (Name::new(interner, "abs"), IntrinsicFn::Abs),
         (Name::new(interner, "int_pow"), IntrinsicFn::IntPow),
