@@ -133,6 +133,12 @@ fn eval_literal_int() {
 }
 
 #[test]
+fn eval_pipe_identifier_is_allowed_and_pipeline_still_runs() {
+    let val = run_ok("fn id(x: Int) -> Int { x }\nfn main() -> Int { let pipe = 1\n pipe |> id }");
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
 fn eval_literal_bool_true() {
     let val = run_ok("fn main() -> Bool { true }");
     assert!(matches!(val, Value::Bool(true)));

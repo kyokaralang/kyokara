@@ -379,11 +379,11 @@ pub fn is_usage_site(gp_kind: SyntaxKind, kind: SymbolKind, grandparent: &Syntax
             SyntaxKind::NameType | SyntaxKind::RecordExpr | SyntaxKind::RecordPat
         ),
         SymbolKind::Capability => {
-            // Capabilities appear as NameType inside WithClause or PipeClause.
+            // Capabilities appear as NameType inside WithClause.
             if gp_kind == SyntaxKind::NameType
                 && let Some(ggp) = grandparent.parent()
             {
-                return matches!(ggp.kind(), SyntaxKind::WithClause | SyntaxKind::PipeClause);
+                return ggp.kind() == SyntaxKind::WithClause;
             }
             // Also match EffectDef name position (handled above as definition site).
             false

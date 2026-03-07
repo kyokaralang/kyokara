@@ -323,15 +323,6 @@ Rules:
 * pipeline feeds the first parameter positionally.
 * call arguments are evaluated left-to-right in source order before parameter-slot binding.
 * positional arguments must come before named arguments.
-* optionally, function declarations can mark an explicit pipe parameter:
-
-  ```kyokara
-  fn split(text: String, sep: String) -> List<String> pipe text {
-    text.split(sep)
-  }
-  ```
-
-  then `|>` binds to that parameter.
 
 ### 3.2 Error propagation sugar
 

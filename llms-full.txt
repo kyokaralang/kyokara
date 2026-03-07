@@ -200,13 +200,7 @@ Holes carry an expected type from context. The compiler emits machine-readable h
 x |> f(a: 1, b: 2)
 ```
 
-Desugars to `f(x, a: 1, b: 2)`. Pipeline feeds the first parameter positionally. Argument expressions are evaluated left-to-right in source order before slot binding, and positional arguments must come before named arguments. Functions can declare an explicit pipe parameter:
-
-```kyokara
-fn split(text: String, sep: String) -> List<String> pipe text {
-  text.split(sep)
-}
-```
+Desugars to `f(x, a: 1, b: 2)`. Pipeline feeds the first parameter positionally. Argument expressions are evaluated left-to-right in source order before slot binding, and positional arguments must come before named arguments.
 
 ### Error Propagation
 

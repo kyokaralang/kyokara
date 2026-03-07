@@ -52,7 +52,6 @@ pub struct FnItem {
     pub params: Vec<FnParam>,
     pub ret_type: Option<TypeRef>,
     pub with_effects: Vec<TypeRef>,
-    pub pipe_effects: Vec<TypeRef>,
     pub has_body: bool,
     /// Source range of the CST `FnDef` node (for matching back to syntax).
     pub source_range: Option<TextRange>,

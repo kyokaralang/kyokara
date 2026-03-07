@@ -86,8 +86,6 @@ pub enum SyntaxKind {
     AllKw,
     /// `where`
     WhereKw,
-    /// `pipe`
-    PipeKw,
     /// `old`
     OldKw,
     /// `true`
@@ -232,8 +230,6 @@ pub enum SyntaxKind {
     ReturnType,
     /// `with Cap, …`
     WithClause,
-    /// `pipe …`
-    PipeClause,
     /// `contract` section grouping contract clauses.
     ContractSection,
     /// `requires …`
@@ -389,7 +385,6 @@ impl SyntaxKind {
                 | Self::ContinueKw
                 | Self::AllKw
                 | Self::WhereKw
-                | Self::PipeKw
                 | Self::OldKw
                 | Self::TrueKw
                 | Self::FalseKw
@@ -488,7 +483,6 @@ impl SyntaxKind {
             "break" => Some(Self::BreakKw),
             "continue" => Some(Self::ContinueKw),
             "where" => Some(Self::WhereKw),
-            "pipe" => Some(Self::PipeKw),
             "old" => Some(Self::OldKw),
             "true" => Some(Self::TrueKw),
             "false" => Some(Self::FalseKw),

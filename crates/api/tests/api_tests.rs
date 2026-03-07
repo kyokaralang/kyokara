@@ -512,6 +512,20 @@ fn check_rejects_leading_pipe_match_arm_syntax() {
 }
 
 #[test]
+fn check_rejects_removed_pipe_clause_syntax() {
+    let src = "fn split(text: String, sep: String) -> String pipe Text { text }\nfn main() -> String { split(\"a\", \",\") }";
+    let output = check(src, "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0100" && d.message.contains("expected function body")),
+        "expected parse diagnostic rejecting removed `pipe` clause syntax, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_rejects_pub_property_without_hanging() {
     let src = "pub property p(x: Int <- Gen.int()) { true }\nfn main() -> Int { 1 }";
     let output = check(src, "test.ky");

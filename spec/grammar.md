@@ -41,7 +41,7 @@ Ident            <- [a-zA-Z_] [a-zA-Z0-9_]*
 # Note: `cap` is lexed as a reserved keyword for targeted diagnostics, but
 # item parsing rejects it and requires `effect` declarations.
 Keyword          <- 'module' / 'import' / 'as' / 'type' / 'fn' / 'let' / 'pub'
-                  / 'match' / 'cap' / 'effect' / 'with' / 'pipe' / 'contract'
+                  / 'match' / 'cap' / 'effect' / 'with' / 'contract'
                   / 'requires' / 'ensures' / 'invariant'
                   / 'property' / 'for' / 'all' / 'where' / 'in'
                   / 'while' / 'break' / 'continue'
@@ -122,11 +122,10 @@ ParamList        <- '(' (Param (',' Param)* ','?)? ')'
 Param            <- Ident (':' TypeExpr)?
 ReturnType       <- '->' TypeExpr
 
-# Parsed in canonical order: with, pipe, then optional contract section.
+# Parsed in canonical order: with, then optional contract section.
 # Duplicate clauses and out-of-order contract clauses are diagnosed.
-FnContract       <- WithClause? PipeClause? ContractSection?
+FnContract       <- WithClause? ContractSection?
 WithClause       <- 'with' TypeExpr (',' TypeExpr)*
-PipeClause       <- 'pipe' TypeExpr (',' TypeExpr)*
 ContractSection  <- 'contract' ContractClause+
 ContractClause   <- RequiresClause / EnsuresClause / InvariantClause
 RequiresClause   <- 'requires' '(' Expr ')'
@@ -296,7 +295,7 @@ All keywords listed above are reserved and cannot be used as identifiers.
 ```
 all      as       cap      contract  effect   else     ensures
 false    fn       for      if        import   in        invariant
-let      match    module   old       pipe     property  pub
+let      match    module   old       property  pub
 requires return   true     type      where    while     with
 break    continue
 ```

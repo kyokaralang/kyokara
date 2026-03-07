@@ -19,7 +19,6 @@ const CLAUSE_EXPR_RECOVERY: TokenSet = TokenSet::new(&[
     Comma,
     ContractKw,
     WithKw,
-    PipeKw,
     RequiresKw,
     EnsuresKw,
     InvariantKw,
@@ -247,34 +246,23 @@ fn return_type(p: &mut Parser<'_>) {
 }
 
 /// Parse optional function-level clauses in canonical order:
-/// `with`, `pipe`, then an optional `contract` section.
+/// `with`, then an optional `contract` section.
 ///
 /// Legacy direct `requires`/`ensures`/`invariant` clauses are rejected and
 /// consumed for recovery.
 fn fn_contract(p: &mut Parser<'_>) {
     let mut seen_with = false;
-    let mut seen_pipe = false;
 
-    while matches!(p.current(), WithKw | PipeKw) {
+    while p.at(WithKw) {
         match p.current() {
             WithKw => {
                 if seen_with {
                     p.error("duplicate `with` clause");
                 }
-                if seen_pipe {
-                    p.error("with cannot appear after pipe (function clause order: with, pipe)");
-                }
                 with_clause(p);
                 seen_with = true;
             }
-            PipeKw => {
-                if seen_pipe {
-                    p.error("duplicate `pipe` clause");
-                }
-                pipe_clause(p);
-                seen_pipe = true;
-            }
-            _ => unreachable!("with/pipe clause dispatch mismatch"),
+            _ => unreachable!("with clause dispatch mismatch"),
         }
     }
 
@@ -381,31 +369,12 @@ fn with_clause(p: &mut Parser<'_>) {
             || p.at(RequiresKw)
             || p.at(EnsuresKw)
             || p.at(InvariantKw)
-            || p.at(PipeKw)
         {
             break;
         }
         super::types::type_expr(p);
     }
     m.complete(p, WithClause);
-}
-
-fn pipe_clause(p: &mut Parser<'_>) {
-    let m = p.open();
-    p.bump(); // pipe
-    super::types::type_expr(p);
-    while p.eat(Comma) {
-        if p.at(LBrace)
-            || p.at(ContractKw)
-            || p.at(RequiresKw)
-            || p.at(EnsuresKw)
-            || p.at(InvariantKw)
-        {
-            break;
-        }
-        super::types::type_expr(p);
-    }
-    m.complete(p, PipeClause);
 }
 
 fn parse_parenthesized_clause_expr(p: &mut Parser<'_>, message: &str) {

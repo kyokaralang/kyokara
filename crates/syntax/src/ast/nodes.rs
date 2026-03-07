@@ -193,10 +193,6 @@ impl FnDef {
         support::child(&self.syntax)
     }
 
-    pub fn pipe_clause(&self) -> Option<PipeClause> {
-        support::child(&self.syntax)
-    }
-
     pub fn contract_section(&self) -> Option<ContractSection> {
         support::child(&self.syntax)
     }
@@ -390,14 +386,6 @@ impl ReturnType {
 define_ast_node!(WithClause, WithClause);
 
 impl WithClause {
-    pub fn types(&self) -> impl Iterator<Item = TypeExpr> + '_ {
-        self.syntax.children().filter_map(TypeExpr::cast)
-    }
-}
-
-define_ast_node!(PipeClause, PipeClause);
-
-impl PipeClause {
     pub fn types(&self) -> impl Iterator<Item = TypeExpr> + '_ {
         self.syntax.children().filter_map(TypeExpr::cast)
     }

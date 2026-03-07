@@ -52,7 +52,6 @@ fn format_node_inner(node: &SyntaxNode) -> Doc {
         SyntaxKind::Param => format_param(node),
         SyntaxKind::ReturnType => format_return_type(node),
         SyntaxKind::WithClause => format_with_clause(node),
-        SyntaxKind::PipeClause => format_pipe_clause(node),
         SyntaxKind::ContractSection => format_contract_section(node),
         SyntaxKind::RequiresClause => format_requires_clause(node),
         SyntaxKind::EnsuresClause => format_ensures_clause(node),
@@ -505,12 +504,6 @@ fn format_fn_def(node: &SyntaxNode) -> Doc {
         parts.push(format_node(&with_clause));
     }
 
-    if let Some(pipe_clause) = find_child_node(node, SyntaxKind::PipeClause) {
-        has_sections = true;
-        parts.push(Doc::HardLine);
-        parts.push(format_node(&pipe_clause));
-    }
-
     if let Some(contract) = find_child_node(node, SyntaxKind::ContractSection) {
         has_sections = true;
         parts.push(Doc::HardLine);
@@ -571,17 +564,6 @@ fn format_return_type(node: &SyntaxNode) -> Doc {
 
 fn format_with_clause(node: &SyntaxNode) -> Doc {
     let mut parts = vec![Doc::text("with"), Doc::text(" ")];
-    let types: Vec<SyntaxNode> = node.children().filter(|c| is_type_expr(c.kind())).collect();
-    let type_docs: Vec<Doc> = types.iter().map(format_node).collect();
-    parts.push(Doc::join(
-        type_docs,
-        Doc::concat(vec![Doc::text(","), Doc::text(" ")]),
-    ));
-    Doc::concat(parts)
-}
-
-fn format_pipe_clause(node: &SyntaxNode) -> Doc {
-    let mut parts = vec![Doc::text("pipe"), Doc::text(" ")];
     let types: Vec<SyntaxNode> = node.children().filter(|c| is_type_expr(c.kind())).collect();
     let type_docs: Vec<Doc> = types.iter().map(format_node).collect();
     parts.push(Doc::join(

@@ -139,7 +139,7 @@ fn should_include_token(parent: &SyntaxNode, kind: SymbolKind) -> bool {
                 if gp_kind == SyntaxKind::NameType
                     && let Some(ggp) = grandparent.parent()
                 {
-                    return matches!(ggp.kind(), SyntaxKind::WithClause | SyntaxKind::PipeClause);
+                    return ggp.kind() == SyntaxKind::WithClause;
                 }
                 false
             }

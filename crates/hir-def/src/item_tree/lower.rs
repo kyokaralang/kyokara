@@ -203,11 +203,6 @@ impl ItemTreeCtx<'_> {
             .map(|wc| wc.types().map(|t| self.lower_type_ref(&t)).collect())
             .unwrap_or_default();
 
-        let pipe_effects = f
-            .pipe_clause()
-            .map(|pc| pc.types().map(|t| self.lower_type_ref(&t)).collect())
-            .unwrap_or_default();
-
         let has_body = f.body().is_some();
         let is_pub = f.is_pub();
 
@@ -218,7 +213,6 @@ impl ItemTreeCtx<'_> {
             params,
             ret_type,
             with_effects,
-            pipe_effects,
             has_body,
             source_range: Some(f.syntax().text_range()),
             receiver_type,
@@ -504,7 +498,6 @@ impl ItemTreeCtx<'_> {
                     args: vec![],
                 }),
                 with_effects: vec![],
-                pipe_effects: vec![],
                 has_body: true,
                 source_range,
                 receiver_type: None,

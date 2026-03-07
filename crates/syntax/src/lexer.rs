@@ -301,7 +301,6 @@ mod tests {
             ("break", BreakKw),
             ("continue", ContinueKw),
             ("where", WhereKw),
-            ("pipe", PipeKw),
             ("old", OldKw),
             ("true", TrueKw),
             ("false", FalseKw),

@@ -127,10 +127,10 @@ fn fmt_fn_with_contract_section() {
 }
 
 #[test]
-fn fmt_fn_with_with_pipe_and_contract_section() {
+fn fmt_fn_with_with_and_contract_section() {
     assert_fmt(
-        "fn run() -> Int with IO pipe Text contract requires (true) invariant (true) { 1 }",
-        "fn run() -> Int\nwith IO\npipe Text\ncontract\n  requires (true)\n  invariant (true)\n{\n  1\n}\n",
+        "fn run() -> Int with IO contract requires (true) invariant (true) { 1 }",
+        "fn run() -> Int\nwith IO\ncontract\n  requires (true)\n  invariant (true)\n{\n  1\n}\n",
     );
 }
 

@@ -158,9 +158,9 @@ pub fn symbol_at_offset(root: &SyntaxNode, offset: TextSize) -> SymbolAtPosition
                 };
             }
             SyntaxKind::NameType => {
-                // Check if it's inside a WithClause or PipeClause (capability).
+                // Check if it's inside a WithClause (capability).
                 if let Some(ggp) = grandparent.parent()
-                    && matches!(ggp.kind(), SyntaxKind::WithClause | SyntaxKind::PipeClause)
+                    && ggp.kind() == SyntaxKind::WithClause
                 {
                     return SymbolAtPosition::Capability {
                         name,
