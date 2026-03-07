@@ -5042,6 +5042,23 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_mutable_list_stack_ops_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+fn main() -> Int {
+    let xs = collections.MutableList.from_list(collections.List.new().push(1).push(2))
+    let last = xs.last().unwrap_or(0)
+    let popped = xs.pop().unwrap_or(0)
+    let alias = xs
+    let _ = xs.extend(collections.List.new().push(7).push(8))
+    last + popped + alias.len()
+}"#,
+        "collections.MutableList pop/last/extend canonical surface",
+    );
+}
+
+#[test]
 fn check_collections_mutable_list_alias_constructor_surface_has_no_diagnostics_rfc_0005() {
     assert_check_no_diagnostics(
         r#"import collections as c

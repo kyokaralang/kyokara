@@ -2141,6 +2141,48 @@ fn eval_mutable_list_aliases_observe_in_place_mutation() {
 }
 
 #[test]
+fn eval_mutable_list_last_pop_and_extend_semantics() {
+    let val = run_ok(
+        r#"import collections
+
+fn main() -> Int {
+    let xs = collections.MutableList.from_list(collections.List.new().push(10).push(20).push(30))
+    let alias = xs
+    let last = xs.last().unwrap_or(0)
+    let popped = xs.pop().unwrap_or(0)
+    let _ = xs.extend(collections.List.new().push(40).push(50))
+    if (last == 30 && popped == 30 && alias.len() == 4 && alias.get(2).unwrap_or(0) == 40 && alias.get(3).unwrap_or(0) == 50) {
+        1
+    } else {
+        0
+    }
+}"#,
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
+fn eval_mutable_list_last_and_pop_return_none_on_empty() {
+    let val = run_ok(
+        r#"import collections
+
+fn main() -> Int {
+    let xs = collections.MutableList.new()
+    let last_missing = match (xs.last()) {
+        Some(_n) => 0
+        None => 1
+    }
+    let pop_missing = match (xs.pop()) {
+        Some(_n) => 0
+        None => 1
+    }
+    if (last_missing == 1 && pop_missing == 1 && xs.is_empty()) { 1 } else { 0 }
+}"#,
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
 fn eval_mutable_list_indexing_and_bounds_behavior() {
     let val = run_ok(
         "import collections

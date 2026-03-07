@@ -3282,6 +3282,30 @@ impl Interpreter {
                     self.make_none()
                 }
             }
+            IntrinsicFn::MutableListLast => {
+                let Value::MutableList(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_last expects a MutableList".into(),
+                    ));
+                };
+                if let Some(val) = xs.last_cloned() {
+                    self.make_some(val)
+                } else {
+                    self.make_none()
+                }
+            }
+            IntrinsicFn::MutableListPop => {
+                let Value::MutableList(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_pop expects a MutableList".into(),
+                    ));
+                };
+                if let Some(val) = xs.pop() {
+                    self.make_some(val)
+                } else {
+                    self.make_none()
+                }
+            }
             IntrinsicFn::ListHead => {
                 let Value::List(xs) = &args[0] else {
                     return Err(RuntimeError::TypeError("list_head expects a List".into()));

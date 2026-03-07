@@ -573,6 +573,21 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             "push",
         ),
         (
+            "mutable_list_last",
+            ReceiverKey::Core(CoreType::MutableList),
+            "last",
+        ),
+        (
+            "mutable_list_pop",
+            ReceiverKey::Core(CoreType::MutableList),
+            "pop",
+        ),
+        (
+            "mutable_list_extend",
+            ReceiverKey::Core(CoreType::MutableList),
+            "extend",
+        ),
+        (
             "mutable_list_len",
             ReceiverKey::Core(CoreType::MutableList),
             "len",
@@ -1810,6 +1825,30 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             "mutable_list_push",
             vec![t_name],
             vec![("xs", mutable_list_t.clone()), ("x", t_ref.clone())],
+            mutable_list_t.clone(),
+        ),
+        // mutable_list_last<T>(xs: MutableList<T>) -> Option<T>
+        mk_intrinsic(
+            interner,
+            "mutable_list_last",
+            vec![t_name],
+            vec![("xs", mutable_list_t.clone())],
+            option_t.clone(),
+        ),
+        // mutable_list_pop<T>(xs: MutableList<T>) -> Option<T>
+        mk_intrinsic(
+            interner,
+            "mutable_list_pop",
+            vec![t_name],
+            vec![("xs", mutable_list_t.clone())],
+            option_t.clone(),
+        ),
+        // mutable_list_extend<T>(xs: MutableList<T>, ys: List<T>) -> MutableList<T>
+        mk_intrinsic(
+            interner,
+            "mutable_list_extend",
+            vec![t_name],
+            vec![("xs", mutable_list_t.clone()), ("ys", list_t.clone())],
             mutable_list_t.clone(),
         ),
         // mutable_list_len<T>(xs: MutableList<T>) -> Int

@@ -1331,6 +1331,14 @@ fn infer_collections_mutable_list_constructor_happy_paths_rfc_0005() {
                 .zip(collections.List.new().push(10))
                 .count()
         }"#,
+        r#"import collections
+        fn main() -> Int {
+            let xs = collections.MutableList.new().push(1).push(2).push(3)
+            let last = xs.last().unwrap_or(0)
+            let popped = xs.pop().unwrap_or(0)
+            let extended = xs.extend(collections.List.new().push(8).push(9))
+            last + popped + extended.len()
+        }"#,
     ];
 
     for src in cases {
@@ -1386,6 +1394,18 @@ fn err_mutable_list_wrong_arity_or_type_rfc_0005() {
         },
         Case {
             src: "import collections\nfn main() -> Int { collections.MutableList.new().push(1).get(false).unwrap_or(0) }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "import collections\nfn main() -> Int { collections.MutableList.new().last(1).unwrap_or(0) }",
+            expected_fragment: "expected 0 argument(s)",
+        },
+        Case {
+            src: "import collections\nfn main() -> Int { collections.MutableList.new().push(1).pop(1).unwrap_or(0) }",
+            expected_fragment: "expected 0 argument(s)",
+        },
+        Case {
+            src: "import collections\nfn main() -> Int { collections.MutableList.new().extend(1).len() }",
             expected_fragment: "type mismatch",
         },
     ];

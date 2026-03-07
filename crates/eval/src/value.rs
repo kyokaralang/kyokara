@@ -92,9 +92,26 @@ impl MutableListValue {
         self.items.borrow().get(idx).cloned()
     }
 
+    pub fn last_cloned(&self) -> Option<Value> {
+        self.items.borrow().last().cloned()
+    }
+
     pub fn push(&self, value: Value) {
         let mut items = self.items.borrow_mut();
         Rc::make_mut(&mut *items).push(value);
+    }
+
+    pub fn pop(&self) -> Option<Value> {
+        let mut items = self.items.borrow_mut();
+        Rc::make_mut(&mut *items).pop()
+    }
+
+    pub fn extend<I>(&self, values: I)
+    where
+        I: IntoIterator<Item = Value>,
+    {
+        let mut items = self.items.borrow_mut();
+        Rc::make_mut(&mut *items).extend(values);
     }
 
     pub fn set(&self, idx: usize, value: Value) {
