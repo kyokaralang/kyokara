@@ -216,6 +216,24 @@ crates/
   cli           # kyokara binary
 ```
 
+## Performance Harness
+
+Kyokara ships a local, fingerprint-gated performance harness for regression tracking:
+
+```sh
+cargo run -p xtask -- perf record
+cargo run -p xtask -- perf check
+```
+
+For focused iteration on one benchmark:
+
+```sh
+cargo run -p xtask -- perf record --case wordfreq_map_set_run
+cargo run -p xtask -- perf check --case wordfreq_map_set_run
+```
+
+The canonical process, corpus schema, and baseline policy live in [`docs/performance-harness.md`](docs/performance-harness.md).
+
 ## Roadmap
 
 | Version | What ships | Status |

@@ -5,6 +5,11 @@ edition = "2024"
 publish = false
 
 [dependencies]
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

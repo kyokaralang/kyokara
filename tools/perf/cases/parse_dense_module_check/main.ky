@@ -1,0 +1,103 @@
+type Color = Red | Green | Blue
+
+type Shape =
+  Circle(Int)
+  | Rect(Int, Int)
+  | Dot
+
+type Point = { x: Int, y: Int }
+type Metric = { total: Int, count: Int }
+type Transform =
+  Shift(Int, Int)
+  | Scale(Int)
+  | Identity
+
+fn color_score(c: Color) -> Int {
+  match (c) {
+    Red => 3
+    Green => 5
+    Blue => 7
+  }
+}
+
+fn shape_area(s: Shape) -> Int {
+  match (s) {
+    Circle(r) => r * r * 3
+    Rect(w, h) => w * h
+    Dot => 1
+  }
+}
+
+fn move_point(p: Point, dx: Int, dy: Int) -> Point {
+  Point { x: p.x + dx, y: p.y + dy }
+}
+
+fn apply_transform(p: Point, t: Transform) -> Point {
+  match (t) {
+    Shift(dx, dy) => move_point(p, dx, dy)
+    Scale(f) => Point { x: p.x * f, y: p.y * f }
+    Identity => p
+  }
+}
+
+fn metric_new() -> Metric { Metric { total: 0, count: 0 } }
+
+fn metric_push(m: Metric, value: Int) -> Metric {
+  Metric { total: m.total + value, count: m.count + 1 }
+}
+
+fn metric_mean_floor(m: Metric) -> Int {
+  if (m.count == 0) { 0 } else { m.total / m.count }
+}
+
+fn zig(n: Int) -> Int {
+  if ((n % 2) == 0) { n / 2 } else { n * 3 + 1 }
+}
+
+fn zag(n: Int) -> Int {
+  if (n < 10) { n + 4 } else { n - 3 }
+}
+
+fn score_point(p: Point) -> Int {
+  let ax = if (p.x < 0) { -p.x } else { p.x }
+  let ay = if (p.y < 0) { -p.y } else { p.y }
+  ax * 10 + ay
+}
+
+fn pipeline(seed: Int) -> Int {
+  let p0 = Point { x: seed, y: seed + 1 }
+  let p1 = apply_transform(p0, Shift(2, -1))
+  let p2 = apply_transform(p1, Scale(2))
+  let p3 = apply_transform(p2, Identity)
+  score_point(p3) + zig(seed) + zag(seed + 10)
+}
+
+fn blend(a: Int, b: Int, c: Int) -> Int {
+  let left = if (a > b) { a - b } else { b - a }
+  let right = if (c > b) { c - b } else { b - c }
+  left + right + (a * b) - c
+}
+
+fn summarize() -> Int {
+  let m0 = metric_new()
+  let m1 = metric_push(m0, color_score(Red))
+  let m2 = metric_push(m1, color_score(Green))
+  let m3 = metric_push(m2, color_score(Blue))
+  let m4 = metric_push(m3, shape_area(Circle(3)))
+  let m5 = metric_push(m4, shape_area(Rect(4, 5)))
+  let m6 = metric_push(m5, shape_area(Dot))
+  metric_mean_floor(m6) + pipeline(7) + blend(8, 3, 5)
+}
+
+fn helper0(n: Int) -> Int { summarize() + n }
+fn helper1(n: Int) -> Int { helper0(n) + pipeline(n) }
+fn helper2(n: Int) -> Int { helper1(n) + shape_area(Rect(n + 1, 2)) }
+fn helper3(n: Int) -> Int { helper2(n) + color_score(Blue) }
+fn helper4(n: Int) -> Int { helper3(n) + blend(n, n + 2, n + 4) }
+fn helper5(n: Int) -> Int { helper4(n) + zig(n + 10) }
+fn helper6(n: Int) -> Int { helper5(n) + zag(n + 20) }
+fn helper7(n: Int) -> Int { helper6(n) + score_point(Point { x: n, y: n + 3 }) }
+
+fn main() -> Int {
+  helper7(5)
+}

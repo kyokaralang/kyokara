@@ -1,0 +1,11 @@
+{
+  "id": "parse_dense_module_check",
+  "mode": "check",
+  "entry": "main.ky",
+  "project": false,
+  "expected_ok": true,
+  "warmup_runs": 1,
+  "measured_runs": 5,
+  "max_regression_pct": 20.0,
+  "max_regression_ms": 15.0
+}

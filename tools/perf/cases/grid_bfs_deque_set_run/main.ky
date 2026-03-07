@@ -1,0 +1,65 @@
+import collections
+
+type Step = { node: Int, dist: Int }
+type Frontier = { queue: Deque<Step>, seen: Set<Int> }
+
+fn neighbors(node: Int) -> List<Int> {
+  match (node) {
+    0 => collections.List.new().push(1).push(4)
+    1 => collections.List.new().push(0).push(2).push(5)
+    2 => collections.List.new().push(1).push(6)
+    3 => collections.List.new().push(7)
+    4 => collections.List.new().push(0).push(5).push(8)
+    5 => collections.List.new().push(1).push(4).push(6).push(9)
+    6 => collections.List.new().push(2).push(5).push(10)
+    7 => collections.List.new().push(3).push(11)
+    8 => collections.List.new().push(4).push(9).push(12)
+    9 => collections.List.new().push(5).push(8).push(10).push(13)
+    10 => collections.List.new().push(6).push(9).push(11).push(14)
+    11 => collections.List.new().push(7).push(10).push(15)
+    12 => collections.List.new().push(8).push(13)
+    13 => collections.List.new().push(9).push(12).push(14)
+    14 => collections.List.new().push(10).push(13).push(15)
+    _ => collections.List.new().push(11).push(14)
+  }
+}
+
+fn expand(neighbors: List<Int>, queue: Deque<Step>, seen: Set<Int>, dist: Int) -> Frontier {
+  neighbors.fold(
+    Frontier { queue: queue, seen: seen },
+    fn(acc: Frontier, next: Int) =>
+      if (acc.seen.contains(next)) {
+        acc
+      } else {
+        Frontier {
+          queue: acc.queue.push_back(Step { node: next, dist: dist }),
+          seen: acc.seen.insert(next)
+        }
+      }
+  )
+}
+
+fn bfs(queue: Deque<Step>, seen: Set<Int>, goal: Int) -> Int {
+  match (queue.pop_front()) {
+    Some(p) =>
+      if (p.value.node == goal) {
+        p.value.dist
+      } else {
+        let next = expand(neighbors(p.value.node), p.rest, seen, p.value.dist + 1)
+        bfs(next.queue, next.seen, goal)
+      }
+    None => -1
+  }
+}
+
+fn solve(goal: Int) -> Int {
+  bfs(
+    collections.Deque.new().push_back(Step { node: 0, dist: 0 }),
+    collections.Set.new().insert(0),
+    goal
+  )
+}
+
+fn main() -> Int {
+  solve(14) + solve(15) + solve(11) + solve(13)
+}

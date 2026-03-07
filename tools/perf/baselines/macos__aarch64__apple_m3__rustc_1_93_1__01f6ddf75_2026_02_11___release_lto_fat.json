@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "fingerprint": {
+    "os": "macos",
+    "arch": "aarch64",
+    "cpu_model": "Apple M3",
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "profile": "release-lto-fat"
+  },
+  "results": [
+    {
+      "id": "bitmask_checksum_run",
+      "mode": "run",
+      "samples_ms": [
+        13.765542,
+        8.154958,
+        6.908042,
+        9.287208999999999,
+        6.793416
+      ],
+      "median_ms": 8.154958
+    },
+    {
+      "id": "dp_coin_change_mutable_list_run",
+      "mode": "run",
+      "samples_ms": [
+        2.574875,
+        3.32725,
+        2.474291,
+        3.4738339999999996,
+        4.248334000000001
+      ],
+      "median_ms": 3.32725
+    },
+    {
+      "id": "grid_bfs_deque_set_run",
+      "mode": "run",
+      "samples_ms": [
+        3.584917,
+        4.7199160000000004,
+        4.682959,
+        4.0895,
+        4.214417
+      ],
+      "median_ms": 4.214417
+    },
+    {
+      "id": "parse_dense_module_check",
+      "mode": "check",
+      "samples_ms": [
+        4.292625,
+        4.047000000000001,
+        5.526833999999999,
+        4.059208,
+        9.148333
+      ],
+      "median_ms": 4.292625
+    },
+    {
+      "id": "wordfreq_map_set_run",
+      "mode": "run",
+      "samples_ms": [
+        24.074542,
+        8.343125,
+        13.486958,
+        4.628667,
+        7.5105830000000005
+      ],
+      "median_ms": 8.343125
+    }
+  ]
+}

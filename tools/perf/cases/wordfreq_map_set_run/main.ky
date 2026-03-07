@@ -1,0 +1,25 @@
+import collections
+
+fn update_count(counts: Map<String, Int>, word: String) -> Map<String, Int> {
+  counts.insert(word, counts.get(word).unwrap_or(0) + 1)
+}
+
+fn checksum_counts(counts: Map<String, Int>) -> Int {
+  counts.get("red").unwrap_or(0) * 100
+    + counts.get("blue").unwrap_or(0) * 10
+    + counts.get("green").unwrap_or(0)
+}
+
+fn main() -> Int {
+  let text = "red blue red green blue red gold green blue red"
+  let counts = text.split(" ").fold(
+    collections.Map.new(),
+    fn(acc: Map<String, Int>, word: String) => update_count(acc, word)
+  )
+  let unique = text.split(" ").fold(
+    collections.Set.new(),
+    fn(acc: Set<String>, word: String) => acc.insert(word)
+  )
+
+  checksum_counts(counts) + unique.len() * 1000 + unique.values().count()
+}

@@ -14,6 +14,7 @@ If a topic appears in multiple files, this index decides the source of truth.
 | Compiler API output contract | [`docs/rfcs/0007-optional-typed-ast-api-output.md`](rfcs/0007-optional-typed-ast-api-output.md) | Default diagnostics/holes/symbol_graph + optional `typed_ast` opt-in. |
 | Traversal surface policy | [`docs/rfcs/0002-collection-first-traversal-surface.md`](rfcs/0002-collection-first-traversal-surface.md), [`docs/rfcs/0003-opaque-traversal-constructor-surface.md`](rfcs/0003-opaque-traversal-constructor-surface.md) | Collection-first methods + opaque constructor/type surface. |
 | Collection naming/placement/mutability | [`docs/rfcs/0005-mutable-collection-naming-and-placement.md`](rfcs/0005-mutable-collection-naming-and-placement.md), [`docs/rfcs/0008-mutable-map-mutableset-surface.md`](rfcs/0008-mutable-map-mutableset-surface.md), [`docs/rfcs/0009-collection-surface-normalization.md`](rfcs/0009-collection-surface-normalization.md) | `Mutable*` naming, mutable map/set follow-up, and constructor-placement normalization across immutable + mutable collections. |
+| Performance harness process | [`docs/performance-harness.md`](performance-harness.md) | Local `xtask perf` workflow, corpus schema, baseline policy, and refresh rules. |
 | Token-count workflow | [`docs/token-metrics.md`](token-metrics.md) | Evergreen process doc. |
 
 ## Archived and dated docs
