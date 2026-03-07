@@ -70,11 +70,11 @@ All collection constructors are canonically under `collections`:
 2. `collections.Map.new()`
 3. `collections.Set.new()`
 4. `collections.Deque.new()`
-5. `collections.PriorityQueue.new_min()` / `new_max()` (final constructor details in the corresponding feature RFC)
+5. `collections.PriorityQueue.new_min()` / `new_max()` (reserved for a future immutable mirror if one is justified)
 6. `collections.MutableList.new()`
 7. `collections.MutableMap.new()`
 8. `collections.MutableSet.new()`
-9. `collections.MutablePriorityQueue.new_min()` / `new_max()`
+9. `collections.MutablePriorityQueue.new_min()` / `new_max()` (defined by RFC 0011)
 
 Global/type-local constructor spellings for collections become non-canonical.
 
@@ -161,6 +161,13 @@ This RFC strengthens RFC 0004 by removing the remaining placement split between 
 
 This RFC keeps their naming principle (`Mutable*`) and generalizes placement symmetry across immutable + mutable collection families.
 
+### RFC 0011
+
+RFC 0011 resolves the priority-queue rollout question for v1:
+
+1. `MutablePriorityQueue` ships first.
+2. Any immutable `PriorityQueue` mirror remains follow-up work, not v1 surface.
+
 ## Migration Policy (v0 freeze window)
 
 Because the language surface is not frozen yet:
@@ -180,4 +187,3 @@ Because the language surface is not frozen yet:
 
 1. Should non-canonical constructor spellings be hard errors immediately or staged via warning + autofix first?
 2. Should formatter auto-rewrite non-canonical collection constructor forms to `collections.*` in v0?
-3. For `PriorityQueue`, should v0 ship mutable-only first or both immutable and mutable from day one?
