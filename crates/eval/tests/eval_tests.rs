@@ -295,6 +295,34 @@ fn eval_while_loop_breaks_correctly() {
 }
 
 #[test]
+fn eval_var_reassignment_in_loop_accumulates_state() {
+    let val = run_ok(
+        "fn main() -> Int {
+           var acc = 0
+           var cur = 1
+           while (cur <= 4) {
+             acc = acc + cur
+             cur = cur + 1
+           }
+           acc
+         }",
+    );
+    assert!(matches!(val, Value::Int(10)));
+}
+
+#[test]
+fn eval_typed_var_reassignment_works() {
+    let val = run_ok(
+        "fn main() -> Int {
+           var acc: Int = 1
+           acc = acc + 4
+           acc
+         }",
+    );
+    assert!(matches!(val, Value::Int(5)));
+}
+
+#[test]
 fn eval_for_loop_over_range_with_continue_and_break() {
     let val = run_ok(
         "import collections

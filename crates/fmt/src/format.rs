@@ -38,6 +38,7 @@ fn format_node_inner(node: &SyntaxNode) -> Doc {
         SyntaxKind::EffectDef => format_cap_def(node),
         SyntaxKind::PropertyDef => format_property_def(node),
         SyntaxKind::LetBinding => format_let_binding(node),
+        SyntaxKind::VarBinding => format_var_binding(node),
 
         // Type-def sub-nodes
         SyntaxKind::RecordFieldList => format_record_field_list(node),
@@ -87,6 +88,7 @@ fn format_node_inner(node: &SyntaxNode) -> Doc {
         SyntaxKind::IfExpr => format_if_expr(node),
         SyntaxKind::WhileStmt => format_while_stmt(node),
         SyntaxKind::ForStmt => format_for_stmt(node),
+        SyntaxKind::AssignStmt => format_assign_stmt(node),
         SyntaxKind::BreakStmt => format_break_stmt(),
         SyntaxKind::ContinueStmt => format_continue_stmt(),
         SyntaxKind::BlockExpr => format_block_expr(node),
@@ -752,7 +754,15 @@ fn format_for_all_binder(node: &SyntaxNode) -> Doc {
 // ── Let binding ─────────────────────────────────────────────────────
 
 fn format_let_binding(node: &SyntaxNode) -> Doc {
-    let mut parts = vec![Doc::text("let"), Doc::text(" ")];
+    format_local_binding(node, "let")
+}
+
+fn format_var_binding(node: &SyntaxNode) -> Doc {
+    format_local_binding(node, "var")
+}
+
+fn format_local_binding(node: &SyntaxNode, keyword: &str) -> Doc {
+    let mut parts = vec![Doc::text(keyword), Doc::text(" ")];
 
     // Pattern
     let pat = node.children().find(|c| is_pat(c.kind()));
@@ -788,6 +798,24 @@ fn format_let_binding(node: &SyntaxNode) -> Doc {
         }
     }
 
+    Doc::concat(parts)
+}
+
+fn format_assign_stmt(node: &SyntaxNode) -> Doc {
+    let mut exprs = node.children().filter(|c| is_expr(c.kind()));
+    let target = exprs.next();
+    let value = exprs.next();
+    let mut parts = Vec::new();
+    if let Some(target) = target {
+        parts.push(format_node(&target));
+    }
+    if let Some(value) = value {
+        parts.push(Doc::text(" ="));
+        parts.push(Doc::group(Doc::indent(
+            INDENT,
+            Doc::concat(vec![Doc::Line, format_node(&value)]),
+        )));
+    }
     Doc::concat(parts)
 }
 
@@ -1249,8 +1277,10 @@ fn format_block_expr(node: &SyntaxNode) -> Doc {
                 || matches!(
                     c.kind(),
                     SyntaxKind::LetBinding
+                        | SyntaxKind::VarBinding
                         | SyntaxKind::WhileStmt
                         | SyntaxKind::ForStmt
+                        | SyntaxKind::AssignStmt
                         | SyntaxKind::BreakStmt
                         | SyntaxKind::ContinueStmt
                 )

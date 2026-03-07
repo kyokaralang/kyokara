@@ -149,7 +149,10 @@ fn should_include_token(parent: &SyntaxNode, kind: SymbolKind) -> bool {
                 }
                 if gp_kind == SyntaxKind::IdentPat {
                     if let Some(ggp) = grandparent.parent() {
-                        return ggp.kind() != SyntaxKind::LetBinding;
+                        return !matches!(
+                            ggp.kind(),
+                            SyntaxKind::LetBinding | SyntaxKind::VarBinding
+                        );
                     }
                     return true;
                 }

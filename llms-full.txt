@@ -126,20 +126,18 @@ Compiler enforces exhaustiveness.
 ### Loop Control
 
 ```kyokara
-import collections
-
 fn sum_odds(n: Int) -> Int {
-  let acc = collections.MutableList.new().push(0)
+  var acc = 0
   for (x in 0..<n) {
     if ((x % 2) == 0) { continue }
     if (x > 1000) { break }
-    acc.set(0, acc[0] + x)
+    acc = acc + x
   }
-  acc[0]
+  acc
 }
 ```
 
-Loop/control syntax is statement-only: `while (cond) { ... }`, `for (pattern in source) { ... }`, `break`, `continue`. Parentheses and braces are mandatory. `for` sources must be traversable (ranges, collections, and producer chains like `s.lines()`), and `for` patterns use full pattern grammar but must be irrefutable.
+Loop/control syntax is statement-only: `while (cond) { ... }`, `for (pattern in source) { ... }`, `break`, `continue`. Local bindings are immutable by default with `let`; use `var` for reassignable loop-local state and bare-name assignment (`x = expr`) to update an existing mutable local. In v1, lambdas cannot capture mutable locals. Parentheses and braces are mandatory. `for` sources must be traversable (ranges, collections, and producer chains like `s.lines()`), and `for` patterns use full pattern grammar but must be irrefutable.
 
 ### Contracts
 

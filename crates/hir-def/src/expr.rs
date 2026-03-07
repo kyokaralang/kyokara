@@ -159,7 +159,10 @@ pub enum Stmt {
         pat: PatIdx,
         ty: Option<TypeRef>,
         init: ExprIdx,
+        mutable: bool,
     },
+    /// `target = value`
+    Assign { target: ExprIdx, value: ExprIdx },
     /// `while (condition) { body }`
     While { condition: ExprIdx, body: ExprIdx },
     /// `for (pat in source) { body }`

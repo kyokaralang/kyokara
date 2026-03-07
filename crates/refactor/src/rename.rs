@@ -327,7 +327,7 @@ fn collect_rename_edits(
 
         if should_rename_token(&parent, kind) {
             // For function renames, skip PathExpr usages that are locally
-            // shadowed by a LetBinding or Param with the same name.
+            // shadowed by a local binding or Param with the same name.
             if kind == SymbolKind::Function && is_locally_shadowed(&token, old_name) {
                 continue;
             }
@@ -393,10 +393,10 @@ pub fn is_usage_site(gp_kind: SyntaxKind, kind: SymbolKind, grandparent: &Syntax
                 return true;
             }
             // Zero-arg variant in match pattern: IdentPat > Path > Ident
-            // But skip if the IdentPat is inside a LetBinding (local variable).
+            // But skip if the IdentPat is inside a local binding.
             if gp_kind == SyntaxKind::IdentPat {
                 if let Some(ggp) = grandparent.parent() {
-                    return ggp.kind() != SyntaxKind::LetBinding;
+                    return !matches!(ggp.kind(), SyntaxKind::LetBinding | SyntaxKind::VarBinding);
                 }
                 return true;
             }
@@ -405,7 +405,7 @@ pub fn is_usage_site(gp_kind: SyntaxKind, kind: SymbolKind, grandparent: &Syntax
     }
 }
 
-/// Check if a token usage is locally shadowed by a `LetBinding` or `Param`
+/// Check if a token usage is locally shadowed by a local binding or `Param`
 /// with the same name in the enclosing function body.
 ///
 /// This prevents function renames from touching local variables that shadow
@@ -429,7 +429,7 @@ fn is_locally_shadowed(token: &SyntaxToken, name: &str) -> bool {
 
     let usage_offset = token.text_range().start();
 
-    // Look for Param or LetBinding nodes within this FnDef that bind the same name.
+    // Look for Param or local-binding nodes within this FnDef that bind the same name.
     for node in fn_def.descendants() {
         match node.kind() {
             // Params shadow the entire function body regardless of position.
@@ -445,8 +445,8 @@ fn is_locally_shadowed(token: &SyntaxToken, name: &str) -> bool {
                     }
                 }
             }
-            // LetBindings only shadow usages that appear AFTER the binding.
-            SyntaxKind::LetBinding => {
+            // Local bindings only shadow usages that appear AFTER the binding.
+            SyntaxKind::LetBinding | SyntaxKind::VarBinding => {
                 if node.text_range().start() > usage_offset {
                     continue; // Binding is after usage — doesn't shadow it.
                 }

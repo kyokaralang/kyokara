@@ -880,7 +880,9 @@ impl IntrinsicFn {
                         "mutable_bitset_values expects a MutableBitSet".into(),
                     ));
                 };
-                Ok(Value::seq_source(SeqSource::BitSetValues(bitset.snapshot())))
+                Ok(Value::seq_source(SeqSource::BitSetValues(
+                    bitset.snapshot(),
+                )))
             }
             IntrinsicFn::MutableBitSetUnion => {
                 let Value::MutableBitSet(lhs) = &args[0] else {
@@ -1263,9 +1265,7 @@ impl IntrinsicFn {
             }
             IntrinsicFn::CharCode => {
                 let Value::Char(c) = &args[0] else {
-                    return Err(RuntimeError::TypeError(
-                        "char_code expects a Char".into(),
-                    ));
+                    return Err(RuntimeError::TypeError("char_code expects a Char".into()));
                 };
                 Ok(Value::Int(i64::from(u32::from(*c))))
             }
@@ -1742,9 +1742,15 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (Name::new(interner, "bitset_new"), IntrinsicFn::BitSetNew),
         (Name::new(interner, "bitset_test"), IntrinsicFn::BitSetTest),
         (Name::new(interner, "bitset_set"), IntrinsicFn::BitSetSet),
-        (Name::new(interner, "bitset_reset"), IntrinsicFn::BitSetReset),
+        (
+            Name::new(interner, "bitset_reset"),
+            IntrinsicFn::BitSetReset,
+        ),
         (Name::new(interner, "bitset_flip"), IntrinsicFn::BitSetFlip),
-        (Name::new(interner, "bitset_count"), IntrinsicFn::BitSetCount),
+        (
+            Name::new(interner, "bitset_count"),
+            IntrinsicFn::BitSetCount,
+        ),
         (Name::new(interner, "bitset_size"), IntrinsicFn::BitSetSize),
         (
             Name::new(interner, "bitset_is_empty"),
@@ -1754,7 +1760,10 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
             Name::new(interner, "bitset_values"),
             IntrinsicFn::BitSetValues,
         ),
-        (Name::new(interner, "bitset_union"), IntrinsicFn::BitSetUnion),
+        (
+            Name::new(interner, "bitset_union"),
+            IntrinsicFn::BitSetUnion,
+        ),
         (
             Name::new(interner, "bitset_intersection"),
             IntrinsicFn::BitSetIntersection,

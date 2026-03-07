@@ -6,7 +6,7 @@ use kyokara_parser::SyntaxKind;
 use kyokara_syntax::SyntaxNode;
 use kyokara_syntax::SyntaxToken;
 use kyokara_syntax::ast::AstNode;
-use kyokara_syntax::ast::nodes::{EffectDef, FnDef, LetBinding, Param, Pat, TypeDef};
+use kyokara_syntax::ast::nodes::{EffectDef, FnDef, LetBinding, Param, Pat, TypeDef, VarBinding};
 use kyokara_syntax::ast::traits::HasName;
 use text_size::TextSize;
 use tower_lsp::lsp_types::{Location, Url};
@@ -185,7 +185,7 @@ pub(crate) fn find_local_def_range_syntax(
         .map(|f| f.syntax().clone())
         .unwrap_or_else(|| root.clone());
 
-    // Walk backwards from cursor to find the nearest LetBinding or Param
+    // Walk backwards from cursor to find the nearest local binding or Param
     // that introduces this name.
     let mut best: Option<(TextSize, kyokara_span::TextRange)> = None;
 
@@ -218,6 +218,24 @@ pub(crate) fn find_local_def_range_syntax(
                                 None => best = Some((tok_start, range)),
                                 _ => {}
                             }
+                        }
+                    }
+                }
+            }
+            SyntaxKind::VarBinding => {
+                if let Some(var_b) = VarBinding::cast(node.clone())
+                    && let Some(name_tok) = var_b.name_token()
+                    && name_tok.text() == name
+                {
+                    let tok_start = name_tok.text_range().start();
+                    if tok_start <= cursor_offset {
+                        let range = name_tok.text_range();
+                        match &best {
+                            Some((prev_start, _)) if *prev_start < tok_start => {
+                                best = Some((tok_start, range));
+                            }
+                            None => best = Some((tok_start, range)),
+                            _ => {}
                         }
                     }
                 }

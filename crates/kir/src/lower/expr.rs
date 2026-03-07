@@ -939,6 +939,9 @@ impl<'a> LoweringCtx<'a> {
                     let init_val = self.lower_expr(*init);
                     self.bind_pattern(*pat, init_val);
                 }
+                Stmt::Assign { value, .. } => {
+                    self.lower_expr(*value);
+                }
                 Stmt::While {
                     condition,
                     body: loop_body,

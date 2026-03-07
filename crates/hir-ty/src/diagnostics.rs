@@ -76,6 +76,12 @@ pub enum TyDiagnosticData {
     ContinueOutsideLoop,
     /// `for` loop binder pattern is refutable.
     RefutableForPattern,
+    /// Assignment target is not a bare local variable.
+    InvalidAssignmentTarget,
+    /// Attempted to assign to an immutable binding.
+    ImmutableAssignment { name: String },
+    /// Mutable local captured by nested function or lambda.
+    CapturedMutableLocal { name: String },
 }
 
 impl TyDiagnosticData {
@@ -115,6 +121,9 @@ impl TyDiagnosticData {
             TyDiagnosticData::BreakOutsideLoop => "E0030",
             TyDiagnosticData::ContinueOutsideLoop => "E0031",
             TyDiagnosticData::RefutableForPattern => "E0032",
+            TyDiagnosticData::InvalidAssignmentTarget => "E0033",
+            TyDiagnosticData::ImmutableAssignment { .. } => "E0034",
+            TyDiagnosticData::CapturedMutableLocal { .. } => "E0035",
         }
     }
 
@@ -269,6 +278,17 @@ impl TyDiagnosticData {
             TyDiagnosticData::BreakOutsideLoop => "`break` used outside loop".into(),
             TyDiagnosticData::ContinueOutsideLoop => "`continue` used outside loop".into(),
             TyDiagnosticData::RefutableForPattern => "for loop pattern must be irrefutable".into(),
+            TyDiagnosticData::InvalidAssignmentTarget => {
+                "assignment target must be a local variable".into()
+            }
+            TyDiagnosticData::ImmutableAssignment { name } => {
+                format!("`{name}` is immutable; use `var` if rebinding is intended")
+            }
+            TyDiagnosticData::CapturedMutableLocal { name } => {
+                format!(
+                    "mutable locals cannot be captured by nested functions or lambdas (`{name}`)"
+                )
+            }
         };
         Diagnostic::error(message, span)
     }

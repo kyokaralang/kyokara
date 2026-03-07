@@ -240,6 +240,122 @@ fn check_parse_error_code() {
 }
 
 #[test]
+fn check_local_var_and_assignment_typecheck_cleanly() {
+    let src = r#"
+fn main() -> Int {
+  var acc = 0
+  for (x in 0..<5) {
+    acc = acc + x
+  }
+  acc
+}
+"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected var/assignment to typecheck, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_typed_local_var_and_assignment_typecheck_cleanly() {
+    let src = r#"
+fn main() -> Int {
+  var acc: Int = 0
+  acc = acc + 2
+  acc
+}
+"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected typed var/assignment to typecheck, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_top_level_var_reports_targeted_parse_error() {
+    let output = check("var x = 1", "test.ky");
+    let parse_diags: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0100")
+        .collect();
+    assert_eq!(
+        parse_diags.len(),
+        1,
+        "expected one parse diagnostic, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        parse_diags[0]
+            .message
+            .contains("top-level `var` bindings are not allowed"),
+        "expected top-level var diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_assignment_to_immutable_binding_reports_direct_error() {
+    let src = r#"
+fn main() -> Int {
+  let x = 1
+  x = 2
+  x
+}
+"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.iter().any(|d| d
+            .message
+            .contains("`x` is immutable; use `var` if rebinding is intended")),
+        "expected immutable assignment diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_assignment_target_must_be_local_variable() {
+    let src = r#"
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(1)
+  xs[0] = 2
+  0
+}
+"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.iter().any(|d| d
+            .message
+            .contains("assignment target must be a local variable")),
+        "expected invalid assignment-target diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_var_capture_in_lambda_is_rejected() {
+    let src = r#"
+fn main() -> Int {
+  var x = 1
+  let f = fn() => x
+  f()
+}
+"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.iter().any(|d| d
+            .message
+            .contains("mutable locals cannot be captured by nested functions or lambdas")),
+        "expected mutable-local capture diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_keyword_local_binding_reports_single_targeted_parse_error() {
     let src = "fn main() -> Int { let module = 1\n1 }";
     let output = check(src, "test.ky");
@@ -265,7 +381,8 @@ fn check_keyword_local_binding_reports_single_targeted_parse_error() {
         output
             .diagnostics
             .iter()
-            .all(|d| !d.message.contains("expected Eq") && !d.message.contains("expected expression")),
+            .all(|d| !d.message.contains("expected Eq")
+                && !d.message.contains("expected expression")),
         "unexpected cascade diagnostics: {:?}",
         output.diagnostics
     );
@@ -333,7 +450,8 @@ fn check_keyword_lambda_param_reports_single_targeted_parse_error() {
         output
             .diagnostics
             .iter()
-            .all(|d| !d.message.contains("expected item") && !d.message.contains("expected FatArrow")),
+            .all(|d| !d.message.contains("expected item")
+                && !d.message.contains("expected FatArrow")),
         "unexpected lambda cascade diagnostics: {:?}",
         output.diagnostics
     );

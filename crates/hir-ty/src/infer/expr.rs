@@ -18,6 +18,12 @@ use crate::ty::Ty;
 
 use super::{Expectation, InferenceCtx};
 
+enum AssignmentTargetInfo {
+    MutableLocal,
+    Immutable(String),
+    Invalid,
+}
+
 impl<'a> InferenceCtx<'a> {
     /// Infer the type of an expression, possibly guided by an expectation.
     pub(crate) fn infer_expr(&mut self, idx: ExprIdx, expected: &Expectation) -> Ty {
@@ -878,7 +884,7 @@ impl<'a> InferenceCtx<'a> {
     fn infer_block(&mut self, stmts: &[Stmt], tail: Option<ExprIdx>, expected: &Expectation) -> Ty {
         for stmt in stmts {
             match stmt {
-                Stmt::Let { pat, ty, init } => {
+                Stmt::Let { pat, ty, init, .. } => {
                     let init_ty = if let Some(ty_ref) = ty {
                         let env = Self::make_env(
                             self.item_tree,
@@ -900,6 +906,28 @@ impl<'a> InferenceCtx<'a> {
                     if !self.is_irrefutable_let_pattern(*pat, &init_ty) {
                         self.current_expr = Some(*init);
                         self.push_diag(TyDiagnosticData::RefutableLetPattern);
+                    }
+                }
+                Stmt::Assign { target, value } => {
+                    let target_ty = self.infer_expr(*target, &Expectation::None);
+                    let target_info = self.assignment_target_info(*target);
+                    match target_info {
+                        AssignmentTargetInfo::MutableLocal => {
+                            let value_ty =
+                                self.infer_expr(*value, &Expectation::Has(target_ty.clone()));
+                            self.current_expr = Some(*value);
+                            self.unify_or_err(&target_ty, &value_ty);
+                        }
+                        AssignmentTargetInfo::Immutable(name) => {
+                            self.current_expr = Some(*target);
+                            self.push_diag(TyDiagnosticData::ImmutableAssignment { name });
+                            self.infer_expr(*value, &Expectation::None);
+                        }
+                        AssignmentTargetInfo::Invalid => {
+                            self.current_expr = Some(*target);
+                            self.push_diag(TyDiagnosticData::InvalidAssignmentTarget);
+                            self.infer_expr(*value, &Expectation::None);
+                        }
                     }
                 }
                 Stmt::Expr(e) => {
@@ -1178,12 +1206,175 @@ impl<'a> InferenceCtx<'a> {
             self.infer_pat(*pat_idx, &ty);
         }
 
+        self.reject_captured_mutable_locals(body_expr);
+
         let expected_ret = expected_fn.map(|(_, r)| Expectation::Has(r));
         let body_ty = self.infer_expr(body_expr, &expected_ret.unwrap_or(Expectation::None));
 
         Ty::Fn {
             params: param_tys,
             ret: Box::new(body_ty),
+        }
+    }
+
+    fn assignment_target_info(&self, target: ExprIdx) -> AssignmentTargetInfo {
+        let Expr::Path(path) = &self.body.exprs[target] else {
+            return AssignmentTargetInfo::Invalid;
+        };
+        if !path.is_single() {
+            return AssignmentTargetInfo::Invalid;
+        }
+        let name = path.segments[0];
+        let Some(resolved) = self.body.resolve_name_at(self.module_scope, target, name) else {
+            return AssignmentTargetInfo::Invalid;
+        };
+        match resolved.resolved {
+            ResolvedName::Local(ScopeDef::Local(pat_idx)) => {
+                let Some(meta) = self.body.local_binding_meta.get(pat_idx) else {
+                    return AssignmentTargetInfo::Invalid;
+                };
+                if meta.mutable {
+                    AssignmentTargetInfo::MutableLocal
+                } else {
+                    AssignmentTargetInfo::Immutable(name.resolve(self.interner).to_string())
+                }
+            }
+            ResolvedName::Local(ScopeDef::Param(_))
+            | ResolvedName::Local(ScopeDef::LambdaParam(_)) => {
+                AssignmentTargetInfo::Immutable(name.resolve(self.interner).to_string())
+            }
+            _ => AssignmentTargetInfo::Invalid,
+        }
+    }
+
+    fn reject_captured_mutable_locals(&mut self, body_expr: ExprIdx) {
+        let Some(lambda_scope) = self.body.expr_scopes.get(body_expr).copied() else {
+            return;
+        };
+        self.reject_captured_mutable_locals_in_expr(body_expr, lambda_scope);
+    }
+
+    fn reject_captured_mutable_locals_in_expr(
+        &mut self,
+        expr_idx: ExprIdx,
+        lambda_scope: kyokara_hir_def::scope::ScopeIdx,
+    ) {
+        match &self.body.exprs[expr_idx] {
+            Expr::Path(path) if path.is_single() => {
+                let name = path.segments[0];
+                if let Some(resolved) = self.body.resolve_name_at(self.module_scope, expr_idx, name)
+                    && let Some((_, meta)) = resolved.local_binding
+                    && meta.mutable
+                    && !self.scope_is_within(meta.scope, lambda_scope)
+                {
+                    let prev = self.current_expr;
+                    self.current_expr = Some(expr_idx);
+                    self.push_diag(TyDiagnosticData::CapturedMutableLocal {
+                        name: name.resolve(self.interner).to_string(),
+                    });
+                    self.current_expr = prev;
+                }
+            }
+            Expr::Binary { lhs, rhs, .. } => {
+                self.reject_captured_mutable_locals_in_expr(*lhs, lambda_scope);
+                self.reject_captured_mutable_locals_in_expr(*rhs, lambda_scope);
+            }
+            Expr::Unary { operand, .. } | Expr::Old(operand) => {
+                self.reject_captured_mutable_locals_in_expr(*operand, lambda_scope);
+            }
+            Expr::Call { callee, args } => {
+                self.reject_captured_mutable_locals_in_expr(*callee, lambda_scope);
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(idx) => {
+                            self.reject_captured_mutable_locals_in_expr(*idx, lambda_scope);
+                        }
+                        CallArg::Named { value, .. } => {
+                            self.reject_captured_mutable_locals_in_expr(*value, lambda_scope);
+                        }
+                    }
+                }
+            }
+            Expr::Field { base, .. } => {
+                self.reject_captured_mutable_locals_in_expr(*base, lambda_scope);
+            }
+            Expr::Index { base, index } => {
+                self.reject_captured_mutable_locals_in_expr(*base, lambda_scope);
+                self.reject_captured_mutable_locals_in_expr(*index, lambda_scope);
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.reject_captured_mutable_locals_in_expr(*condition, lambda_scope);
+                self.reject_captured_mutable_locals_in_expr(*then_branch, lambda_scope);
+                if let Some(else_branch) = else_branch {
+                    self.reject_captured_mutable_locals_in_expr(*else_branch, lambda_scope);
+                }
+            }
+            Expr::Match { scrutinee, arms } => {
+                self.reject_captured_mutable_locals_in_expr(*scrutinee, lambda_scope);
+                for arm in arms {
+                    self.reject_captured_mutable_locals_in_expr(arm.body, lambda_scope);
+                }
+            }
+            Expr::Block { stmts, tail } => {
+                for stmt in stmts {
+                    match stmt {
+                        Stmt::Let { init, .. } => {
+                            self.reject_captured_mutable_locals_in_expr(*init, lambda_scope);
+                        }
+                        Stmt::Assign { target, value } => {
+                            self.reject_captured_mutable_locals_in_expr(*target, lambda_scope);
+                            self.reject_captured_mutable_locals_in_expr(*value, lambda_scope);
+                        }
+                        Stmt::While { condition, body } => {
+                            self.reject_captured_mutable_locals_in_expr(*condition, lambda_scope);
+                            self.reject_captured_mutable_locals_in_expr(*body, lambda_scope);
+                        }
+                        Stmt::For { source, body, .. } => {
+                            self.reject_captured_mutable_locals_in_expr(*source, lambda_scope);
+                            self.reject_captured_mutable_locals_in_expr(*body, lambda_scope);
+                        }
+                        Stmt::Break | Stmt::Continue => {}
+                        Stmt::Expr(expr) => {
+                            self.reject_captured_mutable_locals_in_expr(*expr, lambda_scope);
+                        }
+                    }
+                }
+                if let Some(tail) = tail {
+                    self.reject_captured_mutable_locals_in_expr(*tail, lambda_scope);
+                }
+            }
+            Expr::Return(value) => {
+                if let Some(value) = value {
+                    self.reject_captured_mutable_locals_in_expr(*value, lambda_scope);
+                }
+            }
+            Expr::RecordLit { fields, .. } => {
+                for (_, value) in fields {
+                    self.reject_captured_mutable_locals_in_expr(*value, lambda_scope);
+                }
+            }
+            Expr::Lambda { .. } | Expr::Missing | Expr::Hole | Expr::Literal(_) | Expr::Path(_) => {
+            }
+        }
+    }
+
+    fn scope_is_within(
+        &self,
+        mut scope: kyokara_hir_def::scope::ScopeIdx,
+        ancestor: kyokara_hir_def::scope::ScopeIdx,
+    ) -> bool {
+        loop {
+            if scope == ancestor {
+                return true;
+            }
+            let Some(parent) = self.body.scopes.scopes[scope].parent else {
+                return false;
+            };
+            scope = parent;
         }
     }
 

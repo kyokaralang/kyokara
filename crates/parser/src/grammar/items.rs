@@ -10,7 +10,7 @@ use crate::token_set::TokenSet;
 
 /// Tokens that can start an item — used for error recovery.
 pub(super) const ITEM_RECOVERY: TokenSet = TokenSet::new(&[
-    ModuleKw, ImportKw, TypeKw, FnKw, CapKw, EffectKw, PropertyKw, LetKw, PubKw,
+    ModuleKw, ImportKw, TypeKw, FnKw, CapKw, EffectKw, PropertyKw, LetKw, VarKw, PubKw,
 ]);
 const CLAUSE_EXPR_RECOVERY: TokenSet = TokenSet::new(&[
     LBrace,
@@ -56,6 +56,17 @@ pub(super) fn item(p: &mut Parser<'_>) -> Option<CompletedMarker> {
                 return None;
             }
             let_binding(p)
+        }
+        VarKw => {
+            if is_pub {
+                p.error_recover("expected item", ITEM_RECOVERY);
+                return None;
+            }
+            let err = p.open();
+            p.error("top-level `var` bindings are not allowed");
+            var_binding(p);
+            err.complete(p, ErrorNode);
+            return None;
         }
         _ => {
             p.error_recover("expected item", ITEM_RECOVERY);
@@ -514,6 +525,19 @@ pub(super) fn let_binding(p: &mut Parser<'_>) -> CompletedMarker {
     p.expect(Eq);
     super::expressions::expr(p);
     m.complete(p, LetBinding)
+}
+
+/// `var Ident (':' TypeExpr)? '=' Expr`
+pub(super) fn var_binding(p: &mut Parser<'_>) -> CompletedMarker {
+    let m = p.open();
+    p.bump(); // var
+    p.expect_identifier(IdentifierRole::LocalBindingName);
+    if p.eat(Colon) {
+        super::types::type_expr(p);
+    }
+    p.expect(Eq);
+    super::expressions::expr(p);
+    m.complete(p, VarBinding)
 }
 
 // ── Generics ────────────────────────────────────────────────────────

@@ -1510,8 +1510,14 @@ fn err_unresolved_name_in_expr() {
 
 #[test]
 fn err_char_code_wrong_receivers() {
-    check_err(r#"fn main() -> Int { "a".code() }"#, "no method `code` on type `String`");
-    check_err("fn main() -> Int { 1.code() }", "no method `code` on type `Int`");
+    check_err(
+        r#"fn main() -> Int { "a".code() }"#,
+        "no method `code` on type `String`",
+    );
+    check_err(
+        "fn main() -> Int { 1.code() }",
+        "no method `code` on type `Int`",
+    );
 }
 
 #[test]

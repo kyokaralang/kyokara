@@ -225,11 +225,7 @@ fn register_mutable_set(tree: &mut ItemTree, scope: &mut ModuleScope, interner: 
 }
 
 /// `MutableBitSet` — opaque builtin type (no variants, no pattern matching).
-fn register_mutable_bitset(
-    tree: &mut ItemTree,
-    scope: &mut ModuleScope,
-    interner: &mut Interner,
-) {
+fn register_mutable_bitset(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
     let _ = register_core_type_item(
         tree,
         scope,
@@ -534,7 +530,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             ReceiverKey::Core(CoreType::BitSet),
             "is_empty",
         ),
-        ("bitset_values", ReceiverKey::Core(CoreType::BitSet), "values"),
+        (
+            "bitset_values",
+            ReceiverKey::Core(CoreType::BitSet),
+            "values",
+        ),
         ("bitset_union", ReceiverKey::Core(CoreType::BitSet), "union"),
         (
             "bitset_intersection",
@@ -561,7 +561,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_windows", ReceiverKey::Core(CoreType::List), "windows"),
         ("seq_count", ReceiverKey::Core(CoreType::List), "count"),
         ("seq_count_by", ReceiverKey::Core(CoreType::List), "count"),
-        ("seq_frequencies", ReceiverKey::Core(CoreType::List), "frequencies"),
+        (
+            "seq_frequencies",
+            ReceiverKey::Core(CoreType::List),
+            "frequencies",
+        ),
         ("seq_any", ReceiverKey::Core(CoreType::List), "any"),
         ("seq_all", ReceiverKey::Core(CoreType::List), "all"),
         ("seq_find", ReceiverKey::Core(CoreType::List), "find"),
@@ -833,7 +837,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_windows", ReceiverKey::Core(CoreType::Deque), "windows"),
         ("seq_count", ReceiverKey::Core(CoreType::Deque), "count"),
         ("seq_count_by", ReceiverKey::Core(CoreType::Deque), "count"),
-        ("seq_frequencies", ReceiverKey::Core(CoreType::Deque), "frequencies"),
+        (
+            "seq_frequencies",
+            ReceiverKey::Core(CoreType::Deque),
+            "frequencies",
+        ),
         ("seq_any", ReceiverKey::Core(CoreType::Deque), "any"),
         ("seq_all", ReceiverKey::Core(CoreType::Deque), "all"),
         ("seq_find", ReceiverKey::Core(CoreType::Deque), "find"),
@@ -853,7 +861,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_windows", ReceiverKey::Core(CoreType::Seq), "windows"),
         ("seq_count", ReceiverKey::Core(CoreType::Seq), "count"),
         ("seq_count_by", ReceiverKey::Core(CoreType::Seq), "count"),
-        ("seq_frequencies", ReceiverKey::Core(CoreType::Seq), "frequencies"),
+        (
+            "seq_frequencies",
+            ReceiverKey::Core(CoreType::Seq),
+            "frequencies",
+        ),
         ("seq_any", ReceiverKey::Core(CoreType::Seq), "any"),
         ("seq_all", ReceiverKey::Core(CoreType::Seq), "all"),
         ("seq_find", ReceiverKey::Core(CoreType::Seq), "find"),

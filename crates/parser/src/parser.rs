@@ -203,11 +203,7 @@ impl<'i> Parser<'i> {
 
     /// Consume an identifier or emit a targeted reserved-keyword diagnostic,
     /// falling back to generic recovery for non-identifier tokens.
-    pub fn expect_identifier_recover(
-        &mut self,
-        role: IdentifierRole,
-        recovery: TokenSet,
-    ) -> bool {
+    pub fn expect_identifier_recover(&mut self, role: IdentifierRole, recovery: TokenSet) -> bool {
         if self.eat(SyntaxKind::Ident) {
             return true;
         }

@@ -20,6 +20,7 @@
 - Pipeline operator: `x |> f(a: 1)` desugars to `f(x, a: 1)`
 - Error propagation: `expr?` desugars to early-return match on `Result`
 - Native integer bitwise operators: `&`, `|`, `^`, `~`, `<<`, `>>` on `Int`; `>>` is arithmetic right shift; shift counts must be in `0..63`
+- Local bindings: `let` is immutable by default; `var` introduces a mutable local slot; assignment is `x = expr` to an existing mutable local identifier; in v1, lambdas cannot capture mutable locals
 - Loop control surface: `while (cond) { ... }`, `for (pattern in source) { ... }`, `break`, `continue`; `for` patterns support destructuring but must be irrefutable, and `for` sources are any traversables (ranges, collections, producer chains)
 - No null, no exceptions: `Option<T>` and `Result<T, E>` only (builtin types, available without imports)
 

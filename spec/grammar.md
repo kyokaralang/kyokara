@@ -41,6 +41,7 @@ Ident            <- [a-zA-Z_] [a-zA-Z0-9_]*
 # Note: `cap` is lexed as a reserved keyword for targeted diagnostics, but
 # item parsing rejects it and requires `effect` declarations.
 Keyword          <- 'module' / 'import' / 'as' / 'type' / 'fn' / 'let' / 'pub'
+                  / 'var'
                   / 'match' / 'cap' / 'effect' / 'with' / 'contract'
                   / 'requires' / 'ensures' / 'invariant'
                   / 'property' / 'for' / 'all' / 'where' / 'in'
@@ -157,6 +158,8 @@ ForAllBinder      <- 'for' 'all' Ident ':' TypeExpr '.'
 
 ```peg
 LetBinding       <- 'let' Pattern (':' TypeExpr)? '=' Expr
+VarBinding       <- 'var' Ident (':' TypeExpr)? '=' Expr
+AssignStmt       <- Ident '=' Expr
 ```
 
 ### Generics
@@ -249,7 +252,7 @@ IdentExpr          <- Ident
 PathExpr           <- Path
 ParenExpr          <- '(' Expr ')'
 BlockExpr          <- '{' BlockItem* Expr? '}'
-BlockItem          <- LetBinding / WhileStmt / ForStmt / BreakStmt / ContinueStmt / Expr
+BlockItem          <- LetBinding / VarBinding / AssignStmt / WhileStmt / ForStmt / BreakStmt / ContinueStmt / Expr
 IfExpr             <- 'if' '(' Expr ')' BlockExpr ('else' (IfExpr / BlockExpr))?
 WhileStmt          <- 'while' '(' Expr ')' BlockExpr
 ForStmt            <- 'for' '(' Pattern 'in' Expr ')' BlockExpr
@@ -295,7 +298,7 @@ All keywords listed above are reserved and cannot be used as identifiers.
 ```
 all      as       cap      contract  effect   else     ensures
 false    fn       for      if        import   in        invariant
-let      match    module   old       property  pub
+let      match    module   old       property  pub      var
 requires return   true     type      where    while     with
 break    continue
 ```

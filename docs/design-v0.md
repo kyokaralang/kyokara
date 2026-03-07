@@ -193,37 +193,38 @@ Compiler enforces exhaustiveness.
 ### 2.7 Loop control
 
 ```kyokara
-import collections
-
 fn sum_odds(n: Int) -> Int {
-  let acc = collections.MutableList.new().push(0)
+  var acc = 0
   for (x in 0..<n) {
     if ((x % 2) == 0) { continue }
     if (x > 1000) { break }
-    acc.set(0, acc[0] + x)
+    acc = acc + x
   }
-  acc[0]
+  acc
 }
 
 fn count_positive(xs: List<Int>) -> Int {
-  let acc = collections.MutableList.new().push(0)
+  var acc = 0
   for (x in xs) {
-    if (x > 0) { acc.set(0, acc[0] + 1) }
+    if (x > 0) { acc = acc + 1 }
   }
-  acc[0]
+  acc
 }
 
 fn non_empty_line_count(s: String) -> Int {
-  let acc = collections.MutableList.new().push(0)
+  var acc = 0
   for (line in s.lines()) {
-    if (line.len() > 0) { acc.set(0, acc[0] + 1) }
+    if (line.len() > 0) { acc = acc + 1 }
   }
-  acc[0]
+  acc
 }
 ```
 
 Rules:
+* local bindings are immutable by default with `let`; use `var` for reassignable loop-local state
 * statement-only loop/control forms: `while (cond) { ... }`, `for (pattern in source) { ... }`, `break`, `continue`
+* assignment uses bare local identifiers only: `x = expr`
+* v0.4 restriction: lambdas may not capture mutable locals
 * parentheses and braces are mandatory in loop heads/bodies
 * `for` source must be traversable (`start..<end`, collections, and producer chains)
 * `for` pattern uses full pattern grammar but must be irrefutable (refutable patterns are type errors)

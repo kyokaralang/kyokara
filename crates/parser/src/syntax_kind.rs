@@ -54,6 +54,8 @@ pub enum SyntaxKind {
     FnKw,
     /// `let`
     LetKw,
+    /// `var`
+    VarKw,
     /// `match`
     MatchKw,
     /// `cap`
@@ -206,6 +208,8 @@ pub enum SyntaxKind {
     PropertyDef,
     /// `let x = …`
     LetBinding,
+    /// `var x = …`
+    VarBinding,
 
     // Type-def sub-nodes
     /// `{ field: Type, … }`
@@ -294,6 +298,8 @@ pub enum SyntaxKind {
     WhileStmt,
     /// `for (pat in source) { ... }`
     ForStmt,
+    /// `target = value`
+    AssignStmt,
     /// `break`
     BreakStmt,
     /// `continue`
@@ -369,6 +375,7 @@ impl SyntaxKind {
                 | Self::TypeKw
                 | Self::FnKw
                 | Self::LetKw
+                | Self::VarKw
                 | Self::MatchKw
                 | Self::CapKw
                 | Self::EffectKw
@@ -404,6 +411,7 @@ impl SyntaxKind {
             Self::TypeKw => Some("type"),
             Self::FnKw => Some("fn"),
             Self::LetKw => Some("let"),
+            Self::VarKw => Some("var"),
             Self::MatchKw => Some("match"),
             Self::CapKw => Some("cap"),
             Self::EffectKw => Some("effect"),
@@ -504,6 +512,7 @@ impl SyntaxKind {
             "type" => Some(Self::TypeKw),
             "fn" => Some(Self::FnKw),
             "let" => Some(Self::LetKw),
+            "var" => Some(Self::VarKw),
             "match" => Some(Self::MatchKw),
             "cap" => Some(Self::CapKw),
             "effect" => Some(Self::EffectKw),
@@ -544,6 +553,7 @@ mod tests {
             SyntaxKind::TypeKw,
             SyntaxKind::FnKw,
             SyntaxKind::LetKw,
+            SyntaxKind::VarKw,
             SyntaxKind::MatchKw,
             SyntaxKind::CapKw,
             SyntaxKind::EffectKw,

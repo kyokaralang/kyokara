@@ -186,7 +186,10 @@ impl BitSetValue {
     }
 
     pub fn count(&self) -> usize {
-        self.words.iter().map(|word| word.count_ones() as usize).sum()
+        self.words
+            .iter()
+            .map(|word| word.count_ones() as usize)
+            .sum()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -641,7 +644,11 @@ impl Value {
                         bits
                     })
                     .collect();
-                format!("BitSet(size={}, #{{{}}})", bitset.size_bits(), fs.join(", "))
+                format!(
+                    "BitSet(size={}, #{{{}}})",
+                    bitset.size_bits(),
+                    fs.join(", ")
+                )
             }
             Value::MutableList(items) => {
                 let snapshot = items.snapshot();
@@ -666,7 +673,9 @@ impl Value {
             }
             Value::MutableBitSet(bitset) => {
                 let snapshot = bitset.snapshot();
-                Value::BitSet(snapshot).display(interner).replace("BitSet", "MutableBitSet")
+                Value::BitSet(snapshot)
+                    .display(interner)
+                    .replace("BitSet", "MutableBitSet")
             }
             Value::Deque(items) => {
                 let fs: Vec<String> = items.iter().map(|v| v.display(interner)).collect();

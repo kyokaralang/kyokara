@@ -108,6 +108,24 @@ impl Env {
             BindingValue::Moved => None,
         }
     }
+
+    /// Overwrite a lexical slot with a new live value.
+    #[inline(always)]
+    pub fn set_slot(&mut self, depth: usize, slot: usize, value: Value) -> Option<()> {
+        let scope_idx = self.scope_starts.len().checked_sub(depth + 1)?;
+        let binding_idx = self.scope_starts[scope_idx].checked_add(slot)?;
+        let scope_end = self
+            .scope_starts
+            .get(scope_idx + 1)
+            .copied()
+            .unwrap_or(self.bindings.len());
+        if binding_idx >= scope_end {
+            return None;
+        }
+        let (_, binding) = self.bindings.get_mut(binding_idx)?;
+        *binding = BindingValue::Live(value);
+        Some(())
+    }
 }
 
 #[cfg(test)]

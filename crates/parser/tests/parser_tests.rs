@@ -123,6 +123,61 @@ fn let_binding_keyword_name_reports_single_targeted_error() {
     assert!(has_node(&events, LetBinding));
 }
 
+#[test]
+fn var_binding_simple() {
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, LBrace, VarKw, Ident, Eq, IntLiteral, RBrace,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "expected no parse errors: {errors:?}"
+    );
+    assert!(has_node(&events, VarBinding));
+}
+
+#[test]
+fn var_binding_with_type() {
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, LBrace, VarKw, Ident, Colon, Ident, Eq, IntLiteral, RBrace,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "expected no parse errors: {errors:?}"
+    );
+    assert!(has_node(&events, VarBinding));
+    assert!(has_node(&events, NameType));
+}
+
+#[test]
+fn top_level_var_binding_reports_targeted_error_without_cascade() {
+    let (events, errors) = parse_tokens(&[VarKw, Ident, Eq, IntLiteral]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted error, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("top-level `var` bindings are not allowed"),
+        "expected top-level var message, got: {errors:?}"
+    );
+    assert!(has_node(&events, VarBinding));
+}
+
+#[test]
+fn assignment_statement_inside_block() {
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, LBrace, VarKw, Ident, Eq, IntLiteral, Semicolon, Ident, Eq,
+        IntLiteral, RBrace,
+    ]);
+    assert!(
+        has_no_errors(&errors),
+        "expected no parse errors: {errors:?}"
+    );
+    assert!(has_node(&events, AssignStmt));
+}
+
 // ── Type definitions ────────────────────────────────────────────────
 
 #[test]
@@ -314,7 +369,8 @@ fn fn_def_with_contract() {
 #[test]
 fn fn_def_keyword_name_reports_single_targeted_error() {
     // fn effect() { 1 }
-    let (events, errors) = parse_tokens(&[FnKw, EffectKw, LParen, RParen, LBrace, IntLiteral, RBrace]);
+    let (events, errors) =
+        parse_tokens(&[FnKw, EffectKw, LParen, RParen, LBrace, IntLiteral, RBrace]);
     assert_eq!(
         errors.len(),
         1,
@@ -428,7 +484,9 @@ fn keyword_identifier_role_grammar_matrix_reports_targeted_messages() {
         },
         Case {
             name: "method name",
-            tokens: vec![FnKw, Ident, Dot, WhileKw, LParen, RParen, LBrace, IntLiteral, RBrace],
+            tokens: vec![
+                FnKw, Ident, Dot, WhileKw, LParen, RParen, LBrace, IntLiteral, RBrace,
+            ],
             message: "reserved keyword `while` cannot be used as a method name",
             node: FnDef,
         },

@@ -133,7 +133,7 @@ pub fn symbol_at_offset(root: &SyntaxNode, offset: TextSize) -> SymbolAtPosition
                 is_definition: true,
             };
         }
-        SyntaxKind::Param | SyntaxKind::LetBinding => {
+        SyntaxKind::Param | SyntaxKind::LetBinding | SyntaxKind::VarBinding => {
             return SymbolAtPosition::Local { name };
         }
         SyntaxKind::FieldExpr => {
@@ -187,7 +187,7 @@ pub fn symbol_at_offset(root: &SyntaxNode, offset: TextSize) -> SymbolAtPosition
             SyntaxKind::IdentPat => {
                 // Could be a zero-arg variant in a match arm, or a local.
                 if let Some(ggp) = grandparent.parent()
-                    && ggp.kind() == SyntaxKind::LetBinding
+                    && matches!(ggp.kind(), SyntaxKind::LetBinding | SyntaxKind::VarBinding)
                 {
                     return SymbolAtPosition::Local { name };
                 }

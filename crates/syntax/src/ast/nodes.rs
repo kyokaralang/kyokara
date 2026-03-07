@@ -301,6 +301,20 @@ impl LetBinding {
     }
 }
 
+define_ast_node!(VarBinding, VarBinding);
+
+impl HasName for VarBinding {}
+
+impl VarBinding {
+    pub fn type_expr(&self) -> Option<TypeExpr> {
+        self.syntax.children().find_map(TypeExpr::cast)
+    }
+
+    pub fn value(&self) -> Option<Expr> {
+        self.syntax.children().find_map(Expr::cast)
+    }
+}
+
 // ── Type-def sub-nodes ─────────────────────────────────────────────
 
 define_ast_node!(RecordFieldList, RecordFieldList);
@@ -882,6 +896,17 @@ impl ForStmt {
 
 define_ast_node!(BreakStmt, BreakStmt);
 define_ast_node!(ContinueStmt, ContinueStmt);
+define_ast_node!(AssignStmt, AssignStmt);
+
+impl AssignStmt {
+    pub fn target(&self) -> Option<Expr> {
+        self.syntax.children().filter_map(Expr::cast).next()
+    }
+
+    pub fn value(&self) -> Option<Expr> {
+        self.syntax.children().filter_map(Expr::cast).nth(1)
+    }
+}
 
 define_ast_node!(BlockExpr, BlockExpr);
 
@@ -896,8 +921,10 @@ impl BlockExpr {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BlockItem {
     LetBinding(LetBinding),
+    VarBinding(VarBinding),
     WhileStmt(WhileStmt),
     ForStmt(ForStmt),
+    AssignStmt(AssignStmt),
     BreakStmt(BreakStmt),
     ContinueStmt(ContinueStmt),
     Expr(Expr),
@@ -908,11 +935,17 @@ impl BlockItem {
         if let Some(let_b) = LetBinding::cast(node.clone()) {
             return Some(BlockItem::LetBinding(let_b));
         }
+        if let Some(var_b) = VarBinding::cast(node.clone()) {
+            return Some(BlockItem::VarBinding(var_b));
+        }
         if let Some(while_stmt) = WhileStmt::cast(node.clone()) {
             return Some(BlockItem::WhileStmt(while_stmt));
         }
         if let Some(for_stmt) = ForStmt::cast(node.clone()) {
             return Some(BlockItem::ForStmt(for_stmt));
+        }
+        if let Some(assign_stmt) = AssignStmt::cast(node.clone()) {
+            return Some(BlockItem::AssignStmt(assign_stmt));
         }
         if let Some(break_stmt) = BreakStmt::cast(node.clone()) {
             return Some(BlockItem::BreakStmt(break_stmt));

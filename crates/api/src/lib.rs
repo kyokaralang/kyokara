@@ -1261,6 +1261,10 @@ fn expr_expr_refs(expr: &Expr) -> Vec<u32> {
             for stmt in stmts {
                 match stmt {
                     Stmt::Let { init, .. } => refs.push(expr_idx_to_u32(*init)),
+                    Stmt::Assign { target, value } => {
+                        refs.push(expr_idx_to_u32(*target));
+                        refs.push(expr_idx_to_u32(*value));
+                    }
                     Stmt::While { condition, body } => {
                         refs.push(expr_idx_to_u32(*condition));
                         refs.push(expr_idx_to_u32(*body));
@@ -1308,7 +1312,11 @@ fn expr_pat_refs(expr: &Expr) -> Vec<u32> {
                     Stmt::Let { pat, .. } | Stmt::For { pat, .. } => {
                         refs.push(pat_idx_to_u32(*pat))
                     }
-                    Stmt::While { .. } | Stmt::Break | Stmt::Continue | Stmt::Expr(_) => {}
+                    Stmt::Assign { .. }
+                    | Stmt::While { .. }
+                    | Stmt::Break
+                    | Stmt::Continue
+                    | Stmt::Expr(_) => {}
                 }
             }
         }

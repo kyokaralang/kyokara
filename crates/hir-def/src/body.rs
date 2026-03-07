@@ -55,6 +55,7 @@ pub struct LocalBindingMeta {
     pub decl_range: kyokara_span::TextRange,
     pub scope: ScopeIdx,
     pub slot: usize,
+    pub mutable: bool,
 }
 
 /// Resolved local access coordinates for runtime lookup.
@@ -124,7 +125,11 @@ impl Body {
         expr_idx: ExprIdx,
         name: Name,
     ) -> Option<LocalSlotRef> {
-        let usage_scope = self.expr_scopes.get(expr_idx).copied().or(self.scopes.root)?;
+        let usage_scope = self
+            .expr_scopes
+            .get(expr_idx)
+            .copied()
+            .or(self.scopes.root)?;
         let resolved = self.resolve_name_at(module_scope, expr_idx, name)?;
         match resolved.resolved {
             ResolvedName::Local(ScopeDef::Local(pat_idx)) => {

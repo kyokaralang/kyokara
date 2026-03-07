@@ -21,15 +21,16 @@ use crate::token_set::TokenSet;
 
 /// Tokens that signal we should stop parsing an expression (recovery).
 const EXPR_RECOVERY: TokenSet = TokenSet::new(&[
-    LetKw, RBrace, Semicolon, RParen, Comma, FatArrow, TypeKw, FnKw, CapKw, PropertyKw, LeftArrow,
+    LetKw, VarKw, RBrace, Semicolon, RParen, Comma, FatArrow, TypeKw, FnKw, CapKw, PropertyKw,
+    LeftArrow,
 ]);
 const IF_HEAD_RECOVERY: TokenSet = TokenSet::new(&[LBrace, ElseKw, Semicolon, RBrace]);
 const MATCH_HEAD_RECOVERY: TokenSet = TokenSet::new(&[LBrace, Semicolon, RBrace]);
 const WHILE_HEAD_RECOVERY: TokenSet = TokenSet::new(&[LBrace, Semicolon, RBrace]);
 const FOR_HEAD_RECOVERY: TokenSet = TokenSet::new(&[RParen, LBrace, Semicolon, RBrace]);
 const RANGE_RHS_RECOVERY: TokenSet = TokenSet::new(&[
-    LetKw, RBrace, Semicolon, RParen, Comma, FatArrow, TypeKw, FnKw, CapKw, PropertyKw, LeftArrow,
-    PipeGt,
+    LetKw, VarKw, RBrace, Semicolon, RParen, Comma, FatArrow, TypeKw, FnKw, CapKw, PropertyKw,
+    LeftArrow, PipeGt,
 ]);
 
 /// Entry point: parse an expression.
@@ -173,13 +174,16 @@ fn paren_expr(p: &mut Parser<'_>) -> CompletedMarker {
     m.complete(p, ParenExpr)
 }
 
-/// `{ (LetBinding / Expr)* Expr? }`
+/// `{ (LetBinding / VarBinding / AssignStmt / Expr)* Expr? }`
 pub(super) fn block_expr(p: &mut Parser<'_>) -> CompletedMarker {
     let m = p.open();
     p.bump(); // {
     while !p.at(RBrace) && !p.at_eof() {
         if p.at(LetKw) {
             super::items::let_binding(p);
+            while p.eat(Semicolon) {}
+        } else if p.at(VarKw) {
+            super::items::var_binding(p);
             while p.eat(Semicolon) {}
         } else if p.at(WhileKw) {
             while_stmt(p);
@@ -193,8 +197,14 @@ pub(super) fn block_expr(p: &mut Parser<'_>) -> CompletedMarker {
         } else if p.at(ContinueKw) {
             continue_stmt(p);
             while p.eat(Semicolon) {}
-        } else if expr(p).is_some() {
-            // Expression statement — optionally followed by semicolons
+        } else if let Some(lhs) = expr(p) {
+            if p.at(Eq) {
+                let m = lhs.precede(p);
+                p.bump(); // =
+                expr(p);
+                m.complete(p, AssignStmt);
+            }
+            // Statement tail — optionally followed by semicolons
             // (we don't require semicolons in the grammar)
             while p.eat(Semicolon) {}
         } else {

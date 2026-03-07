@@ -402,6 +402,29 @@ fn lower_let_binding() {
 }
 
 #[test]
+fn lower_var_binding_and_assignment_stmt() {
+    let (body, diags, _) = lower_fn_body("fn foo() { var x = 1\n x = 2\n x }");
+    assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
+    match &body.exprs[body.root] {
+        Expr::Block { stmts, tail, .. } => {
+            assert_eq!(stmts.len(), 2);
+            assert!(
+                matches!(&stmts[0], Stmt::Let { mutable: true, .. }),
+                "expected mutable local binding, got: {:?}",
+                stmts[0]
+            );
+            assert!(
+                matches!(&stmts[1], Stmt::Assign { .. }),
+                "expected assignment stmt, got: {:?}",
+                stmts[1]
+            );
+            assert!(tail.is_some(), "expected block tail");
+        }
+        other => panic!("expected Block, got {other:?}"),
+    }
+}
+
+#[test]
 fn lower_lambda_expr() {
     let (body, diags, _) = lower_fn_body("fn foo() { fn(x: Int) => x }");
     assert!(diags.is_empty());
@@ -795,8 +818,7 @@ fn foo(x: Int) -> Int {
             let Expr::Path(path) = expr else {
                 return None;
             };
-            let access =
-                body.resolve_local_access_at(&module_scope, expr_idx, path.segments[0])?;
+            let access = body.resolve_local_access_at(&module_scope, expr_idx, path.segments[0])?;
             let range = *body.expr_source_map.get(expr_idx)?;
             Some((
                 range.start(),
@@ -840,7 +862,10 @@ fn foo(x: Int) -> Int {
         .collect::<Vec<_>>();
     local_slots.sort_by_key(|(start, _)| *start);
     assert_eq!(
-        local_slots.into_iter().map(|(_, slot)| slot).collect::<Vec<_>>(),
+        local_slots
+            .into_iter()
+            .map(|(_, slot)| slot)
+            .collect::<Vec<_>>(),
         vec![0, 1, 0]
     );
 }
@@ -863,8 +888,7 @@ fn foo(xs: Int) -> Int {
             let Expr::Path(path) = expr else {
                 return None;
             };
-            let access =
-                body.resolve_local_access_at(&module_scope, expr_idx, path.segments[0])?;
+            let access = body.resolve_local_access_at(&module_scope, expr_idx, path.segments[0])?;
             let range = *body.expr_source_map.get(expr_idx)?;
             Some((
                 range.start(),
@@ -899,7 +923,10 @@ fn foo(x: Int) -> Int
 "#;
     let (body, module_scope, diags, interner) = lower_named_fn_body_with_scope(src, Some("foo"));
     assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
-    let ensure_range = *body.expr_source_map.get(body.ensures[0]).expect("ensure range");
+    let ensure_range = *body
+        .expr_source_map
+        .get(body.ensures[0])
+        .expect("ensure range");
     let mut path_accesses = body
         .exprs
         .iter()
@@ -911,8 +938,7 @@ fn foo(x: Int) -> Int
             if range.start() < ensure_range.start() || range.end() > ensure_range.end() {
                 return None;
             }
-            let access =
-                body.resolve_local_access_at(&module_scope, expr_idx, path.segments[0])?;
+            let access = body.resolve_local_access_at(&module_scope, expr_idx, path.segments[0])?;
             Some((
                 range.start(),
                 path.segments[0].resolve(&interner).to_string(),

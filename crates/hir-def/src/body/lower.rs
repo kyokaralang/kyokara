@@ -11,9 +11,10 @@ use kyokara_span::{FileId, Span, TextRange};
 use kyokara_syntax::SyntaxKind;
 use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::{
-    self, ArgList, BinaryExpr, BlockExpr, BlockItem, CallExpr, ElseBranch, FieldExpr, FnDef,
-    IfExpr, IndexExpr, LambdaExpr, LiteralExpr, MatchExpr, NamedArg, OldExpr, PathExpr,
+    self, ArgList, AssignStmt, BinaryExpr, BlockExpr, BlockItem, CallExpr, ElseBranch, FieldExpr,
+    FnDef, IfExpr, IndexExpr, LambdaExpr, LiteralExpr, MatchExpr, NamedArg, OldExpr, PathExpr,
     PipelineExpr, PropagateExpr, PropertyDef, RecordExpr, ReturnExpr, TypeExpr, UnaryExpr,
+    VarBinding,
 };
 use kyokara_syntax::ast::traits::{HasName, HasTypeParams};
 
@@ -60,7 +61,10 @@ pub fn lower_body(
     // Create root scope
     let root_scope = ctx.scopes.new_root();
     ctx.current_scope = Some(root_scope);
-    let param_count = fn_def.param_list().map(|pl| pl.params().count()).unwrap_or(0);
+    let param_count = fn_def
+        .param_list()
+        .map(|pl| pl.params().count())
+        .unwrap_or(0);
     ctx.scope_slot_counts.insert(root_scope, param_count);
 
     // Register function parameters in scope
@@ -107,6 +111,7 @@ pub fn lower_body(
                 result_pat,
                 e.syntax().text_range(),
                 LocalBindingOrigin::ContractResult,
+                false,
             );
             let idx = ctx.lower_expr(&e);
             ctx.pop_scope();
@@ -298,6 +303,7 @@ impl BodyLowerCtx<'_> {
         pat_idx: PatIdx,
         decl_range: TextRange,
         origin: LocalBindingOrigin,
+        mutable: bool,
     ) {
         if let Some(scope) = self.current_scope {
             let slot = self.scope_slot_counts.get(scope).copied().unwrap_or(0);
@@ -310,6 +316,7 @@ impl BodyLowerCtx<'_> {
                     decl_range,
                     scope,
                     slot,
+                    mutable,
                 },
             );
             self.scope_slot_counts.insert(scope, slot + 1);
@@ -328,7 +335,7 @@ impl BodyLowerCtx<'_> {
                 (meta.origin == LocalBindingOrigin::LetPattern
                     && source_range.start() >= pat_range.start()
                     && source_range.end() <= pat_range.end())
-                    .then_some(candidate_idx)
+                .then_some(candidate_idx)
             })
             .collect::<Vec<_>>();
         for candidate_idx in affected {
@@ -832,7 +839,18 @@ impl BodyLowerCtx<'_> {
                         .unwrap_or_else(|| self.alloc_pat(pat::Pat::Missing));
                     self.override_let_binding_decl_range(pat, lb.syntax().text_range());
                     let ty = lb.type_expr().map(|te| self.lower_type_ref(&te));
-                    stmts.push(Stmt::Let { pat, ty, init });
+                    stmts.push(Stmt::Let {
+                        pat,
+                        ty,
+                        init,
+                        mutable: false,
+                    });
+                }
+                BlockItem::VarBinding(vb) => {
+                    stmts.push(self.lower_var_binding(vb));
+                }
+                BlockItem::AssignStmt(assign) => {
+                    stmts.push(self.lower_assign_stmt(assign));
                 }
                 BlockItem::Expr(expr) => {
                     let idx = self.lower_expr(expr);
@@ -877,6 +895,45 @@ impl BodyLowerCtx<'_> {
 
         self.pop_scope();
         self.alloc_expr(Expr::Block { stmts, tail })
+    }
+
+    fn lower_var_binding(&mut self, vb: &VarBinding) -> Stmt {
+        let init = vb
+            .value()
+            .map(|e| self.lower_expr(&e))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+        let name = vb
+            .name_token()
+            .map(|tok| Name::new(self.interner, tok.text()))
+            .unwrap_or_else(|| Name::new(self.interner, "_"));
+        let pat = self.alloc_pat(pat::Pat::Bind { name });
+        self.pat_source_map.insert(pat, vb.syntax().text_range());
+        self.register_local_binding(
+            name,
+            pat,
+            vb.syntax().text_range(),
+            LocalBindingOrigin::LetPattern,
+            true,
+        );
+        let ty = vb.type_expr().map(|te| self.lower_type_ref(&te));
+        Stmt::Let {
+            pat,
+            ty,
+            init,
+            mutable: true,
+        }
+    }
+
+    fn lower_assign_stmt(&mut self, assign: &AssignStmt) -> Stmt {
+        let target = assign
+            .target()
+            .map(|e| self.lower_expr(&e))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+        let value = assign
+            .value()
+            .map(|e| self.lower_expr(&e))
+            .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
+        Stmt::Assign { target, value }
     }
 
     fn lower_record(&mut self, re: &RecordExpr) -> ExprIdx {
@@ -982,6 +1039,7 @@ impl BodyLowerCtx<'_> {
                             pat_idx,
                             p.syntax().text_range(),
                             LocalBindingOrigin::LambdaParam,
+                            false,
                         );
 
                         let ty = p.type_expr().map(|te| self.lower_type_ref(&te));
@@ -1063,7 +1121,13 @@ impl BodyLowerCtx<'_> {
                             .with_kind(DiagnosticKind::DuplicateDefinition),
                         );
                     }
-                    self.register_local_binding(name, pat_idx, ip.syntax().text_range(), origin);
+                    self.register_local_binding(
+                        name,
+                        pat_idx,
+                        ip.syntax().text_range(),
+                        origin,
+                        false,
+                    );
                     pat_idx
                 }
             }
@@ -1182,7 +1246,13 @@ impl BodyLowerCtx<'_> {
                     let field_name = Name::new(self.interner, tok.text());
                     let pat_idx = self.alloc_pat(pat::Pat::Bind { name: field_name });
                     self.pat_source_map.insert(pat_idx, tok.text_range());
-                    self.register_local_binding(field_name, pat_idx, tok.text_range(), origin);
+                    self.register_local_binding(
+                        field_name,
+                        pat_idx,
+                        tok.text_range(),
+                        origin,
+                        false,
+                    );
                 }
                 let pat_idx = self.alloc_pat(pat::Pat::Record { path, fields });
                 self.pat_source_map

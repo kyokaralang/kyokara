@@ -532,6 +532,10 @@ impl Interpreter {
                 for stmt in stmts {
                     count += match stmt {
                         Stmt::Let { init, .. } => self.count_local_access_uses(body, *init, target),
+                        Stmt::Assign { target: lhs, value } => {
+                            self.count_local_access_uses(body, *lhs, target)
+                                + self.count_local_access_uses(body, *value, target)
+                        }
                         Stmt::While {
                             condition,
                             body: loop_body,
@@ -600,6 +604,7 @@ impl Interpreter {
     fn stmt_scope(body: &Body, stmt: &Stmt) -> Option<ScopeIdx> {
         let expr_idx = match stmt {
             Stmt::Let { init, .. } => *init,
+            Stmt::Assign { value, .. } => *value,
             Stmt::While { condition, .. } => *condition,
             Stmt::For { source, .. } => *source,
             Stmt::Expr(idx) => *idx,
@@ -636,6 +641,9 @@ impl Interpreter {
         };
         let (_, access, receiver_name) = self.leftmost_method_chain_receiver(body, expr_idx)?;
         let pat_scope = body.local_binding_meta.get(pat_idx)?.scope;
+        if body.local_binding_meta.get(pat_idx)?.mutable {
+            return None;
+        }
         let allow_root_block_shadow = Self::root_block_scope(body) == Some(pat_scope);
         if access.depth != 0 && !allow_root_block_shadow {
             return None;
@@ -4130,6 +4138,37 @@ impl Interpreter {
                         return Err(err);
                     }
                 }
+                Stmt::Assign { target, value } => {
+                    let result = match self.eval_expr(env, body, *value) {
+                        Ok(result) => result,
+                        Err(err) => {
+                            env.pop_scope();
+                            return Err(err);
+                        }
+                    };
+                    if matches!(
+                        result,
+                        ControlFlow::Return(_) | ControlFlow::Break | ControlFlow::Continue
+                    ) {
+                        env.pop_scope();
+                        return Ok(result);
+                    }
+                    let Some(access) = self.local_access_for_expr(body, *target) else {
+                        env.pop_scope();
+                        return Err(RuntimeError::TypeError(
+                            "assignment target must be a local variable".into(),
+                        ));
+                    };
+                    if env
+                        .set_slot(access.depth, access.slot, result.into_value())
+                        .is_none()
+                    {
+                        env.pop_scope();
+                        return Err(RuntimeError::TypeError(
+                            "internal runtime error: assignment target unavailable".into(),
+                        ));
+                    }
+                }
                 Stmt::While {
                     condition,
                     body: loop_body,
@@ -4419,6 +4458,38 @@ impl Interpreter {
                     if let Err(err) = self.bind_pat_shared(body, *pat, &result.into_value()) {
                         self.env.pop_scope();
                         return Err(err);
+                    }
+                }
+                Stmt::Assign { target, value } => {
+                    let result = match self.eval_expr_shared(body, *value) {
+                        Ok(result) => result,
+                        Err(err) => {
+                            self.env.pop_scope();
+                            return Err(err);
+                        }
+                    };
+                    if matches!(
+                        result,
+                        ControlFlow::Return(_) | ControlFlow::Break | ControlFlow::Continue
+                    ) {
+                        self.env.pop_scope();
+                        return Ok(result);
+                    }
+                    let Some(access) = self.local_access_for_expr(body, *target) else {
+                        self.env.pop_scope();
+                        return Err(RuntimeError::TypeError(
+                            "assignment target must be a local variable".into(),
+                        ));
+                    };
+                    if self
+                        .env
+                        .set_slot(access.depth, access.slot, result.into_value())
+                        .is_none()
+                    {
+                        self.env.pop_scope();
+                        return Err(RuntimeError::TypeError(
+                            "internal runtime error: assignment target unavailable".into(),
+                        ));
                     }
                 }
                 Stmt::While {

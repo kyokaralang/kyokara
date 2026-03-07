@@ -669,8 +669,7 @@ mod tests {
 
     #[test]
     fn completion_dot_after_mutable_bitset_type_shows_new() {
-        let source =
-            "import collections\nfn main() -> Int {\n  let xs = collections.MutableBitSet.new(8)\n  xs.count()\n}";
+        let source = "import collections\nfn main() -> Int {\n  let xs = collections.MutableBitSet.new(8)\n  xs.count()\n}";
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
         let new_pos = source.find("new").expect("new offset");
