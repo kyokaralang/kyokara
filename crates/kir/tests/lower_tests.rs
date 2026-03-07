@@ -135,6 +135,16 @@ fn test_range_until_lowers_via_seq_range_intrinsic_path_rfc_0003() {
 }
 
 #[test]
+fn test_count_predicate_lowers_via_seq_count_by_intrinsic() {
+    let out = lower_and_display("fn f() -> Int { (0..<3).count(fn(n: Int) => n % 2 == 0) }");
+    assert!(out.contains("call intrinsic:seq_range("), "output:\n{out}");
+    assert!(
+        out.contains("call intrinsic:seq_count_by("),
+        "output:\n{out}"
+    );
+}
+
+#[test]
 fn test_loop_statements_lower_with_minimal_kir_compatibility_rfc_0006() {
     let out = lower_and_display(
         "import collections\n\

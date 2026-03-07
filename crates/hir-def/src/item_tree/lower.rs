@@ -391,7 +391,7 @@ impl ItemTreeCtx<'_> {
 
             self.module_scope
                 .methods
-                .insert((receiver_key, method_name), fn_idx);
+                .insert((receiver_key, method_name), vec![fn_idx]);
         }
     }
 

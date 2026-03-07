@@ -178,8 +178,12 @@ pub struct ModuleScope {
     pub constructors: FxHashMap<Name, (TypeItemIdx, usize)>,
     /// Imported names: `local_name -> import_index`.
     pub imports: FxHashMap<Name, usize>,
-    /// Method definitions: `(receiver_identity, method_name)` → `FnItemIdx`.
-    pub methods: FxHashMap<(ReceiverKey, Name), FnItemIdx>,
+    /// Method definitions: `(receiver_identity, method_name)` → candidate `FnItemIdx`s.
+    ///
+    /// Most entries contain exactly one method. A small fixed arity family such as
+    /// `count()` / `count(predicate)` stores multiple candidates under the same
+    /// receiver/name key and is selected mechanically by arity.
+    pub methods: FxHashMap<(ReceiverKey, Name), Vec<FnItemIdx>>,
     /// Synthetic modules: `module_name` → `{ fn_name → FnItemIdx }`.
     /// Module-qualified calls like `io.println(s)` resolve through this.
     pub synthetic_modules: FxHashMap<Name, FxHashMap<Name, FnItemIdx>>,

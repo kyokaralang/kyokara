@@ -6304,6 +6304,40 @@ fn main() -> Int {
 }
 
 #[test]
+fn eval_collection_first_count_predicate_semantics_rfc_0002() {
+    let val = run_ok(
+        r#"import collections
+
+fn main() -> Int {
+    let a = ((0)..<6).count(fn(n: Int) => n % 2 == 0)
+    let b = collections.List.new().push(1).push(2).push(3).count(fn(n: Int) => n >= 2)
+    let c = "a,b,,c".split(",").count(fn(part: String) => part != "")
+    let d = collections.MutableList.from_list(collections.List.new().push(1).push(2).push(3))
+        .count(fn(n: Int) => n != 2)
+    let e = collections.Deque.new().push_back(1).push_back(2).push_back(3)
+        .count(fn(n: Int) => n < 3)
+    a * 10000 + b * 1000 + c * 100 + d * 10 + e
+}"#,
+    );
+    assert_eq!(val, Value::Int(32322));
+}
+
+#[test]
+fn eval_count_predicate_does_not_short_circuit() {
+    let err = run_err(
+        r#"fn main() -> Int {
+    (0..<3).count(fn(n: Int) =>
+        if (n == 0) { true } else { 10 / (n - 1) > 0 }
+    )
+}"#,
+    );
+    assert!(
+        err.contains("division by zero"),
+        "expected division-by-zero from full predicate evaluation, got: {err}"
+    );
+}
+
+#[test]
 fn eval_opaque_traversal_surface_semantics_rfc_0003() {
     let val = run_ok(
         r#"type Seed = { x: Int }

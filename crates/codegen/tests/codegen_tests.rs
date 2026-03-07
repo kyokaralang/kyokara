@@ -1734,7 +1734,11 @@ fn test_adt_float_field_roundtrip() {
            }\n\
          }",
     );
-    assert!((val - 3.14).abs() < 1e-10, "expected 3.14, got {val}");
+    let expected = 314.0_f64 / 100.0_f64;
+    assert!(
+        (val - expected).abs() < 1e-10,
+        "expected {expected}, got {val}"
+    );
 }
 
 #[test]
@@ -1778,7 +1782,11 @@ fn test_adt_mixed_int_float_fields_get_float() {
            }\n\
          }",
     );
-    assert!((val - 3.14).abs() < 1e-10, "expected 3.14, got {val}");
+    let expected = 314.0_f64 / 100.0_f64;
+    assert!(
+        (val - expected).abs() < 1e-10,
+        "expected {expected}, got {val}"
+    );
 }
 
 #[test]
@@ -1832,5 +1840,9 @@ fn test_record_mixed_int_float_get_float() {
            r.value\n\
          }",
     );
-    assert!((val - 3.14).abs() < 1e-10, "expected 3.14, got {val}");
+    let expected = 314.0_f64 / 100.0_f64;
+    assert!(
+        (val - expected).abs() < 1e-10,
+        "expected {expected}, got {val}"
+    );
 }
