@@ -561,6 +561,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_windows", ReceiverKey::Core(CoreType::List), "windows"),
         ("seq_count", ReceiverKey::Core(CoreType::List), "count"),
         ("seq_count_by", ReceiverKey::Core(CoreType::List), "count"),
+        ("seq_frequencies", ReceiverKey::Core(CoreType::List), "frequencies"),
         ("seq_any", ReceiverKey::Core(CoreType::List), "any"),
         ("seq_all", ReceiverKey::Core(CoreType::List), "all"),
         ("seq_find", ReceiverKey::Core(CoreType::List), "find"),
@@ -763,6 +764,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             ReceiverKey::Core(CoreType::MutableList),
             "count",
         ),
+        (
+            "seq_frequencies",
+            ReceiverKey::Core(CoreType::MutableList),
+            "frequencies",
+        ),
         ("seq_any", ReceiverKey::Core(CoreType::MutableList), "any"),
         ("seq_all", ReceiverKey::Core(CoreType::MutableList), "all"),
         ("seq_find", ReceiverKey::Core(CoreType::MutableList), "find"),
@@ -812,6 +818,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_windows", ReceiverKey::Core(CoreType::Deque), "windows"),
         ("seq_count", ReceiverKey::Core(CoreType::Deque), "count"),
         ("seq_count_by", ReceiverKey::Core(CoreType::Deque), "count"),
+        ("seq_frequencies", ReceiverKey::Core(CoreType::Deque), "frequencies"),
         ("seq_any", ReceiverKey::Core(CoreType::Deque), "any"),
         ("seq_all", ReceiverKey::Core(CoreType::Deque), "all"),
         ("seq_find", ReceiverKey::Core(CoreType::Deque), "find"),
@@ -831,6 +838,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_windows", ReceiverKey::Core(CoreType::Seq), "windows"),
         ("seq_count", ReceiverKey::Core(CoreType::Seq), "count"),
         ("seq_count_by", ReceiverKey::Core(CoreType::Seq), "count"),
+        ("seq_frequencies", ReceiverKey::Core(CoreType::Seq), "frequencies"),
         ("seq_any", ReceiverKey::Core(CoreType::Seq), "any"),
         ("seq_all", ReceiverKey::Core(CoreType::Seq), "all"),
         ("seq_find", ReceiverKey::Core(CoreType::Seq), "find"),
@@ -1446,6 +1454,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     let map_kv = TypeRef::Path {
         path: Path::single(map_core_name),
         args: vec![k_ref.clone(), v_ref.clone()],
+    };
+    let map_ti = TypeRef::Path {
+        path: Path::single(map_core_name),
+        args: vec![t_ref.clone(), int_ty.clone()],
     };
     let mutable_map_kv = TypeRef::Path {
         path: Path::single(mutable_map_core_name),
@@ -2247,6 +2259,14 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![t_name],
             vec![("s", seq_t.clone()), ("f", fn_t_to_bool.clone())],
             int_ty.clone(),
+        ),
+        // seq_frequencies<T>(s: Seq<T>) -> Map<T, Int>
+        mk_intrinsic(
+            interner,
+            "seq_frequencies",
+            vec![t_name],
+            vec![("s", seq_t.clone())],
+            map_ti,
         ),
         // seq_any<T>(s: Seq<T>, f: fn(T) -> Bool) -> Bool
         mk_intrinsic(

@@ -6345,6 +6345,43 @@ fn main() -> Int {
 }
 
 #[test]
+fn eval_collection_first_frequencies_semantics() {
+    let val = run_ok(
+        r#"import collections
+
+fn main() -> Int {
+    let a = collections.List.new().push(3).push(1).push(3).push(2).frequencies()
+    let b = "a,b,a,c".split(",").frequencies()
+    let c = collections.MutableList.from_list(collections.List.new().push(1).push(2).push(1))
+        .frequencies()
+    let d = collections.Deque.new().push_back(1).push_back(2).push_back(1).frequencies()
+    let e = (0..<4).frequencies()
+    let empty = collections.List.new().frequencies()
+    let ordered = a.keys().to_list()
+    if (
+        a.get(3).unwrap_or(0) == 2
+            && a.get(1).unwrap_or(0) == 1
+            && a.len() == 3
+            && ordered[0] == 3
+            && ordered[1] == 1
+            && ordered[2] == 2
+            && b.get("a").unwrap_or(0) == 2
+            && b.get("c").unwrap_or(0) == 1
+            && c.get(1).unwrap_or(0) == 2
+            && d.get(2).unwrap_or(0) == 1
+            && e.len() == 4
+            && empty.is_empty()
+    ) {
+        1
+    } else {
+        0
+    }
+}"#,
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
 fn eval_collection_first_count_predicate_semantics_rfc_0002() {
     let val = run_ok(
         r#"import collections

@@ -1574,6 +1574,74 @@ fn infer_collection_first_traversal_surface_happy_paths_rfc_0002() {
 }
 
 #[test]
+fn infer_seq_frequencies_happy_paths() {
+    let cases = [
+        r#"fn main() -> Int {
+            let counts = collections.List.new().push(3).push(1).push(3).push(2).frequencies()
+            counts.get(3).unwrap_or(0) + counts.len()
+        }"#,
+        r#"fn main() -> Int {
+            let counts = "a,b,a,c".split(",").frequencies()
+            counts.get("a").unwrap_or(0) + counts.len()
+        }"#,
+        r#"import collections
+
+        fn main() -> Int {
+            let counts = collections.MutableList.from_list(collections.List.new().push(1).push(2).push(1))
+                .frequencies()
+            counts.get(1).unwrap_or(0) + counts.len()
+        }"#,
+        r#"import collections
+
+        fn main() -> Int {
+            let counts = collections.Deque.new().push_back(1).push_back(2).push_back(1).frequencies()
+            counts.get(1).unwrap_or(0) + counts.len()
+        }"#,
+        r#"fn main() -> Int {
+            let counts = (0..<4).frequencies()
+            counts.get(0).unwrap_or(0) + counts.len()
+        }"#,
+    ];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected no diagnostics, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn err_seq_frequencies_non_hashable_element_reports_e0024() {
+    let cases = [
+        r#"fn main() -> Int {
+            let counts = collections.List.new().push(collections.List.new().push(1)).frequencies()
+            counts.len()
+        }"#,
+        r#"type P = { x: Int }
+
+        fn main() -> Int {
+            let counts = collections.List.new().push(P { x: 1 }).frequencies()
+            counts.len()
+        }"#,
+    ];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("map key")),
+            "expected E0024 map key diagnostic, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
 fn infer_opaque_traversal_surface_happy_paths_rfc_0003() {
     let cases = [
         r#"fn main() -> Int {

@@ -1442,6 +1442,7 @@ impl<'a> InferenceCtx<'a> {
                 | "seq_windows"
                 | "seq_count"
                 | "seq_count_by"
+                | "seq_frequencies"
                 | "seq_any"
                 | "seq_all"
                 | "seq_find"
@@ -1708,6 +1709,19 @@ impl<'a> InferenceCtx<'a> {
                 let elem_ty = self.table.resolve_deep(&args[0]);
                 if !elem_ty.is_hashable_collection_key() {
                     self.push_diag(TyDiagnosticData::InvalidSetElement { ty: elem_ty });
+                }
+            }
+
+            // Check frequencies() element type: traversal elements become Map keys.
+            if matches!(
+                core,
+                Some(CoreType::List | CoreType::MutableList | CoreType::Deque | CoreType::Seq)
+            ) && !args.is_empty()
+                && method_str == "seq_frequencies"
+            {
+                let elem_ty = self.table.resolve_deep(&args[0]);
+                if !elem_ty.is_hashable_collection_key() {
+                    self.push_diag(TyDiagnosticData::InvalidMapKey { ty: elem_ty });
                 }
             }
 
