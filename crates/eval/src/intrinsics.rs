@@ -104,6 +104,7 @@ pub enum IntrinsicFn {
     SeqWindows,
     SeqCount,
     SeqCountBy,
+    SeqFrequencies,
     SeqAny,
     SeqAll,
     SeqFind,
@@ -223,6 +224,7 @@ impl IntrinsicFn {
                 | IntrinsicFn::SeqWindows
                 | IntrinsicFn::SeqCount
                 | IntrinsicFn::SeqCountBy
+                | IntrinsicFn::SeqFrequencies
                 | IntrinsicFn::SeqAny
                 | IntrinsicFn::SeqAll
                 | IntrinsicFn::SeqFind
@@ -1650,6 +1652,7 @@ impl IntrinsicFn {
             | IntrinsicFn::SeqWindows
             | IntrinsicFn::SeqCount
             | IntrinsicFn::SeqCountBy
+            | IntrinsicFn::SeqFrequencies
             | IntrinsicFn::SeqAny
             | IntrinsicFn::SeqAll
             | IntrinsicFn::SeqFind
@@ -1911,6 +1914,10 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (Name::new(interner, "seq_windows"), IntrinsicFn::SeqWindows),
         (Name::new(interner, "seq_count"), IntrinsicFn::SeqCount),
         (Name::new(interner, "seq_count_by"), IntrinsicFn::SeqCountBy),
+        (
+            Name::new(interner, "seq_frequencies"),
+            IntrinsicFn::SeqFrequencies,
+        ),
         (Name::new(interner, "seq_any"), IntrinsicFn::SeqAny),
         (Name::new(interner, "seq_all"), IntrinsicFn::SeqAll),
         (Name::new(interner, "seq_find"), IntrinsicFn::SeqFind),

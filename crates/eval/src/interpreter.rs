@@ -3478,6 +3478,27 @@ impl Interpreter {
                 })?;
                 Ok(Value::Int(count))
             }
+            IntrinsicFn::SeqFrequencies => {
+                let plan = self.require_traversal_plan(&args[0], "seq_frequencies")?;
+                let mut entries = indexmap::IndexMap::new();
+                self.seq_for_each(&plan, &mut |_interp, item| {
+                    let key = MapKey::from_value(&item)?;
+                    let next = match entries.get(&key) {
+                        Some(Value::Int(n)) => {
+                            n.checked_add(1).ok_or(RuntimeError::IntegerOverflow)?
+                        }
+                        Some(_) => {
+                            return Err(RuntimeError::TypeError(
+                                "seq_frequencies: internal count must be Int".into(),
+                            ));
+                        }
+                        None => 1,
+                    };
+                    entries.insert(key, Value::Int(next));
+                    Ok(())
+                })?;
+                Ok(Value::Map(Rc::new(entries)))
+            }
             IntrinsicFn::SeqAny => {
                 let plan = self.require_traversal_plan(&args[0], "seq_any")?;
                 let predicate = args[1].clone();

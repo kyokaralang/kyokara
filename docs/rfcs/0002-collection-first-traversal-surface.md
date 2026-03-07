@@ -78,7 +78,8 @@ Canonical user forms:
 11. `xs.find(f)`
 12. `xs.count()`
 13. `xs.count(f)`
-14. `xs.to_list()`
+14. `xs.frequencies()`
+15. `xs.to_list()`
 
 Predicate terminal query family:
 
@@ -87,6 +88,7 @@ Predicate terminal query family:
 3. `xs.find(f)` returns the first matching element
 4. `xs.count()` counts all elements
 5. `xs.count(f)` counts matching elements
+6. `xs.frequencies()` returns `Map<T, Int>` bucket counts in first-seen key order
 
 `xs.filter(f).count()` remains valid composition when the filtered traversal is
 also reused, but `xs.count(f)` is the canonical direct count query because it
@@ -248,7 +250,7 @@ Decision: reject permanent dual surface.
 1. Day-to-day traversal code never requires `seq()`.
 2. Common previous near-miss (`List.enumerate`) is valid by construction.
 3. No loss of traversal expressiveness compared with current `Seq` surface.
-4. `count()` and `count(predicate)` are both explicitly documented as the terminal count family.
+4. `count()` and `count(predicate)` are both explicitly documented as the terminal count family, and `frequencies()` is documented as the canonical full-histogram terminal.
 5. RFC 0001 law text updated to reflect canonical model and the `L7A` family-completion rule.
 
 ## Follow-up

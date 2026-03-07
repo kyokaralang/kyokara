@@ -4477,6 +4477,50 @@ fn check_seq_any_all_find_wrong_predicate_type_reports_type_mismatch() {
 }
 
 #[test]
+fn check_seq_frequencies_canonical_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+        fn main() -> Int {
+            let a = collections.List.new().push(3).push(1).push(3).push(2).frequencies()
+            let b = "a,b,a,c".split(",").frequencies()
+            let c = collections.MutableList.from_list(collections.List.new().push(1).push(2).push(1))
+                .frequencies()
+            let d = collections.Deque.new().push_back(1).push_back(2).push_back(1).frequencies()
+            let e = (0..<4).frequencies()
+            a.get(3).unwrap_or(0)
+                + b.get("a").unwrap_or(0)
+                + c.get(1).unwrap_or(0)
+                + d.get(1).unwrap_or(0)
+                + e.get(0).unwrap_or(0)
+        }"#,
+        "seq frequencies canonical surface",
+    );
+}
+
+#[test]
+fn check_seq_frequencies_non_hashable_element_reports_e0024() {
+    let output = check(
+        r#"type P = { x: Int }
+
+        fn main() -> Int {
+            let counts = collections.List.new().push(P { x: 1 }).frequencies()
+            counts.len()
+        }"#,
+        "test.ky",
+    );
+
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0024" && d.message.contains("map key")),
+        "expected E0024 map key diagnostic for frequencies(), got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_seq_count_predicate_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
         r#"import collections
