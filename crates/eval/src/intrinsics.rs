@@ -51,6 +51,9 @@ pub enum IntrinsicFn {
     MutableListNew,
     MutableListFromList,
     MutableListPush,
+    MutableListLast,
+    MutableListPop,
+    MutableListExtend,
     MutableListLen,
     MutableListIsEmpty,
     MutableListGet,
@@ -209,6 +212,8 @@ impl IntrinsicFn {
             IntrinsicFn::ListGet
                 | IntrinsicFn::ListHead
                 | IntrinsicFn::ListUpdate
+                | IntrinsicFn::MutableListLast
+                | IntrinsicFn::MutableListPop
                 | IntrinsicFn::MutableListGet
                 | IntrinsicFn::MutableListUpdate
                 | IntrinsicFn::MutableMapGet
@@ -555,6 +560,27 @@ impl IntrinsicFn {
                     ));
                 };
                 xs.push(val);
+                Ok(Value::MutableList(xs))
+            }
+            IntrinsicFn::MutableListExtend => {
+                let mut args = args;
+                let Value::List(values) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_list_extend: missing values argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_extend expects a List".into(),
+                    ));
+                };
+                let Value::MutableList(xs) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_list_extend: missing mutable list argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_extend expects a MutableList".into(),
+                    ));
+                };
+                xs.extend(values.iter().cloned());
                 Ok(Value::MutableList(xs))
             }
             IntrinsicFn::MutableListLen => {
@@ -1648,6 +1674,8 @@ impl IntrinsicFn {
             // ── Complex (intercepted by interpreter) ─────────────
             IntrinsicFn::ListGet
             | IntrinsicFn::ListHead
+            | IntrinsicFn::MutableListLast
+            | IntrinsicFn::MutableListPop
             | IntrinsicFn::MutableListGet
             | IntrinsicFn::MutableMapGet
             | IntrinsicFn::SeqMap
@@ -1747,6 +1775,18 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (
             Name::new(interner, "mutable_list_push"),
             IntrinsicFn::MutableListPush,
+        ),
+        (
+            Name::new(interner, "mutable_list_last"),
+            IntrinsicFn::MutableListLast,
+        ),
+        (
+            Name::new(interner, "mutable_list_pop"),
+            IntrinsicFn::MutableListPop,
+        ),
+        (
+            Name::new(interner, "mutable_list_extend"),
+            IntrinsicFn::MutableListExtend,
         ),
         (
             Name::new(interner, "mutable_list_len"),

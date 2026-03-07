@@ -635,7 +635,7 @@ while `io`/`fs` are module namespaces for effectful operations.
     Only naturally orderable element types are allowed (same as `xs.sort()`).
 * `MutableList<T>` — opaque builtin type with alias-visible in-place runtime storage (`Rc<RefCell<Vec<Value>>>`) ✓
   * Constructors: `collections.MutableList.new()` and `collections.MutableList.from_list(xs)` (requires `import collections`)
-  * Methods (storage/random-access): `xs.push(v)`, `xs.len()`, `xs.is_empty()`, `xs.get(i)` → `Option<T>`, `xs.set(i, v)`, `xs.update(i, f)`, `xs[i]`
+  * Methods (storage/random-access): `xs.push(v)`, `xs.last()` → `Option<T>`, `xs.pop()` → `Option<T>`, `xs.extend(ys)` where `ys: List<T>`, `xs.len()`, `xs.is_empty()`, `xs.get(i)` → `Option<T>`, `xs.set(i, v)`, `xs.update(i, f)`, `xs[i]`
   * Methods (traversal): `xs.map(f)`, `xs.filter(f)`, `xs.scan(init, f)`, `xs.enumerate()`, `xs.zip(other)`, `xs.chunks(n)`, `xs.windows(n)`, `xs.fold(init, f)`, `xs.count()`, `xs.count(f)`, `xs.frequencies()`, `xs.any(f)`, `xs.all(f)`, `xs.find(f)`, `xs.to_list()`
   * Mutation semantics: updates are visible across aliases that reference the same `MutableList`.
 * `MutableMap<K, V>` — opaque builtin type with alias-visible mutable key/value storage. Keys must be hashable types (Int, String, Char, Bool, Unit); invalid key types are rejected at compile time for typed mutable-map operations (E0024). ✓
