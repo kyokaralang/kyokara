@@ -4834,6 +4834,33 @@ impl Interpreter {
                     Err(e) => self.make_err(self.make_invalid_float(format!("{e}"))?),
                 }
             }
+            IntrinsicFn::CharToDecimalDigit => {
+                let Value::Char(c) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "char_to_decimal_digit expects a Char".into(),
+                    ));
+                };
+                if let Some(digit) = intrinsics::char_digit_value(*c, 10)? {
+                    self.make_some(Value::Int(digit))
+                } else {
+                    self.make_none()
+                }
+            }
+            IntrinsicFn::CharToDigit => {
+                let Value::Char(c) = &args[0] else {
+                    return Err(RuntimeError::TypeError("char_to_digit expects a Char".into()));
+                };
+                let Value::Int(radix) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "char_to_digit expects an Int radix".into(),
+                    ));
+                };
+                if let Some(digit) = intrinsics::char_digit_value(*c, *radix)? {
+                    self.make_some(Value::Int(digit))
+                } else {
+                    self.make_none()
+                }
+            }
             _ => Err(RuntimeError::TypeError("unknown complex intrinsic".into())),
         }
     }

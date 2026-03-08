@@ -162,6 +162,9 @@ pub enum IntrinsicFn {
     StringToLower,
     CharToString,
     CharCode,
+    CharIsDecimalDigit,
+    CharToDecimalDigit,
+    CharToDigit,
 
     // Int/Float math
     Abs,
@@ -193,6 +196,23 @@ pub enum IntrinsicFn {
     ListSort,
     ListSortBy,
     ListBinarySearch,
+}
+
+pub(crate) fn char_digit_value(c: char, radix: i64) -> Result<Option<i64>, RuntimeError> {
+    if !(2..=36).contains(&radix) {
+        return Err(RuntimeError::TypeError(
+            "char_to_digit: radix must be in 2..=36".into(),
+        ));
+    }
+
+    let value = match c {
+        '0'..='9' => Some(i64::from(c as u32 - '0' as u32)),
+        'a'..='z' => Some(i64::from(c as u32 - 'a' as u32) + 10),
+        'A'..='Z' => Some(i64::from(c as u32 - 'A' as u32) + 10),
+        _ => None,
+    };
+
+    Ok(value.filter(|digit| *digit < radix))
 }
 
 impl IntrinsicFn {
@@ -272,6 +292,8 @@ impl IntrinsicFn {
                 | IntrinsicFn::ResultMapOr
                 | IntrinsicFn::ParseInt
                 | IntrinsicFn::ParseFloat
+                | IntrinsicFn::CharToDecimalDigit
+                | IntrinsicFn::CharToDigit
         )
     }
 
@@ -1384,6 +1406,17 @@ impl IntrinsicFn {
                 };
                 Ok(Value::Int(i64::from(u32::from(*c))))
             }
+            IntrinsicFn::CharIsDecimalDigit => {
+                let Value::Char(c) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "char_is_decimal_digit expects a Char".into(),
+                    ));
+                };
+                Ok(Value::Bool(char_digit_value(*c, 10)?.is_some()))
+            }
+            IntrinsicFn::CharToDecimalDigit | IntrinsicFn::CharToDigit => Err(
+                RuntimeError::TypeError("char digit conversion intrinsic requires interpreter".into()),
+            ),
 
             // ── Int/Float math ───────────────────────────────────
             IntrinsicFn::Abs => {
@@ -2216,6 +2249,15 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
             IntrinsicFn::CharToString,
         ),
         (Name::new(interner, "char_code"), IntrinsicFn::CharCode),
+        (
+            Name::new(interner, "char_is_decimal_digit"),
+            IntrinsicFn::CharIsDecimalDigit,
+        ),
+        (
+            Name::new(interner, "char_to_decimal_digit"),
+            IntrinsicFn::CharToDecimalDigit,
+        ),
+        (Name::new(interner, "char_to_digit"), IntrinsicFn::CharToDigit),
         // Int/Float
         (Name::new(interner, "abs"), IntrinsicFn::Abs),
         (Name::new(interner, "int_pow"), IntrinsicFn::IntPow),

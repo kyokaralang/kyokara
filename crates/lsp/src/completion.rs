@@ -4,10 +4,13 @@ use std::sync::Arc;
 
 use kyokara_hir::{TypeDefKind, display_ty_with_tree};
 use kyokara_hir_def::resolver::StaticOwnerKey;
+use kyokara_hir_def::resolver::{PrimitiveType, ReceiverKey};
+use kyokara_hir_ty::ty::Ty;
 use kyokara_parser::SyntaxKind;
 use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::FnDef;
 use kyokara_syntax::ast::traits::HasName;
+use text_size::TextRange;
 use text_size::TextSize;
 use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, CompletionResponse};
 
@@ -206,10 +209,80 @@ fn try_dot_completion(
         }
     }
 
+    if items.is_empty()
+        && let Some(receiver_key) = receiver_key_for_base_expr(analysis, base_node.text_range())
+    {
+        add_receiver_method_completions(analysis, receiver_key, &mut items);
+    }
+
     if items.is_empty() {
         None // Not a module or type with static methods — fall through to normal completion.
     } else {
         Some(items)
+    }
+}
+
+fn receiver_key_for_base_expr(analysis: &FileAnalysis, base_range: TextRange) -> Option<ReceiverKey> {
+    for (fn_idx, body) in &analysis.type_check.fn_bodies {
+        let infer = analysis.type_check.fn_results.get(fn_idx)?;
+        for (expr_idx, range) in body.expr_source_map.iter() {
+            if *range == base_range {
+                let ty = infer.expr_types.get(expr_idx)?;
+                return receiver_key_for_ty(analysis, ty);
+            }
+        }
+    }
+    None
+}
+
+fn receiver_key_for_ty(analysis: &FileAnalysis, ty: &Ty) -> Option<ReceiverKey> {
+    match ty {
+        Ty::String => Some(ReceiverKey::Primitive(PrimitiveType::String)),
+        Ty::Int => Some(ReceiverKey::Primitive(PrimitiveType::Int)),
+        Ty::Float => Some(ReceiverKey::Primitive(PrimitiveType::Float)),
+        Ty::Bool => Some(ReceiverKey::Primitive(PrimitiveType::Bool)),
+        Ty::Char => Some(ReceiverKey::Primitive(PrimitiveType::Char)),
+        Ty::Adt { def, .. } => analysis
+            .module_scope
+            .core_types
+            .kind_for_idx(*def)
+            .map(ReceiverKey::Core)
+            .or(Some(ReceiverKey::User(*def))),
+        _ => None,
+    }
+}
+
+fn add_receiver_method_completions(
+    analysis: &FileAnalysis,
+    receiver_key: ReceiverKey,
+    items: &mut Vec<CompletionItem>,
+) {
+    let interner = &analysis.interner;
+    let tree = &analysis.item_tree;
+    let scope = &analysis.module_scope;
+
+    for ((method_receiver, method_name), fn_indices) in &scope.methods {
+        if *method_receiver != receiver_key {
+            continue;
+        }
+
+        for fn_idx in fn_indices {
+            let fn_item = &tree.functions[*fn_idx];
+            let params: Vec<String> = fn_item
+                .params
+                .iter()
+                .skip(1)
+                .map(|p| p.name.resolve(interner).to_string())
+                .collect();
+            let ret = fn_item.ret_type.as_ref().map(|_| " -> ...").unwrap_or("");
+            let detail = format!("fn({params}){ret}", params = params.join(", "));
+            items.push(CompletionItem {
+                label: method_name.resolve(interner).to_string(),
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some(detail),
+                ..Default::default()
+            });
+        }
     }
 }
 
@@ -697,6 +770,31 @@ mod tests {
         assert!(
             items.iter().any(|i| i.label == "new_max"),
             "expected 'new_max' in MutablePriorityQueue dot-completion: {items:?}"
+        );
+    }
+
+    #[test]
+    fn completion_dot_after_char_value_shows_digit_methods() {
+        let source =
+            "fn main() -> Int {\n  let ch = '7'\n  match (ch.to_decimal_digit()) { Some(n) => n None => 0 }\n}";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let field_pos = source
+            .find("to_decimal_digit")
+            .expect("to_decimal_digit offset");
+        let offset = TextSize::from(field_pos as u32);
+        let items = completion_items(&analysis, source, offset);
+        assert!(
+            items.iter().any(|i| i.label == "is_decimal_digit"),
+            "expected 'is_decimal_digit' in Char dot-completion: {items:?}"
+        );
+        assert!(
+            items.iter().any(|i| i.label == "to_decimal_digit"),
+            "expected 'to_decimal_digit' in Char dot-completion: {items:?}"
+        );
+        assert!(
+            items.iter().any(|i| i.label == "to_digit"),
+            "expected 'to_digit' in Char dot-completion: {items:?}"
         );
     }
 

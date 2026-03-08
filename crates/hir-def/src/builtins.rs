@@ -1135,6 +1135,21 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             ReceiverKey::Primitive(PrimitiveType::Char),
             "code",
         ),
+        (
+            "char_is_decimal_digit",
+            ReceiverKey::Primitive(PrimitiveType::Char),
+            "is_decimal_digit",
+        ),
+        (
+            "char_to_decimal_digit",
+            ReceiverKey::Primitive(PrimitiveType::Char),
+            "to_decimal_digit",
+        ),
+        (
+            "char_to_digit",
+            ReceiverKey::Primitive(PrimitiveType::Char),
+            "to_digit",
+        ),
     ];
 
     let mut seen_builtin_keys = kyokara_stdx::FxHashSet::default();
@@ -3022,6 +3037,36 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![],
             vec![("c", char_ty.clone())],
             int_ty.clone(),
+        ),
+        // char_is_decimal_digit(c: Char) -> Bool
+        mk_intrinsic(
+            interner,
+            "char_is_decimal_digit",
+            vec![],
+            vec![("c", char_ty.clone())],
+            bool_ty.clone(),
+        ),
+        // char_to_decimal_digit(c: Char) -> Option<Int>
+        mk_intrinsic(
+            interner,
+            "char_to_decimal_digit",
+            vec![],
+            vec![("c", char_ty.clone())],
+            TypeRef::Path {
+                path: Path::single(option_core_name),
+                args: vec![int_ty.clone()],
+            },
+        ),
+        // char_to_digit(c: Char, radix: Int) -> Option<Int>
+        mk_intrinsic(
+            interner,
+            "char_to_digit",
+            vec![],
+            vec![("c", char_ty.clone()), ("radix", int_ty.clone())],
+            TypeRef::Path {
+                path: Path::single(option_core_name),
+                args: vec![int_ty.clone()],
+            },
         ),
         // ── Int/Float math ──────────────────────────────────────
         // abs(n: Int) -> Int

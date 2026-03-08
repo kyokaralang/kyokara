@@ -413,7 +413,7 @@ cli             (depends: api, refactor, eval, pbt, fmt, hir, lsp, syntax, diagn
 - Set methods: `insert/contains/remove/len/is_empty/values`
 - String methods: scalar-based `len`/indexing/`substring`/`chars`, plus `contains/starts_with/ends_with/trim/split/to_upper/to_lower/concat/lines/parse_int/parse_float`
 - Int surface: native bitwise operators `&/|/^/~/<</>>` (`Int` only, arithmetic `>>`, shift counts `0..63`) plus methods `abs/pow/to_string/to_float`
-- Char methods: `to_string/code` (`code` returns Unicode scalar / code point value)
+- Char methods: `to_string/code/is_decimal_digit/to_decimal_digit/to_digit(radix)`; digit conversion uses ASCII `0-9` / `a-z` / `A-Z` semantics and `to_digit(radix)` requires `radix` in `2..=36`
 - Capability modules (explicit import + manifest enforcement): `io.*`, `fs.*`
 - Pure utility module (explicit import): `math.*`
 

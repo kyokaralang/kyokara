@@ -7574,6 +7574,77 @@ fn eval_method_char_code_on_indexed_string_chars() {
 }
 
 #[test]
+fn eval_method_char_is_decimal_digit() {
+    let ascii_digit = run_ok("fn main() -> Bool { '7'.is_decimal_digit() }");
+    assert_eq!(ascii_digit, Value::Bool(true));
+
+    let letter = run_ok("fn main() -> Bool { 'x'.is_decimal_digit() }");
+    assert_eq!(letter, Value::Bool(false));
+}
+
+#[test]
+fn eval_method_char_to_decimal_digit() {
+    let digit = run_ok(
+        r#"fn main() -> Int {
+    match ('7'.to_decimal_digit()) {
+        Some(n) => n
+        None => 0 - 1
+    }
+}"#,
+    );
+    assert_eq!(digit, Value::Int(7));
+
+    let nondigit = run_ok(
+        r#"fn main() -> Int {
+    match ('x'.to_decimal_digit()) {
+        Some(n) => n
+        None => 0 - 1
+    }
+}"#,
+    );
+    assert_eq!(nondigit, Value::Int(-1));
+}
+
+#[test]
+fn eval_method_char_to_digit_with_radix() {
+    let hex_upper = run_ok(
+        r#"fn main() -> Int {
+    match ('F'.to_digit(16)) {
+        Some(n) => n
+        None => 0 - 1
+    }
+}"#,
+    );
+    assert_eq!(hex_upper, Value::Int(15));
+
+    let hex_lower = run_ok(
+        r#"fn main() -> Int {
+    match ('f'.to_digit(16)) {
+        Some(n) => n
+        None => 0 - 1
+    }
+}"#,
+    );
+    assert_eq!(hex_lower, Value::Int(15));
+
+    let missing = run_ok(
+        r#"fn main() -> Int {
+    match ('g'.to_digit(16)) {
+        Some(n) => n
+        None => 0 - 1
+    }
+}"#,
+    );
+    assert_eq!(missing, Value::Int(-1));
+}
+
+#[test]
+fn eval_method_char_to_digit_rejects_invalid_radix() {
+    let err = run_err("fn main() -> Int { match ('7'.to_digit(1)) { Some(n) => n None => 0 } }");
+    assert!(err.contains("radix"), "got: {err}");
+}
+
+#[test]
 fn eval_method_int_abs() {
     let val = run_ok("fn main() -> Int { (0 - 5).abs() }");
     assert!(matches!(val, Value::Int(5)));

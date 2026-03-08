@@ -112,6 +112,51 @@ fn check_char_code_surface_typechecks() {
 }
 
 #[test]
+fn check_char_decimal_digit_surface_typechecks() {
+    let output = check(
+        r#"fn main() -> Int {
+    let a = if ('7'.is_decimal_digit()) { 1 } else { 0 }
+    let b = match ('7'.to_decimal_digit()) {
+        Some(n) => n
+        None => 0
+    }
+    let c = match ('f'.to_digit(16)) {
+        Some(n) => n
+        None => 0
+    }
+    a + b + c
+}"#,
+        "test.ky",
+    );
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_char_to_digit_requires_int_radix() {
+    let output = check(
+        r#"fn main() -> Int {
+    match ('f'.to_digit("16")) {
+        Some(n) => n
+        None => 0
+    }
+}"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("expected Int") || d.message.contains("type mismatch")),
+        "expected type mismatch diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_hole_produces_spec() {
     let output = check("fn foo() -> Int { _ }", "test.ky");
     assert_eq!(output.holes.len(), 1);
