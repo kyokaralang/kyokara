@@ -315,7 +315,7 @@ It is a design target for review and tightening, not current parser behavior.
 
 ```peg
 # Planned additions to Keyword:
-# 'trait' / 'impl' / 'deriving'
+# 'trait' / 'impl' / 'derive'
 # `Self` is reserved in trait declarations and impl blocks as the self-type placeholder.
 
 TraitRef             <- Path TypeArgList?
@@ -329,7 +329,7 @@ PlannedItem          <- 'pub'? (PlannedTypeDef
                        / ImplDef
 
 PlannedTypeDef       <- 'type' Ident TypeParamList? DeriveClause? '=' TypeBody
-DeriveClause         <- 'deriving' '(' TraitRef (',' TraitRef)* ','? ')'
+DeriveClause         <- 'derive' '(' TraitRef (',' TraitRef)* ','? ')'
 
 TraitDef             <- 'trait' Ident TypeParamList? SupertraitList? '{' TraitMethodSig* '}'
 SupertraitList       <- ':' TraitRef ('+' TraitRef)*
@@ -354,7 +354,7 @@ pub trait Show {
   fn show(self) -> String
 }
 
-type Point deriving (Eq, Hash) = { x: Int, y: Int }
+type Point derive(Eq, Hash) = { x: Int, y: Int }
 
 impl Show for Point {
   fn show(self) -> String {
@@ -362,15 +362,15 @@ impl Show for Point {
   }
 }
 
-fn less<T: Ord>(a: T, b: T) -> Bool {
-  Ord.compare(a, b) < 0
+fn debug_point(p: Point) -> String {
+  Show.show(p)
 }
 ```
 
 Why this example is canonical:
 
 1. `trait` declaration stays small.
-2. `deriving(...)` shows nominal conformance with no extra boilerplate.
+2. `derive(...)` shows nominal conformance with no extra boilerplate.
 3. `impl Show for Point` shows explicit user conformance.
-4. `Ord.compare(a, b)` shows the qualified trait-call rule.
-5. The only generic syntax needed for power is `fn less<T: Ord>(...)`.
+4. `Show.show(p)` shows the qualified trait-call rule.
+5. Generic bounds stay available elsewhere, but the first example does not force readers into them.

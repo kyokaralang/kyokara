@@ -14,7 +14,7 @@ This RFC defines:
 1. Explicit `trait` declarations.
 2. Explicit `impl` blocks.
 3. Generic trait bounds using `T: Trait` syntax.
-4. Optional `deriving(...)` for eligible nominal types.
+4. Optional `derive(...)` for eligible nominal types.
 5. Qualified trait calls such as `Ord.compare(a, b)`.
 6. Static trait resolution with deterministic coherence rules.
 
@@ -59,7 +59,7 @@ This is inconsistent with Kyokara's design goals:
 
 This RFC adds the following language surface:
 
-1. New reserved keywords: `trait`, `impl`, and `deriving`.
+1. New reserved keywords: `trait`, `impl`, and `derive`.
 2. `Self` is reserved in trait declarations and impl blocks as the self-type placeholder.
 3. New item kinds: trait declarations and impl blocks.
 4. A derive clause on nominal type declarations.
@@ -67,7 +67,7 @@ This RFC adds the following language surface:
 Canonical grammar additions:
 
 ```peg
-Keyword          <- ... / 'trait' / 'impl' / 'deriving'
+Keyword          <- ... / 'trait' / 'impl' / 'derive'
 
 TraitRef         <- Path TypeArgList?
 
@@ -80,7 +80,7 @@ Item             <- 'pub'? (TypeDef
                  / ImplDef
 
 TypeDef          <- 'type' Ident TypeParamList? DeriveClause? '=' TypeBody
-DeriveClause     <- 'deriving' '(' TraitRef (',' TraitRef)* ','? ')'
+DeriveClause     <- 'derive' '(' TraitRef (',' TraitRef)* ','? ')'
 
 TraitDef         <- 'trait' Ident TypeParamList? SupertraitList? '{' TraitMethodSig* '}'
 SupertraitList   <- ':' TraitRef ('+' TraitRef)*
@@ -94,7 +94,7 @@ Notes:
 
 1. `for` is already reserved elsewhere in the language, so impl syntax reuses the existing token.
 2. The grammar above is the normative surface contract; exact parser production factoring may differ internally.
-3. `deriving(...)` attaches only to nominal `type` declarations, never to anonymous structural records.
+3. `derive(...)` attaches only to nominal `type` declarations, never to anonymous structural records.
 4. Qualified trait calls reuse the existing qualified-call syntax surface; this RFC changes resolution policy, not the punctuation of calls.
 5. `impl` blocks are not independently `pub`; visibility is attached to traits, types, and ordinary items, not to impl blocks themselves.
 
@@ -176,7 +176,7 @@ Reason:
 Canonical usage summary:
 
 ```kyokara
-type Point deriving (Eq, Ord, Hash, Show) = { x: Int, y: Int }
+type Point derive(Eq, Ord, Hash, Show) = { x: Int, y: Int }
 
 fn clamp<T: Ord>(x: T, lo: T, hi: T) -> T {
   if (Ord.compare(x, lo) < 0) {
@@ -221,9 +221,9 @@ Phase-1 rule:
 Nominal record and ADT types may opt into synthesized conformances:
 
 ```kyokara
-type Point deriving (Eq, Ord, Hash, Show) = { x: Int, y: Int }
+type Point derive(Eq, Ord, Hash, Show) = { x: Int, y: Int }
 
-type Token deriving (Eq, Hash, Show) =
+type Token derive(Eq, Hash, Show) =
   | IntLit(Int)
   | Ident(String)
 ```
@@ -246,7 +246,7 @@ Phase-1 restriction:
 Structural-record boundary example:
 
 ```kyokara
-type Point deriving (Eq, Hash) = { x: Int, y: Int }
+type Point derive(Eq, Hash) = { x: Int, y: Int }
 
 let ok: Set<Point> = ...
 // Rejected in phase 1: Set<{ x: Int, y: Int }>
@@ -409,7 +409,7 @@ RFC 0012 depends on this RFC for `Ord`-based priority typing.
 
 ## Acceptance criteria
 
-1. The trait surface is fully specified: `trait`, `impl`, bounds, and `deriving(...)`.
+1. The trait surface is fully specified: `trait`, `impl`, bounds, and `derive(...)`.
 2. Coherence and resolution rules are explicit and non-ambient.
 3. Phase-1 trait usage is sufficient to replace current ad-hoc collection constraint checks.
 4. Deferred features are explicitly listed so later phases extend, rather than redesign, the model.
