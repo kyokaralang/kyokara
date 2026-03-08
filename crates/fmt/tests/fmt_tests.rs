@@ -440,6 +440,14 @@ fn fmt_record_expr() {
     );
 }
 
+#[test]
+fn fmt_anonymous_record_expr_has_no_leading_space() {
+    assert_fmt(
+        "fn main() -> { x: Int, y: Int } { { x: 1, y: 2 } }",
+        "fn main() -> { x: Int, y: Int } {\n  { x: 1, y: 2 }\n}\n",
+    );
+}
+
 // ── Patterns ────────────────────────────────────────────────────────
 
 #[test]
@@ -611,7 +619,47 @@ fn fmt_lambda_with_if_body_uses_stable_multiline_layout() {
 fn fmt_fold_lambda_in_call_uses_stable_multiline_layout() {
     assert_fmt(
         "fn main() -> Int { (0..<3).fold(0, fn(acc: Int, n: Int) => if (n > 1) { acc + n } else { acc }) }",
-        "fn main() -> Int {\n  (0 ..< 3).fold(0, fn(acc: Int, n: Int) =>\n      if (n > 1) {\n        acc + n\n      } else {\n        acc\n      })\n}\n",
+        "fn main() -> Int {\n  (0 ..< 3).fold(\n    0,\n    fn(acc: Int, n: Int) =>\n      if (n > 1) {\n        acc + n\n      } else {\n        acc\n      },\n  )\n}\n",
+    );
+}
+
+#[test]
+fn fmt_direct_call_multiline_lambda_argument_uses_block_arg_layout() {
+    assert_fmt_parse_ok(
+        "fn main() -> Int { apply(1, fn(acc: Int, n: Int) => if (n > 1) { acc + n } else { acc }) }",
+        "fn main() -> Int {\n  apply(\n    1,\n    fn(acc: Int, n: Int) =>\n      if (n > 1) {\n        acc + n\n      } else {\n        acc\n      },\n  )\n}\n",
+    );
+}
+
+#[test]
+fn fmt_unfold_lambda_with_block_body_uses_block_arg_layout() {
+    assert_fmt_parse_ok(
+        "fn main() -> Int { 0.unfold(fn(state: Int) => { let next = state + 1\nSome({ value: state, state: next }) }).count() }",
+        "fn main() -> Int {\n  0.unfold(\n    fn(state: Int) =>\n      {\n        let next = state + 1\n        Some({ value: state, state: next })\n      },\n  ).count()\n}\n",
+    );
+}
+
+#[test]
+fn fmt_named_arg_multiline_lambda_uses_block_arg_layout() {
+    assert_fmt_parse_ok(
+        "fn main() -> Int { apply(seed: 0, step: fn(state: Int) => if (state > 0) { state - 1 } else { state }).count() }",
+        "fn main() -> Int {\n  apply(\n    seed: 0,\n    step: fn(state: Int) =>\n      if (state > 0) {\n        state - 1\n      } else {\n        state\n      },\n  ).count()\n}\n",
+    );
+}
+
+#[test]
+fn fmt_if_expression_argument_uses_block_arg_layout() {
+    assert_fmt_parse_ok(
+        "fn main() -> Int { choose(if (ready) { 1 } else { 2 }, 3) }",
+        "fn main() -> Int {\n  choose(\n    if (ready) {\n      1\n    } else {\n      2\n    },\n    3,\n  )\n}\n",
+    );
+}
+
+#[test]
+fn fmt_simple_lambda_argument_stays_compact() {
+    assert_fmt(
+        "fn main() -> Int { (0..<3).fold(0, fn(acc: Int, n: Int) => acc + n) }",
+        "fn main() -> Int {\n  (0 ..< 3).fold(0, fn(acc: Int, n: Int) => acc + n)\n}\n",
     );
 }
 
