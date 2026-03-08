@@ -824,6 +824,7 @@ pub enum Value {
     List(Rc<Vec<Value>>),
     BitSet(BitSetValue),
     MutableList(MutableListValue),
+    MutablePriorityQueue(Rc<RefCell<MutablePriorityQueueValue>>),
     MutableMap(Rc<RefCell<MapValue>>),
     MutableSet(Rc<RefCell<SetValue>>),
     MutableBitSet(MutableBitSetValue),
@@ -906,6 +907,36 @@ pub enum SeqPlan {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PriorityQueueDirection {
+    Min,
+    Max,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PriorityQueueEntry {
+    pub priority: Value,
+    pub value: Value,
+    pub seq: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MutablePriorityQueueValue {
+    pub direction: PriorityQueueDirection,
+    pub next_seq: u64,
+    pub entries: Vec<PriorityQueueEntry>,
+}
+
+impl MutablePriorityQueueValue {
+    pub fn new(direction: PriorityQueueDirection) -> Self {
+        Self {
+            direction,
+            next_seq: 0,
+            entries: Vec::new(),
+        }
+    }
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -935,6 +966,9 @@ impl PartialEq for Value {
                 let b_items = b.items.borrow();
                 *a_items == *b_items
             }
+            (Value::MutablePriorityQueue(a), Value::MutablePriorityQueue(b)) => {
+                *a.borrow() == *b.borrow()
+            }
             (Value::MutableMap(a), Value::MutableMap(b)) => *a.borrow() == *b.borrow(),
             (Value::MutableSet(a), Value::MutableSet(b)) => *a.borrow() == *b.borrow(),
             (Value::MutableBitSet(a), Value::MutableBitSet(b)) => a.snapshot() == b.snapshot(),
@@ -959,6 +993,12 @@ impl Value {
 
     pub fn mutable_list(items: Vec<Value>) -> Self {
         Value::MutableList(MutableListValue::new(items))
+    }
+
+    pub fn mutable_priority_queue(direction: PriorityQueueDirection) -> Self {
+        Value::MutablePriorityQueue(Rc::new(RefCell::new(MutablePriorityQueueValue::new(
+            direction,
+        ))))
     }
 
     pub fn bitset(size_bits: usize) -> Self {
@@ -1060,6 +1100,17 @@ impl Value {
                 let snapshot = items.snapshot();
                 let fs: Vec<String> = snapshot.iter().map(|v| v.display(interner)).collect();
                 format!("MutableList([{}])", fs.join(", "))
+            }
+            Value::MutablePriorityQueue(queue) => {
+                let queue = queue.borrow();
+                let direction = match queue.direction {
+                    PriorityQueueDirection::Min => "min",
+                    PriorityQueueDirection::Max => "max",
+                };
+                format!(
+                    "MutablePriorityQueue(direction={direction}, len={})",
+                    queue.entries.len()
+                )
             }
             Value::MutableMap(entries) => {
                 let fs: Vec<String> = entries

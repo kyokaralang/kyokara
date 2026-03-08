@@ -5719,6 +5719,121 @@ fn eval_parse_int_user_defined_parse_error_reserved_variants_are_compile_error()
 }
 
 #[test]
+fn eval_collections_mutable_priority_queue_constructor_surface_rfc_0012() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let pq: MutablePriorityQueue<Int, String> = collections.MutablePriorityQueue.new_min()
+               .push(5, \"far\")
+               .push(1, \"near\")
+           match (pq.peek()) {
+             Some(item) => item.priority + pq.len()
+             None => 0
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(3)));
+}
+
+#[test]
+fn eval_collections_mutable_priority_queue_alias_constructor_surface_rfc_0012() {
+    let val = run_ok(
+        "import collections as c
+         fn main() -> Int {
+           let pq: MutablePriorityQueue<Int, String> = c.MutablePriorityQueue.new_max()
+               .push(1, \"low\")
+               .push(9, \"high\")
+           match (pq.pop()) {
+             Some(item) => item.priority
+             None => 0
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(9)));
+}
+
+#[test]
+fn eval_global_mutable_priority_queue_constructor_surface_is_removed_rfc_0012() {
+    let err = run_err(
+        "fn main() -> Int { let pq: MutablePriorityQueue<Int, Int> = MutablePriorityQueue.new_min() pq.len() }",
+    );
+    assert!(
+        err.contains("no method `new_min`")
+            || err.contains("unresolved name")
+            || err.contains("import name"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn eval_mutable_priority_queue_min_max_and_stable_ties() {
+    let val = run_ok(
+        r#"import collections
+         fn main() -> Int {
+           let minq: MutablePriorityQueue<Int, Int> = collections.MutablePriorityQueue.new_min()
+               .push(5, 50)
+               .push(1, 10)
+               .push(1, 11)
+           let maxq: MutablePriorityQueue<Int, Int> = collections.MutablePriorityQueue.new_max()
+               .push(5, 50)
+               .push(1, 10)
+               .push(5, 51)
+
+           let a = match (minq.pop()) { Some(item) => item.value None => 0 }
+           let b = match (minq.pop()) { Some(item) => item.value None => 0 }
+           let c = match (maxq.pop()) { Some(item) => item.value None => 0 }
+           let d = match (maxq.pop()) { Some(item) => item.value None => 0 }
+           a * 1000 + b * 100 + c * 10 + d
+         }"#,
+    );
+    assert!(matches!(val, Value::Int(11651)));
+}
+
+#[test]
+fn eval_mutable_priority_queue_aliases_observe_in_place_mutation() {
+    let val = run_ok(
+        r#"import collections
+         fn main() -> Int {
+           let pq: MutablePriorityQueue<Int, Int> = collections.MutablePriorityQueue.new_min()
+           let alias = pq
+           pq.push(3, 30).push(1, 10)
+           let top = match (alias.peek()) { Some(item) => item.value None => 0 }
+           top * 10 + alias.len()
+         }"#,
+    );
+    assert!(matches!(val, Value::Int(102)));
+}
+
+#[test]
+fn eval_mutable_priority_queue_empty_peek_and_pop_return_none() {
+    let val = run_ok(
+        r#"import collections
+         fn main() -> Int {
+           let pq: MutablePriorityQueue<Int, Int> = collections.MutablePriorityQueue.new_min()
+           let a = match (pq.peek()) { Some(_) => 1 None => 0 }
+           let b = match (pq.pop()) { Some(_) => 1 None => 0 }
+           a * 10 + b
+         }"#,
+    );
+    assert!(matches!(val, Value::Int(0)));
+}
+
+#[test]
+fn eval_mutable_priority_queue_non_ord_priority_is_compile_error() {
+    let err = run_err(
+        r#"import collections
+         fn main() -> Int {
+           let pq: MutablePriorityQueue<Float, Int> = collections.MutablePriorityQueue.new_min()
+           pq.len()
+         }"#,
+    );
+    assert!(
+        err.contains("Ord") || err.contains("trait"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn eval_parse_float_user_defined_parse_error_reserved_variants_are_compile_error() {
     let err = run_err(
         r#"type ParseError = InvalidInt(Int) | InvalidFloat(Int)

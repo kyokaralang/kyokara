@@ -596,14 +596,14 @@ a canonical API surface: method calls for value-owned behavior, module-qualified
 for no-owner utilities and effects, and type-namespaced constructors.
 
 Canonical visibility matrix:
-* Prelude builtin value types (no import): `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `Deque<T>`, `Map<K, V>`, `Set<T>`, `BitSet`, `MutableBitSet` type names and value methods.
-* Pure collection constructors (imported module): `collections.List.new()`, `collections.Map.new()`, `collections.Set.new()`, `collections.MutableList.new()`, `collections.MutableList.from_list(xs)`, `collections.MutableMap.new()`, `collections.MutableSet.new()`, `collections.Deque.new()`, `collections.BitSet.new(size)`, `collections.MutableBitSet.new(size)`
+* Prelude builtin value types (no import): `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `MutablePriorityQueue<P, T>`, `Deque<T>`, `Map<K, V>`, `Set<T>`, `BitSet`, `MutableBitSet` type names and value methods.
+* Pure collection constructors (imported module): `collections.List.new()`, `collections.Map.new()`, `collections.Set.new()`, `collections.MutableList.new()`, `collections.MutableList.from_list(xs)`, `collections.MutableMap.new()`, `collections.MutableSet.new()`, `collections.MutablePriorityQueue.new_min()`, `collections.MutablePriorityQueue.new_max()`, `collections.Deque.new()`, `collections.BitSet.new(size)`, `collections.MutableBitSet.new(size)`
 * Prelude traversal constructors (no import): `start..<end`, `seed.unfold(step)`.
 * Pure no-owner utilities (imported module): `math.*`
 * Effectful utilities (imported capability modules): `io.*`, `fs.*`
 * Internal intrinsic IDs (`list_new`, `map_insert`, etc.) are implementation detail only.
 
-Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `Deque<T>`, `Map<K, V>`, `Set<T>`, `BitSet`, `MutableBitSet`, and `ParseError` are
+Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `MutablePriorityQueue<P, T>`, `Deque<T>`, `Map<K, V>`, `Set<T>`, `BitSet`, `MutableBitSet`, and `ParseError` are
 injected as synthetic types before type-checking. Synthetic modules (`collections`, `io`, `math`, `fs`)
 require explicit `import collections` / `import io` / `import math` / `import fs` in all modes.
 Zero intrinsic free functions exist in user scope.
@@ -615,8 +615,8 @@ Runtime soundness invariants for core APIs:
 * Temporary safety rule: unqualified user ADT variants named `Some`, `None`, `Ok`, `Err`, `InvalidInt`, and `InvalidFloat` are rejected until qualified constructors are implemented.
 * Follow-up: add qualified constructors/patterns (`Type.Variant`) and remove the temporary reservation ([#293](https://github.com/kyokaralang/kyokara/issues/293)).
 
-Mental model: `List`/`MutableList`/`MutableMap`/`MutableSet`/`Deque`/`Map`/`Set`/`BitSet`/`MutableBitSet` are prelude value types (type/value namespace),
-`collections` is the pure module namespace for collection constructors (`List`/`Map`/`Set` plus specialized collections like `MutableList`, `MutableMap`, `MutableSet`, `Deque`, `BitSet`, and `MutableBitSet`),
+Mental model: `List`/`MutableList`/`MutableMap`/`MutableSet`/`MutablePriorityQueue`/`Deque`/`Map`/`Set`/`BitSet`/`MutableBitSet` are prelude value types (type/value namespace),
+`collections` is the pure module namespace for collection constructors (`List`/`Map`/`Set` plus specialized collections like `MutableList`, `MutableMap`, `MutableSet`, `MutablePriorityQueue`, `Deque`, `BitSet`, and `MutableBitSet`),
 while `io`/`fs` are module namespaces for effectful operations.
 
 **Implemented (v0.1+):**
@@ -639,12 +639,16 @@ while `io`/`fs` are module namespaces for effectful operations.
   * Methods (storage/random-access): `xs.push(v)`, `xs.last()` → `Option<T>`, `xs.pop()` → `Option<T>`, `xs.extend(ys)` where `ys: List<T>`, `xs.len()`, `xs.is_empty()`, `xs.get(i)` → `Option<T>`, `xs.set(i, v)`, `xs.update(i, f)`, `xs[i]`
   * Methods (traversal): `xs.map(f)`, `xs.filter(f)`, `xs.scan(init, f)`, `xs.enumerate()`, `xs.zip(other)`, `xs.chunks(n)`, `xs.windows(n)`, `xs.fold(init, f)`, `xs.count()`, `xs.count(f)`, `xs.frequencies()`, `xs.any(f)`, `xs.all(f)`, `xs.find(f)`, `xs.to_list()`
   * Mutation semantics: updates are visible across aliases that reference the same `MutableList`.
-* `MutableMap<K, V>` — opaque builtin type with alias-visible mutable key/value storage. Keys must be hashable types (Int, String, Char, Bool, Unit); invalid key types are rejected at compile time for typed mutable-map operations (E0024). ✓
+* `MutableMap<K, V>` — opaque builtin type with alias-visible mutable key/value storage. Keys must satisfy `Hash + Eq`; invalid key types are rejected at compile time for typed mutable-map operations (E0024). ✓
   * Constructor: `collections.MutableMap.new()` (requires `import collections`)
   * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()`, `m.values()`, `m.is_empty()`
-* `MutableSet<T>` — opaque builtin type with alias-visible mutable set storage. Elements must be hashable types (Int, String, Char, Bool, Unit); invalid element types are rejected at compile time for typed mutable-set operations (E0028). ✓
+* `MutableSet<T>` — opaque builtin type with alias-visible mutable set storage. Elements must satisfy `Hash + Eq`; invalid element types are rejected at compile time for typed mutable-set operations (E0028). ✓
   * Constructor: `collections.MutableSet.new()` (requires `import collections`)
   * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()`
+* `MutablePriorityQueue<P, T>` — opaque builtin type with alias-visible prioritized worklist storage. Priorities must satisfy `Ord`; invalid priority types are rejected at compile time with missing-`Ord` diagnostics. ✓
+  * Constructors: `collections.MutablePriorityQueue.new_min()`, `collections.MutablePriorityQueue.new_max()` (requires `import collections`; `P` and `T` are inferred from context or explicit annotation)
+  * Methods: `pq.push(priority, value)`, `pq.peek()` → `Option<{ priority: P, value: T }>`, `pq.pop()` → `Option<{ priority: P, value: T }>`, `pq.len()`, `pq.is_empty()`
+  * Semantics: `new_min()` returns the smallest priority first, `new_max()` returns the largest first, and equal-priority ties are returned in insertion order.
 * `BitSet` — opaque builtin dense bitset with COW-backed packed-word runtime storage (`Rc<Vec<u64>>`). This is the canonical dense bounded-bit tool; `MutableList<Bool>` remains valid but is not the intended representation for dense relation/set workloads. ✓
   * Constructor: `collections.BitSet.new(size)` (requires `import collections`)
   * Domain: valid indices are `0..size-1`; `size` is fixed at construction; negative sizes are runtime errors.
@@ -668,10 +672,10 @@ while `io`/`fs` are module namespaces for effectful operations.
 * Guidance: for predicate/search traversal, default to `s.any(f)`, `s.all(f)`, `s.find(f)`, `s.count(f)`; use `s.frequencies()` for direct histogram/tally queries; reserve `s.fold(...)` for true accumulation/reduction
   * Evaluation model: each terminal re-runs the traversal pipeline from source (no single-use consumption state)
   * Implementation note: traversal is backed by an internal runtime/compiler engine type and is not nameable in user code
-* `Map<K, V>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<IndexMap<MapKey, Value>>`, insertion-order-preserving hash map, O(1) lookup). Keys must be hashable types (Int, String, Char, Bool, Unit); invalid key types are rejected at compile time for typed map operations (E0024). `m.keys()` and `m.values()` return deterministic insertion order traversal values. ✓
+* `Map<K, V>` — opaque builtin type with witness-backed persistent runtime storage and deterministic insertion-order iteration. Keys must satisfy `Hash + Eq`; invalid key types are rejected at compile time for typed map operations (E0024). `m.keys()` and `m.values()` return deterministic insertion order traversal values. ✓
   * Constructor: `collections.Map.new()` (requires `import collections`)
   * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()`, `m.values()`, `m.is_empty()`
-* `Set<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<IndexSet<MapKey>>`, insertion-order-preserving hash set). Elements must be hashable types (Int, String, Char, Bool, Unit); invalid element types are rejected at compile time for typed set operations (E0028). `s.values()` returns deterministic insertion-order traversal values. ✓
+* `Set<T>` — opaque builtin type with witness-backed persistent runtime storage and deterministic insertion-order iteration. Elements must satisfy `Hash + Eq`; invalid element types are rejected at compile time for typed set operations (E0028). `s.values()` returns deterministic insertion-order traversal values. ✓
   * Constructor: `collections.Set.new()` (requires `import collections`)
   * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()`
 * String methods ✓ — scalar-based (`s.len()` counts Unicode scalars; `s[i]`, `s.substring(a, b)`, and `s.chars()` operate on Unicode scalars), plus `s.contains(t)`, `s.starts_with(t)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()`, `s.parse_int()` → `Result<Int, ParseError>`, `s.parse_float()` → `Result<Float, ParseError>`
@@ -710,7 +714,7 @@ while `io`/`fs` are module namespaces for effectful operations.
 * Canonical formatter (`kyokara fmt`, `kyokara-fmt` crate, Wadler-Lindig Doc IR) ✓
 * Stable symbol IDs (`kind::name` / `kind::parent::child` format, unique across symbol kinds) ✓
 * Runtime contract checks (requires/ensures/old) ✓
-* Core stdlib (List, MutableList, MutableMap, MutableSet, Deque, Map, Set, BitSet, MutableBitSet, String, Int/Float, io, math, fs — intrinsic functions exposed via canonical method/module API) ✓
+* Core stdlib (List, MutableList, MutableMap, MutableSet, MutablePriorityQueue, Deque, Map, Set, BitSet, MutableBitSet, String, Int/Float, io, math, fs — intrinsic functions exposed via canonical method/module API) ✓
 
 **v0.2 — Refactoring + LSP + Capabilities**
 * Module system: convention-based file layout, `pub` visibility, flat imports ✓

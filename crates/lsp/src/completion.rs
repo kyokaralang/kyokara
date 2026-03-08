@@ -303,6 +303,7 @@ fn add_builtin_completions(items: &mut Vec<CompletionItem>) {
         "BitSet",
         "Map",
         "Set",
+        "MutablePriorityQueue",
         "MutableBitSet",
         "ParseError",
     ] {
@@ -678,6 +679,24 @@ mod tests {
         assert!(
             items.iter().any(|i| i.label == "new"),
             "expected 'new' in MutableBitSet dot-completion: {items:?}"
+        );
+    }
+
+    #[test]
+    fn completion_dot_after_mutable_priority_queue_type_shows_new_min_and_new_max() {
+        let source = "import collections\nfn main() -> Int {\n  let pq: MutablePriorityQueue<Int, Int> = collections.MutablePriorityQueue.new_min()\n  pq.len()\n}";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let new_pos = source.find("new_min").expect("new_min offset");
+        let offset = TextSize::from(new_pos as u32);
+        let items = completion_items(&analysis, source, offset);
+        assert!(
+            items.iter().any(|i| i.label == "new_min"),
+            "expected 'new_min' in MutablePriorityQueue dot-completion: {items:?}"
+        );
+        assert!(
+            items.iter().any(|i| i.label == "new_max"),
+            "expected 'new_max' in MutablePriorityQueue dot-completion: {items:?}"
         );
     }
 

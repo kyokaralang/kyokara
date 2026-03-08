@@ -34,6 +34,7 @@ fn core_hidden_type_name(interner: &mut Interner, core: CoreType) -> Name {
         CoreType::List => "$core_List",
         CoreType::BitSet => "$core_BitSet",
         CoreType::MutableList => "$core_MutableList",
+        CoreType::MutablePriorityQueue => "$core_MutablePriorityQueue",
         CoreType::MutableMap => "$core_MutableMap",
         CoreType::MutableSet => "$core_MutableSet",
         CoreType::MutableBitSet => "$core_MutableBitSet",
@@ -53,6 +54,7 @@ fn core_public_type_name(interner: &mut Interner, core: CoreType) -> Name {
         CoreType::List => "List",
         CoreType::BitSet => "BitSet",
         CoreType::MutableList => "MutableList",
+        CoreType::MutablePriorityQueue => "MutablePriorityQueue",
         CoreType::MutableMap => "MutableMap",
         CoreType::MutableSet => "MutableSet",
         CoreType::MutableBitSet => "MutableBitSet",
@@ -113,8 +115,9 @@ fn path_type(interner: &mut Interner, name: &str) -> TypeRef {
     }
 }
 
-/// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`, `MutableMap<K,V>`,
-/// `MutableSet<T>`, `Deque<T>`, `Seq<T>`, `Map<K,V>`, `Set<T>`, and `ParseError` into the
+/// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`,
+/// `MutablePriorityQueue<P, T>`, `MutableMap<K,V>`, `MutableSet<T>`, `Deque<T>`,
+/// `Seq<T>`, `Map<K,V>`, `Set<T>`, and `ParseError` into the
 /// item tree
 /// and module scope.
 ///
@@ -131,6 +134,7 @@ pub fn register_builtin_types(
     register_list(tree, scope, interner);
     register_bitset(tree, scope, interner);
     register_mutable_list(tree, scope, interner);
+    register_mutable_priority_queue(tree, scope, interner);
     register_mutable_map(tree, scope, interner);
     register_mutable_set(tree, scope, interner);
     register_mutable_bitset(tree, scope, interner);
@@ -319,6 +323,24 @@ fn register_mutable_list(tree: &mut ItemTree, scope: &mut ModuleScope, interner:
         interner,
         CoreType::MutableList,
         vec![t_name],
+        TypeDefKind::Adt { variants: vec![] },
+    );
+}
+
+/// `MutablePriorityQueue<P, T>` — opaque builtin type (no variants, no pattern matching).
+fn register_mutable_priority_queue(
+    tree: &mut ItemTree,
+    scope: &mut ModuleScope,
+    interner: &mut Interner,
+) {
+    let p_name = Name::new(interner, "P");
+    let t_name = Name::new(interner, "T");
+    let _ = register_core_type_item(
+        tree,
+        scope,
+        interner,
+        CoreType::MutablePriorityQueue,
+        vec![p_name, t_name],
         TypeDefKind::Adt { variants: vec![] },
     );
 }
@@ -741,6 +763,32 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             "mutable_list_update",
             ReceiverKey::Core(CoreType::MutableList),
             "update",
+        ),
+        // MutablePriorityQueue methods
+        (
+            "mutable_priority_queue_push",
+            ReceiverKey::Core(CoreType::MutablePriorityQueue),
+            "push",
+        ),
+        (
+            "mutable_priority_queue_peek",
+            ReceiverKey::Core(CoreType::MutablePriorityQueue),
+            "peek",
+        ),
+        (
+            "mutable_priority_queue_pop",
+            ReceiverKey::Core(CoreType::MutablePriorityQueue),
+            "pop",
+        ),
+        (
+            "mutable_priority_queue_len",
+            ReceiverKey::Core(CoreType::MutablePriorityQueue),
+            "len",
+        ),
+        (
+            "mutable_priority_queue_is_empty",
+            ReceiverKey::Core(CoreType::MutablePriorityQueue),
+            "is_empty",
         ),
         // MutableMap methods
         (
@@ -1313,10 +1361,13 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     let set = Name::new(interner, "Set");
     let deque = Name::new(interner, "Deque");
     let mutable_list = Name::new(interner, "MutableList");
+    let mutable_priority_queue = Name::new(interner, "MutablePriorityQueue");
     let mutable_map = Name::new(interner, "MutableMap");
     let mutable_set = Name::new(interner, "MutableSet");
     let mutable_bitset = Name::new(interner, "MutableBitSet");
     let new = Name::new(interner, "new");
+    let new_min = Name::new(interner, "new_min");
+    let new_max = Name::new(interner, "new_max");
     let from_list = Name::new(interner, "from_list");
     let list_new = Name::new(interner, "list_new");
     let bitset_new = Name::new(interner, "bitset_new");
@@ -1325,6 +1376,8 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     let deque_new = Name::new(interner, "deque_new");
     let mutable_list_new = Name::new(interner, "mutable_list_new");
     let mutable_list_from_list = Name::new(interner, "mutable_list_from_list");
+    let mutable_priority_queue_new_min = Name::new(interner, "mutable_priority_queue_new_min");
+    let mutable_priority_queue_new_max = Name::new(interner, "mutable_priority_queue_new_max");
     let mutable_map_new = Name::new(interner, "mutable_map_new");
     let mutable_set_new = Name::new(interner, "mutable_set_new");
     let mutable_bitset_new = Name::new(interner, "mutable_bitset_new");
@@ -1363,6 +1416,16 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
             .synthetic_module_static_methods
             .insert((collections, mutable_list, from_list), fn_idx);
     }
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_priority_queue_new_min) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, mutable_priority_queue, new_min), fn_idx);
+    }
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_priority_queue_new_max) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, mutable_priority_queue, new_max), fn_idx);
+    }
     if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_map_new) {
         scope
             .synthetic_module_static_methods
@@ -1381,10 +1444,10 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
 }
 
 /// Helper to build a simple intrinsic FnItem.
-fn mk_intrinsic(
+fn mk_intrinsic_with_type_params(
     interner: &mut Interner,
     name_str: &str,
-    type_params: Vec<Name>,
+    type_params: Vec<TypeParamDef>,
     params: Vec<(&str, TypeRef)>,
     ret: TypeRef,
 ) -> (Name, FnItem) {
@@ -1401,13 +1464,7 @@ fn mk_intrinsic(
         FnItem {
             name,
             is_pub: false,
-            type_params: type_params
-                .into_iter()
-                .map(|name| TypeParamDef {
-                    name,
-                    bounds: Vec::new(),
-                })
-                .collect(),
+            type_params,
             params: fn_params,
             ret_type: Some(ret),
             with_effects: Vec::new(),
@@ -1415,6 +1472,35 @@ fn mk_intrinsic(
             source_range: None,
             receiver_type: None,
         },
+    )
+}
+
+fn trait_ref_item(interner: &mut Interner, trait_name: &str) -> TraitRefItem {
+    TraitRefItem {
+        path: Path::single(Name::new(interner, trait_name)),
+        args: Vec::new(),
+    }
+}
+
+fn mk_intrinsic(
+    interner: &mut Interner,
+    name_str: &str,
+    type_params: Vec<Name>,
+    params: Vec<(&str, TypeRef)>,
+    ret: TypeRef,
+) -> (Name, FnItem) {
+    mk_intrinsic_with_type_params(
+        interner,
+        name_str,
+        type_params
+            .into_iter()
+            .map(|name| TypeParamDef {
+                name,
+                bounds: Vec::new(),
+            })
+            .collect(),
+        params,
+        ret,
     )
 }
 
@@ -1461,6 +1547,11 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         .get(CoreType::MutableList)
         .map(|info| info.type_name)
         .unwrap_or_else(|| Name::new(interner, "MutableList"));
+    let mutable_priority_queue_core_name = scope
+        .core_types
+        .get(CoreType::MutablePriorityQueue)
+        .map(|info| info.type_name)
+        .unwrap_or_else(|| Name::new(interner, "MutablePriorityQueue"));
     let mutable_map_core_name = scope
         .core_types
         .get(CoreType::MutableMap)
@@ -1516,6 +1607,7 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     let t_name = Name::new(interner, "T");
     let u_name = Name::new(interner, "U");
     let e_name = Name::new(interner, "E");
+    let p_name = Name::new(interner, "P");
     let k_name = Name::new(interner, "K");
     let v_name = Name::new(interner, "V");
     let s_name = Name::new(interner, "S");
@@ -1531,6 +1623,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     };
     let e_ref = TypeRef::Path {
         path: Path::single(e_name),
+        args: Vec::new(),
+    };
+    let p_ref = TypeRef::Path {
+        path: Path::single(p_name),
         args: Vec::new(),
     };
     let k_ref = TypeRef::Path {
@@ -1558,6 +1654,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     let mutable_list_t = TypeRef::Path {
         path: Path::single(mutable_list_core_name),
         args: vec![t_ref.clone()],
+    };
+    let mutable_priority_queue_pt = TypeRef::Path {
+        path: Path::single(mutable_priority_queue_core_name),
+        args: vec![p_ref.clone(), t_ref.clone()],
     };
     let deque_t = TypeRef::Path {
         path: Path::single(deque_core_name),
@@ -1673,6 +1773,17 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         path: Path::single(option_core_name),
         args: vec![v_ref.clone()],
     };
+    let priority_queue_item_pt = TypeRef::Record {
+        fields: vec![
+            (Name::new(interner, "priority"), p_ref.clone()),
+            (Name::new(interner, "value"), t_ref.clone()),
+        ],
+    };
+    let option_priority_queue_item_pt = TypeRef::Path {
+        path: Path::single(option_core_name),
+        args: vec![priority_queue_item_pt],
+    };
+    let ord_bound = trait_ref_item(interner, "Ord");
     let unfold_step_record = TypeRef::Record {
         fields: vec![
             (Name::new(interner, "value"), t_ref.clone()),
@@ -2042,6 +2153,129 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
                 ("f", fn_t_to_t.clone()),
             ],
             mutable_list_t.clone(),
+        ),
+        // mutable_priority_queue_new_min<P: Ord, T>() -> MutablePriorityQueue<P, T>
+        mk_intrinsic_with_type_params(
+            interner,
+            "mutable_priority_queue_new_min",
+            vec![
+                TypeParamDef {
+                    name: p_name,
+                    bounds: vec![ord_bound.clone()],
+                },
+                TypeParamDef {
+                    name: t_name,
+                    bounds: Vec::new(),
+                },
+            ],
+            vec![],
+            mutable_priority_queue_pt.clone(),
+        ),
+        // mutable_priority_queue_new_max<P: Ord, T>() -> MutablePriorityQueue<P, T>
+        mk_intrinsic_with_type_params(
+            interner,
+            "mutable_priority_queue_new_max",
+            vec![
+                TypeParamDef {
+                    name: p_name,
+                    bounds: vec![ord_bound.clone()],
+                },
+                TypeParamDef {
+                    name: t_name,
+                    bounds: Vec::new(),
+                },
+            ],
+            vec![],
+            mutable_priority_queue_pt.clone(),
+        ),
+        // mutable_priority_queue_push<P: Ord, T>(pq: MutablePriorityQueue<P,T>, priority: P, value: T) -> MutablePriorityQueue<P,T>
+        mk_intrinsic_with_type_params(
+            interner,
+            "mutable_priority_queue_push",
+            vec![
+                TypeParamDef {
+                    name: p_name,
+                    bounds: vec![ord_bound.clone()],
+                },
+                TypeParamDef {
+                    name: t_name,
+                    bounds: Vec::new(),
+                },
+            ],
+            vec![
+                ("pq", mutable_priority_queue_pt.clone()),
+                ("priority", p_ref.clone()),
+                ("value", t_ref.clone()),
+            ],
+            mutable_priority_queue_pt.clone(),
+        ),
+        // mutable_priority_queue_peek<P: Ord, T>(pq: MutablePriorityQueue<P,T>) -> Option<{ priority: P, value: T }>
+        mk_intrinsic_with_type_params(
+            interner,
+            "mutable_priority_queue_peek",
+            vec![
+                TypeParamDef {
+                    name: p_name,
+                    bounds: vec![ord_bound.clone()],
+                },
+                TypeParamDef {
+                    name: t_name,
+                    bounds: Vec::new(),
+                },
+            ],
+            vec![("pq", mutable_priority_queue_pt.clone())],
+            option_priority_queue_item_pt.clone(),
+        ),
+        // mutable_priority_queue_pop<P: Ord, T>(pq: MutablePriorityQueue<P,T>) -> Option<{ priority: P, value: T }>
+        mk_intrinsic_with_type_params(
+            interner,
+            "mutable_priority_queue_pop",
+            vec![
+                TypeParamDef {
+                    name: p_name,
+                    bounds: vec![ord_bound.clone()],
+                },
+                TypeParamDef {
+                    name: t_name,
+                    bounds: Vec::new(),
+                },
+            ],
+            vec![("pq", mutable_priority_queue_pt.clone())],
+            option_priority_queue_item_pt.clone(),
+        ),
+        // mutable_priority_queue_len<P: Ord, T>(pq: MutablePriorityQueue<P,T>) -> Int
+        mk_intrinsic_with_type_params(
+            interner,
+            "mutable_priority_queue_len",
+            vec![
+                TypeParamDef {
+                    name: p_name,
+                    bounds: vec![ord_bound.clone()],
+                },
+                TypeParamDef {
+                    name: t_name,
+                    bounds: Vec::new(),
+                },
+            ],
+            vec![("pq", mutable_priority_queue_pt.clone())],
+            int_ty.clone(),
+        ),
+        // mutable_priority_queue_is_empty<P: Ord, T>(pq: MutablePriorityQueue<P,T>) -> Bool
+        mk_intrinsic_with_type_params(
+            interner,
+            "mutable_priority_queue_is_empty",
+            vec![
+                TypeParamDef {
+                    name: p_name,
+                    bounds: vec![ord_bound.clone()],
+                },
+                TypeParamDef {
+                    name: t_name,
+                    bounds: Vec::new(),
+                },
+            ],
+            vec![("pq", mutable_priority_queue_pt.clone())],
+            bool_ty.clone(),
         ),
         // mutable_map_new<K, V>() -> MutableMap<K, V>
         mk_intrinsic(
