@@ -842,7 +842,7 @@ are maintained in one place.
 | `W8` | Refactoring protocol with verified safe patches | Partial | `70%` | [#31](https://github.com/kyokaralang/kyokara/issues/31), [#32](https://github.com/kyokaralang/kyokara/issues/32), [#238](https://github.com/kyokaralang/kyokara/issues/238) |
 | `W9` | Capability-native runtime permissions (deny-by-default execution boundary) | Implemented (with known limits) | `85%` | [#22](https://github.com/kyokaralang/kyokara/issues/22), [#186](https://github.com/kyokaralang/kyokara/issues/186) |
 | `W10` | Executable docs in CI (prevent stale guidance for agents) | Missing | `10%` | [#234](https://github.com/kyokaralang/kyokara/issues/234) |
-| `W11` | Deterministic canonical formatter (predictable edits) | Implemented | `95%` | [#34](https://github.com/kyokaralang/kyokara/issues/34) |
+| `W11` | Deterministic canonical formatter (predictable edits) | Implemented | `95%` | [#34](https://github.com/kyokaralang/kyokara/issues/34), [#404](https://github.com/kyokaralang/kyokara/issues/404) |
 | `W12` | Typed serialization contracts + schema evolution policy | Missing | `5%` | [#235](https://github.com/kyokaralang/kyokara/issues/235) |
 | `W13` | Partial-program checking (typed holes + incomplete code support) | Implemented | `100%` | [#35](https://github.com/kyokaralang/kyokara/issues/35) |
 | `W14` | Fast incremental compiler query API (low-latency AI edit loops) | Partial/weak | `35%` | [#33](https://github.com/kyokaralang/kyokara/issues/33), [#239](https://github.com/kyokaralang/kyokara/issues/239) |
