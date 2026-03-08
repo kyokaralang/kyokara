@@ -211,6 +211,60 @@ fn type_with_generics() {
 }
 
 #[test]
+fn type_with_derive_clause() {
+    // type Point derive(Eq, Hash) = { x: Int, y: Int }
+    let (events, errors) = parse_tokens(&[
+        TypeKw, Ident, DeriveKw, LParen, Ident, Comma, Ident, RParen, Eq, LBrace, Ident, Colon,
+        Ident, Comma, Ident, Colon, Ident, RBrace,
+    ]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, TypeDef));
+    assert!(has_node(&events, DeriveClause));
+    assert_eq!(count_start_nodes(&events, TraitRef), 2);
+}
+
+#[test]
+fn trait_def_with_supertraits() {
+    // pub trait Ord: Eq + Show { fn compare(self, other: Self) -> Int }
+    let (events, errors) = parse_tokens(&[
+        PubKw, TraitKw, Ident, Colon, Ident, Plus, Ident, LBrace, FnKw, Ident, LParen, Ident,
+        Comma, Ident, Colon, Ident, RParen, Arrow, Ident, RBrace,
+    ]);
+    assert!(has_no_errors(&errors), "unexpected errors: {errors:?}");
+    assert!(has_node(&events, TraitDef));
+    assert!(has_node(&events, SupertraitList));
+    assert!(has_node(&events, TraitMethodSig));
+    assert_eq!(count_start_nodes(&events, TraitRef), 2);
+}
+
+#[test]
+fn impl_def_is_parsed() {
+    // impl Show for Point { fn show(self) -> String { "" } }
+    let (events, errors) = parse_tokens(&[
+        ImplKw, Ident, ForKw, Ident, LBrace, FnKw, Ident, LParen, Ident, RParen, Arrow, Ident,
+        LBrace, StringLiteral, RBrace, RBrace,
+    ]);
+    assert!(has_no_errors(&errors), "unexpected errors: {errors:?}");
+    assert!(has_node(&events, ImplDef));
+    assert!(has_node(&events, TraitRef));
+    assert!(has_node(&events, ImplMethodDef));
+}
+
+#[test]
+fn bounded_type_params_are_parsed() {
+    // fn less<T: Ord + Show>(a: T) -> Bool { true }
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, Lt, Ident, Colon, Ident, Plus, Ident, Gt, LParen, Ident, Colon, Ident,
+        RParen, Arrow, Ident, LBrace, TrueKw, RBrace,
+    ]);
+    assert!(has_no_errors(&errors), "unexpected errors: {errors:?}");
+    assert!(has_node(&events, FnDef));
+    assert!(has_node(&events, TypeParamList));
+    assert!(has_node(&events, TypeParamBoundList));
+    assert_eq!(count_start_nodes(&events, TraitRef), 2);
+}
+
+#[test]
 fn nested_type_args_accept_gtgt_token() {
     // fn f(xs: List<List<Int>>) -> Int { 0 }
     let (events, errors) = parse_tokens(&[

@@ -139,6 +139,121 @@ fn eval_pipe_identifier_is_allowed_and_pipeline_still_runs() {
 }
 
 #[test]
+fn eval_builtin_trait_qualified_call() {
+    let val = run_ok("fn main() -> Int { Ord.compare(3, 1) }");
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_user_impl_trait_qualified_call() {
+    let val = run_ok(
+        "trait Show { fn show(self) -> String }\n\
+         type Point = { x: Int }\n\
+         impl Show for Point { fn show(self) -> String { \"p\" } }\n\
+         fn main() -> String {\n\
+             let p: Point = Point { x: 1 }\n\
+             Show.show(p)\n\
+         }",
+    );
+    assert!(matches!(val, Value::String(ref s) if s == "p"));
+}
+
+#[test]
+fn eval_map_supports_derived_key_type() {
+    let val = run_ok(
+        "import collections\n\
+         type Point derive(Eq, Hash) = { x: Int, y: Int }\n\
+         fn main() -> Int {\n\
+             let p: Point = Point { x: 1, y: 2 }\n\
+             let m = collections.Map.new().insert(p, 7)\n\
+             if (m.contains(p)) { m[p] } else { 0 }\n\
+         }",
+    );
+    assert_eq!(val, Value::Int(7));
+}
+
+#[test]
+fn eval_mutable_map_supports_derived_key_type() {
+    let val = run_ok(
+        "import collections\n\
+         type Point derive(Eq, Hash) = { x: Int, y: Int }\n\
+         fn main() -> Int {\n\
+             let p: Point = Point { x: 1, y: 2 }\n\
+             let m = collections.MutableMap.new().insert(p, 11)\n\
+             if (m.contains(p)) { m[p] } else { 0 }\n\
+         }",
+    );
+    assert_eq!(val, Value::Int(11));
+}
+
+#[test]
+fn eval_set_and_frequencies_support_derived_hash_eq_types() {
+    let val = run_ok(
+        "import collections\n\
+         type Point derive(Eq, Hash) = { x: Int }\n\
+         fn main() -> Int {\n\
+             let p: Point = Point { x: 3 }\n\
+             let s = collections.Set.new().insert(p)\n\
+             let counts = collections.List.new().push(p).push(p).frequencies()\n\
+             if (s.contains(p)) { counts[p] } else { 0 }\n\
+         }",
+    );
+    assert_eq!(val, Value::Int(2));
+}
+
+#[test]
+fn eval_mutable_set_supports_derived_hash_eq_type() {
+    let val = run_ok(
+        "import collections\n\
+         type Point derive(Eq, Hash) = { x: Int }\n\
+         fn main() -> Int {\n\
+             let p: Point = Point { x: 3 }\n\
+             let s = collections.MutableSet.new().insert(p)\n\
+             if (s.contains(p)) { s.len() } else { 0 }\n\
+         }",
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
+fn eval_manual_eq_hash_impls_drive_collection_behavior() {
+    let val = run_ok(
+        "import collections\n\
+         type Key = { raw: Int }\n\
+         impl Eq for Key {\n\
+             fn eq(self, other: Key) -> Bool { self.raw % 2 == other.raw % 2 }\n\
+         }\n\
+         impl Hash for Key {\n\
+             fn hash(self) -> Int { self.raw % 2 }\n\
+         }\n\
+         fn main() -> Int {\n\
+             let a: Key = Key { raw: 1 }\n\
+             let b: Key = Key { raw: 3 }\n\
+             let m = collections.Map.new().insert(a, 10).insert(b, 20)\n\
+             m.len() * 100 + m[a]\n\
+         }",
+    );
+    assert_eq!(val, Value::Int(120));
+}
+
+#[test]
+fn eval_list_sort_and_binary_search_support_user_ord() {
+    let val = run_ok(
+        "import collections\n\
+         type Point derive(Eq, Ord) = { x: Int }\n\
+         fn main() -> Int {\n\
+             let a: Point = Point { x: 3 }\n\
+             let b: Point = Point { x: 1 }\n\
+             let c: Point = Point { x: 2 }\n\
+             let xs = collections.List.new().push(a).push(b).push(c).sort()\n\
+             let needle: Point = Point { x: 2 }\n\
+             xs[0].x * 100 + xs[1].x * 10 + xs.binary_search(needle)\n\
+         }",
+    );
+    assert_eq!(val, Value::Int(121));
+}
+
+#[test]
 fn eval_literal_bool_true() {
     let val = run_ok("fn main() -> Bool { true }");
     assert!(matches!(val, Value::Bool(true)));
@@ -5959,38 +6074,37 @@ fn eval_list_sort_bools() {
 }
 
 #[test]
-fn eval_list_sort_floats() {
-    let val = run_ok(
-        "fn main() -> Float {
+fn eval_list_sort_floats_rejected() {
+    let err = run_err(
+        "fn main() -> Int {
             let xs = collections.List.new().push(3.0).push(1.0).push(2.0)
             let sorted = xs.sort()
-            match (sorted.get(0)) {
-                Some(x) => x
-                None => -1.0
-            }
+            sorted.len()
         }",
     );
-    assert_eq!(val, Value::Float(1.0));
+    assert!(
+        err.contains("cannot be sorted"),
+        "expected compile-time sort rejection, got: {err}"
+    );
 }
 
 #[test]
-fn eval_list_sort_floats_with_nan() {
-    // NaN sorts to end via f64::total_cmp
-    let val = run_ok(
-        r#"fn main() -> Float {
+fn eval_list_sort_floats_with_nan_rejected() {
+    let err = run_err(
+        r#"fn main() -> Int {
             let nan = match ("NaN".parse_float()) {
                 Ok(f) => f
                 Err(_) => 0.0
             }
             let xs = collections.List.new().push(nan).push(1.0).push(2.0)
             let sorted = xs.sort()
-            match (sorted.get(0)) {
-                Some(x) => x
-                None => -1.0
-            }
+            sorted.len()
         }"#,
     );
-    assert_eq!(val, Value::Float(1.0));
+    assert!(
+        err.contains("cannot be sorted"),
+        "expected compile-time sort rejection, got: {err}"
+    );
 }
 
 #[test]
@@ -6009,19 +6123,20 @@ fn eval_list_sort_chars() {
 }
 
 #[test]
-fn eval_list_sort_unsortable() {
-    let err = run_err(
+fn eval_list_sort_lists_lexicographically() {
+    let val = run_ok(
         "fn main() -> Int {
-            let inner = collections.List.new().push(1)
-            let xs = collections.List.new().push(inner)
+            let a = collections.List.new().push(1)
+            let b = collections.List.new().push(1).push(2)
+            let xs = collections.List.new().push(b).push(a)
             let sorted = xs.sort()
-            sorted.len()
+            match (sorted.get(0)) {
+                Some(inner) => inner.len()
+                None => -1
+            }
         }",
     );
-    assert!(
-        err.contains("cannot be sorted"),
-        "expected compile-time sort rejection, got: {err}"
-    );
+    assert_eq!(val, Value::Int(1));
 }
 
 #[test]
@@ -6049,18 +6164,17 @@ fn eval_list_binary_search_empty_returns_negative_one() {
 }
 
 #[test]
-fn eval_list_binary_search_unsortable() {
-    let err = run_err(
+fn eval_list_binary_search_lists() {
+    let val = run_ok(
         "fn main() -> Int {
-            let needle = collections.List.new().push(1)
-            let xs = collections.List.new().push(needle)
+            let a = collections.List.new().push(1)
+            let b = collections.List.new().push(1).push(2)
+            let xs = collections.List.new().push(a).push(b)
+            let needle = collections.List.new().push(1).push(2)
             xs.binary_search(needle)
         }",
     );
-    assert!(
-        err.contains("cannot be sorted"),
-        "expected compile-time binary_search rejection, got: {err}"
-    );
+    assert_eq!(val, Value::Int(1));
 }
 
 // ── list_sort_by tests ──────────────────────────────────────────────
@@ -6474,7 +6588,8 @@ fn main() -> Int {
         .frequencies()
     let d = collections.Deque.new().push_back(1).push_back(2).push_back(1).frequencies()
     let e = (0..<4).frequencies()
-    let empty = collections.List.new().frequencies()
+    let empty_src: List<Int> = collections.List.new()
+    let empty = empty_src.frequencies()
     let ordered = a.keys().to_list()
     if (
         a.get(3).unwrap_or(0) == 2
@@ -7977,18 +8092,15 @@ fn eval_map_float_key_rejected_at_compile_time() {
 }
 
 #[test]
-fn eval_map_list_key_rejected_at_compile_time() {
-    let err = run_err(
+fn eval_map_list_key_allowed_when_elements_are_hashable() {
+    let val = run_ok(
         "fn main() -> Int {
             let xs = collections.List.new().push(1)
             let m = collections.Map.new().insert(xs, 1)
-            0
+            m.get(xs).unwrap_or(0)
         }",
     );
-    assert!(
-        err.contains("cannot be used as a map key"),
-        "expected compile-time map key rejection, got: {err}"
-    );
+    assert_eq!(val, Value::Int(1));
 }
 
 #[test]
@@ -8133,18 +8245,15 @@ fn eval_set_float_element_rejected_at_compile_time() {
 }
 
 #[test]
-fn eval_set_list_element_rejected_at_compile_time() {
-    let err = run_err(
+fn eval_set_list_element_allowed_when_elements_are_hashable() {
+    let val = run_ok(
         r#"fn main() -> Int {
             let xs = collections.List.new().push(1)
             let s = collections.Set.new().insert(xs)
-            s.len()
+            if (s.contains(xs)) { s.len() } else { 0 }
         }"#,
     );
-    assert!(
-        err.contains("cannot be used as a set element"),
-        "expected compile-time set element rejection, got: {err}"
-    );
+    assert_eq!(val, Value::Int(1));
 }
 
 #[test]
@@ -8390,18 +8499,20 @@ fn main() -> Int {
 // ── List.sort() element type compile-time rejection ─────────────
 
 #[test]
-fn eval_list_sort_unsortable_list_of_lists() {
-    let err = run_err(
+fn eval_list_sort_list_of_lists_is_allowed() {
+    let val = run_ok(
         "fn main() -> Int {
-            let xs = collections.List.new().push(collections.List.new())
+            let a: List<Int> = collections.List.new()
+            let b = collections.List.new().push(1)
+            let xs = collections.List.new().push(b).push(a)
             let sorted = xs.sort()
-            0
+            match (sorted.get(0)) {
+                Some(inner) => inner.len()
+                None => -1
+            }
         }",
     );
-    assert!(
-        err.contains("cannot be sorted"),
-        "expected compile-time sort rejection, got: {err}"
-    );
+    assert_eq!(val, Value::Int(0));
 }
 
 #[test]
@@ -8437,15 +8548,15 @@ fn eval_list_sort_unsortable_list_of_maps() {
 
 #[test]
 fn eval_list_sort_valid_types_no_rejection() {
-    // Guard test: sortable types (Int, Float, String, Char, Bool) should NOT be rejected
+    // Guard test: sortable builtin and structural value types should NOT be rejected.
     run_ok(
         r#"fn main() -> Bool {
             let ints = collections.List.new().push(3).push(1).push(2).sort()
-            let floats = collections.List.new().push(3.0).push(1.0).push(2.0).sort()
             let strings = collections.List.new().push("c").push("a").push("b").sort()
             let chars = collections.List.new().push('c').push('a').push('b').sort()
             let bools = collections.List.new().push(true).push(false).sort()
-            ints.len() == 3 && floats.len() == 3 && strings.len() == 3 && chars.len() == 3 && bools.len() == 2
+            let lists = collections.List.new().push(collections.List.new().push(1)).push(collections.List.new()).sort()
+            ints.len() == 3 && strings.len() == 3 && chars.len() == 3 && bools.len() == 2 && lists.len() == 2
         }"#,
     );
 }

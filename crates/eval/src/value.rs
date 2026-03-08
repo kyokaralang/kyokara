@@ -1,6 +1,7 @@
 //! Runtime value representation.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -57,6 +58,407 @@ impl MapKey {
 
     pub fn display(&self, _interner: &Interner) -> String {
         self.to_value().display(_interner)
+    }
+
+    pub fn primitive_hash(&self) -> i64 {
+        primitive_map_key_hash(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapEntry {
+    pub hash: i64,
+    pub key: Value,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MapValue {
+    entries: Vec<MapEntry>,
+    buckets: HashMap<i64, Vec<usize>>,
+}
+
+impl PartialEq for MapValue {
+    fn eq(&self, other: &Self) -> bool {
+        if self.entries.len() != other.entries.len() {
+            return false;
+        }
+
+        self.entries.iter().all(|entry| {
+            other
+                .entries
+                .iter()
+                .find(|candidate| candidate.hash == entry.hash && candidate.key == entry.key)
+                .is_some_and(|candidate| candidate.value == entry.value)
+        })
+    }
+}
+
+impl Eq for MapValue {}
+
+impl MapValue {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_primitive_indexmap(entries: IndexMap<MapKey, Value>) -> Self {
+        let entries = entries
+            .into_iter()
+            .map(|(key, value)| MapEntry {
+                hash: primitive_map_key_hash(&key),
+                key: key.to_value(),
+                value,
+            })
+            .collect();
+        Self::from_entries(entries)
+    }
+
+    pub fn from_entries(entries: Vec<MapEntry>) -> Self {
+        let mut buckets: HashMap<i64, Vec<usize>> = HashMap::new();
+        for (idx, entry) in entries.iter().enumerate() {
+            buckets.entry(entry.hash).or_default().push(idx);
+        }
+        Self { entries, buckets }
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn key_at(&self, idx: usize) -> Option<Value> {
+        self.entries.get(idx).map(|entry| entry.key.clone())
+    }
+
+    pub fn value_at(&self, idx: usize) -> Option<Value> {
+        self.entries.get(idx).map(|entry| entry.value.clone())
+    }
+
+    pub fn entries(&self) -> &[MapEntry] {
+        &self.entries
+    }
+
+    pub fn find_index_with<E>(
+        &self,
+        hash: i64,
+        key: &Value,
+        eq: &mut E,
+    ) -> Result<Option<usize>, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        let Some(indices) = self.buckets.get(&hash) else {
+            return Ok(None);
+        };
+        for &idx in indices {
+            let entry = &self.entries[idx];
+            if eq(&entry.key, key)? {
+                return Ok(Some(idx));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn get_cloned_with<E>(
+        &self,
+        hash: i64,
+        key: &Value,
+        eq: &mut E,
+    ) -> Result<Option<Value>, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        Ok(self
+            .find_index_with(hash, key, eq)?
+            .map(|idx| self.entries[idx].value.clone()))
+    }
+
+    pub fn contains_with<E>(
+        &self,
+        hash: i64,
+        key: &Value,
+        eq: &mut E,
+    ) -> Result<bool, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        Ok(self.find_index_with(hash, key, eq)?.is_some())
+    }
+
+    pub fn insert_persistent_with<E>(
+        &self,
+        hash: i64,
+        key: Value,
+        value: Value,
+        eq: &mut E,
+    ) -> Result<Self, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        let mut entries = self.entries.clone();
+        if let Some(idx) = self.find_index_with(hash, &key, eq)? {
+            if entries[idx].value == value {
+                return Ok(self.clone());
+            }
+            entries[idx].value = value;
+            return Ok(Self::from_entries(entries));
+        }
+        entries.push(MapEntry { hash, key, value });
+        Ok(Self::from_entries(entries))
+    }
+
+    pub fn remove_persistent_with<E>(
+        &self,
+        hash: i64,
+        key: &Value,
+        eq: &mut E,
+    ) -> Result<Self, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        let Some(idx) = self.find_index_with(hash, key, eq)? else {
+            return Ok(self.clone());
+        };
+        let mut entries = self.entries.clone();
+        entries.remove(idx);
+        Ok(Self::from_entries(entries))
+    }
+
+    pub fn insert_with<E>(
+        &mut self,
+        hash: i64,
+        key: Value,
+        value: Value,
+        eq: &mut E,
+    ) -> Result<(), RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Some(idx) = self.find_index_with(hash, &key, eq)? {
+            self.entries[idx].value = value;
+        } else {
+            self.entries.push(MapEntry { hash, key, value });
+        }
+        *self = Self::from_entries(self.entries.clone());
+        Ok(())
+    }
+
+    pub fn remove_with<E>(
+        &mut self,
+        hash: i64,
+        key: &Value,
+        eq: &mut E,
+    ) -> Result<(), RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Some(idx) = self.find_index_with(hash, key, eq)? {
+            self.entries.remove(idx);
+            *self = Self::from_entries(self.entries.clone());
+        }
+        Ok(())
+    }
+
+    pub fn get(&self, key: &MapKey) -> Option<&Value> {
+        let hash = key.primitive_hash();
+        let key_value = key.to_value();
+        self.buckets.get(&hash).and_then(|indices| {
+            indices.iter().find_map(|&idx| {
+                let entry = &self.entries[idx];
+                (entry.key == key_value).then_some(&entry.value)
+            })
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetEntry {
+    pub hash: i64,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SetValue {
+    entries: Vec<SetEntry>,
+    buckets: HashMap<i64, Vec<usize>>,
+}
+
+impl PartialEq for SetValue {
+    fn eq(&self, other: &Self) -> bool {
+        if self.entries.len() != other.entries.len() {
+            return false;
+        }
+
+        self.entries.iter().all(|entry| {
+            other
+                .entries
+                .iter()
+                .any(|candidate| candidate.hash == entry.hash && candidate.value == entry.value)
+        })
+    }
+}
+
+impl Eq for SetValue {}
+
+impl SetValue {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_primitive_indexset(entries: IndexSet<MapKey>) -> Self {
+        let entries = entries
+            .into_iter()
+            .map(|value| SetEntry {
+                hash: primitive_map_key_hash(&value),
+                value: value.to_value(),
+            })
+            .collect();
+        Self::from_entries(entries)
+    }
+
+    pub fn from_entries(entries: Vec<SetEntry>) -> Self {
+        let mut buckets: HashMap<i64, Vec<usize>> = HashMap::new();
+        for (idx, entry) in entries.iter().enumerate() {
+            buckets.entry(entry.hash).or_default().push(idx);
+        }
+        Self { entries, buckets }
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn value_at(&self, idx: usize) -> Option<Value> {
+        self.entries.get(idx).map(|entry| entry.value.clone())
+    }
+
+    pub fn entries(&self) -> &[SetEntry] {
+        &self.entries
+    }
+
+    pub fn find_index_with<E>(
+        &self,
+        hash: i64,
+        value: &Value,
+        eq: &mut E,
+    ) -> Result<Option<usize>, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        let Some(indices) = self.buckets.get(&hash) else {
+            return Ok(None);
+        };
+        for &idx in indices {
+            let entry = &self.entries[idx];
+            if eq(&entry.value, value)? {
+                return Ok(Some(idx));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn contains_with<E>(
+        &self,
+        hash: i64,
+        value: &Value,
+        eq: &mut E,
+    ) -> Result<bool, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        Ok(self.find_index_with(hash, value, eq)?.is_some())
+    }
+
+    pub fn insert_persistent_with<E>(
+        &self,
+        hash: i64,
+        value: Value,
+        eq: &mut E,
+    ) -> Result<Self, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if self.find_index_with(hash, &value, eq)?.is_some() {
+            return Ok(self.clone());
+        }
+        let mut entries = self.entries.clone();
+        entries.push(SetEntry { hash, value });
+        Ok(Self::from_entries(entries))
+    }
+
+    pub fn remove_persistent_with<E>(
+        &self,
+        hash: i64,
+        value: &Value,
+        eq: &mut E,
+    ) -> Result<Self, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        let Some(idx) = self.find_index_with(hash, value, eq)? else {
+            return Ok(self.clone());
+        };
+        let mut entries = self.entries.clone();
+        entries.remove(idx);
+        Ok(Self::from_entries(entries))
+    }
+
+    pub fn insert_with<E>(&mut self, hash: i64, value: Value, eq: &mut E) -> Result<(), RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if self.find_index_with(hash, &value, eq)?.is_none() {
+            self.entries.push(SetEntry { hash, value });
+            *self = Self::from_entries(self.entries.clone());
+        }
+        Ok(())
+    }
+
+    pub fn remove_with<E>(
+        &mut self,
+        hash: i64,
+        value: &Value,
+        eq: &mut E,
+    ) -> Result<(), RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Some(idx) = self.find_index_with(hash, value, eq)? {
+            self.entries.remove(idx);
+            *self = Self::from_entries(self.entries.clone());
+        }
+        Ok(())
+    }
+
+    pub fn contains(&self, key: &MapKey) -> bool {
+        let hash = key.primitive_hash();
+        let key_value = key.to_value();
+        self.buckets.get(&hash).is_some_and(|indices| {
+            indices.iter().any(|&idx| self.entries[idx].value == key_value)
+        })
+    }
+}
+
+fn primitive_map_key_hash(key: &MapKey) -> i64 {
+    match key {
+        MapKey::Int(n) => *n,
+        MapKey::String(s) => {
+            let mut hash = 0i64;
+            for byte in s.as_bytes() {
+                hash = hash.wrapping_mul(31).wrapping_add(i64::from(*byte));
+            }
+            hash
+        }
+        MapKey::Char(c) => i64::from(u32::from(*c)),
+        MapKey::Bool(b) => i64::from(*b),
+        MapKey::Unit => 0,
     }
 }
 
@@ -422,13 +824,13 @@ pub enum Value {
     List(Rc<Vec<Value>>),
     BitSet(BitSetValue),
     MutableList(MutableListValue),
-    MutableMap(Rc<RefCell<IndexMap<MapKey, Value>>>),
-    MutableSet(Rc<RefCell<IndexSet<MapKey>>>),
+    MutableMap(Rc<RefCell<MapValue>>),
+    MutableSet(Rc<RefCell<SetValue>>),
     MutableBitSet(MutableBitSetValue),
     Deque(Rc<VecDeque<Value>>),
     Seq(Rc<SeqPlan>),
-    Map(Rc<IndexMap<MapKey, Value>>),
-    Set(Rc<IndexSet<MapKey>>),
+    Map(Rc<MapValue>),
+    Set(Rc<SetValue>),
     Fn(Box<FnValue>),
 }
 
@@ -460,9 +862,9 @@ pub enum SeqSource {
     StringSplit { s: Rc<String>, delim: Rc<String> },
     StringLines { s: Rc<String> },
     StringChars { s: Rc<String> },
-    MapKeys(Rc<IndexMap<MapKey, Value>>),
-    MapValues(Rc<IndexMap<MapKey, Value>>),
-    SetValues(Rc<IndexSet<MapKey>>),
+    MapKeys(Rc<MapValue>),
+    MapValues(Rc<MapValue>),
+    SetValues(Rc<SetValue>),
     BitSetValues(BitSetValue),
 }
 
@@ -564,11 +966,15 @@ impl Value {
     }
 
     pub fn mutable_map(entries: IndexMap<MapKey, Value>) -> Self {
-        Value::MutableMap(Rc::new(RefCell::new(entries)))
+        Value::MutableMap(Rc::new(RefCell::new(MapValue::from_primitive_indexmap(
+            entries,
+        ))))
     }
 
     pub fn mutable_set(entries: IndexSet<MapKey>) -> Self {
-        Value::MutableSet(Rc::new(RefCell::new(entries)))
+        Value::MutableSet(Rc::new(RefCell::new(SetValue::from_primitive_indexset(
+            entries,
+        ))))
     }
 
     pub fn mutable_bitset(size_bits: usize) -> Self {
@@ -588,11 +994,11 @@ impl Value {
     }
 
     pub fn map(entries: IndexMap<MapKey, Value>) -> Self {
-        Value::Map(Rc::new(entries))
+        Value::Map(Rc::new(MapValue::from_primitive_indexmap(entries)))
     }
 
     pub fn set(entries: IndexSet<MapKey>) -> Self {
-        Value::Set(Rc::new(entries))
+        Value::Set(Rc::new(SetValue::from_primitive_indexset(entries)))
     }
 
     pub fn display(&self, interner: &Interner) -> String {
@@ -658,16 +1064,24 @@ impl Value {
             Value::MutableMap(entries) => {
                 let fs: Vec<String> = entries
                     .borrow()
+                    .entries()
                     .iter()
-                    .map(|(k, v)| format!("{}: {}", k.display(interner), v.display(interner)))
+                    .map(|entry| {
+                        format!(
+                            "{}: {}",
+                            entry.key.display(interner),
+                            entry.value.display(interner)
+                        )
+                    })
                     .collect();
                 format!("MutableMap({{{}}})", fs.join(", "))
             }
             Value::MutableSet(entries) => {
                 let fs: Vec<String> = entries
                     .borrow()
+                    .entries()
                     .iter()
-                    .map(|k| k.display(interner))
+                    .map(|entry| entry.value.display(interner))
                     .collect();
                 format!("MutableSet(#{{{}}})", fs.join(", "))
             }
@@ -684,13 +1098,24 @@ impl Value {
             Value::Seq(_) => "<seq>".to_string(),
             Value::Map(entries) => {
                 let fs: Vec<String> = entries
+                    .entries()
                     .iter()
-                    .map(|(k, v)| format!("{}: {}", k.display(interner), v.display(interner)))
+                    .map(|entry| {
+                        format!(
+                            "{}: {}",
+                            entry.key.display(interner),
+                            entry.value.display(interner)
+                        )
+                    })
                     .collect();
                 format!("{{{}}}", fs.join(", "))
             }
             Value::Set(entries) => {
-                let fs: Vec<String> = entries.iter().map(|k| k.display(interner)).collect();
+                let fs: Vec<String> = entries
+                    .entries()
+                    .iter()
+                    .map(|entry| entry.value.display(interner))
+                    .collect();
                 format!("#{{{}}}", fs.join(", "))
             }
             Value::Fn(_) => "<function>".to_string(),

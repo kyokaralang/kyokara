@@ -118,6 +118,8 @@ impl ItemTreeCtx<'_> {
                 self.lower_fn_def(&f, false);
             }
             Item::TypeDef(t) => self.lower_type_def(&t),
+            Item::TraitDef(t) => self.lower_trait_def(&t),
+            Item::ImplDef(i) => self.lower_impl_def(&i),
             Item::EffectDef(c) => self.lower_cap_def(&c),
             Item::PropertyDef(p) => self.lower_property_def(&p),
             Item::LetBinding(l) => self.lower_let_binding(&l),
@@ -287,10 +289,15 @@ impl ItemTreeCtx<'_> {
         };
 
         let is_pub = t.is_pub();
+        let derives = t
+            .derive_clause()
+            .map(|dc| dc.trait_refs().map(|tr| self.lower_trait_ref(&tr)).collect())
+            .unwrap_or_default();
         let idx = self.tree.types.alloc(TypeItem {
             name,
             is_pub,
             type_params,
+            derives,
             kind: kind.clone(),
         });
 
@@ -340,6 +347,183 @@ impl ItemTreeCtx<'_> {
                     );
                 }
             }
+        }
+    }
+
+    fn lower_trait_def(&mut self, t: &TraitDef) {
+        let name = self.name_of(t);
+        let is_pub = t.is_pub();
+        let type_params = self.collect_type_params(t);
+        let supertraits = t
+            .supertrait_list()
+            .map(|st| st.trait_refs().map(|tr| self.lower_trait_ref(&tr)).collect())
+            .unwrap_or_default();
+        let methods = t
+            .method_sigs()
+            .map(|m| self.lower_trait_method_sig(&m))
+            .collect();
+
+        let idx = self.tree.traits.alloc(TraitItem {
+            name,
+            is_pub,
+            type_params,
+            supertraits,
+            methods,
+        });
+
+        if let std::collections::hash_map::Entry::Vacant(e) = self.module_scope.traits.entry(name) {
+            e.insert(idx);
+        } else {
+            let span = self.node_span(t.syntax());
+            self.diagnostics.push(
+                Diagnostic::error(
+                    format!("duplicate trait `{}`", name.resolve(self.interner)),
+                    span,
+                )
+                .with_kind(DiagnosticKind::DuplicateDefinition),
+            );
+        }
+    }
+
+    fn lower_trait_method_sig(&mut self, m: &TraitMethodSig) -> TraitMethodItem {
+        let name = self.name_of(m);
+        let type_params = self.collect_type_params(m);
+        let params = m
+            .param_list()
+            .map(|pl| {
+                pl.params()
+                    .map(|p| {
+                        let pname = p
+                            .name_token()
+                            .map(|tok| Name::new(self.interner, tok.text()))
+                            .unwrap_or_else(|| Name::new(self.interner, "_"));
+                        let ty = p
+                            .type_expr()
+                            .map(|te| self.lower_type_ref(&te))
+                            .unwrap_or_else(|| self.self_type_ref());
+                        FnParam { name: pname, ty }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let ret_type = m
+            .return_type()
+            .and_then(|rt| rt.type_expr())
+            .map(|t| self.lower_type_ref(&t));
+
+        TraitMethodItem {
+            name,
+            type_params,
+            params,
+            ret_type,
+            with_effects: Vec::new(),
+        }
+    }
+
+    fn lower_impl_def(&mut self, i: &ImplDef) {
+        let type_params = self.collect_type_params(i);
+        let trait_ref = i
+            .trait_ref()
+            .map(|tr| self.lower_trait_ref(&tr))
+            .unwrap_or(TraitRefItem {
+                path: Path { segments: vec![] },
+                args: vec![],
+            });
+        let self_ty = i.self_type().map(|ty| self.lower_type_ref(&ty)).unwrap_or(TypeRef::Error);
+        let methods = i
+            .methods()
+            .map(|m| self.lower_impl_method_def(&m, &self_ty))
+            .collect::<Vec<_>>();
+
+        self.tree.impls.alloc(ImplItem {
+            type_params,
+            trait_ref,
+            self_ty,
+            methods,
+        });
+    }
+
+    fn lower_impl_method_def(&mut self, m: &ImplMethodDef, impl_self_ty: &TypeRef) -> FnItemIdx {
+        let name = self.name_of(m);
+        let type_params = self.collect_type_params(m);
+        let params = m
+            .param_list()
+            .map(|pl| {
+                pl.params()
+                    .map(|p| {
+                        let pname = p
+                            .name_token()
+                            .map(|tok| Name::new(self.interner, tok.text()))
+                            .unwrap_or_else(|| Name::new(self.interner, "_"));
+                        let ty = p.type_expr().map_or_else(
+                            || impl_self_ty.clone(),
+                            |te| {
+                                let ty = self.lower_type_ref(&te);
+                                self.substitute_self_type_ref(ty, impl_self_ty)
+                            },
+                        );
+                        FnParam { name: pname, ty }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let ret_type = m
+            .return_type()
+            .and_then(|rt| rt.type_expr())
+            .map(|t| {
+                let ty = self.lower_type_ref(&t);
+                self.substitute_self_type_ref(ty, impl_self_ty)
+            });
+        self.tree.functions.alloc(FnItem {
+            name,
+            is_pub: false,
+            type_params,
+            params,
+            ret_type,
+            with_effects: Vec::new(),
+            has_body: m.body().is_some(),
+            source_range: Some(m.syntax().text_range()),
+            receiver_type: None,
+        })
+    }
+
+    fn substitute_self_type_ref(&mut self, ty: TypeRef, impl_self_ty: &TypeRef) -> TypeRef {
+        match ty {
+            TypeRef::Path { path, args } => {
+                if path.is_single() && path.segments[0].resolve(self.interner) == "Self" {
+                    return impl_self_ty.clone();
+                }
+                TypeRef::Path {
+                    path,
+                    args: args
+                        .into_iter()
+                        .map(|arg| self.substitute_self_type_ref(arg, impl_self_ty))
+                        .collect(),
+                }
+            }
+            TypeRef::Fn { params, ret } => TypeRef::Fn {
+                params: params
+                    .into_iter()
+                    .map(|param| self.substitute_self_type_ref(param, impl_self_ty))
+                    .collect(),
+                ret: Box::new(self.substitute_self_type_ref(*ret, impl_self_ty)),
+            },
+            TypeRef::Record { fields } => TypeRef::Record {
+                fields: fields
+                    .into_iter()
+                    .map(|(name, ty)| (name, self.substitute_self_type_ref(ty, impl_self_ty)))
+                    .collect(),
+            },
+            TypeRef::Refined {
+                name,
+                base,
+                predicate,
+            } => TypeRef::Refined {
+                name,
+                base: Box::new(self.substitute_self_type_ref(*base, impl_self_ty)),
+                predicate,
+            },
+            TypeRef::Error => TypeRef::Error,
         }
     }
 
@@ -783,7 +967,7 @@ impl ItemTreeCtx<'_> {
             .unwrap_or_else(|| Name::new(self.interner, "_"))
     }
 
-    fn collect_type_params(&mut self, node: &impl HasTypeParams) -> Vec<Name> {
+    fn collect_type_params(&mut self, node: &impl HasTypeParams) -> Vec<TypeParamDef> {
         node.type_param_list()
             .map(|tpl| {
                 let mut seen = std::collections::HashSet::new();
@@ -801,11 +985,36 @@ impl ItemTreeCtx<'_> {
                                 .with_kind(DiagnosticKind::DuplicateDefinition),
                             );
                         }
-                        Some(Name::new(self.interner, text))
+                        Some(TypeParamDef {
+                            name: Name::new(self.interner, text),
+                            bounds: tp
+                                .bound_list()
+                                .map(|bl| bl.trait_refs().map(|tr| self.lower_trait_ref(&tr)).collect())
+                                .unwrap_or_default(),
+                        })
                     })
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn lower_trait_ref(&mut self, trait_ref: &kyokara_syntax::ast::nodes::TraitRef) -> TraitRefItem {
+        let path = trait_ref
+            .path()
+            .map(|p| self.lower_path(&p))
+            .unwrap_or_else(|| Path { segments: vec![] });
+        let args = trait_ref
+            .type_arg_list()
+            .map(|tal| tal.type_args().map(|a| self.lower_type_ref(&a)).collect())
+            .unwrap_or_default();
+        TraitRefItem { path, args }
+    }
+
+    fn self_type_ref(&mut self) -> TypeRef {
+        TypeRef::Path {
+            path: Path::single(Name::new(self.interner, "Self")),
+            args: Vec::new(),
+        }
     }
 
     fn register_fn(&mut self, name: Name, idx: FnItemIdx, syntax: &kyokara_syntax::SyntaxNode) {

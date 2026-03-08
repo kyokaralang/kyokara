@@ -848,7 +848,7 @@ fn build_module_symbol_graph(
             let type_params: Vec<String> = type_item
                 .type_params
                 .iter()
-                .map(|n| n.resolve(interner).to_owned())
+                .map(|n| n.name.resolve(interner).to_owned())
                 .collect();
             let (kind, fields, variants) = match &type_item.kind {
                 TypeDefKind::Alias(TypeRef::Record {
@@ -1419,6 +1419,7 @@ fn resolved_symbol_id(
             ))
         }
         ResolvedName::Import(_)
+        | ResolvedName::Trait(_)
         | ResolvedName::Module(_)
         | ResolvedName::StaticMethodType(_)
         | ResolvedName::Local(_) => None,

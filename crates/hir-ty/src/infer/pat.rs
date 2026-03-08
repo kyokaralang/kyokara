@@ -196,7 +196,7 @@ impl<'a> InferenceCtx<'a> {
                             let mut tp_map: Vec<(kyokara_hir_def::name::Name, Ty)> =
                                 self.type_params.clone();
                             for (param_name, arg) in type_item.type_params.iter().zip(args.iter()) {
-                                tp_map.push((*param_name, arg.clone()));
+                                tp_map.push((param_name.name, arg.clone()));
                             }
                             let env = TyResolutionEnv {
                                 item_tree: self.item_tree,

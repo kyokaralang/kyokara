@@ -50,6 +50,12 @@ pub enum SyntaxKind {
     AsKw,
     /// `type`
     TypeKw,
+    /// `trait`
+    TraitKw,
+    /// `impl`
+    ImplKw,
+    /// `derive`
+    DeriveKw,
     /// `fn`
     FnKw,
     /// `let`
@@ -200,6 +206,10 @@ pub enum SyntaxKind {
     // Items
     /// `type Foo = …`
     TypeDef,
+    /// `trait Show { ... }`
+    TraitDef,
+    /// `impl Show for Point { ... }`
+    ImplDef,
     /// `fn foo(…) -> … { … }`
     FnDef,
     /// `effect Foo`
@@ -210,6 +220,16 @@ pub enum SyntaxKind {
     LetBinding,
     /// `var x = …`
     VarBinding,
+    /// `derive(Eq, Hash)`
+    DeriveClause,
+    /// `Ord`, `Hash<K>`
+    TraitRef,
+    /// `: Eq + Ord`
+    SupertraitList,
+    /// `fn compare(self, other: Self) -> Int`
+    TraitMethodSig,
+    /// `fn show(self) -> String { ... }`
+    ImplMethodDef,
 
     // Type-def sub-nodes
     /// `{ field: Type, … }`
@@ -248,6 +268,8 @@ pub enum SyntaxKind {
     TypeParamList,
     /// `T`
     TypeParam,
+    /// `: Eq + Hash`
+    TypeParamBoundList,
     /// `<Int, String>`
     TypeArgList,
 
@@ -373,6 +395,9 @@ impl SyntaxKind {
                 | Self::ImportKw
                 | Self::AsKw
                 | Self::TypeKw
+                | Self::TraitKw
+                | Self::ImplKw
+                | Self::DeriveKw
                 | Self::FnKw
                 | Self::LetKw
                 | Self::VarKw
@@ -409,6 +434,9 @@ impl SyntaxKind {
             Self::ImportKw => Some("import"),
             Self::AsKw => Some("as"),
             Self::TypeKw => Some("type"),
+            Self::TraitKw => Some("trait"),
+            Self::ImplKw => Some("impl"),
+            Self::DeriveKw => Some("derive"),
             Self::FnKw => Some("fn"),
             Self::LetKw => Some("let"),
             Self::VarKw => Some("var"),
@@ -510,6 +538,9 @@ impl SyntaxKind {
             "import" => Some(Self::ImportKw),
             "as" => Some(Self::AsKw),
             "type" => Some(Self::TypeKw),
+            "trait" => Some(Self::TraitKw),
+            "impl" => Some(Self::ImplKw),
+            "derive" => Some(Self::DeriveKw),
             "fn" => Some(Self::FnKw),
             "let" => Some(Self::LetKw),
             "var" => Some(Self::VarKw),
@@ -551,6 +582,9 @@ mod tests {
             SyntaxKind::ImportKw,
             SyntaxKind::AsKw,
             SyntaxKind::TypeKw,
+            SyntaxKind::TraitKw,
+            SyntaxKind::ImplKw,
+            SyntaxKind::DeriveKw,
             SyntaxKind::FnKw,
             SyntaxKind::LetKw,
             SyntaxKind::VarKw,

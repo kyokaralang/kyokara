@@ -5,7 +5,8 @@ use std::borrow::Cow;
 
 use kyokara_hir_def::builtins::{
     activate_synthetic_imports, register_builtin_intrinsics, register_builtin_methods,
-    register_builtin_types, register_static_methods, register_synthetic_modules,
+    register_builtin_traits, register_builtin_types, register_static_methods,
+    register_synthetic_modules,
 };
 use kyokara_hir_def::item_tree::lower::collect_item_tree;
 use kyokara_hir_ty::ty::Ty;
@@ -44,6 +45,11 @@ fn check(src: &str) -> (TypeCheckResult, Interner) {
     let mut interner = Interner::new();
     let mut item_result = collect_item_tree(&sf, file_id(), &mut interner);
     register_builtin_types(
+        &mut item_result.tree,
+        &mut item_result.module_scope,
+        &mut interner,
+    );
+    register_builtin_traits(
         &mut item_result.tree,
         &mut item_result.module_scope,
         &mut interner,
@@ -215,6 +221,34 @@ fn infer_binary_equality_rejects_non_comparable_types() {
     check_err(
         "fn foo() -> Bool { collections.List.new() == collections.List.new() }",
         "equality operator requires",
+    );
+}
+
+#[test]
+fn infer_builtin_trait_qualified_call() {
+    check_ok("fn foo() -> Int { Ord.compare(1, 2) }");
+}
+
+#[test]
+fn infer_generic_trait_bound_body() {
+    check_ok("fn less<T: Ord>(a: T, b: T) -> Bool { Ord.compare(a, b) < 0 }");
+}
+
+#[test]
+fn infer_user_impl_trait_call() {
+    check_ok(
+        "trait Show { fn show(self) -> String }\n\
+         type Point = { x: Int }\n\
+         impl Show for Point { fn show(self) -> String { \"p\" } }\n\
+         fn foo(p: Point) -> String { Show.show(p) }",
+    );
+}
+
+#[test]
+fn infer_derived_trait_call() {
+    check_ok(
+        "type Point derive(Eq) = { x: Int, y: Int }\n\
+         fn foo(a: Point, b: Point) -> Bool { Eq.eq(a, b) }",
     );
 }
 
@@ -1638,6 +1672,13 @@ fn infer_seq_frequencies_happy_paths() {
             let counts = (0..<4).frequencies()
             counts.get(0).unwrap_or(0) + counts.len()
         }"#,
+        r#"type P derive(Eq, Hash) = { x: Int }
+
+        fn main() -> Int {
+            let p: P = P { x: 1 }
+            let counts = collections.List.new().push(p).push(p).frequencies()
+            counts.len()
+        }"#,
     ];
 
     for src in cases {
@@ -1651,16 +1692,31 @@ fn infer_seq_frequencies_happy_paths() {
 }
 
 #[test]
-fn err_seq_frequencies_non_hashable_element_reports_e0024() {
-    let cases = [
-        r#"fn main() -> Int {
-            let counts = collections.List.new().push(collections.List.new().push(1)).frequencies()
-            counts.len()
-        }"#,
-        r#"type P = { x: Int }
+fn infer_list_sort_accepts_derived_ord_elements() {
+    check_ok(
+        r#"type P derive(Ord) = { x: Int }
 
         fn main() -> Int {
-            let counts = collections.List.new().push(P { x: 1 }).frequencies()
+            let a: P = P { x: 2 }
+            let b: P = P { x: 1 }
+            let xs = collections.List.new().push(a).push(b).sort()
+            xs.len()
+        }"#,
+    );
+}
+
+#[test]
+fn err_seq_frequencies_non_hashable_element_reports_e0024() {
+    let cases = [
+        r#"import collections
+
+        fn main() -> Int {
+            let inner = collections.MutableList.from_list(collections.List.new().push(1))
+            let counts = collections.List.new().push(inner).frequencies()
+            counts.len()
+        }"#,
+        r#"fn main() -> Int {
+            let counts = collections.List.new().push(fn(x: Int) => x).frequencies()
             counts.len()
         }"#,
     ];
@@ -1676,6 +1732,29 @@ fn err_seq_frequencies_non_hashable_element_reports_e0024() {
             result.diagnostics
         );
     }
+}
+
+#[test]
+fn err_seq_frequencies_named_record_without_derive_reports_e0024() {
+    let (result, _) = check(
+        r#"import collections
+
+        type P = { x: Int }
+
+        fn main() -> Int {
+            let counts = collections.List.new().push(P { x: 1 }).frequencies()
+            counts.len()
+        }"#,
+    );
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("map key")),
+        "expected E0024 map key diagnostic, got: {:?}",
+        result.diagnostics
+    );
 }
 
 #[test]

@@ -94,6 +94,57 @@ fn collect_module_and_imports() {
 }
 
 #[test]
+fn collect_trait_impl_and_derive_items() {
+    let root = parse_source(
+        "pub trait Show { fn show(self) -> String }\n\
+         type Point derive(Eq, Hash) = { x: Int, y: Int }\n\
+         impl Show for Point { fn show(self) -> String { \"p\" } }",
+    );
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    assert_eq!(result.tree.traits.len(), 1);
+    assert_eq!(result.tree.impls.len(), 1);
+    let trait_item = &result.tree.traits[result.tree.traits.iter().next().unwrap().0];
+    assert_eq!(trait_item.name.resolve(&interner), "Show");
+    assert_eq!(trait_item.methods.len(), 1);
+
+    let type_item = &result.tree.types[result.tree.types.iter().next().unwrap().0];
+    assert_eq!(type_item.derives.len(), 2);
+
+    let impl_item = &result.tree.impls[result.tree.impls.iter().next().unwrap().0];
+    assert_eq!(impl_item.methods.len(), 1);
+    assert!(result.diagnostics.is_empty(), "unexpected diagnostics: {:?}", result.diagnostics);
+}
+
+#[test]
+fn collect_bounded_type_params_on_fn_and_impl() {
+    let root = parse_source(
+        "pub trait Show { fn show(self) -> String }\n\
+         fn less<T: Show>(x: T) -> Bool { true }\n\
+         impl<T: Show> Show for Box<T> { fn show(self) -> String { Show.show(self.value) } }",
+    );
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    let less = result
+        .tree
+        .functions
+        .iter()
+        .find(|(_, f)| f.name.resolve(&interner) == "less")
+        .map(|(_, f)| f)
+        .expect("less fn");
+    assert_eq!(less.type_params.len(), 1);
+    assert_eq!(less.type_params[0].bounds.len(), 1);
+
+    let impl_item = &result.tree.impls[result.tree.impls.iter().next().unwrap().0];
+    assert_eq!(impl_item.type_params.len(), 1);
+    assert_eq!(impl_item.type_params[0].bounds.len(), 1);
+}
+
+#[test]
 fn duplicate_fn_diagnostic() {
     let root = parse_source("fn foo() { 1 }\nfn foo() { 2 }");
     let sf = SourceFile::cast(root).unwrap();

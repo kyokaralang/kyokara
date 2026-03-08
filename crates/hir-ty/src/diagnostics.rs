@@ -82,6 +82,8 @@ pub enum TyDiagnosticData {
     ImmutableAssignment { name: String },
     /// Mutable local captured by nested function or lambda.
     CapturedMutableLocal { name: String },
+    /// Type does not implement a required trait.
+    MissingTraitImpl { trait_name: String, ty: Ty },
 }
 
 impl TyDiagnosticData {
@@ -124,6 +126,7 @@ impl TyDiagnosticData {
             TyDiagnosticData::InvalidAssignmentTarget => "E0033",
             TyDiagnosticData::ImmutableAssignment { .. } => "E0034",
             TyDiagnosticData::CapturedMutableLocal { .. } => "E0035",
+            TyDiagnosticData::MissingTraitImpl { .. } => "E0037",
         }
     }
 
@@ -288,6 +291,9 @@ impl TyDiagnosticData {
                 format!(
                     "mutable locals cannot be captured by nested functions or lambdas (`{name}`)"
                 )
+            }
+            TyDiagnosticData::MissingTraitImpl { trait_name, ty } => {
+                format!("type `{}` does not implement trait `{trait_name}`", dt(ty))
             }
         };
         Diagnostic::error(message, span)

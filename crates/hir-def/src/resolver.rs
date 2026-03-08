@@ -7,7 +7,7 @@ use kyokara_stdx::{FxHashMap, FxHashSet};
 
 use kyokara_intern::Interner;
 
-use crate::item_tree::{EffectItemIdx, FnItemIdx, TypeItemIdx};
+use crate::item_tree::{EffectItemIdx, FnItemIdx, TraitItemIdx, TypeItemIdx};
 use crate::name::Name;
 use crate::scope::{ScopeDef, ScopeIdx, ScopeTree};
 
@@ -188,6 +188,8 @@ pub struct ModuleScope {
     pub types: FxHashMap<Name, TypeItemIdx>,
     /// Capability definitions.
     pub effects: FxHashMap<Name, EffectItemIdx>,
+    /// Trait definitions.
+    pub traits: FxHashMap<Name, TraitItemIdx>,
     /// ADT constructors: `VariantName -> (type_idx, variant_idx)`.
     pub constructors: FxHashMap<Name, (TypeItemIdx, usize)>,
     /// Imported names: `local_name -> import_index`.
@@ -243,6 +245,8 @@ pub enum ResolvedName {
     Type(TypeItemIdx),
     /// A capability at module level.
     Effect(EffectItemIdx),
+    /// A trait at module level.
+    Trait(TraitItemIdx),
     /// An ADT constructor.
     Constructor {
         type_idx: TypeItemIdx,
@@ -287,6 +291,9 @@ impl<'a> Resolver<'a> {
         }
         if let Some(&idx) = self.module.effects.get(&name) {
             return Some(ResolvedName::Effect(idx));
+        }
+        if let Some(&idx) = self.module.traits.get(&name) {
+            return Some(ResolvedName::Trait(idx));
         }
 
         // 2b. Synthetic modules (io, math, fs) — only if explicitly imported.
@@ -338,6 +345,9 @@ impl<'a> Resolver<'a> {
         }
         if let Some(&idx) = self.module.effects.get(&name) {
             return Some(ResolvedName::Effect(idx));
+        }
+        if let Some(&idx) = self.module.traits.get(&name) {
+            return Some(ResolvedName::Trait(idx));
         }
 
         // 2b. Synthetic modules — only if explicitly imported.

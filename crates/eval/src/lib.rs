@@ -12,7 +12,8 @@ pub mod value;
 
 use kyokara_hir::{
     ModulePath, activate_synthetic_imports, check_module, check_project, collect_item_tree,
-    register_builtin_intrinsics, register_builtin_methods, register_builtin_types,
+    register_builtin_intrinsics, register_builtin_methods, register_builtin_traits,
+    register_builtin_types,
     register_static_methods, register_synthetic_modules,
 };
 use kyokara_intern::Interner;
@@ -137,6 +138,11 @@ pub fn run_with_manifest(
 
     // 4. Register builtin types (Option, Result) before intrinsics and type-checking.
     register_builtin_types(
+        &mut item_result.tree,
+        &mut item_result.module_scope,
+        &mut interner,
+    );
+    register_builtin_traits(
         &mut item_result.tree,
         &mut item_result.module_scope,
         &mut interner,

@@ -92,6 +92,8 @@ pub(crate) struct InferenceCtx<'a> {
     pub caller_effects: EffectSet,
     /// Type parameters in scope for the current function.
     pub type_params: Vec<(Name, Ty)>,
+    /// Declared trait bounds for each type parameter in scope.
+    pub type_param_bounds: Vec<(Name, Vec<Name>)>,
     /// Parameter types by index (for ScopeDef::Param(i) lookups).
     pub param_types: Vec<Ty>,
     /// Parameter names by index (for locals collection in holes).
@@ -117,6 +119,186 @@ impl<'a> InferenceCtx<'a> {
 
     fn traversal_seq_compat_enabled(&self) -> bool {
         self.traversal_seq_compat_depth > 0
+    }
+
+    pub(crate) fn ty_satisfies_trait_name(&mut self, ty: &Ty, trait_name: Name) -> bool {
+        let ty = self.table.resolve_deep(ty);
+        match ty {
+            Ty::Error | Ty::Never => true,
+            Ty::Var(var) => self
+                .type_params
+                .iter()
+                .find(|(_, param_ty)| matches!(self.table.resolve(param_ty), Ty::Var(v) if v == var))
+                .and_then(|(name, _)| self.type_param_bounds.iter().find(|(n, _)| n == name))
+                .is_some_and(|(_, bounds)| {
+                    bounds
+                        .iter()
+                        .copied()
+                        .any(|bound| self.trait_name_satisfies(bound, trait_name))
+                }),
+            Ty::Int => self.builtin_trait_name_satisfied("Int", trait_name),
+            Ty::String => self.builtin_trait_name_satisfied("String", trait_name),
+            Ty::Char => self.builtin_trait_name_satisfied("Char", trait_name),
+            Ty::Bool => self.builtin_trait_name_satisfied("Bool", trait_name),
+            Ty::Unit => self.builtin_trait_name_satisfied("Unit", trait_name),
+            Ty::Float => self.builtin_trait_name_satisfied("Float", trait_name),
+            Ty::Adt { def, args } => {
+                let type_name = self.item_tree.types[def].name.resolve(self.interner);
+                if self.module_scope.core_types.kind_for_idx(def).is_some() {
+                    self.builtin_trait_name_satisfied(type_name, trait_name)
+                } else {
+                    self.user_adt_satisfies_trait(def, &args, trait_name)
+                }
+            }
+            Ty::Record { fields } => match trait_name.resolve(self.interner) {
+                "Eq" | "Ord" | "Hash" | "Show" => fields
+                    .iter()
+                    .all(|(_, field_ty)| self.ty_satisfies_trait_name(field_ty, trait_name)),
+                _ => false,
+            },
+            Ty::Fn { .. } => false,
+        }
+    }
+
+    pub(crate) fn ty_satisfies_trait(&mut self, ty: &Ty, trait_text: &str) -> bool {
+        self.module_scope
+            .traits
+            .keys()
+            .find(|name| name.resolve(self.interner) == trait_text)
+            .copied()
+            .is_some_and(|trait_name| self.ty_satisfies_trait_name(ty, trait_name))
+    }
+
+    fn builtin_trait_name_satisfied(&self, type_name: &str, trait_name: Name) -> bool {
+        let trait_name = trait_name.resolve(self.interner);
+        match trait_name {
+            "Eq" => matches!(
+                type_name,
+                "Int"
+                    | "String"
+                    | "Char"
+                    | "Bool"
+                    | "Unit"
+                    | "Option"
+                    | "Result"
+                    | "List"
+                    | "MutableList"
+                    | "Deque"
+                    | "BitSet"
+                    | "MutableBitSet"
+                    | "Map"
+                    | "MutableMap"
+                    | "Set"
+                    | "MutableSet"
+                    | "ParseError"
+            ),
+            "Ord" => matches!(
+                type_name,
+                "Int"
+                    | "String"
+                    | "Char"
+                    | "Bool"
+                    | "Unit"
+                    | "Option"
+                    | "Result"
+                    | "List"
+                    | "MutableList"
+                    | "Deque"
+                    | "ParseError"
+            ),
+            "Hash" => matches!(
+                type_name,
+                "Int"
+                    | "String"
+                    | "Char"
+                    | "Bool"
+                    | "Unit"
+                    | "Option"
+                    | "Result"
+                    | "List"
+                    | "Deque"
+                    | "BitSet"
+                    | "Map"
+                    | "Set"
+                    | "ParseError"
+            ),
+            "Show" => !matches!(type_name, "<fn>"),
+            _ => false,
+        }
+    }
+
+    fn trait_name_satisfies(&self, bound_name: Name, target_name: Name) -> bool {
+        if bound_name == target_name {
+            return true;
+        }
+        let Some(&bound_idx) = self.module_scope.traits.get(&bound_name) else {
+            return false;
+        };
+        self.item_tree.traits[bound_idx]
+            .supertraits
+            .iter()
+            .filter_map(|trait_ref| trait_ref.path.last())
+            .any(|super_name| self.trait_name_satisfies(super_name, target_name))
+    }
+
+    fn user_adt_satisfies_trait(
+        &mut self,
+        def: TypeItemIdx,
+        args: &[Ty],
+        trait_name: Name,
+    ) -> bool {
+        let type_item = &self.item_tree.types[def];
+
+        if type_item.derives.iter().any(|derived| {
+            derived
+                .path
+                .last()
+                .is_some_and(|derived_name| self.trait_name_satisfies(derived_name, trait_name))
+        }) {
+            let mut env_type_params = self.type_params.clone();
+            for (param, arg) in type_item.type_params.iter().zip(args.iter()) {
+                env_type_params.push((param.name, arg.clone()));
+            }
+            let env = TyResolutionEnv {
+                item_tree: self.item_tree,
+                module_scope: self.module_scope,
+                interner: self.interner,
+                type_params: env_type_params,
+                resolving_aliases: vec![],
+            };
+
+            let field_type_refs: Vec<TypeRef> = match &type_item.kind {
+                TypeDefKind::Alias(TypeRef::Record { fields }) => {
+                    fields.iter().map(|(_, ty)| ty.clone()).collect()
+                }
+                TypeDefKind::Record { fields } => fields.iter().map(|(_, ty)| ty.clone()).collect(),
+                TypeDefKind::Adt { variants } => variants
+                    .iter()
+                    .flat_map(|variant| variant.fields.iter().cloned())
+                    .collect(),
+                TypeDefKind::Alias(_) => Vec::new(),
+            };
+
+            for field_ty_ref in field_type_refs {
+                let field_ty = env.resolve_type_ref(&field_ty_ref, &mut self.table);
+                if !self.ty_satisfies_trait_name(&field_ty, trait_name) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        self.item_tree.impls.iter().any(|(_, impl_item)| {
+            impl_item
+                .trait_ref
+                .path
+                .last()
+                .is_some_and(|impl_trait| impl_trait == trait_name)
+                && matches!(
+                    &impl_item.self_ty,
+                    TypeRef::Path { path, .. } if path.last().is_some_and(|n| n == type_item.name)
+                )
+        })
     }
 
     pub(crate) fn with_loop_scope<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
@@ -148,13 +330,32 @@ impl<'a> InferenceCtx<'a> {
     /// Unify two types, emitting a type mismatch diagnostic on failure.
     /// Returns the unified type (or Error on failure).
     pub(crate) fn unify_or_err(&mut self, expected: &Ty, actual: &Ty) -> Ty {
+        let mut exact_table = self.table.clone();
+        if exact_table.unify(expected, actual)
+            || (self.traversal_seq_compat_enabled()
+                && self.unify_seq_traversal_compat_with_table(
+                    &mut exact_table,
+                    expected,
+                    actual,
+                ))
+        {
+            self.table = exact_table;
+            return self.table.resolve_deep(expected);
+        }
+
         let expected_norm = self.normalize_record_aliases_for_unify(expected);
         let actual_norm = self.normalize_record_aliases_for_unify(actual);
 
-        if self.table.unify(&expected_norm, &actual_norm)
+        let mut normalized_table = self.table.clone();
+        if normalized_table.unify(&expected_norm, &actual_norm)
             || (self.traversal_seq_compat_enabled()
-                && self.unify_seq_traversal_compat(&expected_norm, &actual_norm))
+                && self.unify_seq_traversal_compat_with_table(
+                    &mut normalized_table,
+                    &expected_norm,
+                    &actual_norm,
+                ))
         {
+            self.table = normalized_table;
             self.table.resolve_deep(&expected_norm)
         } else {
             let expected = self.table.resolve_deep(&expected_norm);
@@ -169,9 +370,14 @@ impl<'a> InferenceCtx<'a> {
         }
     }
 
-    fn unify_seq_traversal_compat(&mut self, expected: &Ty, actual: &Ty) -> bool {
-        let expected = self.table.resolve(expected);
-        let actual = self.table.resolve(actual);
+    fn unify_seq_traversal_compat_with_table(
+        &self,
+        table: &mut UnificationTable,
+        expected: &Ty,
+        actual: &Ty,
+    ) -> bool {
+        let expected = table.resolve(expected);
+        let actual = table.resolve(actual);
         let (
             Ty::Adt {
                 def: expected_def,
@@ -201,7 +407,7 @@ impl<'a> InferenceCtx<'a> {
             return false;
         }
 
-        self.table.unify(&expected_args[0], &actual_args[0])
+        table.unify(&expected_args[0], &actual_args[0])
     }
 
     /// Expand record aliases into structural records for unification-only paths.
@@ -256,12 +462,12 @@ impl<'a> InferenceCtx<'a> {
         };
 
         let mut type_params = self.type_params.clone();
-        for (i, &param_name) in type_item.type_params.iter().enumerate() {
+        for (i, param) in type_item.type_params.iter().enumerate() {
             let arg = args
                 .get(i)
                 .cloned()
                 .unwrap_or_else(|| self.table.fresh_var());
-            type_params.push((param_name, arg));
+            type_params.push((param.name, arg));
         }
 
         let env = TyResolutionEnv {
@@ -317,9 +523,18 @@ pub fn infer_body(
 
     // Build type parameter bindings (fresh vars for each).
     let mut type_params: Vec<(Name, Ty)> = Vec::new();
-    for &name in &fn_item.type_params {
+    let mut type_param_bounds: Vec<(Name, Vec<Name>)> = Vec::new();
+    for param in &fn_item.type_params {
         let var = table.fresh_var();
-        type_params.push((name, var));
+        type_params.push((param.name, var));
+        type_param_bounds.push((
+            param.name,
+            param
+                .bounds
+                .iter()
+                .filter_map(|bound| bound.path.last())
+                .collect(),
+        ));
     }
 
     let env = TyResolutionEnv {
@@ -394,6 +609,7 @@ pub fn infer_body(
         ret_ty,
         caller_effects,
         type_params,
+        type_param_bounds,
         param_types: param_tys.clone(),
         param_names: fn_item.params.iter().map(|p| p.name).collect(),
         local_types: ArenaMap::default(),

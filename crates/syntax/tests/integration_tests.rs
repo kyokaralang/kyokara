@@ -2,7 +2,8 @@
 #![allow(clippy::unwrap_used)]
 
 use kyokara_syntax::ast::AstNode;
-use kyokara_syntax::ast::nodes::{ElseBranch, FnDef, ForStmt, IfExpr, SourceFile};
+use kyokara_syntax::ast::nodes::{ElseBranch, FnDef, ForStmt, IfExpr, ImplDef, SourceFile, TraitDef, TypeDef};
+use kyokara_syntax::ast::traits::{HasName, HasTypeParams};
 use kyokara_syntax::{SyntaxKind, parse};
 
 /// Helper: parse source, check no errors, return CST debug string.
@@ -95,6 +96,55 @@ fn parse_effect_with_body_is_rejected() {
         result.errors
     );
     assert_eq!(green_text(&result.green), src);
+}
+
+#[test]
+fn parse_trait_impl_and_derive_roundtrip_and_ast_access() {
+    let src = "pub trait Show { fn show(self) -> String }\n\ntype Point derive(Eq, Hash) = { x: Int, y: Int }\n\nimpl Show for Point { fn show(self) -> String { \"p\" } }";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+
+    let root = kyokara_syntax::SyntaxNode::new_root(green);
+    let sf = SourceFile::cast(root).expect("source file");
+
+    let trait_def = sf
+        .syntax()
+        .descendants()
+        .find_map(TraitDef::cast)
+        .expect("trait def");
+    assert_eq!(trait_def.name_token().unwrap().text(), "Show");
+    assert!(trait_def.supertrait_list().is_none());
+    assert_eq!(trait_def.method_sigs().count(), 1);
+
+    let type_def = sf
+        .syntax()
+        .descendants()
+        .find_map(TypeDef::cast)
+        .expect("type def");
+    let derive = type_def.derive_clause().expect("derive clause");
+    assert_eq!(derive.trait_refs().count(), 2);
+
+    let impl_def = sf
+        .syntax()
+        .descendants()
+        .find_map(ImplDef::cast)
+        .expect("impl def");
+    assert_eq!(impl_def.trait_ref().unwrap().path().unwrap().segments().next().unwrap().text(), "Show");
+    assert_eq!(impl_def.methods().count(), 1);
+}
+
+#[test]
+fn parse_bounded_type_params_roundtrip() {
+    let src = "fn less<T: Ord + Show>(a: T, b: T) -> Bool { true }";
+    let green = parse_ok(src);
+    assert_eq!(green_text(&green), src);
+
+    let root = kyokara_syntax::SyntaxNode::new_root(green);
+    let fn_def = root.descendants().find_map(FnDef::cast).expect("fn");
+    let params = fn_def.type_param_list().expect("type params");
+    let tp = params.type_params().next().expect("type param");
+    let bounds = tp.bound_list().expect("bound list");
+    assert_eq!(bounds.trait_refs().count(), 2);
 }
 
 #[test]

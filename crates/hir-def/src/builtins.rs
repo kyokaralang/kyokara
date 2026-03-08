@@ -5,7 +5,10 @@
 //! hir `check_file` pipeline call [`register_builtin_types`] after
 //! item tree collection but before type-checking.
 
-use crate::item_tree::{FnItem, FnParam, ItemTree, TypeDefKind, TypeItem, TypeItemIdx, VariantDef};
+use crate::item_tree::{
+    FnItem, FnParam, ItemTree, TraitItem, TraitMethodItem, TraitRefItem, TypeDefKind, TypeItem,
+    TypeItemIdx, TypeParamDef, VariantDef,
+};
 use crate::name::Name;
 use crate::path::Path;
 use crate::resolver::{
@@ -80,7 +83,14 @@ fn register_core_type_item(
     let idx = tree.types.alloc(TypeItem {
         name: type_name,
         is_pub: false,
-        type_params,
+        type_params: type_params
+            .into_iter()
+            .map(|name| TypeParamDef {
+                name,
+                bounds: Vec::new(),
+            })
+            .collect(),
+        derives: Vec::new(),
         kind,
     });
 
@@ -94,6 +104,13 @@ fn register_core_type_item(
     );
 
     (idx, type_name)
+}
+
+fn path_type(interner: &mut Interner, name: &str) -> TypeRef {
+    TypeRef::Path {
+        path: Path::single(Name::new(interner, name)),
+        args: Vec::new(),
+    }
 }
 
 /// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`, `MutableMap<K,V>`,
@@ -122,6 +139,115 @@ pub fn register_builtin_types(
     register_map(tree, scope, interner);
     register_set(tree, scope, interner);
     register_parse_error(tree, scope, interner);
+}
+
+pub fn register_builtin_traits(
+    tree: &mut ItemTree,
+    scope: &mut ModuleScope,
+    interner: &mut Interner,
+) {
+    let string_ty = path_type(interner, "String");
+    let int_ty = path_type(interner, "Int");
+    let bool_ty = path_type(interner, "Bool");
+
+    let eq_name = Name::new(interner, "Eq");
+    let ord_name = Name::new(interner, "Ord");
+    let hash_name = Name::new(interner, "Hash");
+    let show_name = Name::new(interner, "Show");
+
+    let traits = [
+        TraitItem {
+            name: eq_name,
+            is_pub: false,
+            type_params: Vec::new(),
+            supertraits: Vec::new(),
+            methods: vec![TraitMethodItem {
+                name: Name::new(interner, "eq"),
+                type_params: Vec::new(),
+                params: vec![
+                    FnParam {
+                        name: Name::new(interner, "self"),
+                        ty: path_type(interner, "Self"),
+                    },
+                    FnParam {
+                        name: Name::new(interner, "other"),
+                        ty: path_type(interner, "Self"),
+                    },
+                ],
+                ret_type: Some(bool_ty.clone()),
+                with_effects: Vec::new(),
+            }],
+        },
+        TraitItem {
+            name: ord_name,
+            is_pub: false,
+            type_params: Vec::new(),
+            supertraits: vec![TraitRefItem {
+                path: Path::single(eq_name),
+                args: Vec::new(),
+            }],
+            methods: vec![TraitMethodItem {
+                name: Name::new(interner, "compare"),
+                type_params: Vec::new(),
+                params: vec![
+                    FnParam {
+                        name: Name::new(interner, "self"),
+                        ty: path_type(interner, "Self"),
+                    },
+                    FnParam {
+                        name: Name::new(interner, "other"),
+                        ty: path_type(interner, "Self"),
+                    },
+                ],
+                ret_type: Some(int_ty.clone()),
+                with_effects: Vec::new(),
+            }],
+        },
+        TraitItem {
+            name: hash_name,
+            is_pub: false,
+            type_params: Vec::new(),
+            supertraits: vec![TraitRefItem {
+                path: Path::single(eq_name),
+                args: Vec::new(),
+            }],
+            methods: vec![TraitMethodItem {
+                name: Name::new(interner, "hash"),
+                type_params: Vec::new(),
+                params: vec![FnParam {
+                    name: Name::new(interner, "self"),
+                    ty: path_type(interner, "Self"),
+                }],
+                ret_type: Some(int_ty.clone()),
+                with_effects: Vec::new(),
+            }],
+        },
+        TraitItem {
+            name: show_name,
+            is_pub: false,
+            type_params: Vec::new(),
+            supertraits: Vec::new(),
+            methods: vec![TraitMethodItem {
+                name: Name::new(interner, "show"),
+                type_params: Vec::new(),
+                params: vec![FnParam {
+                    name: Name::new(interner, "self"),
+                    ty: path_type(interner, "Self"),
+                }],
+                ret_type: Some(string_ty),
+                with_effects: Vec::new(),
+            }],
+        },
+    ];
+
+    for trait_item in traits {
+        let name = trait_item.name;
+        if scope.traits.contains_key(&name) {
+            continue;
+        }
+        let idx = tree.traits.alloc(trait_item);
+        scope.traits.insert(name, idx);
+    }
 }
 
 /// `type Option<T> = Some(T) | None`
@@ -1275,7 +1401,13 @@ fn mk_intrinsic(
         FnItem {
             name,
             is_pub: false,
-            type_params,
+            type_params: type_params
+                .into_iter()
+                .map(|name| TypeParamDef {
+                    name,
+                    bounds: Vec::new(),
+                })
+                .collect(),
             params: fn_params,
             ret_type: Some(ret),
             with_effects: Vec::new(),

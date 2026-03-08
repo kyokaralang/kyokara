@@ -61,6 +61,8 @@ impl SourceFile {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Item {
     TypeDef(TypeDef),
+    TraitDef(TraitDef),
+    ImplDef(ImplDef),
     FnDef(FnDef),
     EffectDef(EffectDef),
     PropertyDef(PropertyDef),
@@ -71,6 +73,8 @@ impl Item {
     pub fn cast(node: SyntaxNode) -> Option<Self> {
         match node.kind() {
             SyntaxKind::TypeDef => TypeDef::cast(node).map(Item::TypeDef),
+            SyntaxKind::TraitDef => TraitDef::cast(node).map(Item::TraitDef),
+            SyntaxKind::ImplDef => ImplDef::cast(node).map(Item::ImplDef),
             SyntaxKind::FnDef => FnDef::cast(node).map(Item::FnDef),
             SyntaxKind::EffectDef => EffectDef::cast(node).map(Item::EffectDef),
             SyntaxKind::PropertyDef => PropertyDef::cast(node).map(Item::PropertyDef),
@@ -154,6 +158,10 @@ impl HasTypeParams for TypeDef {}
 impl HasVisibility for TypeDef {}
 
 impl TypeDef {
+    pub fn derive_clause(&self) -> Option<DeriveClause> {
+        support::child(&self.syntax)
+    }
+
     /// The type body — either a variant list, record field list, or a type expression.
     pub fn variant_list(&self) -> Option<VariantList> {
         support::child(&self.syntax)
@@ -167,6 +175,40 @@ impl TypeDef {
     /// If the body is a record field list.
     pub fn record_field_list(&self) -> Option<RecordFieldList> {
         support::child(&self.syntax)
+    }
+}
+
+define_ast_node!(TraitDef, TraitDef);
+
+impl HasName for TraitDef {}
+impl HasTypeParams for TraitDef {}
+impl HasVisibility for TraitDef {}
+
+impl TraitDef {
+    pub fn supertrait_list(&self) -> Option<SupertraitList> {
+        support::child(&self.syntax)
+    }
+
+    pub fn method_sigs(&self) -> impl Iterator<Item = TraitMethodSig> + '_ {
+        support::children(&self.syntax)
+    }
+}
+
+define_ast_node!(ImplDef, ImplDef);
+
+impl HasTypeParams for ImplDef {}
+
+impl ImplDef {
+    pub fn trait_ref(&self) -> Option<TraitRef> {
+        support::child(&self.syntax)
+    }
+
+    pub fn self_type(&self) -> Option<TypeExpr> {
+        self.syntax.children().find_map(TypeExpr::cast)
+    }
+
+    pub fn methods(&self) -> impl Iterator<Item = ImplMethodDef> + '_ {
+        support::children(&self.syntax)
     }
 }
 
@@ -447,6 +489,88 @@ impl InvariantClause {
 
 // ── Generics ───────────────────────────────────────────────────────
 
+define_ast_node!(DeriveClause, DeriveClause);
+
+impl DeriveClause {
+    pub fn trait_refs(&self) -> impl Iterator<Item = TraitRef> + '_ {
+        support::children(&self.syntax)
+    }
+}
+
+define_ast_node!(TraitRef, TraitRef);
+
+impl TraitRef {
+    pub fn path(&self) -> Option<Path> {
+        support::child(&self.syntax)
+    }
+
+    pub fn type_arg_list(&self) -> Option<TypeArgList> {
+        support::child(&self.syntax)
+    }
+}
+
+define_ast_node!(SupertraitList, SupertraitList);
+
+impl SupertraitList {
+    pub fn trait_refs(&self) -> impl Iterator<Item = TraitRef> + '_ {
+        support::children(&self.syntax)
+    }
+}
+
+define_ast_node!(TraitMethodSig, TraitMethodSig);
+
+impl HasName for TraitMethodSig {}
+impl HasTypeParams for TraitMethodSig {}
+
+impl TraitMethodSig {
+    pub fn param_list(&self) -> Option<ParamList> {
+        support::child(&self.syntax)
+    }
+
+    pub fn return_type(&self) -> Option<ReturnType> {
+        support::child(&self.syntax)
+    }
+}
+
+define_ast_node!(ImplMethodDef, ImplMethodDef);
+
+impl HasName for ImplMethodDef {}
+impl HasTypeParams for ImplMethodDef {}
+
+impl ImplMethodDef {
+    pub fn param_list(&self) -> Option<ParamList> {
+        support::child(&self.syntax)
+    }
+
+    pub fn return_type(&self) -> Option<ReturnType> {
+        support::child(&self.syntax)
+    }
+
+    pub fn body(&self) -> Option<BlockExpr> {
+        support::child(&self.syntax)
+    }
+
+    pub fn with_clause(&self) -> Option<WithClause> {
+        support::child(&self.syntax)
+    }
+
+    pub fn contract_section(&self) -> Option<ContractSection> {
+        support::child(&self.syntax)
+    }
+
+    pub fn requires_clauses(&self) -> impl Iterator<Item = RequiresClause> + '_ {
+        ChildNodeIter::from_parent(self.contract_section().map(|c| c.syntax))
+    }
+
+    pub fn ensures_clauses(&self) -> impl Iterator<Item = EnsuresClause> + '_ {
+        ChildNodeIter::from_parent(self.contract_section().map(|c| c.syntax))
+    }
+
+    pub fn invariant_clauses(&self) -> impl Iterator<Item = InvariantClause> + '_ {
+        ChildNodeIter::from_parent(self.contract_section().map(|c| c.syntax))
+    }
+}
+
 define_ast_node!(TypeParamList, TypeParamList);
 
 impl TypeParamList {
@@ -458,6 +582,20 @@ impl TypeParamList {
 define_ast_node!(TypeParam, TypeParam);
 
 impl HasName for TypeParam {}
+
+impl TypeParam {
+    pub fn bound_list(&self) -> Option<TypeParamBoundList> {
+        support::child(&self.syntax)
+    }
+}
+
+define_ast_node!(TypeParamBoundList, TypeParamBoundList);
+
+impl TypeParamBoundList {
+    pub fn trait_refs(&self) -> impl Iterator<Item = TraitRef> + '_ {
+        support::children(&self.syntax)
+    }
+}
 
 define_ast_node!(TypeArgList, TypeArgList);
 

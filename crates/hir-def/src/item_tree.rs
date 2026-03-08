@@ -16,6 +16,10 @@ use crate::type_ref::TypeRef;
 pub type FnItemIdx = Idx<FnItem>;
 /// Index into the type arena.
 pub type TypeItemIdx = Idx<TypeItem>;
+/// Index into the trait arena.
+pub type TraitItemIdx = Idx<TraitItem>;
+/// Index into the impl arena.
+pub type ImplItemIdx = Idx<ImplItem>;
 /// Index into the capability arena.
 pub type EffectItemIdx = Idx<EffectItem>;
 /// Index into the property arena.
@@ -30,6 +34,8 @@ pub struct ItemTree {
     pub imports: Vec<Import>,
     pub functions: Arena<FnItem>,
     pub types: Arena<TypeItem>,
+    pub traits: Arena<TraitItem>,
+    pub impls: Arena<ImplItem>,
     pub effects: Arena<EffectItem>,
     pub properties: Arena<PropertyItem>,
     pub lets: Arena<LetItem>,
@@ -48,7 +54,7 @@ pub struct Import {
 pub struct FnItem {
     pub name: Name,
     pub is_pub: bool,
-    pub type_params: Vec<Name>,
+    pub type_params: Vec<TypeParamDef>,
     pub params: Vec<FnParam>,
     pub ret_type: Option<TypeRef>,
     pub with_effects: Vec<TypeRef>,
@@ -72,8 +78,23 @@ pub struct FnParam {
 pub struct TypeItem {
     pub name: Name,
     pub is_pub: bool,
-    pub type_params: Vec<Name>,
+    pub type_params: Vec<TypeParamDef>,
+    pub derives: Vec<TraitRefItem>,
     pub kind: TypeDefKind,
+}
+
+/// A structured type parameter with explicit bounds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeParamDef {
+    pub name: Name,
+    pub bounds: Vec<TraitRefItem>,
+}
+
+/// A trait reference in item signatures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraitRefItem {
+    pub path: Path,
+    pub args: Vec<TypeRef>,
 }
 
 /// The kind of type definition.
@@ -94,12 +115,41 @@ pub struct VariantDef {
     pub fields: Vec<TypeRef>,
 }
 
+/// A trait declaration.
+#[derive(Debug, Clone)]
+pub struct TraitItem {
+    pub name: Name,
+    pub is_pub: bool,
+    pub type_params: Vec<TypeParamDef>,
+    pub supertraits: Vec<TraitRefItem>,
+    pub methods: Vec<TraitMethodItem>,
+}
+
+/// A method signature declared inside a trait.
+#[derive(Debug, Clone)]
+pub struct TraitMethodItem {
+    pub name: Name,
+    pub type_params: Vec<TypeParamDef>,
+    pub params: Vec<FnParam>,
+    pub ret_type: Option<TypeRef>,
+    pub with_effects: Vec<TypeRef>,
+}
+
+/// An impl block.
+#[derive(Debug, Clone)]
+pub struct ImplItem {
+    pub type_params: Vec<TypeParamDef>,
+    pub trait_ref: TraitRefItem,
+    pub self_ty: TypeRef,
+    pub methods: Vec<FnItemIdx>,
+}
+
 /// A capability definition.
 #[derive(Debug, Clone)]
 pub struct EffectItem {
     pub name: Name,
     pub is_pub: bool,
-    pub type_params: Vec<Name>,
+    pub type_params: Vec<TypeParamDef>,
     pub functions: Vec<FnItemIdx>,
 }
 
