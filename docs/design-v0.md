@@ -641,7 +641,7 @@ while `io`/`fs` are module namespaces for effectful operations.
   * Mutation semantics: updates are visible across aliases that reference the same `MutableList`.
 * `MutableMap<K, V>` — opaque builtin type with alias-visible mutable key/value storage. Keys must satisfy `Hash + Eq`; invalid key types are rejected at compile time for typed mutable-map operations (E0024). For nominal keys, derive or implement those traits explicitly, e.g. `type Point derive(Eq, Hash) = { x: Int, y: Int }`. ✓
   * Constructor: `collections.MutableMap.new()` (requires `import collections`)
-  * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()`, `m.values()`, `m.is_empty()`
+  * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.get_or_insert_with(k, fn() => v)` → `V`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()`, `m.values()`, `m.is_empty()`
 * `MutableSet<T>` — opaque builtin type with alias-visible mutable set storage. Elements must satisfy `Hash + Eq`; invalid element types are rejected at compile time for typed mutable-set operations (E0028). For nominal elements, derive or implement those traits explicitly, e.g. `type Point derive(Eq, Hash) = { x: Int, y: Int }`. ✓
   * Constructor: `collections.MutableSet.new()` (requires `import collections`)
   * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()`

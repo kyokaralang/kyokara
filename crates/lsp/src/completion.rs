@@ -222,7 +222,10 @@ fn try_dot_completion(
     }
 }
 
-fn receiver_key_for_base_expr(analysis: &FileAnalysis, base_range: TextRange) -> Option<ReceiverKey> {
+fn receiver_key_for_base_expr(
+    analysis: &FileAnalysis,
+    base_range: TextRange,
+) -> Option<ReceiverKey> {
     for (fn_idx, body) in &analysis.type_check.fn_bodies {
         let infer = analysis.type_check.fn_results.get(fn_idx)?;
         for (expr_idx, range) in body.expr_source_map.iter() {
@@ -774,9 +777,22 @@ mod tests {
     }
 
     #[test]
+    fn completion_dot_after_mutable_map_value_shows_get_or_insert_with() {
+        let source = "import collections\nfn main() -> Int {\n  let m = collections.MutableMap.new()\n  m.get(\"a\").unwrap_or(0)\n}";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let field_pos = source.find("get").expect("get offset");
+        let offset = TextSize::from(field_pos as u32);
+        let items = completion_items(&analysis, source, offset);
+        assert!(
+            items.iter().any(|i| i.label == "get_or_insert_with"),
+            "expected 'get_or_insert_with' in MutableMap receiver completion: {items:?}"
+        );
+    }
+
+    #[test]
     fn completion_dot_after_char_value_shows_digit_methods() {
-        let source =
-            "fn main() -> Int {\n  let ch = '7'\n  match (ch.to_decimal_digit()) { Some(n) => n None => 0 }\n}";
+        let source = "fn main() -> Int {\n  let ch = '7'\n  match (ch.to_decimal_digit()) { Some(n) => n None => 0 }\n}";
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
         let field_pos = source

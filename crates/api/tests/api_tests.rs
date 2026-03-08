@@ -5437,6 +5437,47 @@ fn check_mutable_map_derived_hash_eq_key_has_no_map_key_diagnostic() {
 }
 
 #[test]
+fn check_mutable_map_get_or_insert_with_hit_and_miss_have_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+fn main() -> Int {
+    let m = collections.MutableMap.new().insert("a", 7)
+    let first = m.get_or_insert_with("a", fn() => 99)
+    let second = m.get_or_insert_with("b", fn() => 11)
+    first + second + m.get("b").unwrap_or(0)
+}"#,
+        "MutableMap.get_or_insert_with hit/miss surface",
+    );
+}
+
+#[test]
+fn check_mutable_map_get_or_insert_with_recursive_structured_key_memo_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+type MemoState derive(Eq, Hash) = { pos: Int, gi: Int, streak: Int }
+
+fn solve(limit: Int, pos: Int, gi: Int, streak: Int, memo: MutableMap<MemoState, Int>) -> Int {
+    let key = MemoState { pos: pos, gi: gi, streak: streak }
+    memo.get_or_insert_with(key, fn() =>
+        if (pos == limit) {
+            gi + streak
+        } else {
+            solve(limit, pos + 1, gi + 1, streak, memo) + solve(limit, pos + 1, gi, streak + 1, memo)
+        }
+    )
+}
+
+fn main() -> Int {
+    let memo = collections.MutableMap.new()
+    solve(4, 0, 0, 0, memo)
+}"#,
+        "MutableMap.get_or_insert_with recursive structured-key memo surface",
+    );
+}
+
+#[test]
 fn check_collections_mutable_set_constructor_surface_has_no_diagnostics_rfc_0008() {
     assert_check_no_diagnostics(
         r#"import collections

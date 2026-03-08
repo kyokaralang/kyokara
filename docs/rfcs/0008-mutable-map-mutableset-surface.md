@@ -50,12 +50,13 @@ No prelude-global constructor aliases.
 
 1. `insert(key, value)`
 2. `get(key) -> Option<V>`
-3. `contains(key) -> Bool`
-4. `remove(key)`
-5. `len() -> Int`
-6. `is_empty() -> Bool`
-7. `keys()`
-8. `values()`
+3. `get_or_insert_with(key, fn() -> V) -> V`
+4. `contains(key) -> Bool`
+5. `remove(key)`
+6. `len() -> Int`
+7. `is_empty() -> Bool`
+8. `keys()`
+9. `values()`
 
 `MutableSet` (tentative canonical set):
 
@@ -93,4 +94,3 @@ RFC 0001 and RFC 0005 remain authoritative:
 3. Alias semantics tests for both `MutableMap` and `MutableSet`.
 4. Deterministic order tests for `keys()/values()`.
 5. Clippy/lint clean for touched crates.
-

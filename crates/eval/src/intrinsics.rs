@@ -69,6 +69,7 @@ pub enum IntrinsicFn {
     MutableMapNew,
     MutableMapInsert,
     MutableMapGet,
+    MutableMapGetOrInsertWith,
     MutableMapContains,
     MutableMapRemove,
     MutableMapLen,
@@ -248,6 +249,7 @@ impl IntrinsicFn {
                 | IntrinsicFn::MutablePriorityQueuePop
                 | IntrinsicFn::MutableMapInsert
                 | IntrinsicFn::MutableMapGet
+                | IntrinsicFn::MutableMapGetOrInsertWith
                 | IntrinsicFn::MutableMapContains
                 | IntrinsicFn::MutableMapRemove
                 | IntrinsicFn::MutableSetInsert
@@ -756,11 +758,9 @@ impl IntrinsicFn {
                 let key = MapKey::from_value(&key_value)?;
                 let hash = key.primitive_hash();
                 let key_value = key.to_value();
-                entries.borrow_mut().remove_with(
-                    hash,
-                    &key_value,
-                    &mut |lhs, rhs| Ok(lhs == rhs),
-                )?;
+                entries
+                    .borrow_mut()
+                    .remove_with(hash, &key_value, &mut |lhs, rhs| Ok(lhs == rhs))?;
                 Ok(Value::MutableMap(entries))
             }
             IntrinsicFn::MutableMapLen => {
@@ -852,11 +852,9 @@ impl IntrinsicFn {
                 let elem = MapKey::from_value(&elem_value)?;
                 let hash = elem.primitive_hash();
                 let elem_value = elem.to_value();
-                entries.borrow_mut().remove_with(
-                    hash,
-                    &elem_value,
-                    &mut |lhs, rhs| Ok(lhs == rhs),
-                )?;
+                entries
+                    .borrow_mut()
+                    .remove_with(hash, &elem_value, &mut |lhs, rhs| Ok(lhs == rhs))?;
                 Ok(Value::MutableSet(entries))
             }
             IntrinsicFn::MutableSetLen => {
@@ -1164,11 +1162,8 @@ impl IntrinsicFn {
                 if entries.get(&key).is_none() {
                     return Ok(Value::Map(entries));
                 }
-                Rc::make_mut(&mut entries).remove_with(
-                    hash,
-                    &key_value,
-                    &mut |lhs, rhs| Ok(lhs == rhs),
-                )?;
+                Rc::make_mut(&mut entries)
+                    .remove_with(hash, &key_value, &mut |lhs, rhs| Ok(lhs == rhs))?;
                 Ok(Value::Map(entries))
             }
             IntrinsicFn::MapLen => {
@@ -1214,11 +1209,8 @@ impl IntrinsicFn {
                 if entries.contains(&elem) {
                     return Ok(Value::Set(entries));
                 }
-                Rc::make_mut(&mut entries).insert_with(
-                    hash,
-                    elem_value,
-                    &mut |lhs, rhs| Ok(lhs == rhs),
-                )?;
+                Rc::make_mut(&mut entries)
+                    .insert_with(hash, elem_value, &mut |lhs, rhs| Ok(lhs == rhs))?;
                 Ok(Value::Set(entries))
             }
             IntrinsicFn::SetContains => {
@@ -1251,11 +1243,8 @@ impl IntrinsicFn {
                 if !entries.contains(&elem) {
                     return Ok(Value::Set(entries));
                 }
-                Rc::make_mut(&mut entries).remove_with(
-                    hash,
-                    &elem_value,
-                    &mut |lhs, rhs| Ok(lhs == rhs),
-                )?;
+                Rc::make_mut(&mut entries)
+                    .remove_with(hash, &elem_value, &mut |lhs, rhs| Ok(lhs == rhs))?;
                 Ok(Value::Set(entries))
             }
             IntrinsicFn::SetLen => {
@@ -1414,9 +1403,11 @@ impl IntrinsicFn {
                 };
                 Ok(Value::Bool(char_digit_value(*c, 10)?.is_some()))
             }
-            IntrinsicFn::CharToDecimalDigit | IntrinsicFn::CharToDigit => Err(
-                RuntimeError::TypeError("char digit conversion intrinsic requires interpreter".into()),
-            ),
+            IntrinsicFn::CharToDecimalDigit | IntrinsicFn::CharToDigit => {
+                Err(RuntimeError::TypeError(
+                    "char digit conversion intrinsic requires interpreter".into(),
+                ))
+            }
 
             // ── Int/Float math ───────────────────────────────────
             IntrinsicFn::Abs => {
@@ -1829,6 +1820,7 @@ impl IntrinsicFn {
             | IntrinsicFn::MutablePriorityQueuePeek
             | IntrinsicFn::MutablePriorityQueuePop
             | IntrinsicFn::MutableMapGet
+            | IntrinsicFn::MutableMapGetOrInsertWith
             | IntrinsicFn::SeqMap
             | IntrinsicFn::SeqFilter
             | IntrinsicFn::SeqFold
@@ -2007,6 +1999,10 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (
             Name::new(interner, "mutable_map_get"),
             IntrinsicFn::MutableMapGet,
+        ),
+        (
+            Name::new(interner, "mutable_map_get_or_insert_with"),
+            IntrinsicFn::MutableMapGetOrInsertWith,
         ),
         (
             Name::new(interner, "mutable_map_contains"),
@@ -2257,7 +2253,10 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
             Name::new(interner, "char_to_decimal_digit"),
             IntrinsicFn::CharToDecimalDigit,
         ),
-        (Name::new(interner, "char_to_digit"), IntrinsicFn::CharToDigit),
+        (
+            Name::new(interner, "char_to_digit"),
+            IntrinsicFn::CharToDigit,
+        ),
         // Int/Float
         (Name::new(interner, "abs"), IntrinsicFn::Abs),
         (Name::new(interner, "int_pow"), IntrinsicFn::IntPow),

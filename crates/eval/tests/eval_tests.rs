@@ -2192,6 +2192,56 @@ fn eval_mutable_map_invalid_key_type_is_compile_error() {
 }
 
 #[test]
+fn eval_mutable_map_get_or_insert_with_skips_closure_on_hit_and_inserts_on_miss() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let calls = collections.MutableList.new().push(0)
+           let memo = collections.MutableMap.new().insert(\"a\", 7)
+           let first = memo.get_or_insert_with(\"a\", fn() =>
+             if (true) {
+               let _c = calls.set(0, calls[0] + 1)
+               99
+             } else {
+               0
+             }
+           )
+           let second = memo.get_or_insert_with(\"b\", fn() =>
+             if (true) {
+               let _c = calls.set(0, calls[0] + 1)
+               11
+             } else {
+               0
+             }
+           )
+           first * 100 + second * 10 + calls[0]
+         }",
+    );
+    assert!(matches!(val, Value::Int(811)));
+}
+
+#[test]
+fn eval_mutable_map_get_or_insert_with_supports_recursive_memo_use() {
+    let val = run_ok(
+        "import collections
+         fn fib(n: Int, memo: MutableMap<Int, Int>) -> Int {
+           memo.get_or_insert_with(n, fn() =>
+             if (n < 2) {
+               n
+             } else {
+               fib(n - 1, memo) + fib(n - 2, memo)
+             }
+           )
+         }
+         fn main() -> Int {
+           let memo = collections.MutableMap.new()
+           fib(10, memo) * 100 + memo.len()
+         }",
+    );
+    assert!(matches!(val, Value::Int(5511)));
+}
+
+#[test]
 fn eval_collections_mutable_set_constructor_surface_rfc_0008() {
     let val = run_ok(
         "import collections

@@ -1568,7 +1568,11 @@ impl<'a> InferenceCtx<'a> {
         // Trait-qualified call: Ord.compare(a, b), Show.show(x)
         if let Some(&trait_idx) = self.module_scope.traits.get(&name) {
             let trait_item = &self.item_tree.traits[trait_idx];
-            if let Some(method) = trait_item.methods.iter().find(|method| method.name == field) {
+            if let Some(method) = trait_item
+                .methods
+                .iter()
+                .find(|method| method.name == field)
+            {
                 let Some(first_arg) = args.first() else {
                     self.push_diag(TyDiagnosticData::ArgCountMismatch {
                         expected: method.params.len(),
@@ -1608,7 +1612,11 @@ impl<'a> InferenceCtx<'a> {
                     .iter()
                     .map(|param| self.resolve_trait_method_type(&param.ty, &recv_ty, &env))
                     .collect::<Vec<_>>();
-                let param_names = method.params.iter().map(|param| param.name).collect::<Vec<_>>();
+                let param_names = method
+                    .params
+                    .iter()
+                    .map(|param| param.name)
+                    .collect::<Vec<_>>();
                 let has_arg_errors =
                     self.infer_call_args_with_binding(args, &param_tys, Some(&param_names));
                 if has_arg_errors {
@@ -1675,7 +1683,9 @@ impl<'a> InferenceCtx<'a> {
         env: &TyResolutionEnv<'_>,
     ) -> Ty {
         match ty_ref {
-            kyokara_hir_def::type_ref::TypeRef::Path { path, args } if path.is_single() && args.is_empty() => {
+            kyokara_hir_def::type_ref::TypeRef::Path { path, args }
+                if path.is_single() && args.is_empty() =>
+            {
                 let seg = path.segments[0];
                 if seg.resolve(self.interner) == "Self" {
                     recv_ty.clone()
@@ -1997,6 +2007,7 @@ impl<'a> InferenceCtx<'a> {
                         | "map_remove"
                         | "mutable_map_insert"
                         | "mutable_map_get"
+                        | "mutable_map_get_or_insert_with"
                         | "mutable_map_contains"
                         | "mutable_map_remove"
                 )

@@ -1,8 +1,8 @@
 //! Core tree-walking interpreter.
 
 use std::cmp::Ordering;
-use std::collections::hash_map::DefaultHasher;
 use std::collections::VecDeque;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
@@ -578,6 +578,80 @@ impl Interpreter {
         }
     }
 
+    fn expr_contains_lambda(&self, body: &Body, expr_idx: ExprIdx) -> bool {
+        match &body.exprs[expr_idx] {
+            Expr::Missing | Expr::Hole | Expr::Literal(_) | Expr::Path(_) => false,
+            Expr::Binary { lhs, rhs, .. } => {
+                self.expr_contains_lambda(body, *lhs) || self.expr_contains_lambda(body, *rhs)
+            }
+            Expr::Unary { operand, .. } | Expr::Old(operand) => {
+                self.expr_contains_lambda(body, *operand)
+            }
+            Expr::Call { callee, args } => {
+                self.expr_contains_lambda(body, *callee)
+                    || args.iter().any(|arg| {
+                        let arg_idx = match arg {
+                            CallArg::Positional(idx) => *idx,
+                            CallArg::Named { value, .. } => *value,
+                        };
+                        self.expr_contains_lambda(body, arg_idx)
+                    })
+            }
+            Expr::Field { base, .. } => self.expr_contains_lambda(body, *base),
+            Expr::Index { base, index } => {
+                self.expr_contains_lambda(body, *base) || self.expr_contains_lambda(body, *index)
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.expr_contains_lambda(body, *condition)
+                    || self.expr_contains_lambda(body, *then_branch)
+                    || else_branch.is_some_and(|else_idx| self.expr_contains_lambda(body, else_idx))
+            }
+            Expr::Match { scrutinee, arms } => {
+                self.expr_contains_lambda(body, *scrutinee)
+                    || arms
+                        .iter()
+                        .any(|arm| self.expr_contains_lambda(body, arm.body))
+            }
+            Expr::Block { stmts, tail } => {
+                stmts.iter().any(|stmt| match stmt {
+                    Stmt::Let { init, .. } => self.expr_contains_lambda(body, *init),
+                    Stmt::Assign { target, value } => {
+                        self.expr_contains_lambda(body, *target)
+                            || self.expr_contains_lambda(body, *value)
+                    }
+                    Stmt::While {
+                        condition,
+                        body: loop_body,
+                    } => {
+                        self.expr_contains_lambda(body, *condition)
+                            || self.expr_contains_lambda(body, *loop_body)
+                    }
+                    Stmt::For {
+                        source,
+                        body: loop_body,
+                        ..
+                    } => {
+                        self.expr_contains_lambda(body, *source)
+                            || self.expr_contains_lambda(body, *loop_body)
+                    }
+                    Stmt::Expr(idx) => self.expr_contains_lambda(body, *idx),
+                    Stmt::Break | Stmt::Continue => false,
+                }) || tail.is_some_and(|tail_idx| self.expr_contains_lambda(body, tail_idx))
+            }
+            Expr::Return(value) => {
+                value.is_some_and(|return_value| self.expr_contains_lambda(body, return_value))
+            }
+            Expr::RecordLit { fields, .. } => fields
+                .iter()
+                .any(|(_, value)| self.expr_contains_lambda(body, *value)),
+            Expr::Lambda { .. } => true,
+        }
+    }
+
     fn leftmost_method_chain_receiver(
         &mut self,
         body: &Body,
@@ -631,6 +705,9 @@ impl Interpreter {
         body: &Body,
         expr_idx: ExprIdx,
     ) -> Option<LocalSlotRef> {
+        if self.expr_contains_lambda(body, expr_idx) {
+            return None;
+        }
         let (_, access, _) = self.leftmost_method_chain_receiver(body, expr_idx)?;
         (self.count_local_access_uses(body, expr_idx, access) == 1).then_some(access)
     }
@@ -644,6 +721,9 @@ impl Interpreter {
         let Pat::Bind { name } = body.pats[pat_idx] else {
             return None;
         };
+        if self.expr_contains_lambda(body, expr_idx) {
+            return None;
+        }
         let (_, access, receiver_name) = self.leftmost_method_chain_receiver(body, expr_idx)?;
         let pat_scope = body.local_binding_meta.get(pat_idx)?.scope;
         if body.local_binding_meta.get(pat_idx)?.mutable {
@@ -868,13 +948,16 @@ impl Interpreter {
     ) -> Option<FnItemIdx> {
         self.item_tree.impls.iter().find_map(|(_, impl_item)| {
             let impl_trait_name = impl_item.trait_ref.path.last()?;
-            if impl_trait_name != trait_name || !self.type_ref_matches_value(&impl_item.self_ty, recv)
+            if impl_trait_name != trait_name
+                || !self.type_ref_matches_value(&impl_item.self_ty, recv)
             {
                 return None;
             }
-            impl_item.methods.iter().copied().find(|&fn_idx| {
-                self.item_tree.functions[fn_idx].name == method_name
-            })
+            impl_item
+                .methods
+                .iter()
+                .copied()
+                .find(|&fn_idx| self.item_tree.functions[fn_idx].name == method_name)
         })
     }
 
@@ -928,7 +1011,11 @@ impl Interpreter {
             ));
         };
         let trait_item = &self.item_tree.traits[trait_idx];
-        let Some(method) = trait_item.methods.iter().find(|method| method.name == method_name) else {
+        let Some(method) = trait_item
+            .methods
+            .iter()
+            .find(|method| method.name == method_name)
+        else {
             return Err(RuntimeError::TypeError(format!(
                 "trait `{}` has no method `{}`",
                 trait_name.resolve(&self.interner),
@@ -1023,10 +1110,14 @@ impl Interpreter {
                 let mut lhs_fields: Vec<_> = f1.iter().collect();
                 let mut rhs_fields: Vec<_> = f2.iter().collect();
                 lhs_fields.sort_by(|(lhs_name, _), (rhs_name, _)| {
-                    lhs_name.resolve(&self.interner).cmp(rhs_name.resolve(&self.interner))
+                    lhs_name
+                        .resolve(&self.interner)
+                        .cmp(rhs_name.resolve(&self.interner))
                 });
                 rhs_fields.sort_by(|(lhs_name, _), (rhs_name, _)| {
-                    lhs_name.resolve(&self.interner).cmp(rhs_name.resolve(&self.interner))
+                    lhs_name
+                        .resolve(&self.interner)
+                        .cmp(rhs_name.resolve(&self.interner))
                 });
                 for ((lhs_name, lhs_value), (rhs_name, rhs_value)) in
                     lhs_fields.into_iter().zip(rhs_fields.into_iter())
@@ -1065,9 +1156,9 @@ impl Interpreter {
             (Value::Fn(_), Value::Fn(_)) => Err(RuntimeError::TypeError(
                 "functions do not implement Eq".into(),
             )),
-            (Value::Seq(_), Value::Seq(_)) => Err(RuntimeError::TypeError(
-                "Seq does not implement Eq".into(),
-            )),
+            (Value::Seq(_), Value::Seq(_)) => {
+                Err(RuntimeError::TypeError("Seq does not implement Eq".into()))
+            }
             _ => Ok(false),
         }
     }
@@ -1124,20 +1215,34 @@ impl Interpreter {
                 let mut lhs_fields: Vec<_> = f1.iter().collect();
                 let mut rhs_fields: Vec<_> = f2.iter().collect();
                 lhs_fields.sort_by(|(lhs_name, _), (rhs_name, _)| {
-                    lhs_name.resolve(&self.interner).cmp(rhs_name.resolve(&self.interner))
+                    lhs_name
+                        .resolve(&self.interner)
+                        .cmp(rhs_name.resolve(&self.interner))
                 });
                 rhs_fields.sort_by(|(lhs_name, _), (rhs_name, _)| {
-                    lhs_name.resolve(&self.interner).cmp(rhs_name.resolve(&self.interner))
+                    lhs_name
+                        .resolve(&self.interner)
+                        .cmp(rhs_name.resolve(&self.interner))
                 });
                 let name_ord = lhs_fields
                     .iter()
                     .map(|(name, _)| name.resolve(&self.interner))
-                    .cmp(rhs_fields.iter().map(|(name, _)| name.resolve(&self.interner)));
+                    .cmp(
+                        rhs_fields
+                            .iter()
+                            .map(|(name, _)| name.resolve(&self.interner)),
+                    );
                 if name_ord != Ordering::Equal {
                     name_ord
                 } else {
-                    let lhs_values: Vec<_> = lhs_fields.into_iter().map(|(_, value)| value.clone()).collect();
-                    let rhs_values: Vec<_> = rhs_fields.into_iter().map(|(_, value)| value.clone()).collect();
+                    let lhs_values: Vec<_> = lhs_fields
+                        .into_iter()
+                        .map(|(_, value)| value.clone())
+                        .collect();
+                    let rhs_values: Vec<_> = rhs_fields
+                        .into_iter()
+                        .map(|(_, value)| value.clone())
+                        .collect();
                     self.trait_compare_slices_refs(&lhs_values, &rhs_values)?
                 }
             }
@@ -1172,7 +1277,11 @@ impl Interpreter {
         })
     }
 
-    fn trait_compare_slices(&mut self, lhs: &[Value], rhs: &[Value]) -> Result<Ordering, RuntimeError> {
+    fn trait_compare_slices(
+        &mut self,
+        lhs: &[Value],
+        rhs: &[Value],
+    ) -> Result<Ordering, RuntimeError> {
         self.trait_compare_slices_refs(lhs, rhs)
     }
 
@@ -1275,9 +1384,7 @@ impl Interpreter {
         if let Some(fn_idx) = self.resolve_named_trait_method("Hash", "hash", value) {
             let value = self.call_fn(fn_idx, smallvec::smallvec![value.clone()])?;
             let Value::Int(result) = value else {
-                return Err(RuntimeError::TypeError(
-                    "Hash.hash must return Int".into(),
-                ));
+                return Err(RuntimeError::TypeError("Hash.hash must return Int".into()));
             };
             return Ok(result);
         }
@@ -1337,7 +1444,9 @@ impl Interpreter {
                 }
                 let mut sorted_fields: Vec<_> = fields.iter().collect();
                 sorted_fields.sort_by(|(lhs_name, _), (rhs_name, _)| {
-                    lhs_name.resolve(&self.interner).cmp(rhs_name.resolve(&self.interner))
+                    lhs_name
+                        .resolve(&self.interner)
+                        .cmp(rhs_name.resolve(&self.interner))
                 });
                 for (name, value) in sorted_fields {
                     name.resolve(&self.interner).hash(hasher);
@@ -1460,14 +1569,16 @@ impl Interpreter {
             }
             Value::List(items) => Ok(format!(
                 "[{}]",
-                items.iter()
+                items
+                    .iter()
                     .map(|item| self.trait_show_value(item))
                     .collect::<Result<Vec<_>, _>>()?
                     .join(", ")
             )),
             Value::Deque(items) => Ok(format!(
                 "Deque([{}])",
-                items.iter()
+                items
+                    .iter()
                     .map(|item| self.trait_show_value(item))
                     .collect::<Result<Vec<_>, _>>()?
                     .join(", ")
@@ -1491,7 +1602,10 @@ impl Interpreter {
                 return None;
             }
             impl_item.methods.iter().copied().find(|&fn_idx| {
-                self.item_tree.functions[fn_idx].name.resolve(&self.interner) == method_name
+                self.item_tree.functions[fn_idx]
+                    .name
+                    .resolve(&self.interner)
+                    == method_name
             })
         })
     }
@@ -1525,12 +1639,9 @@ impl Interpreter {
         value: Value,
     ) -> Result<MapValue, RuntimeError> {
         let hash = self.hash_for_collection_key(&key)?;
-        entries.insert_persistent_with(
-            hash,
-            key,
-            value,
-            &mut |lhs, rhs| self.trait_eq_values(lhs, rhs),
-        )
+        entries.insert_persistent_with(hash, key, value, &mut |lhs, rhs| {
+            self.trait_eq_values(lhs, rhs)
+        })
     }
 
     fn set_contains_value(
@@ -4191,9 +4302,8 @@ impl Interpreter {
                     return Ok(Value::Map(entries));
                 }
                 let hash = self.hash_for_collection_key(&key)?;
-                Rc::make_mut(&mut entries).remove_with(hash, &key, &mut |lhs, rhs| {
-                    self.trait_eq_values(lhs, rhs)
-                })?;
+                Rc::make_mut(&mut entries)
+                    .remove_with(hash, &key, &mut |lhs, rhs| self.trait_eq_values(lhs, rhs))?;
                 Ok(Value::Map(entries))
             }
             IntrinsicFn::MapLen => {
@@ -4239,9 +4349,11 @@ impl Interpreter {
                 let key = args[1].clone();
                 let value = args[2].clone();
                 let hash = self.hash_for_collection_key(&key)?;
-                entries.borrow_mut().insert_with(hash, key, value, &mut |lhs, rhs| {
-                    self.trait_eq_values(lhs, rhs)
-                })?;
+                entries
+                    .borrow_mut()
+                    .insert_with(hash, key, value, &mut |lhs, rhs| {
+                        self.trait_eq_values(lhs, rhs)
+                    })?;
                 Ok(Value::MutableMap(entries.clone()))
             }
             IntrinsicFn::MutableMapGet => {
@@ -4256,6 +4368,35 @@ impl Interpreter {
                 } else {
                     self.make_none()
                 }
+            }
+            IntrinsicFn::MutableMapGetOrInsertWith => {
+                let Value::MutableMap(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_get_or_insert_with expects a MutableMap".into(),
+                    ));
+                };
+                if let Some(v) = {
+                    let borrowed = entries.borrow();
+                    self.map_get_value(&borrowed, &args[1])?
+                } {
+                    return Ok(v.clone());
+                }
+                let computed = self.call_value(args[2].clone(), smallvec::smallvec![])?;
+                if let Some(existing) = {
+                    let borrowed = entries.borrow();
+                    self.map_get_value(&borrowed, &args[1])?
+                } {
+                    return Ok(existing.clone());
+                }
+                let key = args[1].clone();
+                let hash = self.hash_for_collection_key(&key)?;
+                entries.borrow_mut().insert_with(
+                    hash,
+                    key,
+                    computed.clone(),
+                    &mut |lhs, rhs| self.trait_eq_values(lhs, rhs),
+                )?;
+                Ok(computed)
             }
             IntrinsicFn::MutableMapContains => {
                 let Value::MutableMap(entries) = &args[0] else {
@@ -4273,9 +4414,11 @@ impl Interpreter {
                     ));
                 };
                 let hash = self.hash_for_collection_key(&args[1])?;
-                entries.borrow_mut().remove_with(hash, &args[1], &mut |lhs, rhs| {
-                    self.trait_eq_values(lhs, rhs)
-                })?;
+                entries
+                    .borrow_mut()
+                    .remove_with(hash, &args[1], &mut |lhs, rhs| {
+                        self.trait_eq_values(lhs, rhs)
+                    })?;
                 Ok(Value::MutableMap(entries.clone()))
             }
             IntrinsicFn::MutableMapLen => {
@@ -4329,9 +4472,8 @@ impl Interpreter {
                     return Ok(Value::Set(entries));
                 }
                 let hash = self.hash_for_collection_key(&value)?;
-                Rc::make_mut(&mut entries).insert_with(hash, value, &mut |lhs, rhs| {
-                    self.trait_eq_values(lhs, rhs)
-                })?;
+                Rc::make_mut(&mut entries)
+                    .insert_with(hash, value, &mut |lhs, rhs| self.trait_eq_values(lhs, rhs))?;
                 Ok(Value::Set(entries))
             }
             IntrinsicFn::SetContains => {
@@ -4355,9 +4497,8 @@ impl Interpreter {
                     return Ok(Value::Set(entries));
                 }
                 let hash = self.hash_for_collection_key(&value)?;
-                Rc::make_mut(&mut entries).remove_with(hash, &value, &mut |lhs, rhs| {
-                    self.trait_eq_values(lhs, rhs)
-                })?;
+                Rc::make_mut(&mut entries)
+                    .remove_with(hash, &value, &mut |lhs, rhs| self.trait_eq_values(lhs, rhs))?;
                 Ok(Value::Set(entries))
             }
             IntrinsicFn::SetLen => {
@@ -4407,9 +4548,11 @@ impl Interpreter {
                     ));
                 };
                 let hash = self.hash_for_collection_key(&args[1])?;
-                entries.borrow_mut().remove_with(hash, &args[1], &mut |lhs, rhs| {
-                    self.trait_eq_values(lhs, rhs)
-                })?;
+                entries
+                    .borrow_mut()
+                    .remove_with(hash, &args[1], &mut |lhs, rhs| {
+                        self.trait_eq_values(lhs, rhs)
+                    })?;
                 Ok(Value::MutableSet(entries.clone()))
             }
             IntrinsicFn::MutableSetLen => {
@@ -4848,7 +4991,9 @@ impl Interpreter {
             }
             IntrinsicFn::CharToDigit => {
                 let Value::Char(c) = &args[0] else {
-                    return Err(RuntimeError::TypeError("char_to_digit expects a Char".into()));
+                    return Err(RuntimeError::TypeError(
+                        "char_to_digit expects a Char".into(),
+                    ));
                 };
                 let Value::Int(radix) = &args[1] else {
                     return Err(RuntimeError::TypeError(
@@ -5042,10 +5187,9 @@ impl Interpreter {
                     }),
                 }
             }
-            (Value::Map(entries), key) => {
-                self.map_get_value(entries, key)?
-                    .ok_or(RuntimeError::KeyNotFound)
-            }
+            (Value::Map(entries), key) => self
+                .map_get_value(entries, key)?
+                .ok_or(RuntimeError::KeyNotFound),
             (Value::MutableMap(entries), key) => {
                 let borrowed = entries.borrow();
                 self.map_get_value(&borrowed, key)?
@@ -6804,9 +6948,9 @@ mod tests {
             "string lines iterator should reuse the source string"
         );
 
-        let map_entries = Rc::new(MapValue::from_primitive_indexmap(
-            indexmap::IndexMap::from([(MapKey::Int(1), Value::Int(10))]),
-        ));
+        let map_entries = Rc::new(MapValue::from_primitive_indexmap(indexmap::IndexMap::from(
+            [(MapKey::Int(1), Value::Int(10))],
+        )));
         let map_plan = SeqPlan::Source(SeqSource::MapKeys(map_entries.clone()));
         let SeqIterState::Source(SeqSourceIter::MapKeys { entries, .. }) = interp
             .seq_iter_from_plan(&map_plan)
@@ -6819,9 +6963,9 @@ mod tests {
             "map-keys iterator should reuse map storage"
         );
 
-        let set_entries = Rc::new(SetValue::from_primitive_indexset(
-            indexmap::IndexSet::from([MapKey::Int(1)]),
-        ));
+        let set_entries = Rc::new(SetValue::from_primitive_indexset(indexmap::IndexSet::from(
+            [MapKey::Int(1)],
+        )));
         let set_plan = SeqPlan::Source(SeqSource::SetValues(set_entries.clone()));
         let SeqIterState::Source(SeqSourceIter::SetValues { entries, .. }) = interp
             .seq_iter_from_plan(&set_plan)

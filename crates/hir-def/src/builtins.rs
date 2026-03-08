@@ -802,6 +802,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             "get",
         ),
         (
+            "mutable_map_get_or_insert_with",
+            ReceiverKey::Core(CoreType::MutableMap),
+            "get_or_insert_with",
+        ),
+        (
             "mutable_map_contains",
             ReceiverKey::Core(CoreType::MutableMap),
             "contains",
@@ -1431,12 +1436,18 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
             .synthetic_module_static_methods
             .insert((collections, mutable_list, from_list), fn_idx);
     }
-    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_priority_queue_new_min) {
+    if let Some(&fn_idx) = scope
+        .intrinsic_fn_lookup
+        .get(&mutable_priority_queue_new_min)
+    {
         scope
             .synthetic_module_static_methods
             .insert((collections, mutable_priority_queue, new_min), fn_idx);
     }
-    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_priority_queue_new_max) {
+    if let Some(&fn_idx) = scope
+        .intrinsic_fn_lookup
+        .get(&mutable_priority_queue_new_max)
+    {
         scope
             .synthetic_module_static_methods
             .insert((collections, mutable_priority_queue, new_max), fn_idx);
@@ -1834,6 +1845,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     let fn_t_to_t = TypeRef::Fn {
         params: vec![t_ref.clone()],
         ret: Box::new(t_ref.clone()),
+    };
+    let fn_0_to_v = TypeRef::Fn {
+        params: vec![],
+        ret: Box::new(v_ref.clone()),
     };
     let fn_ut_to_u = TypeRef::Fn {
         params: vec![u_ref.clone(), t_ref.clone()],
@@ -2319,6 +2334,18 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![k_name, v_name],
             vec![("m", mutable_map_kv.clone()), ("k", k_ref.clone())],
             option_v.clone(),
+        ),
+        // mutable_map_get_or_insert_with<K, V>(m: MutableMap<K,V>, k: K, make: fn() -> V) -> V
+        mk_intrinsic(
+            interner,
+            "mutable_map_get_or_insert_with",
+            vec![k_name, v_name],
+            vec![
+                ("m", mutable_map_kv.clone()),
+                ("k", k_ref.clone()),
+                ("make", fn_0_to_v.clone()),
+            ],
+            v_ref.clone(),
         ),
         // mutable_map_contains<K, V>(m: MutableMap<K,V>, k: K) -> Bool
         mk_intrinsic(
