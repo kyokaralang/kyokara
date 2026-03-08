@@ -168,6 +168,23 @@ fn lambda_body_prefers_multiline(kind: SyntaxKind) -> bool {
     )
 }
 
+/// Some call arguments are much clearer when the entire arg list breaks
+/// into block layout instead of using the generic hanging-arg shape.
+fn arg_prefers_block_layout(node: &SyntaxNode) -> bool {
+    match node.kind() {
+        SyntaxKind::LambdaExpr => node
+            .children()
+            .find(|c| is_expr(c.kind()))
+            .is_some_and(|body| lambda_body_prefers_multiline(body.kind())),
+        SyntaxKind::IfExpr | SyntaxKind::MatchExpr | SyntaxKind::BlockExpr => true,
+        SyntaxKind::NamedArg | SyntaxKind::ParenExpr => node
+            .children()
+            .find(|c| is_expr(c.kind()))
+            .is_some_and(|expr| arg_prefers_block_layout(&expr)),
+        _ => false,
+    }
+}
+
 // ── Source file ─────────────────────────────────────────────────────
 
 fn format_source_file(node: &SyntaxNode) -> Doc {
@@ -1034,14 +1051,32 @@ fn format_arg_list(node: &SyntaxNode) -> Doc {
     // Collect all args: positional (Expr children) and named (NamedArg children).
     // They appear interleaved in the CST, so process all children in order.
     let mut arg_docs = Vec::new();
+    let mut prefer_block_layout = false;
     for child in node.children() {
         if is_expr(child.kind()) || child.kind() == SyntaxKind::NamedArg {
+            prefer_block_layout |= arg_prefers_block_layout(&child);
             arg_docs.push(format_node(&child));
         }
     }
 
     if arg_docs.is_empty() {
         return Doc::text("()");
+    }
+
+    if prefer_block_layout {
+        return Doc::concat(vec![
+            Doc::text("("),
+            Doc::indent(
+                INDENT,
+                Doc::concat(vec![
+                    Doc::HardLine,
+                    Doc::join(arg_docs, Doc::concat(vec![Doc::text(","), Doc::HardLine])),
+                    Doc::text(","),
+                ]),
+            ),
+            Doc::HardLine,
+            Doc::text(")"),
+        ]);
     }
 
     Doc::group(Doc::concat(vec![
@@ -1307,8 +1342,8 @@ fn format_record_expr(node: &SyntaxNode) -> Doc {
     let mut parts = Vec::new();
     if let Some(path) = find_child_node(node, SyntaxKind::Path) {
         parts.push(format_node(&path));
+        parts.push(Doc::text(" "));
     }
-    parts.push(Doc::text(" "));
     if let Some(field_list) = find_child_node(node, SyntaxKind::RecordExprFieldList) {
         parts.push(format_node(&field_list));
     }
