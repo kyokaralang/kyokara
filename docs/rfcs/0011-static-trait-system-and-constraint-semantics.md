@@ -1,4 +1,4 @@
-# RFC 0011: Rust-like Trait System and Constraint Semantics
+# RFC 0011: Static Trait System and Constraint Semantics
 
 - Status: Draft
 - Owner: Language Design
@@ -7,7 +7,7 @@
 
 ## Summary
 
-Add a Rust-like trait system to Kyokara as the canonical replacement for hardcoded type-class-like allowlists.
+Add a static trait system to Kyokara as the canonical replacement for hardcoded type-class-like allowlists.
 
 This RFC defines:
 
@@ -69,6 +69,8 @@ Canonical grammar additions:
 ```peg
 Keyword          <- ... / 'trait' / 'impl' / 'deriving'
 
+TraitRef         <- Path
+
 Item             <- 'pub'? (TypeDef
                    / TraitDef
                    / FnDef
@@ -78,13 +80,13 @@ Item             <- 'pub'? (TypeDef
                  / ImplDef
 
 TypeDef          <- 'type' Ident TypeParamList? DeriveClause? '=' TypeBody
-DeriveClause     <- 'deriving' '(' Ident (',' Ident)* ','? ')'
+DeriveClause     <- 'deriving' '(' TraitRef (',' TraitRef)* ','? ')'
 
 TraitDef         <- 'trait' Ident TypeParamList? SupertraitList? '{' TraitMethodSig* '}'
-SupertraitList   <- ':' Ident ('+' Ident)*
+SupertraitList   <- ':' TraitRef ('+' TraitRef)*
 TraitMethodSig   <- 'fn' Ident ParamList ReturnType?
 
-ImplDef          <- 'impl' TypeParamList? Ident 'for' TypeExpr '{' ImplMethodDef* '}'
+ImplDef          <- 'impl' TypeParamList? TraitRef 'for' TypeExpr '{' ImplMethodDef* '}'
 ImplMethodDef    <- 'fn' Ident ParamList ReturnType? BlockExpr
 ```
 
@@ -171,9 +173,36 @@ Reason:
 1. Kyokara keeps one obvious method surface: dot calls are value-owned API, while traits remain explicit capability namespaces.
 2. This avoids inherent-vs-trait precedence rules, trait-import-sensitive method lookup, and other secondary resolution surfaces.
 
+Canonical usage summary:
+
+```kyokara
+type Point deriving (Eq, Ord, Hash, Show) = { x: Int, y: Int }
+
+fn clamp<T: Ord>(x: T, lo: T, hi: T) -> T {
+  if (Ord.compare(x, lo) < 0) {
+    lo
+  } else if (Ord.compare(x, hi) > 0) {
+    hi
+  } else {
+    x
+  }
+}
+
+fn Point.to_string(self) -> String {
+  "(".concat(self.x.to_string()).concat(", ").concat(self.y.to_string()).concat(")")
+}
+
+fn debug_point(p: Point) -> String {
+  Show.show(p)
+}
+
+// Invalid in this RFC:
+// p.show()
+```
+
 ### P5. Trait bounds
 
-Trait bounds use Rust-like inline syntax:
+Trait bounds use inline `T: Trait` syntax:
 
 ```kyokara
 fn contains<K: Hash + Eq, V>(m: Map<K, V>, key: K) -> Bool { ... }
@@ -261,7 +290,7 @@ Rules:
 1. Imports make traits and impl-bearing types visible for bounds and qualified calls; imports do not change which impl is selected.
 2. At most one applicable impl may exist for a given `(Trait, SelfType)` after substitution.
 3. Ambiguous impl sets are compile errors.
-4. The coherence rule for phase 1 is Rust-like or stricter: an impl is legal only if the trait or the outermost self-type constructor is defined in the current project.
+4. The coherence rule for phase 1 is local-owner or stricter: an impl is legal only if the trait or the outermost self-type constructor is defined in the current project.
 5. Generic impls over a named local or builtin outer constructor are allowed, for example `impl<T: Eq> Eq for List<T>`.
 6. Open-ended blanket impls whose self type is just a type parameter, or which would apply to arbitrary unrelated self types, are not allowed in phase 1, for example `impl<T: Show> Show for T`.
 7. The project may not define overlapping impls, including overlap introduced through generic substitution.
