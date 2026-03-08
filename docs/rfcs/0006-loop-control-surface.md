@@ -26,7 +26,7 @@ This RFC is additive and keeps existing combinator APIs (`map/filter/fold/...`) 
 Implementation note:
 
 1. The core loop surface is shipped on `main`.
-2. RFC 0012 now supplies the local mutable-binding surface (`var` / `x = expr`) that completes the loop-carried-state story for imperative kernels.
+2. RFC 0013 now supplies the local mutable-binding surface (`var` / `x = expr`) that completes the loop-carried-state story for imperative kernels.
 3. `#363` tracks only a remaining KIR lowering follow-up, not the source-language loop surface itself.
 
 ## Motivation
@@ -163,9 +163,9 @@ No conflict. `for` consumes the same traversable model already exposed via colle
 
 Complementary. `MutableList` is still the explicit mutable tool for alias-visible container mutation; loops make hot-path iteration ergonomic without changing collection default mutability.
 
-### RFC 0012 (Local mutable bindings)
+### RFC 0013 (Local mutable bindings)
 
-Complementary. RFC 0012 adds `var` and bare-name reassignment so loop-carried local state no longer needs one-slot mutable wrapper cells.
+Complementary. RFC 0013 adds `var` and bare-name reassignment so loop-carried local state no longer needs one-slot mutable wrapper cells.
 
 ## Alternatives Considered
 

@@ -1,4 +1,4 @@
-# RFC 0012: Local Mutable Bindings (`var`)
+# RFC 0013: Local Mutable Bindings (`var`)
 
 - Status: Implemented
 - Owner: Language Design

@@ -74,7 +74,7 @@ All collection constructors are canonically under `collections`:
 6. `collections.MutableList.new()`
 7. `collections.MutableMap.new()`
 8. `collections.MutableSet.new()`
-9. `collections.MutablePriorityQueue.new_min()` / `new_max()` (defined by RFC 0011)
+9. `collections.MutablePriorityQueue.new_min()` / `new_max()` (defined by RFC 0012)
 
 Global/type-local constructor spellings for collections become non-canonical.
 
@@ -161,9 +161,9 @@ This RFC strengthens RFC 0004 by removing the remaining placement split between 
 
 This RFC keeps their naming principle (`Mutable*`) and generalizes placement symmetry across immutable + mutable collection families.
 
-### RFC 0011
+### RFC 0012
 
-RFC 0011 resolves the priority-queue rollout question for v1:
+RFC 0012 resolves the priority-queue rollout question for v1:
 
 1. `MutablePriorityQueue` ships first.
 2. Any immutable `PriorityQueue` mirror remains follow-up work, not v1 surface.
