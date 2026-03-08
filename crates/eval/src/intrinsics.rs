@@ -9,7 +9,7 @@ use kyokara_intern::Interner;
 use smallvec::SmallVec;
 
 use crate::error::RuntimeError;
-use crate::value::{MapKey, SeqSource, Value};
+use crate::value::{MapKey, PriorityQueueDirection, SeqSource, Value};
 
 /// Stack-allocated argument vector for function calls.
 pub type Args = SmallVec<[Value; 4]>;
@@ -59,6 +59,13 @@ pub enum IntrinsicFn {
     MutableListGet,
     MutableListSet,
     MutableListUpdate,
+    MutablePriorityQueueNewMin,
+    MutablePriorityQueueNewMax,
+    MutablePriorityQueuePush,
+    MutablePriorityQueuePeek,
+    MutablePriorityQueuePop,
+    MutablePriorityQueueLen,
+    MutablePriorityQueueIsEmpty,
     MutableMapNew,
     MutableMapInsert,
     MutableMapGet,
@@ -216,6 +223,9 @@ impl IntrinsicFn {
                 | IntrinsicFn::MutableListPop
                 | IntrinsicFn::MutableListGet
                 | IntrinsicFn::MutableListUpdate
+                | IntrinsicFn::MutablePriorityQueuePush
+                | IntrinsicFn::MutablePriorityQueuePeek
+                | IntrinsicFn::MutablePriorityQueuePop
                 | IntrinsicFn::MutableMapInsert
                 | IntrinsicFn::MutableMapGet
                 | IntrinsicFn::MutableMapContains
@@ -645,6 +655,28 @@ impl IntrinsicFn {
 
                 xs.set(i as usize, val);
                 Ok(Value::MutableList(xs))
+            }
+            IntrinsicFn::MutablePriorityQueueNewMin => {
+                Ok(Value::mutable_priority_queue(PriorityQueueDirection::Min))
+            }
+            IntrinsicFn::MutablePriorityQueueNewMax => {
+                Ok(Value::mutable_priority_queue(PriorityQueueDirection::Max))
+            }
+            IntrinsicFn::MutablePriorityQueueLen => {
+                let Value::MutablePriorityQueue(queue) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_priority_queue_len expects a MutablePriorityQueue".into(),
+                    ));
+                };
+                Ok(Value::Int(queue.borrow().entries.len() as i64))
+            }
+            IntrinsicFn::MutablePriorityQueueIsEmpty => {
+                let Value::MutablePriorityQueue(queue) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_priority_queue_is_empty expects a MutablePriorityQueue".into(),
+                    ));
+                };
+                Ok(Value::Bool(queue.borrow().entries.is_empty()))
             }
             IntrinsicFn::MutableMapNew => Ok(Value::mutable_map(IndexMap::new())),
             IntrinsicFn::MutableMapInsert => {
@@ -1760,6 +1792,9 @@ impl IntrinsicFn {
             | IntrinsicFn::MutableListLast
             | IntrinsicFn::MutableListPop
             | IntrinsicFn::MutableListGet
+            | IntrinsicFn::MutablePriorityQueuePush
+            | IntrinsicFn::MutablePriorityQueuePeek
+            | IntrinsicFn::MutablePriorityQueuePop
             | IntrinsicFn::MutableMapGet
             | IntrinsicFn::SeqMap
             | IntrinsicFn::SeqFilter
@@ -1899,6 +1934,34 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (
             Name::new(interner, "mutable_list_update"),
             IntrinsicFn::MutableListUpdate,
+        ),
+        (
+            Name::new(interner, "mutable_priority_queue_new_min"),
+            IntrinsicFn::MutablePriorityQueueNewMin,
+        ),
+        (
+            Name::new(interner, "mutable_priority_queue_new_max"),
+            IntrinsicFn::MutablePriorityQueueNewMax,
+        ),
+        (
+            Name::new(interner, "mutable_priority_queue_push"),
+            IntrinsicFn::MutablePriorityQueuePush,
+        ),
+        (
+            Name::new(interner, "mutable_priority_queue_peek"),
+            IntrinsicFn::MutablePriorityQueuePeek,
+        ),
+        (
+            Name::new(interner, "mutable_priority_queue_pop"),
+            IntrinsicFn::MutablePriorityQueuePop,
+        ),
+        (
+            Name::new(interner, "mutable_priority_queue_len"),
+            IntrinsicFn::MutablePriorityQueueLen,
+        ),
+        (
+            Name::new(interner, "mutable_priority_queue_is_empty"),
+            IntrinsicFn::MutablePriorityQueueIsEmpty,
         ),
         (
             Name::new(interner, "mutable_map_new"),

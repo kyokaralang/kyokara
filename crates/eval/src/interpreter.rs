@@ -24,7 +24,10 @@ use crate::env::Env;
 use crate::error::RuntimeError;
 use crate::intrinsics::{self, Args, IntrinsicFn};
 use crate::manifest::CapabilityManifest;
-use crate::value::{FnValue, MapValue, SeqPlan, SeqSource, SetValue, Value};
+use crate::value::{
+    FnValue, MapValue, MutablePriorityQueueValue, PriorityQueueDirection, PriorityQueueEntry,
+    SeqPlan, SeqSource, SetValue, Value,
+};
 
 /// Tree-walking interpreter state.
 pub struct Interpreter {
@@ -897,6 +900,9 @@ impl Interpreter {
             Value::Record { type_idx: None, .. } => false,
             Value::List(_) => name.resolve(&self.interner) == "List",
             Value::MutableList(_) => name.resolve(&self.interner) == "MutableList",
+            Value::MutablePriorityQueue(_) => {
+                name.resolve(&self.interner) == "MutablePriorityQueue"
+            }
             Value::Deque(_) => name.resolve(&self.interner) == "Deque",
             Value::BitSet(_) => name.resolve(&self.interner) == "BitSet",
             Value::MutableBitSet(_) => name.resolve(&self.interner) == "MutableBitSet",
@@ -1141,6 +1147,11 @@ impl Interpreter {
                 let rhs_items = rhs.snapshot();
                 self.trait_compare_slices(lhs_items.as_ref(), rhs_items.as_ref())?
             }
+            (Value::MutablePriorityQueue(_), Value::MutablePriorityQueue(_)) => {
+                return Err(RuntimeError::TypeError(
+                    "MutablePriorityQueue does not implement Ord".into(),
+                ));
+            }
             (Value::Deque(lhs), Value::Deque(rhs)) => {
                 let lhs_values: Vec<_> = lhs.iter().cloned().collect();
                 let rhs_values: Vec<_> = rhs.iter().cloned().collect();
@@ -1178,6 +1189,86 @@ impl Interpreter {
             }
         }
         Ok(lhs.len().cmp(&rhs.len()))
+    }
+
+    fn priority_queue_is_better(
+        &mut self,
+        direction: PriorityQueueDirection,
+        lhs: &PriorityQueueEntry,
+        rhs: &PriorityQueueEntry,
+    ) -> Result<bool, RuntimeError> {
+        let ord = self.trait_compare_values(&lhs.priority, &rhs.priority)?;
+        if ord != 0 {
+            return Ok(match direction {
+                PriorityQueueDirection::Min => ord < 0,
+                PriorityQueueDirection::Max => ord > 0,
+            });
+        }
+        Ok(lhs.seq < rhs.seq)
+    }
+
+    fn priority_queue_bubble_up(
+        &mut self,
+        queue: &mut MutablePriorityQueueValue,
+        mut idx: usize,
+    ) -> Result<(), RuntimeError> {
+        while idx > 0 {
+            let parent = (idx - 1) / 2;
+            if !self.priority_queue_is_better(
+                queue.direction,
+                &queue.entries[idx],
+                &queue.entries[parent],
+            )? {
+                break;
+            }
+            queue.entries.swap(idx, parent);
+            idx = parent;
+        }
+        Ok(())
+    }
+
+    fn priority_queue_bubble_down(
+        &mut self,
+        queue: &mut MutablePriorityQueueValue,
+        mut idx: usize,
+    ) -> Result<(), RuntimeError> {
+        let len = queue.entries.len();
+        loop {
+            let left = idx * 2 + 1;
+            if left >= len {
+                break;
+            }
+            let right = left + 1;
+            let mut best = left;
+            if right < len
+                && self.priority_queue_is_better(
+                    queue.direction,
+                    &queue.entries[right],
+                    &queue.entries[left],
+                )?
+            {
+                best = right;
+            }
+            if !self.priority_queue_is_better(
+                queue.direction,
+                &queue.entries[best],
+                &queue.entries[idx],
+            )? {
+                break;
+            }
+            queue.entries.swap(idx, best);
+            idx = best;
+        }
+        Ok(())
+    }
+
+    fn priority_queue_make_payload(&mut self, entry: PriorityQueueEntry) -> Value {
+        let priority_name = Name::new(&mut self.interner, "priority");
+        let value_name = Name::new(&mut self.interner, "value");
+        Value::Record {
+            fields: vec![(priority_name, entry.priority), (value_name, entry.value)],
+            type_idx: None,
+        }
     }
 
     fn trait_hash_value(&mut self, value: &Value) -> Result<i64, RuntimeError> {
@@ -1302,6 +1393,7 @@ impl Interpreter {
                 entry_hashes.hash(hasher);
             }
             Value::MutableList(_)
+            | Value::MutablePriorityQueue(_)
             | Value::MutableMap(_)
             | Value::MutableSet(_)
             | Value::MutableBitSet(_)
@@ -4003,6 +4095,58 @@ impl Interpreter {
                 xs.set(idx, updated);
                 Ok(Value::MutableList(xs.clone()))
             }
+            IntrinsicFn::MutablePriorityQueuePush => {
+                let Value::MutablePriorityQueue(queue) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_priority_queue_push expects a MutablePriorityQueue".into(),
+                    ));
+                };
+                let priority = args[1].clone();
+                let value = args[2].clone();
+                let mut queue = queue.borrow_mut();
+                let seq = queue.next_seq;
+                queue.next_seq += 1;
+                queue.entries.push(PriorityQueueEntry {
+                    priority,
+                    value,
+                    seq,
+                });
+                let idx = queue.entries.len() - 1;
+                self.priority_queue_bubble_up(&mut queue, idx)?;
+                Ok(args[0].clone())
+            }
+            IntrinsicFn::MutablePriorityQueuePeek => {
+                let Value::MutablePriorityQueue(queue) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_priority_queue_peek expects a MutablePriorityQueue".into(),
+                    ));
+                };
+                let Some(entry) = queue.borrow().entries.first().cloned() else {
+                    return self.make_none();
+                };
+                let payload = self.priority_queue_make_payload(entry);
+                self.make_some(payload)
+            }
+            IntrinsicFn::MutablePriorityQueuePop => {
+                let Value::MutablePriorityQueue(queue) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_priority_queue_pop expects a MutablePriorityQueue".into(),
+                    ));
+                };
+                let mut queue = queue.borrow_mut();
+                let Some(last) = queue.entries.pop() else {
+                    return self.make_none();
+                };
+                let entry = if queue.entries.is_empty() {
+                    last
+                } else {
+                    let root = std::mem::replace(&mut queue.entries[0], last);
+                    self.priority_queue_bubble_down(&mut queue, 0)?;
+                    root
+                };
+                let payload = self.priority_queue_make_payload(entry);
+                self.make_some(payload)
+            }
             IntrinsicFn::MapInsert => {
                 let mut args = args.into_iter();
                 let Value::Map(mut entries) = args.next().ok_or(RuntimeError::TypeError(
@@ -4755,6 +4899,11 @@ impl Interpreter {
                 .core_types
                 .get(CoreType::MutableList)
                 .map(|_| ReceiverKey::Core(CoreType::MutableList)),
+            Value::MutablePriorityQueue(_) => self
+                .module_scope
+                .core_types
+                .get(CoreType::MutablePriorityQueue)
+                .map(|_| ReceiverKey::Core(CoreType::MutablePriorityQueue)),
             Value::MutableMap(_) => self
                 .module_scope
                 .core_types

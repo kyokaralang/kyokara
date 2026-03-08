@@ -1,0 +1,6 @@
+import collections
+
+fn main() -> Int {
+  let pq: MutablePriorityQueue<Float, Int> = collections.MutablePriorityQueue.new_min()
+  pq.len()
+}

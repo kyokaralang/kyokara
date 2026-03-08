@@ -58,7 +58,7 @@ Canonical constructor placement:
 ```kyokara
 import collections
 
-let pq = collections.MutablePriorityQueue.new_min<Int, String>()
+let pq: MutablePriorityQueue<Int, String> = collections.MutablePriorityQueue.new_min()
 ```
 
 No global constructor aliases.
@@ -67,14 +67,15 @@ No global constructor aliases.
 
 The v1 constructor family is:
 
-1. `collections.MutablePriorityQueue.new_min<P: Ord, T>()`
-2. `collections.MutablePriorityQueue.new_max<P: Ord, T>()`
+1. `collections.MutablePriorityQueue.new_min()`
+2. `collections.MutablePriorityQueue.new_max()`
 
 Rules:
 
 1. Direction is explicit at construction time.
 2. There is no bare `new()` with an implicit default.
 3. The implementation may share one internal heap engine for both directions.
+4. `P` and `T` are inferred from surrounding type context or an explicit variable/type annotation.
 
 ### P3. Canonical method surface
 
@@ -141,7 +142,7 @@ The following are intentionally not in v1:
 import collections
 
 fn frontier_demo() -> String {
-  let pq = collections.MutablePriorityQueue.new_min<Int, String>()
+  let pq: MutablePriorityQueue<Int, String> = collections.MutablePriorityQueue.new_min()
     .push(5, "far")
     .push(1, "near")
     .push(1, "nearer")

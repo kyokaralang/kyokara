@@ -1122,6 +1122,10 @@ fn symbol_graph_contains_types() {
         type_names.contains(&"MutableMap"),
         "MutableMap builtin type should be in symbol graph: {type_names:?}"
     );
+    assert!(
+        type_names.contains(&"MutablePriorityQueue"),
+        "MutablePriorityQueue builtin type should be in symbol graph: {type_names:?}"
+    );
 }
 
 #[test]
@@ -5312,6 +5316,78 @@ fn check_mutable_set_invalid_element_type_reports_e0028() {
             .iter()
             .any(|d| d.code == "E0028" && d.message.contains("set element")),
         "expected E0028 set element diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_collections_mutable_priority_queue_constructor_surface_has_no_diagnostics_rfc_0012() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+fn main() -> Int {
+    let pq: MutablePriorityQueue<Int, String> = collections.MutablePriorityQueue.new_min()
+        .push(5, "far")
+        .push(1, "near")
+    match (pq.peek()) {
+        Some(item) => item.priority + pq.len()
+        None => 0
+    }
+}"#,
+        "collections.MutablePriorityQueue constructor canonical surface",
+    );
+}
+
+#[test]
+fn check_collections_mutable_priority_queue_alias_constructor_surface_has_no_diagnostics_rfc_0012() {
+    assert_check_no_diagnostics(
+        r#"import collections as c
+
+fn main() -> Int {
+    let pq: MutablePriorityQueue<Int, String> = c.MutablePriorityQueue.new_max()
+        .push(1, "low")
+        .push(9, "high")
+    match (pq.pop()) {
+        Some(item) => item.priority
+        None => 0
+    }
+}"#,
+        "collections.MutablePriorityQueue alias constructor canonical surface",
+    );
+}
+
+#[test]
+fn check_global_mutable_priority_queue_constructor_surface_is_removed_rfc_0012() {
+    let output = check(
+        "fn main() -> Int { let pq: MutablePriorityQueue<Int, Int> = MutablePriorityQueue.new_min() pq.len() }",
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("no method") || d.message.contains("unresolved name")),
+        "expected removed constructor-surface diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_mutable_priority_queue_non_ord_priority_reports_trait_diagnostic() {
+    let output = check(
+        r#"import collections
+fn main() -> Int {
+    let pq: MutablePriorityQueue<Float, Int> = collections.MutablePriorityQueue.new_min()
+    pq.len()
+}"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("Ord") || d.code == "E0037"),
+        "expected Ord-bound diagnostic, got: {:?}",
         output.diagnostics
     );
 }

@@ -1706,6 +1706,90 @@ fn infer_list_sort_accepts_derived_ord_elements() {
 }
 
 #[test]
+fn infer_mutable_priority_queue_surface_happy_paths_rfc_0012() {
+    let cases = [
+        r#"import collections
+
+        fn main() -> Int {
+            let pq: MutablePriorityQueue<Int, String> = collections.MutablePriorityQueue.new_min()
+                .push(5, "far")
+                .push(1, "near")
+            match (pq.peek()) {
+                Some(item) => item.priority + pq.len()
+                None => 0
+            }
+        }"#,
+        r#"import collections as c
+
+        fn main() -> Int {
+            let pq: MutablePriorityQueue<Int, String> = c.MutablePriorityQueue.new_max()
+                .push(1, "low")
+                .push(9, "high")
+            match (pq.pop()) {
+                Some(item) => item.priority
+                None => 0
+            }
+        }"#,
+        r#"import collections
+
+        type P derive(Ord) = { score: Int }
+
+        fn main() -> Int {
+            let a: P = P { score: 2 }
+            let b: P = P { score: 1 }
+            let pq: MutablePriorityQueue<P, String> = collections.MutablePriorityQueue.new_min()
+                .push(a, "a")
+                .push(b, "b")
+            match (pq.peek()) {
+                Some(item) => item.priority.score
+                None => 0
+            }
+        }"#,
+    ];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected no diagnostics, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn err_mutable_priority_queue_non_ord_priority_reports_trait_diagnostic() {
+    let cases = [
+        r#"import collections
+
+        fn main() -> Int {
+            let pq: MutablePriorityQueue<Float, Int> = collections.MutablePriorityQueue.new_min()
+            pq.len()
+        }"#,
+        r#"import collections
+
+        type P = { score: Int }
+
+        fn main() -> Int {
+            let pq: MutablePriorityQueue<P, String> = collections.MutablePriorityQueue.new_max()
+            pq.is_empty()
+        }"#,
+    ];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("Ord") || d.message.contains("trait")),
+            "expected Ord-bound diagnostic, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
 fn err_seq_frequencies_non_hashable_element_reports_e0024() {
     let cases = [
         r#"import collections

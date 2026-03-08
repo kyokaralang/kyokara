@@ -1454,6 +1454,29 @@ impl<'a> InferenceCtx<'a> {
             .unwrap_or(StaticOwnerKey::User(type_idx))
     }
 
+    fn check_mutable_priority_queue_ord_bound(&mut self, ty: &Ty) {
+        let resolved = self.table.resolve_deep(ty);
+        let Ty::Adt { def, args } = resolved else {
+            return;
+        };
+        if self.module_scope.core_types.kind_for_idx(def) != Some(CoreType::MutablePriorityQueue) {
+            return;
+        }
+        let Some(priority_ty) = args.first() else {
+            return;
+        };
+        let priority_ty = self.table.resolve_deep(priority_ty);
+        if matches!(priority_ty, Ty::Var(_) | Ty::Error | Ty::Never) {
+            return;
+        }
+        if !self.ty_satisfies_trait(&priority_ty, "Ord") {
+            self.push_diag(TyDiagnosticData::MissingTraitImpl {
+                trait_name: "Ord".to_owned(),
+                ty: priority_ty,
+            });
+        }
+    }
+
     /// Try to resolve `base.field(args)` as a module-qualified or static method call.
     ///
     /// Handles patterns like `io.println(s)`, `math.min(a, b)`,
@@ -1481,7 +1504,13 @@ impl<'a> InferenceCtx<'a> {
                     *type_name,
                     field,
                 )) {
-                    return Some(self.infer_qualified_fn_call(callee, fn_idx, args));
+                    let ty = self.infer_qualified_fn_call(callee, fn_idx, args);
+                    if type_name.resolve(self.interner) == "MutablePriorityQueue"
+                        && matches!(field.resolve(self.interner), "new_min" | "new_max")
+                    {
+                        self.check_mutable_priority_queue_ord_bound(&ty);
+                    }
+                    return Some(ty);
                 }
                 let module_str = module_name.resolve(self.interner);
                 let type_str = type_name.resolve(self.interner);
@@ -1999,6 +2028,28 @@ impl<'a> InferenceCtx<'a> {
                     && self.ty_satisfies_trait(&elem_ty, "Eq"))
                 {
                     self.push_diag(TyDiagnosticData::InvalidSetElement { ty: elem_ty });
+                }
+            }
+
+            if core == Some(CoreType::MutablePriorityQueue)
+                && !args.is_empty()
+                && matches!(
+                    method_str,
+                    "mutable_priority_queue_push"
+                        | "mutable_priority_queue_peek"
+                        | "mutable_priority_queue_pop"
+                        | "mutable_priority_queue_len"
+                        | "mutable_priority_queue_is_empty"
+                )
+            {
+                let priority_ty = self.table.resolve_deep(&args[0]);
+                if !matches!(priority_ty, Ty::Var(_) | Ty::Error | Ty::Never)
+                    && !self.ty_satisfies_trait(&priority_ty, "Ord")
+                {
+                    self.push_diag(TyDiagnosticData::MissingTraitImpl {
+                        trait_name: "Ord".to_owned(),
+                        ty: priority_ty,
+                    });
                 }
             }
 

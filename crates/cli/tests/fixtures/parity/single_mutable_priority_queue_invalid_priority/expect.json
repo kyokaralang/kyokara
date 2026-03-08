@@ -1,0 +1,12 @@
+{
+  "project": false,
+  "entry": "main.ky",
+  "check": {
+    "ok": false,
+    "messages_all": ["Ord"]
+  },
+  "run": {
+    "ok": false,
+    "stderr_contains": ["Ord"]
+  }
+}

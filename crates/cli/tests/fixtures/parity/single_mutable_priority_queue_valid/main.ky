@@ -1,0 +1,17 @@
+import collections
+
+fn main() -> Int {
+  let pq: MutablePriorityQueue<Int, Int> = collections.MutablePriorityQueue.new_min()
+    .push(5, 50)
+    .push(1, 10)
+    .push(1, 11)
+  let a = match (pq.pop()) {
+    Some(item) => item.value
+    None => 0
+  }
+  let b = match (pq.pop()) {
+    Some(item) => item.value
+    None => 0
+  }
+  a * 10 + b
+}
