@@ -90,7 +90,7 @@ APIs that can perform side effects remain module-qualified and capability-scoped
 Canonical placement for specialized collection constructors:
 
 1. `collections.Deque.new()`
-2. `collections.MutablePriorityQueue.new_min()` (first shipped surface; see RFC 0011)
+2. `collections.MutablePriorityQueue.new_min()` (first shipped surface; see RFC 0012)
 
 Once a value exists, behavior remains owner methods:
 
@@ -152,7 +152,7 @@ Only ubiquitous primitives should be prelude-global. Specialized pure APIs shoul
 
 1. Move `Deque` constructor surface to `collections` namespace.
 2. Keep method behavior unchanged.
-3. Introduce the priority-queue family directly under `collections`, with `MutablePriorityQueue` shipping first per RFC 0011.
+3. Introduce the priority-queue family directly under `collections`, with `MutablePriorityQueue` shipping first per RFC 0012.
 4. Update docs/examples/completions to module-first specialized collection references.
 
 No migration-hint policy is required in v0 unless explicitly chosen.

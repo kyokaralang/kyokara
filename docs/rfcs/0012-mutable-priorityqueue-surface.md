@@ -1,9 +1,9 @@
-# RFC 0011: MutablePriorityQueue Surface
+# RFC 0012: MutablePriorityQueue Surface
 
 - Status: Draft
 - Owner: Language Design
 - Tracking issue: [#257](https://github.com/kyokaralang/kyokara/issues/257)
-- Depends on: RFC 0010
+- Depends on: RFC 0011
 - Last updated: 2026-03-07
 
 ## Summary
@@ -113,9 +113,9 @@ Reason:
 
 Priority type requirements:
 
-1. `P` must satisfy `Ord` from RFC 0010.
+1. `P` must satisfy `Ord` from RFC 0011.
 2. Value type `T` is unconstrained.
-3. The first implementation phase may use the subset of `Ord`-conforming builtin types and later automatically widens as RFC 0010 implementations land.
+3. The first implementation phase may use the subset of `Ord`-conforming builtin types and later automatically widens as RFC 0011 implementations land.
 
 ### P6. Mutation model
 
@@ -175,9 +175,9 @@ This RFC resolves RFC 0009's priority-queue scope question:
 2. `MutablePriorityQueue` is the first canonical shipped type,
 3. any future immutable mirror remains follow-up work.
 
-### RFC 0010
+### RFC 0011
 
-This RFC depends on RFC 0010 for `Ord`-bounded priority typing and should not be implemented before RFC 0010 is accepted.
+This RFC depends on RFC 0011 for `Ord`-bounded priority typing and should not be implemented before RFC 0011 is accepted.
 
 ## Acceptance criteria
 

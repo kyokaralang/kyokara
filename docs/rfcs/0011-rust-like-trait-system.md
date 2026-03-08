@@ -1,4 +1,4 @@
-# RFC 0010: Rust-like Trait System and Constraint Semantics
+# RFC 0011: Rust-like Trait System and Constraint Semantics
 
 - Status: Draft
 - Owner: Language Design
@@ -255,9 +255,9 @@ This RFC strengthens RFC 0001's explicitness and mechanically-checkable rules:
 
 This RFC is the prerequisite for any future ordered/hash-constrained collection that wants first-class user-defined key or priority types.
 
-### RFC 0011
+### RFC 0012
 
-RFC 0011 depends on this RFC for `Ord`-based priority typing.
+RFC 0012 depends on this RFC for `Ord`-based priority typing.
 
 ## Acceptance criteria
 
