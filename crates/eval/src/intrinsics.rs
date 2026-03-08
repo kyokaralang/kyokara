@@ -216,7 +216,13 @@ impl IntrinsicFn {
                 | IntrinsicFn::MutableListPop
                 | IntrinsicFn::MutableListGet
                 | IntrinsicFn::MutableListUpdate
+                | IntrinsicFn::MutableMapInsert
                 | IntrinsicFn::MutableMapGet
+                | IntrinsicFn::MutableMapContains
+                | IntrinsicFn::MutableMapRemove
+                | IntrinsicFn::MutableSetInsert
+                | IntrinsicFn::MutableSetContains
+                | IntrinsicFn::MutableSetRemove
                 | IntrinsicFn::DequePopFront
                 | IntrinsicFn::DequePopBack
                 | IntrinsicFn::SeqMap
@@ -235,8 +241,16 @@ impl IntrinsicFn {
                 | IntrinsicFn::SeqAll
                 | IntrinsicFn::SeqFind
                 | IntrinsicFn::SeqToList
+                | IntrinsicFn::MapInsert
+                | IntrinsicFn::MapContains
                 | IntrinsicFn::MapGet
+                | IntrinsicFn::MapRemove
+                | IntrinsicFn::SetInsert
+                | IntrinsicFn::SetContains
+                | IntrinsicFn::SetRemove
+                | IntrinsicFn::ListSort
                 | IntrinsicFn::ListSortBy
+                | IntrinsicFn::ListBinarySearch
                 | IntrinsicFn::OptionUnwrapOr
                 | IntrinsicFn::OptionMapOr
                 | IntrinsicFn::OptionMap
@@ -650,7 +664,11 @@ impl IntrinsicFn {
                     ));
                 };
                 let key = MapKey::from_value(&key_value)?;
-                entries.borrow_mut().insert(key, value);
+                let hash = key.primitive_hash();
+                let key_value = key.to_value();
+                entries
+                    .borrow_mut()
+                    .insert_with(hash, key_value, value, &mut |lhs, rhs| Ok(lhs == rhs))?;
                 Ok(Value::MutableMap(entries))
             }
             IntrinsicFn::MutableMapContains => {
@@ -660,7 +678,13 @@ impl IntrinsicFn {
                     ));
                 };
                 let key = MapKey::from_value(&args[1])?;
-                Ok(Value::Bool(entries.borrow().contains_key(&key)))
+                let hash = key.primitive_hash();
+                let key_value = key.to_value();
+                Ok(Value::Bool(entries.borrow().contains_with(
+                    hash,
+                    &key_value,
+                    &mut |lhs, rhs| Ok(lhs == rhs),
+                )?))
             }
             IntrinsicFn::MutableMapRemove => {
                 let mut args = args;
@@ -676,7 +700,13 @@ impl IntrinsicFn {
                     ));
                 };
                 let key = MapKey::from_value(&key_value)?;
-                entries.borrow_mut().shift_remove(&key);
+                let hash = key.primitive_hash();
+                let key_value = key.to_value();
+                entries.borrow_mut().remove_with(
+                    hash,
+                    &key_value,
+                    &mut |lhs, rhs| Ok(lhs == rhs),
+                )?;
                 Ok(Value::MutableMap(entries))
             }
             IntrinsicFn::MutableMapLen => {
@@ -730,7 +760,11 @@ impl IntrinsicFn {
                     ));
                 };
                 let elem = MapKey::from_value(&elem_value)?;
-                entries.borrow_mut().insert(elem);
+                let hash = elem.primitive_hash();
+                let elem_value = elem.to_value();
+                entries
+                    .borrow_mut()
+                    .insert_with(hash, elem_value, &mut |lhs, rhs| Ok(lhs == rhs))?;
                 Ok(Value::MutableSet(entries))
             }
             IntrinsicFn::MutableSetContains => {
@@ -740,7 +774,13 @@ impl IntrinsicFn {
                     ));
                 };
                 let elem = MapKey::from_value(&args[1])?;
-                Ok(Value::Bool(entries.borrow().contains(&elem)))
+                let hash = elem.primitive_hash();
+                let elem_value = elem.to_value();
+                Ok(Value::Bool(entries.borrow().contains_with(
+                    hash,
+                    &elem_value,
+                    &mut |lhs, rhs| Ok(lhs == rhs),
+                )?))
             }
             IntrinsicFn::MutableSetRemove => {
                 let mut args = args;
@@ -756,7 +796,13 @@ impl IntrinsicFn {
                     ));
                 };
                 let elem = MapKey::from_value(&elem_value)?;
-                entries.borrow_mut().shift_remove(&elem);
+                let hash = elem.primitive_hash();
+                let elem_value = elem.to_value();
+                entries.borrow_mut().remove_with(
+                    hash,
+                    &elem_value,
+                    &mut |lhs, rhs| Ok(lhs == rhs),
+                )?;
                 Ok(Value::MutableSet(entries))
             }
             IntrinsicFn::MutableSetLen => {
@@ -1021,10 +1067,17 @@ impl IntrinsicFn {
                     return Err(RuntimeError::TypeError("map_insert expects a Map".into()));
                 };
                 let key = MapKey::from_value(&key_value)?;
+                let hash = key.primitive_hash();
+                let key_value = key.to_value();
                 if entries.get(&key) == Some(&value) {
                     return Ok(Value::Map(entries));
                 }
-                Rc::make_mut(&mut entries).insert(key, value);
+                Rc::make_mut(&mut entries).insert_with(
+                    hash,
+                    key_value,
+                    value,
+                    &mut |lhs, rhs| Ok(lhs == rhs),
+                )?;
                 Ok(Value::Map(entries))
             }
             IntrinsicFn::MapContains => {
@@ -1032,7 +1085,13 @@ impl IntrinsicFn {
                     return Err(RuntimeError::TypeError("map_contains expects a Map".into()));
                 };
                 let key = MapKey::from_value(&args[1])?;
-                Ok(Value::Bool(entries.contains_key(&key)))
+                let hash = key.primitive_hash();
+                let key_value = key.to_value();
+                Ok(Value::Bool(entries.contains_with(
+                    hash,
+                    &key_value,
+                    &mut |lhs, rhs| Ok(lhs == rhs),
+                )?))
             }
             IntrinsicFn::MapRemove => {
                 let mut args = args;
@@ -1046,10 +1105,16 @@ impl IntrinsicFn {
                     return Err(RuntimeError::TypeError("map_remove expects a Map".into()));
                 };
                 let key = MapKey::from_value(&key_value)?;
-                if !entries.contains_key(&key) {
+                let hash = key.primitive_hash();
+                let key_value = key.to_value();
+                if entries.get(&key).is_none() {
                     return Ok(Value::Map(entries));
                 }
-                Rc::make_mut(&mut entries).shift_remove(&key);
+                Rc::make_mut(&mut entries).remove_with(
+                    hash,
+                    &key_value,
+                    &mut |lhs, rhs| Ok(lhs == rhs),
+                )?;
                 Ok(Value::Map(entries))
             }
             IntrinsicFn::MapLen => {
@@ -1090,10 +1155,16 @@ impl IntrinsicFn {
                     return Err(RuntimeError::TypeError("set_insert expects a Set".into()));
                 };
                 let elem = MapKey::from_value(&elem_value)?;
+                let hash = elem.primitive_hash();
+                let elem_value = elem.to_value();
                 if entries.contains(&elem) {
                     return Ok(Value::Set(entries));
                 }
-                Rc::make_mut(&mut entries).insert(elem);
+                Rc::make_mut(&mut entries).insert_with(
+                    hash,
+                    elem_value,
+                    &mut |lhs, rhs| Ok(lhs == rhs),
+                )?;
                 Ok(Value::Set(entries))
             }
             IntrinsicFn::SetContains => {
@@ -1101,7 +1172,13 @@ impl IntrinsicFn {
                     return Err(RuntimeError::TypeError("set_contains expects a Set".into()));
                 };
                 let elem = MapKey::from_value(&args[1])?;
-                Ok(Value::Bool(entries.contains(&elem)))
+                let hash = elem.primitive_hash();
+                let elem_value = elem.to_value();
+                Ok(Value::Bool(entries.contains_with(
+                    hash,
+                    &elem_value,
+                    &mut |lhs, rhs| Ok(lhs == rhs),
+                )?))
             }
             IntrinsicFn::SetRemove => {
                 let mut args = args;
@@ -1115,10 +1192,16 @@ impl IntrinsicFn {
                     return Err(RuntimeError::TypeError("set_remove expects a Set".into()));
                 };
                 let elem = MapKey::from_value(&elem_value)?;
+                let hash = elem.primitive_hash();
+                let elem_value = elem.to_value();
                 if !entries.contains(&elem) {
                     return Ok(Value::Set(entries));
                 }
-                Rc::make_mut(&mut entries).shift_remove(&elem);
+                Rc::make_mut(&mut entries).remove_with(
+                    hash,
+                    &elem_value,
+                    &mut |lhs, rhs| Ok(lhs == rhs),
+                )?;
                 Ok(Value::Set(entries))
             }
             IntrinsicFn::SetLen => {

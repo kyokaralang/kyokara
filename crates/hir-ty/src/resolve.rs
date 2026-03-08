@@ -131,7 +131,7 @@ impl<'a> TyResolutionEnv<'a> {
     /// the given explicit arguments or fresh inference variables.
     fn with_type_args(
         &self,
-        param_names: &[Name],
+        param_names: &[kyokara_hir_def::item_tree::TypeParamDef],
         args: &[TypeRef],
         table: &mut UnificationTable,
     ) -> TyResolutionEnv<'a> {
@@ -142,7 +142,7 @@ impl<'a> TyResolutionEnv<'a> {
             } else {
                 table.fresh_var()
             };
-            type_params.push((*name, ty));
+            type_params.push((name.name, ty));
         }
         TyResolutionEnv {
             item_tree: self.item_tree,
@@ -171,9 +171,9 @@ pub(crate) fn instantiate_fn_sig(
         type_params: env.type_params.clone(),
         resolving_aliases: vec![],
     };
-    for &name in &fn_item.type_params {
+    for param in &fn_item.type_params {
         let var = table.fresh_var();
-        inner_env.type_params.push((name, var));
+        inner_env.type_params.push((param.name, var));
     }
 
     let param_tys: Vec<Ty> = fn_item
@@ -209,9 +209,9 @@ pub(crate) fn instantiate_constructor(
         resolving_aliases: vec![],
     };
     let mut args = Vec::new();
-    for &name in &type_item.type_params {
+    for param in &type_item.type_params {
         let var = table.fresh_var();
-        inner_env.type_params.push((name, var.clone()));
+        inner_env.type_params.push((param.name, var.clone()));
         args.push(var);
     }
 
@@ -255,6 +255,7 @@ mod tests {
             name,
             is_pub: false,
             type_params: vec![],
+            derives: vec![],
             kind: TypeDefKind::Adt {
                 variants: vec![VariantDef {
                     name: variant_name,
@@ -267,6 +268,8 @@ mod tests {
             imports: vec![],
             functions: Arena::new(),
             types,
+            traits: Arena::new(),
+            impls: Arena::new(),
             effects: Arena::new(),
             properties: Arena::new(),
             lets: Arena::new(),

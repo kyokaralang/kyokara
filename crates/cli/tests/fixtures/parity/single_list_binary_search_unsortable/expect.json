@@ -2,12 +2,11 @@
   "project": false,
   "entry": "main.ky",
   "check": {
-    "ok": false,
-    "codes_all": ["E0025"],
-    "messages_all": ["cannot be sorted"]
+    "ok": true,
+    "codes_all": []
   },
   "run": {
-    "ok": false,
-    "stderr_contains": ["cannot be sorted"]
+    "ok": true,
+    "stdout_contains": ["0"]
   }
 }

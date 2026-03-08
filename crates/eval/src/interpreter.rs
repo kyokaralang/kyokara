@@ -1,7 +1,9 @@
 //! Core tree-walking interpreter.
 
 use std::cmp::Ordering;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::VecDeque;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use kyokara_hir_def::body::{Body, LocalSlotRef};
@@ -22,7 +24,7 @@ use crate::env::Env;
 use crate::error::RuntimeError;
 use crate::intrinsics::{self, Args, IntrinsicFn};
 use crate::manifest::CapabilityManifest;
-use crate::value::{FnValue, MapKey, SeqPlan, SeqSource, Value};
+use crate::value::{FnValue, MapValue, SeqPlan, SeqSource, SetValue, Value};
 
 /// Tree-walking interpreter state.
 pub struct Interpreter {
@@ -158,15 +160,15 @@ enum SeqSourceIter {
         next_start: usize,
     },
     MapKeys {
-        entries: Rc<indexmap::IndexMap<MapKey, Value>>,
+        entries: Rc<MapValue>,
         idx: usize,
     },
     MapValues {
-        entries: Rc<indexmap::IndexMap<MapKey, Value>>,
+        entries: Rc<MapValue>,
         idx: usize,
     },
     SetValues {
-        entries: Rc<indexmap::IndexSet<MapKey>>,
+        entries: Rc<SetValue>,
         idx: usize,
     },
 }
@@ -855,6 +857,599 @@ impl Interpreter {
             })
     }
 
+    fn trait_method_dispatch_fn_idx(
+        &self,
+        trait_name: Name,
+        method_name: Name,
+        recv: &Value,
+    ) -> Option<FnItemIdx> {
+        self.item_tree.impls.iter().find_map(|(_, impl_item)| {
+            let impl_trait_name = impl_item.trait_ref.path.last()?;
+            if impl_trait_name != trait_name || !self.type_ref_matches_value(&impl_item.self_ty, recv)
+            {
+                return None;
+            }
+            impl_item.methods.iter().copied().find(|&fn_idx| {
+                self.item_tree.functions[fn_idx].name == method_name
+            })
+        })
+    }
+
+    fn type_ref_matches_value(&self, ty: &TypeRef, value: &Value) -> bool {
+        let TypeRef::Path { path, .. } = ty else {
+            return false;
+        };
+        let Some(name) = path.last() else {
+            return false;
+        };
+        match value {
+            Value::Int(_) => name.resolve(&self.interner) == "Int",
+            Value::Float(_) => name.resolve(&self.interner) == "Float",
+            Value::String(_) => name.resolve(&self.interner) == "String",
+            Value::Char(_) => name.resolve(&self.interner) == "Char",
+            Value::Bool(_) => name.resolve(&self.interner) == "Bool",
+            Value::Unit => name.resolve(&self.interner) == "Unit",
+            Value::Adt { type_idx, .. } => name == self.item_tree.types[*type_idx].name,
+            Value::Record {
+                type_idx: Some(type_idx),
+                ..
+            } => name == self.item_tree.types[*type_idx].name,
+            Value::Record { type_idx: None, .. } => false,
+            Value::List(_) => name.resolve(&self.interner) == "List",
+            Value::MutableList(_) => name.resolve(&self.interner) == "MutableList",
+            Value::Deque(_) => name.resolve(&self.interner) == "Deque",
+            Value::BitSet(_) => name.resolve(&self.interner) == "BitSet",
+            Value::MutableBitSet(_) => name.resolve(&self.interner) == "MutableBitSet",
+            Value::Map(_) => name.resolve(&self.interner) == "Map",
+            Value::MutableMap(_) => name.resolve(&self.interner) == "MutableMap",
+            Value::Set(_) => name.resolve(&self.interner) == "Set",
+            Value::MutableSet(_) => name.resolve(&self.interner) == "MutableSet",
+            Value::Seq(_) => name.resolve(&self.interner) == "Seq",
+            Value::Fn(_) => false,
+        }
+    }
+
+    fn call_trait_qualified(
+        &mut self,
+        trait_name: Name,
+        method_name: Name,
+        args: &[CallArg],
+        arg_values: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let Some(&trait_idx) = self.module_scope.traits.get(&trait_name) else {
+            return Err(RuntimeError::UnresolvedName(
+                trait_name.resolve(&self.interner).to_string(),
+            ));
+        };
+        let trait_item = &self.item_tree.traits[trait_idx];
+        let Some(method) = trait_item.methods.iter().find(|method| method.name == method_name) else {
+            return Err(RuntimeError::TypeError(format!(
+                "trait `{}` has no method `{}`",
+                trait_name.resolve(&self.interner),
+                method_name.resolve(&self.interner)
+            )));
+        };
+        let param_names: Vec<Name> = method.params.iter().map(|param| param.name).collect();
+        let callee_name = format!(
+            "trait method `{}.{}`",
+            trait_name.resolve(&self.interner),
+            method_name.resolve(&self.interner)
+        );
+        let bound_args =
+            self.bind_call_values_for_param_names(&callee_name, args, arg_values, &param_names)?;
+        let Some(receiver) = bound_args.first() else {
+            return Err(RuntimeError::ArityMismatch {
+                callee: callee_name,
+                expected: method.params.len(),
+                actual: 0,
+            });
+        };
+        if let Some(fn_idx) = self.trait_method_dispatch_fn_idx(trait_name, method_name, receiver) {
+            return self.call_fn(fn_idx, bound_args);
+        }
+        self.call_builtin_trait_method(trait_name, method_name, bound_args)
+    }
+
+    fn call_builtin_trait_method(
+        &mut self,
+        trait_name: Name,
+        method_name: Name,
+        args: Args,
+    ) -> Result<Value, RuntimeError> {
+        match (
+            trait_name.resolve(&self.interner),
+            method_name.resolve(&self.interner),
+            args.as_slice(),
+        ) {
+            ("Eq", "eq", [lhs, rhs]) => Ok(Value::Bool(self.trait_eq_values(lhs, rhs)?)),
+            ("Ord", "compare", [lhs, rhs]) => Ok(Value::Int(self.trait_compare_values(lhs, rhs)?)),
+            ("Hash", "hash", [value]) => Ok(Value::Int(self.trait_hash_value(value)?)),
+            ("Show", "show", [value]) => Ok(Value::String(self.trait_show_value(value)?)),
+            _ => Err(RuntimeError::TypeError(format!(
+                "unsupported trait call `{}.{}`",
+                trait_name.resolve(&self.interner),
+                method_name.resolve(&self.interner)
+            ))),
+        }
+    }
+
+    fn trait_eq_values(&mut self, lhs: &Value, rhs: &Value) -> Result<bool, RuntimeError> {
+        if let Some(fn_idx) = self.resolve_named_trait_method("Eq", "eq", lhs) {
+            let value = self.call_fn(fn_idx, smallvec::smallvec![lhs.clone(), rhs.clone()])?;
+            let Value::Bool(result) = value else {
+                return Err(RuntimeError::TypeError("Eq.eq must return Bool".into()));
+            };
+            return Ok(result);
+        }
+
+        match (lhs, rhs) {
+            (Value::Int(a), Value::Int(b)) => Ok(a == b),
+            (Value::String(a), Value::String(b)) => Ok(a == b),
+            (Value::Char(a), Value::Char(b)) => Ok(a == b),
+            (Value::Bool(a), Value::Bool(b)) => Ok(a == b),
+            (Value::Unit, Value::Unit) => Ok(true),
+            (
+                Value::Adt {
+                    type_idx: t1,
+                    variant: v1,
+                    fields: f1,
+                },
+                Value::Adt {
+                    type_idx: t2,
+                    variant: v2,
+                    fields: f2,
+                },
+            ) => {
+                if t1 != t2 || v1 != v2 || f1.len() != f2.len() {
+                    return Ok(false);
+                }
+                for (lhs_field, rhs_field) in f1.iter().zip(f2.iter()) {
+                    if !self.trait_eq_values(lhs_field, rhs_field)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            (Value::Record { fields: f1, .. }, Value::Record { fields: f2, .. }) => {
+                if f1.len() != f2.len() {
+                    return Ok(false);
+                }
+                let mut lhs_fields: Vec<_> = f1.iter().collect();
+                let mut rhs_fields: Vec<_> = f2.iter().collect();
+                lhs_fields.sort_by(|(lhs_name, _), (rhs_name, _)| {
+                    lhs_name.resolve(&self.interner).cmp(rhs_name.resolve(&self.interner))
+                });
+                rhs_fields.sort_by(|(lhs_name, _), (rhs_name, _)| {
+                    lhs_name.resolve(&self.interner).cmp(rhs_name.resolve(&self.interner))
+                });
+                for ((lhs_name, lhs_value), (rhs_name, rhs_value)) in
+                    lhs_fields.into_iter().zip(rhs_fields.into_iter())
+                {
+                    if lhs_name != rhs_name || !self.trait_eq_values(lhs_value, rhs_value)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            (Value::List(lhs), Value::List(rhs)) => self.trait_eq_slice(lhs, rhs),
+            (Value::MutableList(lhs), Value::MutableList(rhs)) => {
+                let lhs_items = lhs.snapshot();
+                let rhs_items = rhs.snapshot();
+                self.trait_eq_slice(lhs_items.as_ref(), rhs_items.as_ref())
+            }
+            (Value::Deque(lhs), Value::Deque(rhs)) => {
+                if lhs.len() != rhs.len() {
+                    return Ok(false);
+                }
+                for (lhs_value, rhs_value) in lhs.iter().zip(rhs.iter()) {
+                    if !self.trait_eq_values(lhs_value, rhs_value)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            (Value::BitSet(lhs), Value::BitSet(rhs)) => Ok(lhs == rhs),
+            (Value::Map(lhs), Value::Map(rhs)) => Ok(lhs == rhs),
+            (Value::Set(lhs), Value::Set(rhs)) => Ok(lhs == rhs),
+            (Value::MutableMap(lhs), Value::MutableMap(rhs)) => Ok(*lhs.borrow() == *rhs.borrow()),
+            (Value::MutableSet(lhs), Value::MutableSet(rhs)) => Ok(*lhs.borrow() == *rhs.borrow()),
+            (Value::MutableBitSet(lhs), Value::MutableBitSet(rhs)) => {
+                Ok(lhs.snapshot() == rhs.snapshot())
+            }
+            (Value::Fn(_), Value::Fn(_)) => Err(RuntimeError::TypeError(
+                "functions do not implement Eq".into(),
+            )),
+            (Value::Seq(_), Value::Seq(_)) => Err(RuntimeError::TypeError(
+                "Seq does not implement Eq".into(),
+            )),
+            _ => Ok(false),
+        }
+    }
+
+    fn trait_eq_slice(&mut self, lhs: &[Value], rhs: &[Value]) -> Result<bool, RuntimeError> {
+        if lhs.len() != rhs.len() {
+            return Ok(false);
+        }
+        for (lhs_value, rhs_value) in lhs.iter().zip(rhs.iter()) {
+            if !self.trait_eq_values(lhs_value, rhs_value)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn trait_compare_values(&mut self, lhs: &Value, rhs: &Value) -> Result<i64, RuntimeError> {
+        if let Some(fn_idx) = self.resolve_named_trait_method("Ord", "compare", lhs) {
+            let value = self.call_fn(fn_idx, smallvec::smallvec![lhs.clone(), rhs.clone()])?;
+            let Value::Int(result) = value else {
+                return Err(RuntimeError::TypeError(
+                    "Ord.compare must return Int".into(),
+                ));
+            };
+            return Ok(result);
+        }
+
+        let ord = match (lhs, rhs) {
+            (Value::Int(a), Value::Int(b)) => a.cmp(b),
+            (Value::String(a), Value::String(b)) => a.cmp(b),
+            (Value::Char(a), Value::Char(b)) => a.cmp(b),
+            (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+            (Value::Unit, Value::Unit) => Ordering::Equal,
+            (
+                Value::Adt {
+                    type_idx: t1,
+                    variant: v1,
+                    fields: f1,
+                },
+                Value::Adt {
+                    type_idx: t2,
+                    variant: v2,
+                    fields: f2,
+                },
+            ) if t1 == t2 => {
+                let variant_ord = v1.cmp(v2);
+                if variant_ord != Ordering::Equal {
+                    variant_ord
+                } else {
+                    self.trait_compare_slices(f1, f2)?
+                }
+            }
+            (Value::Record { fields: f1, .. }, Value::Record { fields: f2, .. }) => {
+                let mut lhs_fields: Vec<_> = f1.iter().collect();
+                let mut rhs_fields: Vec<_> = f2.iter().collect();
+                lhs_fields.sort_by(|(lhs_name, _), (rhs_name, _)| {
+                    lhs_name.resolve(&self.interner).cmp(rhs_name.resolve(&self.interner))
+                });
+                rhs_fields.sort_by(|(lhs_name, _), (rhs_name, _)| {
+                    lhs_name.resolve(&self.interner).cmp(rhs_name.resolve(&self.interner))
+                });
+                let name_ord = lhs_fields
+                    .iter()
+                    .map(|(name, _)| name.resolve(&self.interner))
+                    .cmp(rhs_fields.iter().map(|(name, _)| name.resolve(&self.interner)));
+                if name_ord != Ordering::Equal {
+                    name_ord
+                } else {
+                    let lhs_values: Vec<_> = lhs_fields.into_iter().map(|(_, value)| value.clone()).collect();
+                    let rhs_values: Vec<_> = rhs_fields.into_iter().map(|(_, value)| value.clone()).collect();
+                    self.trait_compare_slices_refs(&lhs_values, &rhs_values)?
+                }
+            }
+            (Value::List(lhs), Value::List(rhs)) => self.trait_compare_slices(lhs, rhs)?,
+            (Value::MutableList(lhs), Value::MutableList(rhs)) => {
+                let lhs_items = lhs.snapshot();
+                let rhs_items = rhs.snapshot();
+                self.trait_compare_slices(lhs_items.as_ref(), rhs_items.as_ref())?
+            }
+            (Value::Deque(lhs), Value::Deque(rhs)) => {
+                let lhs_values: Vec<_> = lhs.iter().cloned().collect();
+                let rhs_values: Vec<_> = rhs.iter().cloned().collect();
+                self.trait_compare_slices_refs(&lhs_values, &rhs_values)?
+            }
+            (Value::BitSet(lhs), Value::BitSet(rhs)) => lhs.words().cmp(&rhs.words()),
+            _ => {
+                return Err(RuntimeError::TypeError(
+                    "value does not implement Ord".into(),
+                ));
+            }
+        };
+
+        Ok(match ord {
+            Ordering::Less => -1,
+            Ordering::Equal => 0,
+            Ordering::Greater => 1,
+        })
+    }
+
+    fn trait_compare_slices(&mut self, lhs: &[Value], rhs: &[Value]) -> Result<Ordering, RuntimeError> {
+        self.trait_compare_slices_refs(lhs, rhs)
+    }
+
+    fn trait_compare_slices_refs(
+        &mut self,
+        lhs: &[Value],
+        rhs: &[Value],
+    ) -> Result<Ordering, RuntimeError> {
+        for (lhs_value, rhs_value) in lhs.iter().zip(rhs.iter()) {
+            let ord = self.trait_compare_values(lhs_value, rhs_value)?;
+            match ord.cmp(&0) {
+                Ordering::Equal => {}
+                non_eq => return Ok(non_eq),
+            }
+        }
+        Ok(lhs.len().cmp(&rhs.len()))
+    }
+
+    fn trait_hash_value(&mut self, value: &Value) -> Result<i64, RuntimeError> {
+        if let Some(fn_idx) = self.resolve_named_trait_method("Hash", "hash", value) {
+            let value = self.call_fn(fn_idx, smallvec::smallvec![value.clone()])?;
+            let Value::Int(result) = value else {
+                return Err(RuntimeError::TypeError(
+                    "Hash.hash must return Int".into(),
+                ));
+            };
+            return Ok(result);
+        }
+
+        let mut hasher = DefaultHasher::new();
+        self.write_builtin_trait_hash(value, &mut hasher)?;
+        Ok(i64::from_ne_bytes(hasher.finish().to_ne_bytes()))
+    }
+
+    fn write_builtin_trait_hash(
+        &mut self,
+        value: &Value,
+        hasher: &mut DefaultHasher,
+    ) -> Result<(), RuntimeError> {
+        match value {
+            Value::Int(n) => {
+                0u8.hash(hasher);
+                n.hash(hasher);
+            }
+            Value::String(s) => {
+                1u8.hash(hasher);
+                s.hash(hasher);
+            }
+            Value::Char(c) => {
+                2u8.hash(hasher);
+                c.hash(hasher);
+            }
+            Value::Bool(b) => {
+                3u8.hash(hasher);
+                b.hash(hasher);
+            }
+            Value::Unit => {
+                4u8.hash(hasher);
+            }
+            Value::Adt {
+                type_idx,
+                variant,
+                fields,
+            } => {
+                5u8.hash(hasher);
+                self.item_tree.types[*type_idx]
+                    .name
+                    .resolve(&self.interner)
+                    .hash(hasher);
+                variant.hash(hasher);
+                for field in fields {
+                    self.trait_hash_value(field)?.hash(hasher);
+                }
+            }
+            Value::Record { type_idx, fields } => {
+                6u8.hash(hasher);
+                if let Some(type_idx) = type_idx {
+                    self.item_tree.types[*type_idx]
+                        .name
+                        .resolve(&self.interner)
+                        .hash(hasher);
+                }
+                let mut sorted_fields: Vec<_> = fields.iter().collect();
+                sorted_fields.sort_by(|(lhs_name, _), (rhs_name, _)| {
+                    lhs_name.resolve(&self.interner).cmp(rhs_name.resolve(&self.interner))
+                });
+                for (name, value) in sorted_fields {
+                    name.resolve(&self.interner).hash(hasher);
+                    self.trait_hash_value(value)?.hash(hasher);
+                }
+            }
+            Value::List(items) => {
+                7u8.hash(hasher);
+                for item in items.iter() {
+                    self.trait_hash_value(item)?.hash(hasher);
+                }
+            }
+            Value::Deque(items) => {
+                8u8.hash(hasher);
+                for item in items.iter() {
+                    self.trait_hash_value(item)?.hash(hasher);
+                }
+            }
+            Value::BitSet(bitset) => {
+                9u8.hash(hasher);
+                bitset.size_bits().hash(hasher);
+                bitset.words().hash(hasher);
+            }
+            Value::Map(entries) => {
+                10u8.hash(hasher);
+                let mut entry_hashes: Vec<u64> = entries
+                    .entries()
+                    .iter()
+                    .map(|entry| {
+                        let mut entry_hasher = DefaultHasher::new();
+                        entry.hash.hash(&mut entry_hasher);
+                        self.trait_hash_value(&entry.key)?.hash(&mut entry_hasher);
+                        self.trait_hash_value(&entry.value)?.hash(&mut entry_hasher);
+                        Ok(entry_hasher.finish())
+                    })
+                    .collect::<Result<_, RuntimeError>>()?;
+                entry_hashes.sort_unstable();
+                entry_hashes.hash(hasher);
+            }
+            Value::Set(entries) => {
+                11u8.hash(hasher);
+                let mut entry_hashes: Vec<u64> = entries
+                    .entries()
+                    .iter()
+                    .map(|entry| {
+                        let mut entry_hasher = DefaultHasher::new();
+                        entry.hash.hash(&mut entry_hasher);
+                        self.trait_hash_value(&entry.value)?.hash(&mut entry_hasher);
+                        Ok(entry_hasher.finish())
+                    })
+                    .collect::<Result<_, RuntimeError>>()?;
+                entry_hashes.sort_unstable();
+                entry_hashes.hash(hasher);
+            }
+            Value::MutableList(_)
+            | Value::MutableMap(_)
+            | Value::MutableSet(_)
+            | Value::MutableBitSet(_)
+            | Value::Seq(_)
+            | Value::Fn(_)
+            | Value::Float(_) => {
+                return Err(RuntimeError::TypeError(
+                    "value does not implement Hash".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn trait_show_value(&mut self, value: &Value) -> Result<String, RuntimeError> {
+        if let Some(fn_idx) = self.resolve_named_trait_method("Show", "show", value) {
+            let value = self.call_fn(fn_idx, smallvec::smallvec![value.clone()])?;
+            let Value::String(result) = value else {
+                return Err(RuntimeError::TypeError(
+                    "Show.show must return String".into(),
+                ));
+            };
+            return Ok(result);
+        }
+
+        match value {
+            Value::Int(n) => Ok(n.to_string()),
+            Value::Float(f) => Ok(f.to_string()),
+            Value::String(s) => Ok(s.clone()),
+            Value::Char(c) => Ok(c.to_string()),
+            Value::Bool(b) => Ok(b.to_string()),
+            Value::Unit => Ok("()".to_string()),
+            Value::Adt {
+                type_idx,
+                variant,
+                fields,
+            } => {
+                let type_item = &self.item_tree.types[*type_idx];
+                let TypeDefKind::Adt { variants } = &type_item.kind else {
+                    return Ok(value.display(&self.interner));
+                };
+                let variant_name = variants
+                    .get(*variant)
+                    .map(|variant| variant.name.resolve(&self.interner).to_string())
+                    .unwrap_or("<variant>".to_string());
+                if fields.is_empty() {
+                    return Ok(variant_name);
+                }
+                let mut shown_fields = Vec::with_capacity(fields.len());
+                for field in fields {
+                    shown_fields.push(self.trait_show_value(field)?);
+                }
+                Ok(format!("{variant_name}({})", shown_fields.join(", ")))
+            }
+            Value::Record { fields, .. } => {
+                let mut shown_fields = Vec::with_capacity(fields.len());
+                for (name, value) in fields {
+                    let field_name = name.resolve(&self.interner).to_string();
+                    let shown_value = self.trait_show_value(value)?;
+                    shown_fields.push(format!("{field_name}: {shown_value}"));
+                }
+                shown_fields.sort();
+                Ok(format!("{{ {} }}", shown_fields.join(", ")))
+            }
+            Value::List(items) => Ok(format!(
+                "[{}]",
+                items.iter()
+                    .map(|item| self.trait_show_value(item))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(", ")
+            )),
+            Value::Deque(items) => Ok(format!(
+                "Deque([{}])",
+                items.iter()
+                    .map(|item| self.trait_show_value(item))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(", ")
+            )),
+            Value::Seq(_) => Ok("<seq>".to_string()),
+            _ => Ok(value.display(&self.interner)),
+        }
+    }
+
+    fn resolve_named_trait_method(
+        &self,
+        trait_name: &str,
+        method_name: &str,
+        recv: &Value,
+    ) -> Option<FnItemIdx> {
+        self.item_tree.impls.iter().find_map(|(_, impl_item)| {
+            let impl_trait_name = impl_item.trait_ref.path.last()?;
+            if impl_trait_name.resolve(&self.interner) != trait_name
+                || !self.type_ref_matches_value(&impl_item.self_ty, recv)
+            {
+                return None;
+            }
+            impl_item.methods.iter().copied().find(|&fn_idx| {
+                self.item_tree.functions[fn_idx].name.resolve(&self.interner) == method_name
+            })
+        })
+    }
+
+    fn hash_for_collection_key(&mut self, value: &Value) -> Result<i64, RuntimeError> {
+        self.trait_hash_value(value)
+    }
+
+    fn map_get_value(
+        &mut self,
+        entries: &MapValue,
+        key: &Value,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let hash = self.hash_for_collection_key(key)?;
+        entries.get_cloned_with(hash, key, &mut |lhs, rhs| self.trait_eq_values(lhs, rhs))
+    }
+
+    fn map_contains_value(
+        &mut self,
+        entries: &MapValue,
+        key: &Value,
+    ) -> Result<bool, RuntimeError> {
+        let hash = self.hash_for_collection_key(key)?;
+        entries.contains_with(hash, key, &mut |lhs, rhs| self.trait_eq_values(lhs, rhs))
+    }
+
+    fn map_insert_value(
+        &mut self,
+        entries: &MapValue,
+        key: Value,
+        value: Value,
+    ) -> Result<MapValue, RuntimeError> {
+        let hash = self.hash_for_collection_key(&key)?;
+        entries.insert_persistent_with(
+            hash,
+            key,
+            value,
+            &mut |lhs, rhs| self.trait_eq_values(lhs, rhs),
+        )
+    }
+
+    fn set_contains_value(
+        &mut self,
+        entries: &SetValue,
+        value: &Value,
+    ) -> Result<bool, RuntimeError> {
+        let hash = self.hash_for_collection_key(value)?;
+        entries.contains_with(hash, value, &mut |lhs, rhs| self.trait_eq_values(lhs, rhs))
+    }
+
     fn param_names_for_fn_value(&self, fv: &FnValue) -> Option<Vec<Name>> {
         match fv {
             FnValue::User(fn_idx) => Some(self.param_names_for_fn_idx(*fn_idx)),
@@ -1241,6 +1836,18 @@ impl Interpreter {
                         && path.is_single()
                     {
                         let seg = path.segments[0];
+
+                        if self.module_scope.traits.contains_key(&seg) {
+                            let source_order = self.args_in_source_order(&args);
+                            let mut arg_values = Vec::with_capacity(source_order.len());
+                            for idx in &source_order {
+                                let v = eval_propagate!(self, env, body, *idx);
+                                arg_values.push(v);
+                            }
+                            return self
+                                .call_trait_qualified(seg, field_name, &args, arg_values)
+                                .map(ControlFlow::Value);
+                        }
 
                         // Module-qualified call: io.println(s), math.min(a, b)
                         if self.module_scope.imported_modules.contains(&seg)
@@ -1643,6 +2250,18 @@ impl Interpreter {
                         && path.is_single()
                     {
                         let seg = path.segments[0];
+
+                        if self.module_scope.traits.contains_key(&seg) {
+                            let source_order = self.args_in_source_order(args);
+                            let mut arg_values = Vec::with_capacity(source_order.len());
+                            for idx in &source_order {
+                                let v = eval_propagate_shared!(self, body, *idx);
+                                arg_values.push(v);
+                            }
+                            return self
+                                .call_trait_qualified(seg, field_name, args, arg_values)
+                                .map(ControlFlow::Value);
+                        }
 
                         // Module-qualified call: io.println(s)
                         if self.module_scope.imported_modules.contains(&seg)
@@ -2791,21 +3410,21 @@ impl Interpreter {
                 Self::next_string_char(s.as_str(), next_start).map(Value::Char)
             }
             SeqSourceIter::MapKeys { entries, idx } => {
-                let out = entries.get_index(*idx).map(|(key, _)| key.to_value());
+                let out = entries.key_at(*idx);
                 if out.is_some() {
                     *idx += 1;
                 }
                 out
             }
             SeqSourceIter::MapValues { entries, idx } => {
-                let out = entries.get_index(*idx).map(|(_, value)| value.clone());
+                let out = entries.value_at(*idx);
                 if out.is_some() {
                     *idx += 1;
                 }
                 out
             }
             SeqSourceIter::SetValues { entries, idx } => {
-                let out = entries.get_index(*idx).map(MapKey::to_value);
+                let out = entries.value_at(*idx);
                 if out.is_some() {
                     *idx += 1;
                 }
@@ -3034,8 +3653,8 @@ impl Interpreter {
                     Ok(())
                 }
                 SeqSource::MapKeys(entries) => {
-                    for key in entries.keys() {
-                        match emit(self, key.to_value())? {
+                    for entry in entries.entries() {
+                        match emit(self, entry.key.clone())? {
                             Continue => {}
                             Break => return Ok(()),
                         }
@@ -3043,8 +3662,8 @@ impl Interpreter {
                     Ok(())
                 }
                 SeqSource::MapValues(entries) => {
-                    for value in entries.values().cloned() {
-                        match emit(self, value)? {
+                    for entry in entries.entries() {
+                        match emit(self, entry.value.clone())? {
                             Continue => {}
                             Break => return Ok(()),
                         }
@@ -3052,8 +3671,8 @@ impl Interpreter {
                     Ok(())
                 }
                 SeqSource::SetValues(entries) => {
-                    for key in entries.iter() {
-                        match emit(self, key.to_value())? {
+                    for entry in entries.entries() {
+                        match emit(self, entry.value.clone())? {
                             Continue => {}
                             Break => return Ok(()),
                         }
@@ -3384,16 +4003,102 @@ impl Interpreter {
                 xs.set(idx, updated);
                 Ok(Value::MutableList(xs.clone()))
             }
+            IntrinsicFn::MapInsert => {
+                let mut args = args.into_iter();
+                let Value::Map(mut entries) = args.next().ok_or(RuntimeError::TypeError(
+                    "map_insert: missing map argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError("map_insert expects a Map".into()));
+                };
+                let key = args.next().ok_or(RuntimeError::TypeError(
+                    "map_insert: missing key argument".into(),
+                ))?;
+                let value = args.next().ok_or(RuntimeError::TypeError(
+                    "map_insert: missing value argument".into(),
+                ))?;
+                if self.map_get_value(&entries, &key)? == Some(value.clone()) {
+                    return Ok(Value::Map(entries));
+                }
+                let hash = self.hash_for_collection_key(&key)?;
+                Rc::make_mut(&mut entries).insert_with(hash, key, value, &mut |lhs, rhs| {
+                    self.trait_eq_values(lhs, rhs)
+                })?;
+                Ok(Value::Map(entries))
+            }
+            IntrinsicFn::MapContains => {
+                let Value::Map(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError("map_contains expects a Map".into()));
+                };
+                Ok(Value::Bool(self.map_contains_value(entries, &args[1])?))
+            }
+            IntrinsicFn::MapRemove => {
+                let mut args = args.into_iter();
+                let Value::Map(mut entries) = args.next().ok_or(RuntimeError::TypeError(
+                    "map_remove: missing map argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError("map_remove expects a Map".into()));
+                };
+                let key = args.next().ok_or(RuntimeError::TypeError(
+                    "map_remove: missing key argument".into(),
+                ))?;
+                if !self.map_contains_value(&entries, &key)? {
+                    return Ok(Value::Map(entries));
+                }
+                let hash = self.hash_for_collection_key(&key)?;
+                Rc::make_mut(&mut entries).remove_with(hash, &key, &mut |lhs, rhs| {
+                    self.trait_eq_values(lhs, rhs)
+                })?;
+                Ok(Value::Map(entries))
+            }
+            IntrinsicFn::MapLen => {
+                let Value::Map(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError("map_len expects a Map".into()));
+                };
+                Ok(Value::Int(entries.len() as i64))
+            }
+            IntrinsicFn::MapKeys => {
+                let Value::Map(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError("map_keys expects a Map".into()));
+                };
+                Ok(Value::seq_source(SeqSource::MapKeys(entries.clone())))
+            }
+            IntrinsicFn::MapValues => {
+                let Value::Map(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError("map_values expects a Map".into()));
+                };
+                Ok(Value::seq_source(SeqSource::MapValues(entries.clone())))
+            }
+            IntrinsicFn::MapIsEmpty => {
+                let Value::Map(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError("map_is_empty expects a Map".into()));
+                };
+                Ok(Value::Bool(entries.is_empty()))
+            }
             IntrinsicFn::MapGet => {
                 let Value::Map(entries) = &args[0] else {
                     return Err(RuntimeError::TypeError("map_get expects a Map".into()));
                 };
-                let key = MapKey::from_value(&args[1])?;
-                if let Some(v) = entries.get(&key) {
+                if let Some(v) = self.map_get_value(entries, &args[1])? {
                     self.make_some(v.clone())
                 } else {
                     self.make_none()
                 }
+            }
+            IntrinsicFn::MutableMapInsert => {
+                let Value::MutableMap(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_insert expects a MutableMap".into(),
+                    ));
+                };
+                let key = args[1].clone();
+                let value = args[2].clone();
+                let hash = self.hash_for_collection_key(&key)?;
+                entries.borrow_mut().insert_with(hash, key, value, &mut |lhs, rhs| {
+                    self.trait_eq_values(lhs, rhs)
+                })?;
+                Ok(Value::MutableMap(entries.clone()))
             }
             IntrinsicFn::MutableMapGet => {
                 let Value::MutableMap(entries) = &args[0] else {
@@ -3401,12 +4106,193 @@ impl Interpreter {
                         "mutable_map_get expects a MutableMap".into(),
                     ));
                 };
-                let key = MapKey::from_value(&args[1])?;
-                if let Some(v) = entries.borrow().get(&key) {
+                let borrowed = entries.borrow();
+                if let Some(v) = self.map_get_value(&borrowed, &args[1])? {
                     self.make_some(v.clone())
                 } else {
                     self.make_none()
                 }
+            }
+            IntrinsicFn::MutableMapContains => {
+                let Value::MutableMap(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_contains expects a MutableMap".into(),
+                    ));
+                };
+                let borrowed = entries.borrow();
+                Ok(Value::Bool(self.map_contains_value(&borrowed, &args[1])?))
+            }
+            IntrinsicFn::MutableMapRemove => {
+                let Value::MutableMap(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_remove expects a MutableMap".into(),
+                    ));
+                };
+                let hash = self.hash_for_collection_key(&args[1])?;
+                entries.borrow_mut().remove_with(hash, &args[1], &mut |lhs, rhs| {
+                    self.trait_eq_values(lhs, rhs)
+                })?;
+                Ok(Value::MutableMap(entries.clone()))
+            }
+            IntrinsicFn::MutableMapLen => {
+                let Value::MutableMap(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_len expects a MutableMap".into(),
+                    ));
+                };
+                Ok(Value::Int(entries.borrow().len() as i64))
+            }
+            IntrinsicFn::MutableMapKeys => {
+                let Value::MutableMap(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_keys expects a MutableMap".into(),
+                    ));
+                };
+                Ok(Value::seq_source(SeqSource::MapKeys(Rc::new(
+                    entries.borrow().clone(),
+                ))))
+            }
+            IntrinsicFn::MutableMapValues => {
+                let Value::MutableMap(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_values expects a MutableMap".into(),
+                    ));
+                };
+                Ok(Value::seq_source(SeqSource::MapValues(Rc::new(
+                    entries.borrow().clone(),
+                ))))
+            }
+            IntrinsicFn::MutableMapIsEmpty => {
+                let Value::MutableMap(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_is_empty expects a MutableMap".into(),
+                    ));
+                };
+                Ok(Value::Bool(entries.borrow().is_empty()))
+            }
+            IntrinsicFn::SetInsert => {
+                let mut args = args.into_iter();
+                let Value::Set(mut entries) = args.next().ok_or(RuntimeError::TypeError(
+                    "set_insert: missing set argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError("set_insert expects a Set".into()));
+                };
+                let value = args.next().ok_or(RuntimeError::TypeError(
+                    "set_insert: missing element argument".into(),
+                ))?;
+                if self.set_contains_value(&entries, &value)? {
+                    return Ok(Value::Set(entries));
+                }
+                let hash = self.hash_for_collection_key(&value)?;
+                Rc::make_mut(&mut entries).insert_with(hash, value, &mut |lhs, rhs| {
+                    self.trait_eq_values(lhs, rhs)
+                })?;
+                Ok(Value::Set(entries))
+            }
+            IntrinsicFn::SetContains => {
+                let Value::Set(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError("set_contains expects a Set".into()));
+                };
+                Ok(Value::Bool(self.set_contains_value(entries, &args[1])?))
+            }
+            IntrinsicFn::SetRemove => {
+                let mut args = args.into_iter();
+                let Value::Set(mut entries) = args.next().ok_or(RuntimeError::TypeError(
+                    "set_remove: missing set argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError("set_remove expects a Set".into()));
+                };
+                let value = args.next().ok_or(RuntimeError::TypeError(
+                    "set_remove: missing element argument".into(),
+                ))?;
+                if !self.set_contains_value(&entries, &value)? {
+                    return Ok(Value::Set(entries));
+                }
+                let hash = self.hash_for_collection_key(&value)?;
+                Rc::make_mut(&mut entries).remove_with(hash, &value, &mut |lhs, rhs| {
+                    self.trait_eq_values(lhs, rhs)
+                })?;
+                Ok(Value::Set(entries))
+            }
+            IntrinsicFn::SetLen => {
+                let Value::Set(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError("set_len expects a Set".into()));
+                };
+                Ok(Value::Int(entries.len() as i64))
+            }
+            IntrinsicFn::SetIsEmpty => {
+                let Value::Set(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError("set_is_empty expects a Set".into()));
+                };
+                Ok(Value::Bool(entries.is_empty()))
+            }
+            IntrinsicFn::SetValues => {
+                let Value::Set(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError("set_values expects a Set".into()));
+                };
+                Ok(Value::seq_source(SeqSource::SetValues(entries.clone())))
+            }
+            IntrinsicFn::MutableSetInsert => {
+                let Value::MutableSet(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_set_insert expects a MutableSet".into(),
+                    ));
+                };
+                let value = args[1].clone();
+                let hash = self.hash_for_collection_key(&value)?;
+                entries
+                    .borrow_mut()
+                    .insert_with(hash, value, &mut |lhs, rhs| self.trait_eq_values(lhs, rhs))?;
+                Ok(Value::MutableSet(entries.clone()))
+            }
+            IntrinsicFn::MutableSetContains => {
+                let Value::MutableSet(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_set_contains expects a MutableSet".into(),
+                    ));
+                };
+                let borrowed = entries.borrow();
+                Ok(Value::Bool(self.set_contains_value(&borrowed, &args[1])?))
+            }
+            IntrinsicFn::MutableSetRemove => {
+                let Value::MutableSet(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_set_remove expects a MutableSet".into(),
+                    ));
+                };
+                let hash = self.hash_for_collection_key(&args[1])?;
+                entries.borrow_mut().remove_with(hash, &args[1], &mut |lhs, rhs| {
+                    self.trait_eq_values(lhs, rhs)
+                })?;
+                Ok(Value::MutableSet(entries.clone()))
+            }
+            IntrinsicFn::MutableSetLen => {
+                let Value::MutableSet(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_set_len expects a MutableSet".into(),
+                    ));
+                };
+                Ok(Value::Int(entries.borrow().len() as i64))
+            }
+            IntrinsicFn::MutableSetIsEmpty => {
+                let Value::MutableSet(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_set_is_empty expects a MutableSet".into(),
+                    ));
+                };
+                Ok(Value::Bool(entries.borrow().is_empty()))
+            }
+            IntrinsicFn::MutableSetValues => {
+                let Value::MutableSet(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_set_values expects a MutableSet".into(),
+                    ));
+                };
+                Ok(Value::seq_source(SeqSource::SetValues(Rc::new(
+                    entries.borrow().clone(),
+                ))))
             }
             IntrinsicFn::SeqMap => {
                 let plan = self.require_traversal_plan(&args[0], "seq_map")?;
@@ -3512,10 +4398,10 @@ impl Interpreter {
             }
             IntrinsicFn::SeqFrequencies => {
                 let plan = self.require_traversal_plan(&args[0], "seq_frequencies")?;
-                let mut entries = indexmap::IndexMap::new();
-                self.seq_for_each(&plan, &mut |_interp, item| {
-                    let key = MapKey::from_value(&item)?;
-                    let next = match entries.get(&key) {
+                let mut entries = MapValue::new();
+                let mut state = self.seq_iter_from_plan(&plan)?;
+                while let Some(item) = self.seq_iter_next(&mut state)? {
+                    let next = match self.map_get_value(&entries, &item)? {
                         Some(Value::Int(n)) => {
                             n.checked_add(1).ok_or(RuntimeError::IntegerOverflow)?
                         }
@@ -3526,9 +4412,8 @@ impl Interpreter {
                         }
                         None => 1,
                     };
-                    entries.insert(key, Value::Int(next));
-                    Ok(())
-                })?;
+                    entries = self.map_insert_value(&entries, item, Value::Int(next))?;
+                }
                 Ok(Value::Map(Rc::new(entries)))
             }
             IntrinsicFn::SeqAny => {
@@ -3645,6 +4530,37 @@ impl Interpreter {
                     type_idx: None,
                 };
                 self.make_some(payload)
+            }
+            IntrinsicFn::ListSort => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError("list_sort expects a List".into()));
+                };
+                let mut cmp = |a: &Value, b: &Value| {
+                    let ord = self.trait_compare_values(a, b)?;
+                    Ok(ord.cmp(&0))
+                };
+                let items = stable_merge_sort_by(xs.as_ref(), &mut cmp)?;
+                Ok(Value::list(items))
+            }
+            IntrinsicFn::ListBinarySearch => {
+                let Value::List(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "list_binary_search expects a List".into(),
+                    ));
+                };
+                let needle = &args[1];
+                let mut lo = 0usize;
+                let mut hi = xs.len();
+                while lo < hi {
+                    let mid = lo + (hi - lo) / 2;
+                    let ord = self.trait_compare_values(&xs[mid], needle)?;
+                    match ord.cmp(&0) {
+                        Ordering::Less => lo = mid + 1,
+                        Ordering::Greater => hi = mid,
+                        Ordering::Equal => return Ok(Value::Int(mid as i64)),
+                    }
+                }
+                Ok(Value::Int(-(lo as i64) - 1))
             }
             IntrinsicFn::ListSortBy => {
                 let Value::List(xs) = &args[0] else {
@@ -3895,7 +4811,7 @@ impl Interpreter {
         }
     }
 
-    fn eval_index(&self, base: Value, index: Value) -> Result<Value, RuntimeError> {
+    fn eval_index(&mut self, base: Value, index: Value) -> Result<Value, RuntimeError> {
         match (&base, &index) {
             (Value::List(items), Value::Int(i)) => {
                 let i = *i;
@@ -3951,15 +4867,12 @@ impl Interpreter {
                 }
             }
             (Value::Map(entries), key) => {
-                let k = MapKey::from_value(key)?;
-                entries.get(&k).cloned().ok_or(RuntimeError::KeyNotFound)
+                self.map_get_value(entries, key)?
+                    .ok_or(RuntimeError::KeyNotFound)
             }
             (Value::MutableMap(entries), key) => {
-                let k = MapKey::from_value(key)?;
-                entries
-                    .borrow()
-                    .get(&k)
-                    .cloned()
+                let borrowed = entries.borrow();
+                self.map_get_value(&borrowed, key)?
                     .ok_or(RuntimeError::KeyNotFound)
             }
             _ => Err(RuntimeError::TypeError(
@@ -4706,6 +5619,7 @@ mod tests {
     use smallvec::smallvec;
 
     use super::*;
+    use crate::value::MapKey;
 
     fn make_test_interpreter_and_body() -> (Interpreter, Body, TypeItemIdx, Name, Name) {
         let mut interner = Interner::new();
@@ -4719,6 +5633,7 @@ mod tests {
             name: opt_name,
             is_pub: true,
             type_params: Vec::new(),
+            derives: Vec::new(),
             kind: TypeDefKind::Adt {
                 variants: vec![
                     VariantDef {
@@ -5713,9 +6628,9 @@ mod tests {
             "string lines iterator should reuse the source string"
         );
 
-        let mut map_entries = indexmap::IndexMap::new();
-        map_entries.insert(MapKey::Int(1), Value::Int(10));
-        let map_entries = Rc::new(map_entries);
+        let map_entries = Rc::new(MapValue::from_primitive_indexmap(
+            indexmap::IndexMap::from([(MapKey::Int(1), Value::Int(10))]),
+        ));
         let map_plan = SeqPlan::Source(SeqSource::MapKeys(map_entries.clone()));
         let SeqIterState::Source(SeqSourceIter::MapKeys { entries, .. }) = interp
             .seq_iter_from_plan(&map_plan)
@@ -5728,9 +6643,9 @@ mod tests {
             "map-keys iterator should reuse map storage"
         );
 
-        let mut set_entries = indexmap::IndexSet::new();
-        set_entries.insert(MapKey::Int(1));
-        let set_entries = Rc::new(set_entries);
+        let set_entries = Rc::new(SetValue::from_primitive_indexset(
+            indexmap::IndexSet::from([MapKey::Int(1)]),
+        ));
         let set_plan = SeqPlan::Source(SeqSource::SetValues(set_entries.clone()));
         let SeqIterState::Source(SeqSourceIter::SetValues { entries, .. }) = interp
             .seq_iter_from_plan(&set_plan)

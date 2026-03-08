@@ -4601,23 +4601,17 @@ fn check_map_valid_key_types_have_no_map_key_diagnostic() {
 // ── List binary_search element type diagnostics (E0025) ─────────────
 
 #[test]
-fn check_list_binary_search_unsortable_element_reports_e0025() {
-    let output = check(
-        r#"fn main() -> Int {
-            let needle = collections.List.new().push(1)
-            let xs = collections.List.new().push(needle)
-            xs.binary_search(needle)
-        }"#,
-        "test.ky",
-    );
+fn check_list_binary_search_list_elements_have_no_e0025() {
+    assert_check_no_diagnostics(
+        r#"import collections
 
-    assert!(
-        output
-            .diagnostics
-            .iter()
-            .any(|d| d.code == "E0025" && d.message.contains("cannot be sorted")),
-        "expected E0025 unsortable element diagnostic, got: {:?}",
-        output.diagnostics
+        fn main() -> Int {
+            let a = collections.List.new().push(1)
+            let b = collections.List.new().push(1).push(2)
+            let xs = collections.List.new().push(a).push(b)
+            xs.binary_search(b)
+        }"#,
+        "list binary_search list elements",
     );
 }
 
@@ -4816,7 +4810,9 @@ fn check_seq_frequencies_canonical_surface_has_no_diagnostics() {
 #[test]
 fn check_seq_frequencies_non_hashable_element_reports_e0024() {
     let output = check(
-        r#"type P = { x: Int }
+        r#"import collections
+
+        type P = { x: Int }
 
         fn main() -> Int {
             let counts = collections.List.new().push(P { x: 1 }).frequencies()

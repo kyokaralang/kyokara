@@ -118,7 +118,7 @@ fn render_type_signature(item: &TypeItem, interner: &Interner, _tree: &ItemTree)
         let ps: Vec<&str> = item
             .type_params
             .iter()
-            .map(|p| p.resolve(interner))
+            .map(|p| p.name.resolve(interner))
             .collect();
         format!("<{}>", ps.join(", "))
     };

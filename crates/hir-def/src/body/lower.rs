@@ -12,9 +12,9 @@ use kyokara_syntax::SyntaxKind;
 use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::{
     self, ArgList, AssignStmt, BinaryExpr, BlockExpr, BlockItem, CallExpr, ElseBranch, FieldExpr,
-    FnDef, IfExpr, IndexExpr, LambdaExpr, LiteralExpr, MatchExpr, NamedArg, OldExpr, PathExpr,
-    PipelineExpr, PropagateExpr, PropertyDef, RecordExpr, ReturnExpr, TypeExpr, UnaryExpr,
-    VarBinding,
+    FnDef, IfExpr, ImplDef, ImplMethodDef, IndexExpr, LambdaExpr, LiteralExpr, MatchExpr, NamedArg,
+    OldExpr, PathExpr, PipelineExpr, PropagateExpr, PropertyDef, RecordExpr, ReturnExpr,
+    TypeExpr, UnaryExpr, VarBinding,
 };
 use kyokara_syntax::ast::traits::{HasName, HasTypeParams};
 
@@ -56,6 +56,7 @@ pub fn lower_body(
         module_scope,
         current_scope: None,
         in_contract: false,
+        impl_self_ty: None,
     };
 
     // Create root scope
@@ -154,6 +155,125 @@ pub fn lower_body(
     }
 }
 
+/// Lower an impl method body from CST to HIR.
+pub fn lower_impl_method_body(
+    fn_def: &ImplMethodDef,
+    module_scope: &ModuleScope,
+    file_id: FileId,
+    interner: &mut Interner,
+) -> BodyLowerResult {
+    let mut ctx = BodyLowerCtx {
+        exprs: Arena::new(),
+        pats: Arena::new(),
+        scopes: ScopeTree::default(),
+        scope_slot_counts: ArenaMap::default(),
+        pat_scopes: Vec::new(),
+        expr_scopes: ArenaMap::default(),
+        expr_source_map: ArenaMap::default(),
+        pat_source_map: ArenaMap::default(),
+        local_binding_meta: ArenaMap::default(),
+        diagnostics: Vec::new(),
+        file_id,
+        interner,
+        module_scope,
+        current_scope: None,
+        in_contract: false,
+        impl_self_ty: None,
+    };
+
+    ctx.impl_self_ty = fn_def
+        .syntax()
+        .ancestors()
+        .find_map(ImplDef::cast)
+        .and_then(|impl_def| impl_def.self_type())
+        .map(|self_ty| ctx.lower_type_ref(&self_ty));
+
+    let root_scope = ctx.scopes.new_root();
+    ctx.current_scope = Some(root_scope);
+    let param_count = fn_def
+        .param_list()
+        .map(|pl| pl.params().count())
+        .unwrap_or(0);
+    ctx.scope_slot_counts.insert(root_scope, param_count);
+
+    if let Some(param_list) = fn_def.param_list() {
+        for (i, param) in param_list.params().enumerate() {
+            if let Some(tok) = param.name_token() {
+                let name = Name::new(ctx.interner, tok.text());
+                ctx.scopes.define(root_scope, name, ScopeDef::Param(i));
+            }
+        }
+    }
+
+    if let Some(tpl) = HasTypeParams::type_param_list(fn_def) {
+        for tp in tpl.type_params() {
+            if let Some(tok) = tp.name_token() {
+                let name = Name::new(ctx.interner, tok.text());
+                ctx.scopes.define(root_scope, name, ScopeDef::Param(0));
+            }
+        }
+    }
+
+    ctx.in_contract = true;
+    let requires = fn_def
+        .requires_clauses()
+        .filter_map(|rc| rc.expr().map(|e| ctx.lower_expr(&e)))
+        .collect::<Vec<_>>();
+    let ensures = fn_def
+        .ensures_clauses()
+        .filter_map(|ec| ec.expr())
+        .map(|e| {
+            ctx.push_scope();
+            let result_name = Name::new(ctx.interner, "result");
+            let result_pat = ctx.alloc_pat(pat::Pat::Bind { name: result_name });
+            ctx.pat_source_map
+                .insert(result_pat, e.syntax().text_range());
+            ctx.register_local_binding(
+                result_name,
+                result_pat,
+                e.syntax().text_range(),
+                LocalBindingOrigin::ContractResult,
+                false,
+            );
+            let idx = ctx.lower_expr(&e);
+            ctx.pop_scope();
+            idx
+        })
+        .collect::<Vec<_>>();
+    let invariant = fn_def
+        .invariant_clauses()
+        .filter_map(|ic| ic.expr().map(|e| ctx.lower_expr(&e)))
+        .collect::<Vec<_>>();
+    ctx.in_contract = false;
+
+    let root = if let Some(body) = fn_def.body() {
+        let range = body.syntax().text_range();
+        let idx = ctx.lower_block(&body);
+        ctx.expr_source_map.insert(idx, range);
+        idx
+    } else {
+        ctx.alloc_expr(Expr::Missing)
+    };
+
+    BodyLowerResult {
+        body: Body {
+            exprs: ctx.exprs,
+            pats: ctx.pats,
+            root,
+            requires,
+            ensures,
+            invariant,
+            scopes: ctx.scopes,
+            pat_scopes: ctx.pat_scopes,
+            expr_scopes: ctx.expr_scopes,
+            expr_source_map: ctx.expr_source_map,
+            pat_source_map: ctx.pat_source_map,
+            local_binding_meta: ctx.local_binding_meta,
+        },
+        diagnostics: ctx.diagnostics,
+    }
+}
+
 /// Lower a property body from CST to HIR.
 ///
 /// Similar to `lower_body` but for `PropertyDef` nodes: uses
@@ -181,6 +301,7 @@ pub fn lower_property_body(
         module_scope,
         current_scope: None,
         in_contract: false,
+        impl_self_ty: None,
     };
 
     // Create root scope.
@@ -263,6 +384,7 @@ struct BodyLowerCtx<'a> {
     module_scope: &'a ModuleScope,
     current_scope: Option<ScopeIdx>,
     in_contract: bool,
+    impl_self_ty: Option<TypeRef>,
 }
 
 impl BodyLowerCtx<'_> {
@@ -1283,6 +1405,12 @@ impl BodyLowerCtx<'_> {
                     .type_arg_list()
                     .map(|tal| tal.type_args().map(|a| self.lower_type_ref(&a)).collect())
                     .unwrap_or_default();
+                if path.is_single()
+                    && path.segments[0].resolve(self.interner) == "Self"
+                    && let Some(self_ty) = &self.impl_self_ty
+                {
+                    return self_ty.clone();
+                }
                 TypeRef::Path { path, args }
             }
             TypeExpr::FnType(ft) => {

@@ -10,7 +10,8 @@ use crate::token_set::TokenSet;
 
 /// Tokens that can start an item — used for error recovery.
 pub(super) const ITEM_RECOVERY: TokenSet = TokenSet::new(&[
-    ModuleKw, ImportKw, TypeKw, FnKw, CapKw, EffectKw, PropertyKw, LetKw, VarKw, PubKw,
+    ModuleKw, ImportKw, TypeKw, TraitKw, ImplKw, FnKw, CapKw, EffectKw, PropertyKw, LetKw, VarKw,
+    PubKw,
 ]);
 const CLAUSE_EXPR_RECOVERY: TokenSet = TokenSet::new(&[
     LBrace,
@@ -26,7 +27,7 @@ const CLAUSE_EXPR_RECOVERY: TokenSet = TokenSet::new(&[
 ]);
 
 pub(super) fn item(p: &mut Parser<'_>) -> Option<CompletedMarker> {
-    // `pub` can precede fn, type, or effect.
+    // `pub` can precede fn, type, trait, or effect.
     let is_pub = p.at(PubKw);
     let start = if is_pub {
         p.current_after_pub()
@@ -36,6 +37,14 @@ pub(super) fn item(p: &mut Parser<'_>) -> Option<CompletedMarker> {
 
     let cm = match start {
         TypeKw => type_def(p, is_pub),
+        TraitKw => trait_def(p, is_pub),
+        ImplKw => {
+            if is_pub {
+                p.error_recover("expected item", ITEM_RECOVERY);
+                return None;
+            }
+            impl_def(p)
+        }
         FnKw => fn_def(p, is_pub, false),
         CapKw => {
             p.error("`cap` is no longer supported; use `effect`");
@@ -106,7 +115,7 @@ fn import_alias(p: &mut Parser<'_>) {
 
 // ── Type Definition ─────────────────────────────────────────────────
 
-/// `pub? type Ident TypeParamList? '=' TypeBody`
+/// `pub? type Ident TypeParamList? DeriveClause? '=' TypeBody`
 fn type_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
     let m = p.open();
     if is_pub {
@@ -117,9 +126,29 @@ fn type_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
     if p.at(Lt) {
         type_param_list(p);
     }
+    if p.at(DeriveKw) {
+        derive_clause(p);
+    }
     p.expect(Eq);
     type_body(p);
     m.complete(p, TypeDef)
+}
+
+fn derive_clause(p: &mut Parser<'_>) {
+    let m = p.open();
+    p.bump(); // derive
+    p.expect(LParen);
+    if !p.at(RParen) {
+        trait_ref(p);
+        while p.eat(Comma) {
+            if p.at(RParen) {
+                break;
+            }
+            trait_ref(p);
+        }
+    }
+    p.expect(RParen);
+    m.complete(p, DeriveClause);
 }
 
 /// `VariantList / TypeExpr`
@@ -226,6 +255,107 @@ pub(super) fn fn_def(p: &mut Parser<'_>, is_pub: bool, allow_bodyless: bool) -> 
         p.error("expected function body");
     }
     m.complete(p, FnDef)
+}
+
+// ── Trait & Impl Definitions ───────────────────────────────────────
+
+/// `pub? trait Ident TypeParamList? (':' TraitRef ('+' TraitRef)*)? '{' TraitMethodSig* '}'`
+fn trait_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
+    let m = p.open();
+    if is_pub {
+        p.bump(); // pub
+    }
+    p.bump(); // trait
+    p.expect_identifier(IdentifierRole::TypeName);
+    if p.at(Lt) {
+        type_param_list(p);
+    }
+    if p.at(Colon) {
+        supertrait_list(p);
+    }
+    p.expect(LBrace);
+    while !p.at(RBrace) && !p.at_eof() {
+        if p.at(FnKw) {
+            trait_method_sig(p);
+        } else {
+            p.error_recover("expected trait method signature", TokenSet::new(&[FnKw, RBrace]));
+        }
+    }
+    p.expect(RBrace);
+    m.complete(p, TraitDef)
+}
+
+fn supertrait_list(p: &mut Parser<'_>) {
+    let m = p.open();
+    p.bump(); // :
+    trait_ref(p);
+    while p.eat(Plus) {
+        trait_ref(p);
+    }
+    m.complete(p, SupertraitList);
+}
+
+fn trait_method_sig(p: &mut Parser<'_>) {
+    let m = p.open();
+    p.bump(); // fn
+    p.expect_identifier(IdentifierRole::MethodName);
+    if p.at(Lt) {
+        type_param_list(p);
+    }
+    param_list(p);
+    if p.at(Arrow) {
+        return_type(p);
+    }
+    fn_contract(p);
+    if p.at(LBrace) {
+        let err = p.open();
+        p.error("trait method declarations cannot have a body");
+        super::expressions::block_expr(p);
+        err.complete(p, ErrorNode);
+    }
+    m.complete(p, TraitMethodSig);
+}
+
+/// `impl TypeParamList? TraitRef for TypeExpr '{' ImplMethodDef* '}'`
+fn impl_def(p: &mut Parser<'_>) -> CompletedMarker {
+    let m = p.open();
+    p.bump(); // impl
+    if p.at(Lt) {
+        type_param_list(p);
+    }
+    trait_ref(p);
+    p.expect(ForKw);
+    super::types::type_expr(p);
+    p.expect(LBrace);
+    while !p.at(RBrace) && !p.at_eof() {
+        if p.at(FnKw) {
+            impl_method_def(p);
+        } else {
+            p.error_recover("expected impl method definition", TokenSet::new(&[FnKw, RBrace]));
+        }
+    }
+    p.expect(RBrace);
+    m.complete(p, ImplDef)
+}
+
+fn impl_method_def(p: &mut Parser<'_>) {
+    let m = p.open();
+    p.bump(); // fn
+    p.expect_identifier(IdentifierRole::MethodName);
+    if p.at(Lt) {
+        type_param_list(p);
+    }
+    param_list(p);
+    if p.at(Arrow) {
+        return_type(p);
+    }
+    fn_contract(p);
+    if p.at(LBrace) {
+        super::expressions::block_expr(p);
+    } else {
+        p.error("expected function body");
+    }
+    m.complete(p, ImplMethodDef);
 }
 
 fn param_list(p: &mut Parser<'_>) {
@@ -560,5 +690,27 @@ pub(super) fn type_param_list(p: &mut Parser<'_>) {
 fn type_param(p: &mut Parser<'_>) {
     let m = p.open();
     p.expect_identifier(IdentifierRole::TypeParameterName);
+    if p.at(Colon) {
+        type_param_bound_list(p);
+    }
     m.complete(p, TypeParam);
+}
+
+fn type_param_bound_list(p: &mut Parser<'_>) {
+    let m = p.open();
+    p.bump(); // :
+    trait_ref(p);
+    while p.eat(Plus) {
+        trait_ref(p);
+    }
+    m.complete(p, TypeParamBoundList);
+}
+
+fn trait_ref(p: &mut Parser<'_>) {
+    let m = p.open();
+    super::parse_path(p);
+    if p.at(Lt) {
+        super::types::type_arg_list(p);
+    }
+    m.complete(p, TraitRef);
 }

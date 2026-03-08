@@ -6,7 +6,8 @@ use kyokara_eval::intrinsics::Args;
 use kyokara_hir::ModulePath;
 use kyokara_hir::{
     activate_synthetic_imports, check_module, check_project, collect_item_tree,
-    register_builtin_intrinsics, register_builtin_methods, register_builtin_types,
+    register_builtin_intrinsics, register_builtin_methods, register_builtin_traits,
+    register_builtin_types,
     register_static_methods, register_synthetic_modules,
 };
 use kyokara_hir_def::item_tree::FnItemIdx;
@@ -94,6 +95,11 @@ pub fn run_tests(source: &str, config: &TestConfig) -> Result<TestReport, String
 
     // 4. Register builtins.
     register_builtin_types(
+        &mut item_result.tree,
+        &mut item_result.module_scope,
+        &mut interner,
+    );
+    register_builtin_traits(
         &mut item_result.tree,
         &mut item_result.module_scope,
         &mut interner,

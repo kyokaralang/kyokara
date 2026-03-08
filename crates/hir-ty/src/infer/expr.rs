@@ -239,6 +239,7 @@ impl<'a> InferenceCtx<'a> {
                 }
             }
             Some(ResolvedName::Effect(_)) => self.non_value_name_in_expr("capability", name),
+            Some(ResolvedName::Trait(_)) => Ty::Error,
             Some(ResolvedName::Import(_)) => self.non_value_name_in_expr("import", name),
 
             // Module names (io, math, fs) are not values — they're only valid
@@ -758,7 +759,7 @@ impl<'a> InferenceCtx<'a> {
                     let mut tp_map: Vec<(kyokara_hir_def::name::Name, Ty)> =
                         self.type_params.clone();
                     for (param_name, arg) in type_item.type_params.iter().zip(args.iter()) {
-                        tp_map.push((*param_name, arg.clone()));
+                        tp_map.push((param_name.name, arg.clone()));
                     }
                     let env = TyResolutionEnv {
                         item_tree: self.item_tree,
@@ -1107,9 +1108,9 @@ impl<'a> InferenceCtx<'a> {
                     // Build substitution env.
                     let mut tp = self.type_params.clone();
                     let mut args = Vec::new();
-                    for &tparam in &type_item.type_params {
+                    for tparam in &type_item.type_params {
                         let var = self.table.fresh_var();
-                        tp.push((tparam, var.clone()));
+                        tp.push((tparam.name, var.clone()));
                         args.push(var);
                     }
                     let env = TyResolutionEnv {
@@ -1535,6 +1536,81 @@ impl<'a> InferenceCtx<'a> {
             return Some(Ty::Error);
         }
 
+        // Trait-qualified call: Ord.compare(a, b), Show.show(x)
+        if let Some(&trait_idx) = self.module_scope.traits.get(&name) {
+            let trait_item = &self.item_tree.traits[trait_idx];
+            if let Some(method) = trait_item.methods.iter().find(|method| method.name == field) {
+                let Some(first_arg) = args.first() else {
+                    self.push_diag(TyDiagnosticData::ArgCountMismatch {
+                        expected: method.params.len(),
+                        actual: 0,
+                    });
+                    return Some(Ty::Error);
+                };
+
+                let first_expr = match first_arg {
+                    CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => *expr,
+                };
+                let recv_ty = self.infer_expr(first_expr, &Expectation::None);
+                let recv_ty = self.table.resolve_deep(&recv_ty);
+                if !self.ty_satisfies_trait_name(&recv_ty, name) {
+                    self.push_diag(TyDiagnosticData::MissingTraitImpl {
+                        trait_name: name.resolve(self.interner).to_owned(),
+                        ty: recv_ty,
+                    });
+                    for arg in &args[1..] {
+                        match arg {
+                            CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => {
+                                self.infer_expr(*expr, &Expectation::None);
+                            }
+                        }
+                    }
+                    return Some(Ty::Error);
+                }
+
+                let env = Self::make_env(
+                    self.item_tree,
+                    self.module_scope,
+                    self.interner,
+                    &self.type_params,
+                );
+                let param_tys = method
+                    .params
+                    .iter()
+                    .map(|param| self.resolve_trait_method_type(&param.ty, &recv_ty, &env))
+                    .collect::<Vec<_>>();
+                let param_names = method.params.iter().map(|param| param.name).collect::<Vec<_>>();
+                let has_arg_errors =
+                    self.infer_call_args_with_binding(args, &param_tys, Some(&param_names));
+                if has_arg_errors {
+                    return Some(Ty::Error);
+                }
+                let ret = method
+                    .ret_type
+                    .as_ref()
+                    .map(|ret| self.resolve_trait_method_type(ret, &recv_ty, &env))
+                    .unwrap_or(Ty::Unit);
+                return Some(ret);
+            }
+
+            self.push_diag(TyDiagnosticData::NoSuchMethod {
+                method: format!(
+                    "{}.{}",
+                    name.resolve(self.interner),
+                    field.resolve(self.interner)
+                ),
+                ty: Ty::Error,
+            });
+            for arg in args {
+                match arg {
+                    CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => {
+                        self.infer_expr(*expr, &Expectation::None);
+                    }
+                }
+            }
+            return Some(Ty::Error);
+        }
+
         // Type-owned static call: bare `Type.method()` if registered.
         if let Some(&type_idx) = self.module_scope.types.get(&name) {
             let owner_key = self.static_owner_key_for_type_idx(type_idx);
@@ -1561,6 +1637,25 @@ impl<'a> InferenceCtx<'a> {
         }
 
         None
+    }
+
+    fn resolve_trait_method_type(
+        &mut self,
+        ty_ref: &kyokara_hir_def::type_ref::TypeRef,
+        recv_ty: &Ty,
+        env: &TyResolutionEnv<'_>,
+    ) -> Ty {
+        match ty_ref {
+            kyokara_hir_def::type_ref::TypeRef::Path { path, args } if path.is_single() && args.is_empty() => {
+                let seg = path.segments[0];
+                if seg.resolve(self.interner) == "Self" {
+                    recv_ty.clone()
+                } else {
+                    env.resolve_type_ref(ty_ref, &mut self.table)
+                }
+            }
+            _ => env.resolve_type_ref(ty_ref, &mut self.table),
+        }
     }
 
     /// Infer a call to a resolved FnItemIdx (no receiver). Used for module-qualified
@@ -1878,7 +1973,9 @@ impl<'a> InferenceCtx<'a> {
                 )
             {
                 let key_ty = self.table.resolve_deep(&args[0]);
-                if !key_ty.is_hashable_collection_key() {
+                if !(self.ty_satisfies_trait(&key_ty, "Hash")
+                    && self.ty_satisfies_trait(&key_ty, "Eq"))
+                {
                     self.push_diag(TyDiagnosticData::InvalidMapKey { ty: key_ty });
                 }
             }
@@ -1898,7 +1995,9 @@ impl<'a> InferenceCtx<'a> {
                 )
             {
                 let elem_ty = self.table.resolve_deep(&args[0]);
-                if !elem_ty.is_hashable_collection_key() {
+                if !(self.ty_satisfies_trait(&elem_ty, "Hash")
+                    && self.ty_satisfies_trait(&elem_ty, "Eq"))
+                {
                     self.push_diag(TyDiagnosticData::InvalidSetElement { ty: elem_ty });
                 }
             }
@@ -1911,7 +2010,9 @@ impl<'a> InferenceCtx<'a> {
                 && method_str == "seq_frequencies"
             {
                 let elem_ty = self.table.resolve_deep(&args[0]);
-                if !elem_ty.is_hashable_collection_key() {
+                if !(self.ty_satisfies_trait(&elem_ty, "Hash")
+                    && self.ty_satisfies_trait(&elem_ty, "Eq"))
+                {
                     self.push_diag(TyDiagnosticData::InvalidMapKey { ty: elem_ty });
                 }
             }
@@ -1923,7 +2024,7 @@ impl<'a> InferenceCtx<'a> {
                 && matches!(method_str, "list_sort" | "list_binary_search")
             {
                 let elem_ty = self.table.resolve_deep(&args[0]);
-                if !elem_ty.is_sortable() {
+                if !self.ty_satisfies_trait(&elem_ty, "Ord") {
                     self.push_diag(TyDiagnosticData::UnsortableElement { ty: elem_ty });
                 }
             }
@@ -1953,7 +2054,9 @@ impl<'a> InferenceCtx<'a> {
                         .unwrap_or_else(|| self.table.fresh_var());
                     self.infer_expr(index, &Expectation::Has(key_ty.clone()));
                     let resolved_key = self.table.resolve_deep(&key_ty);
-                    if !resolved_key.is_hashable_collection_key() {
+                    if !(self.ty_satisfies_trait(&resolved_key, "Hash")
+                        && self.ty_satisfies_trait(&resolved_key, "Eq"))
+                    {
                         self.push_diag(TyDiagnosticData::InvalidMapKey { ty: resolved_key });
                     }
                     args.get(1).cloned().unwrap_or(Ty::Error)
@@ -1965,7 +2068,9 @@ impl<'a> InferenceCtx<'a> {
                         .unwrap_or_else(|| self.table.fresh_var());
                     self.infer_expr(index, &Expectation::Has(key_ty.clone()));
                     let resolved_key = self.table.resolve_deep(&key_ty);
-                    if !resolved_key.is_hashable_collection_key() {
+                    if !(self.ty_satisfies_trait(&resolved_key, "Hash")
+                        && self.ty_satisfies_trait(&resolved_key, "Eq"))
+                    {
                         self.push_diag(TyDiagnosticData::InvalidMapKey { ty: resolved_key });
                     }
                     args.get(1).cloned().unwrap_or(Ty::Error)

@@ -6,6 +6,7 @@
 use crate::ty::{Ty, TyVarId};
 
 /// Union-find based unification table.
+#[derive(Clone)]
 pub struct UnificationTable {
     /// Each slot is either `None` (unbound variable) or `Some(ty)` (bound).
     vars: Vec<Option<Ty>>,

@@ -20,7 +20,7 @@ pub mod unify;
 
 use kyokara_diagnostics::Diagnostic;
 use kyokara_hir_def::body::Body;
-use kyokara_hir_def::body::lower::{lower_body, lower_property_body};
+use kyokara_hir_def::body::lower::{lower_body, lower_impl_method_body, lower_property_body};
 use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree};
 use kyokara_hir_def::resolver::ModuleScope;
 use kyokara_hir_def::type_ref::TypeRef;
@@ -29,7 +29,7 @@ use kyokara_span::{FileId, Span, TextRange};
 use kyokara_stdx::FxHashMap;
 use kyokara_syntax::SyntaxNode;
 use kyokara_syntax::ast::AstNode;
-use kyokara_syntax::ast::nodes::{FnDef, PropertyDef};
+use kyokara_syntax::ast::nodes::{FnDef, ImplMethodDef, PropertyDef};
 use kyokara_syntax::ast::traits::HasName;
 
 use kyokara_hir_def::name::Name;
@@ -40,12 +40,18 @@ use crate::infer::InferenceResult;
 struct BodyLookupIndex {
     fn_by_range: FxHashMap<TextRange, FnDef>,
     fn_by_name: FxHashMap<String, FnDef>,
+    impl_by_range: FxHashMap<TextRange, ImplMethodDef>,
     prop_by_range: FxHashMap<TextRange, PropertyDef>,
 }
 
-fn build_body_lookup_index(fn_defs: &[FnDef], prop_defs: &[PropertyDef]) -> BodyLookupIndex {
+fn build_body_lookup_index(
+    fn_defs: &[FnDef],
+    impl_defs: &[ImplMethodDef],
+    prop_defs: &[PropertyDef],
+) -> BodyLookupIndex {
     let mut fn_by_range = FxHashMap::default();
     let mut fn_by_name = FxHashMap::default();
+    let mut impl_by_range = FxHashMap::default();
     let mut prop_by_range = FxHashMap::default();
 
     for fd in fn_defs {
@@ -58,6 +64,11 @@ fn build_body_lookup_index(fn_defs: &[FnDef], prop_defs: &[PropertyDef]) -> Body
         }
     }
 
+    for fd in impl_defs {
+        let range = fd.syntax().text_range();
+        impl_by_range.insert(range, fd.clone());
+    }
+
     for pd in prop_defs {
         let range = pd.syntax().text_range();
         prop_by_range.insert(range, pd.clone());
@@ -66,6 +77,7 @@ fn build_body_lookup_index(fn_defs: &[FnDef], prop_defs: &[PropertyDef]) -> Body
     BodyLookupIndex {
         fn_by_range,
         fn_by_name,
+        impl_by_range,
         prop_by_range,
     }
 }
@@ -87,6 +99,13 @@ fn lookup_property_def(
     source_range: Option<TextRange>,
 ) -> Option<&PropertyDef> {
     source_range.and_then(|range| index.prop_by_range.get(&range))
+}
+
+fn lookup_impl_method_def(
+    index: &BodyLookupIndex,
+    source_range: Option<TextRange>,
+) -> Option<&ImplMethodDef> {
+    source_range.and_then(|range| index.impl_by_range.get(&range))
 }
 
 /// Result of type-checking an entire module.
@@ -126,8 +145,10 @@ pub fn check_module(
     let mut fn_calls = Vec::new();
 
     let fn_defs: Vec<FnDef> = root.descendants().filter_map(FnDef::cast).collect();
+    let impl_method_defs: Vec<ImplMethodDef> =
+        root.descendants().filter_map(ImplMethodDef::cast).collect();
     let prop_defs: Vec<PropertyDef> = root.descendants().filter_map(PropertyDef::cast).collect();
-    let body_lookup = build_body_lookup_index(&fn_defs, &prop_defs);
+    let body_lookup = build_body_lookup_index(&fn_defs, &impl_method_defs, &prop_defs);
 
     for (fn_idx, fn_item) in item_tree.functions.iter() {
         if !fn_item.has_body {
@@ -151,6 +172,8 @@ pub fn check_module(
             lower_body(fd, module_scope, file_id, interner)
         } else if let Some(pd) = lookup_property_def(&body_lookup, fn_item.source_range) {
             lower_property_body(pd, module_scope, file_id, interner)
+        } else if let Some(imd) = lookup_impl_method_def(&body_lookup, fn_item.source_range) {
+            lower_impl_method_body(imd, module_scope, file_id, interner)
         } else {
             continue;
         };
@@ -309,7 +332,7 @@ mod tests {
         let fn_defs: Vec<FnDef> = root.descendants().filter_map(FnDef::cast).collect();
         let prop_defs: Vec<PropertyDef> =
             root.descendants().filter_map(PropertyDef::cast).collect();
-        let index = build_body_lookup_index(&fn_defs, &prop_defs);
+        let index = build_body_lookup_index(&fn_defs, &[], &prop_defs);
 
         let beta = &fn_defs[1];
         let beta_range = beta.syntax().text_range();
@@ -332,7 +355,7 @@ mod tests {
         let fn_defs: Vec<FnDef> = root.descendants().filter_map(FnDef::cast).collect();
         let prop_defs: Vec<PropertyDef> =
             root.descendants().filter_map(PropertyDef::cast).collect();
-        let index = build_body_lookup_index(&fn_defs, &prop_defs);
+        let index = build_body_lookup_index(&fn_defs, &[], &prop_defs);
 
         let by_name =
             lookup_fn_def(&index, None, "helper").expect("name fallback should resolve helper");
