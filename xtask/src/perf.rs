@@ -997,6 +997,7 @@ mod tests {
                 "dp_coin_change_mutable_list_run",
                 "grid_bfs_deque_set_run",
                 "mutable_bool_dense_relation_run",
+                "mutable_map_set_churn_run",
                 "parse_dense_module_check",
                 "wordfreq_map_set_run",
             ]
@@ -1050,6 +1051,33 @@ mod tests {
         assert!(
             source.contains("collections.MutableList.new().push(false)"),
             "comparison case must build a mutable bool table"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mutable_map_set_churn_case_exercises_mutable_hash_collection_hot_paths() -> Result<()> {
+        let root = workspace_root()?;
+        let source = fs::read_to_string(
+            root.join("tools")
+                .join("perf")
+                .join("cases")
+                .join("mutable_map_set_churn_run")
+                .join("main.ky"),
+        )?;
+        assert!(
+            source.contains("MutableMap<Int, Int>"),
+            "comparison case must use MutableMap<Int, Int>"
+        );
+        assert!(
+            source.contains("MutableSet<Int>"),
+            "comparison case must use MutableSet<Int>"
+        );
+        assert!(
+            source.contains(".insert(")
+                && source.contains(".contains(")
+                && source.contains(".remove("),
+            "comparison case must churn mutable insert/contains/remove operations"
         );
         Ok(())
     }

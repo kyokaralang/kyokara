@@ -97,6 +97,34 @@ impl PartialEq for MapValue {
 impl Eq for MapValue {}
 
 impl MapValue {
+    fn push_bucket_index(&mut self, hash: i64, idx: usize) {
+        self.buckets.entry(hash).or_default().push(idx);
+    }
+
+    fn remove_bucket_index(&mut self, hash: i64, idx: usize) {
+        let mut remove_bucket = false;
+        if let Some(indices) = self.buckets.get_mut(&hash) {
+            if let Some(pos) = indices.iter().position(|&candidate| candidate == idx) {
+                indices.remove(pos);
+            }
+            remove_bucket = indices.is_empty();
+        }
+        if remove_bucket {
+            self.buckets.remove(&hash);
+        }
+    }
+
+    fn shift_bucket_indices_after_removal(&mut self, removed_idx: usize) {
+        self.buckets.retain(|_, indices| {
+            for idx in indices.iter_mut() {
+                if *idx > removed_idx {
+                    *idx -= 1;
+                }
+            }
+            !indices.is_empty()
+        });
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -176,12 +204,7 @@ impl MapValue {
             .map(|idx| self.entries[idx].value.clone()))
     }
 
-    pub fn contains_with<E>(
-        &self,
-        hash: i64,
-        key: &Value,
-        eq: &mut E,
-    ) -> Result<bool, RuntimeError>
+    pub fn contains_with<E>(&self, hash: i64, key: &Value, eq: &mut E) -> Result<bool, RuntimeError>
     where
         E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
     {
@@ -240,24 +263,22 @@ impl MapValue {
         if let Some(idx) = self.find_index_with(hash, &key, eq)? {
             self.entries[idx].value = value;
         } else {
+            let idx = self.entries.len();
             self.entries.push(MapEntry { hash, key, value });
+            self.push_bucket_index(hash, idx);
         }
-        *self = Self::from_entries(self.entries.clone());
         Ok(())
     }
 
-    pub fn remove_with<E>(
-        &mut self,
-        hash: i64,
-        key: &Value,
-        eq: &mut E,
-    ) -> Result<(), RuntimeError>
+    pub fn remove_with<E>(&mut self, hash: i64, key: &Value, eq: &mut E) -> Result<(), RuntimeError>
     where
         E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
     {
         if let Some(idx) = self.find_index_with(hash, key, eq)? {
+            let hash = self.entries[idx].hash;
             self.entries.remove(idx);
-            *self = Self::from_entries(self.entries.clone());
+            self.remove_bucket_index(hash, idx);
+            self.shift_bucket_indices_after_removal(idx);
         }
         Ok(())
     }
@@ -304,6 +325,34 @@ impl PartialEq for SetValue {
 impl Eq for SetValue {}
 
 impl SetValue {
+    fn push_bucket_index(&mut self, hash: i64, idx: usize) {
+        self.buckets.entry(hash).or_default().push(idx);
+    }
+
+    fn remove_bucket_index(&mut self, hash: i64, idx: usize) {
+        let mut remove_bucket = false;
+        if let Some(indices) = self.buckets.get_mut(&hash) {
+            if let Some(pos) = indices.iter().position(|&candidate| candidate == idx) {
+                indices.remove(pos);
+            }
+            remove_bucket = indices.is_empty();
+        }
+        if remove_bucket {
+            self.buckets.remove(&hash);
+        }
+    }
+
+    fn shift_bucket_indices_after_removal(&mut self, removed_idx: usize) {
+        self.buckets.retain(|_, indices| {
+            for idx in indices.iter_mut() {
+                if *idx > removed_idx {
+                    *idx -= 1;
+                }
+            }
+            !indices.is_empty()
+        });
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -410,13 +459,19 @@ impl SetValue {
         Ok(Self::from_entries(entries))
     }
 
-    pub fn insert_with<E>(&mut self, hash: i64, value: Value, eq: &mut E) -> Result<(), RuntimeError>
+    pub fn insert_with<E>(
+        &mut self,
+        hash: i64,
+        value: Value,
+        eq: &mut E,
+    ) -> Result<(), RuntimeError>
     where
         E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
     {
         if self.find_index_with(hash, &value, eq)?.is_none() {
+            let idx = self.entries.len();
             self.entries.push(SetEntry { hash, value });
-            *self = Self::from_entries(self.entries.clone());
+            self.push_bucket_index(hash, idx);
         }
         Ok(())
     }
@@ -431,8 +486,10 @@ impl SetValue {
         E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
     {
         if let Some(idx) = self.find_index_with(hash, value, eq)? {
+            let hash = self.entries[idx].hash;
             self.entries.remove(idx);
-            *self = Self::from_entries(self.entries.clone());
+            self.remove_bucket_index(hash, idx);
+            self.shift_bucket_indices_after_removal(idx);
         }
         Ok(())
     }
@@ -441,7 +498,9 @@ impl SetValue {
         let hash = key.primitive_hash();
         let key_value = key.to_value();
         self.buckets.get(&hash).is_some_and(|indices| {
-            indices.iter().any(|&idx| self.entries[idx].value == key_value)
+            indices
+                .iter()
+                .any(|&idx| self.entries[idx].value == key_value)
         })
     }
 }
@@ -1351,6 +1410,69 @@ mod tests {
         assert!(
             Rc::ptr_eq(a, b),
             "set clone should share storage before mutation in COW model"
+        );
+    }
+
+    #[test]
+    fn mutable_map_bucket_indices_remain_valid_after_middle_removal() {
+        let mut map = MapValue::new();
+        let mut eq = |left: &Value, right: &Value| Ok(left == right);
+
+        map.insert_with(0, Value::Int(1), Value::Int(10), &mut eq)
+            .expect("first insert should succeed");
+        map.insert_with(0, Value::Int(2), Value::Int(20), &mut eq)
+            .expect("second insert should succeed");
+        map.insert_with(0, Value::Int(3), Value::Int(30), &mut eq)
+            .expect("third insert should succeed");
+
+        map.remove_with(0, &Value::Int(2), &mut eq)
+            .expect("removal should succeed");
+
+        assert_eq!(map.len(), 2);
+        assert_eq!(
+            map.find_index_with(0, &Value::Int(3), &mut eq)
+                .expect("lookup should succeed"),
+            Some(1)
+        );
+        assert_eq!(
+            map.get_cloned_with(0, &Value::Int(3), &mut eq)
+                .expect("lookup should succeed"),
+            Some(Value::Int(30))
+        );
+        assert!(
+            !map.contains_with(0, &Value::Int(2), &mut eq)
+                .expect("lookup should succeed")
+        );
+    }
+
+    #[test]
+    fn mutable_set_bucket_indices_remain_valid_after_middle_removal() {
+        let mut set = SetValue::new();
+        let mut eq = |left: &Value, right: &Value| Ok(left == right);
+
+        set.insert_with(0, Value::Int(1), &mut eq)
+            .expect("first insert should succeed");
+        set.insert_with(0, Value::Int(2), &mut eq)
+            .expect("second insert should succeed");
+        set.insert_with(0, Value::Int(3), &mut eq)
+            .expect("third insert should succeed");
+
+        set.remove_with(0, &Value::Int(2), &mut eq)
+            .expect("removal should succeed");
+
+        assert_eq!(set.len(), 2);
+        assert_eq!(
+            set.find_index_with(0, &Value::Int(3), &mut eq)
+                .expect("lookup should succeed"),
+            Some(1)
+        );
+        assert!(
+            set.contains_with(0, &Value::Int(3), &mut eq)
+                .expect("lookup should succeed")
+        );
+        assert!(
+            !set.contains_with(0, &Value::Int(2), &mut eq)
+                .expect("lookup should succeed")
         );
     }
 }

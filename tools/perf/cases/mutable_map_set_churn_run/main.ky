@@ -1,0 +1,48 @@
+import collections
+
+fn churn_set(rounds: Int) -> Int {
+  let seen: MutableSet<Int> = collections.MutableSet.new()
+  var total = 0
+  var i = 0
+  while (i < rounds) {
+    let key = (i * 97) % 4093
+    let probe = (key + 17) % 4093
+    if (seen.contains(key)) {
+      seen.remove(key)
+      total = total + 1
+    } else {
+      seen.insert(key)
+      total = total + 2
+    }
+    if (seen.contains(probe)) {
+      total = total + 5
+    }
+    i = i + 1
+  }
+  total + seen.len()
+}
+
+fn churn_map(rounds: Int) -> Int {
+  let scores: MutableMap<Int, Int> = collections.MutableMap.new()
+  var total = 0
+  var i = 0
+  while (i < rounds) {
+    let key = (i * 193) % 4093
+    let probe = (key + 29) % 4093
+    let next = scores.get(key).unwrap_or(0) + i + 3
+    scores.insert(key, next)
+    if (scores.contains(probe)) {
+      total = total + (scores.get(probe).unwrap_or(0) % 31)
+    }
+    if (i % 4 == 0) {
+      scores.remove((key + 211) % 4093)
+    }
+    total = total + (next % 97)
+    i = i + 1
+  }
+  total + scores.len()
+}
+
+fn main() -> Int {
+  churn_set(5000) * 100000 + churn_map(5000)
+}

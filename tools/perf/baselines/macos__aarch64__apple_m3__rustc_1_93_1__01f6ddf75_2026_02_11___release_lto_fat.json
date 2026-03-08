@@ -81,6 +81,18 @@
       "median_ms": 394.809209
     },
     {
+      "id": "mutable_map_set_churn_run",
+      "mode": "run",
+      "samples_ms": [
+        33.585249999999995,
+        33.160375,
+        33.069209,
+        32.896833,
+        34.412833
+      ],
+      "median_ms": 33.160375
+    },
+    {
       "id": "parse_dense_module_check",
       "mode": "check",
       "samples_ms": [
