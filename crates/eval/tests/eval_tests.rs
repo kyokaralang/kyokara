@@ -2221,6 +2221,43 @@ fn eval_mutable_map_get_or_insert_with_skips_closure_on_hit_and_inserts_on_miss(
 }
 
 #[test]
+fn eval_mutable_map_get_or_insert_with_skips_thunk_expression_evaluation_on_hit() {
+    let val = run_ok(
+        "import collections
+         fn make(calls: MutableList<Int>) -> fn() -> Int {
+           let _c = calls.set(0, calls[0] + 1)
+           fn() => 99
+         }
+         fn main() -> Int {
+           let calls = collections.MutableList.new().push(0)
+           let memo = collections.MutableMap.new().insert(\"a\", 7)
+           let value = memo.get_or_insert_with(\"a\", make(calls))
+           value * 10 + calls[0]
+         }",
+    );
+    assert!(matches!(val, Value::Int(70)));
+}
+
+#[test]
+fn eval_mutable_map_get_or_insert_with_evaluates_thunk_expression_once_per_miss() {
+    let val = run_ok(
+        "import collections
+         fn make(calls: MutableList<Int>) -> fn() -> Int {
+           let _c = calls.set(0, calls[0] + 1)
+           fn() => 7
+         }
+         fn main() -> Int {
+           let calls = collections.MutableList.new().push(0)
+           let memo = collections.MutableMap.new()
+           let first = memo.get_or_insert_with(\"a\", make(calls))
+           let second = memo.get_or_insert_with(\"a\", make(calls))
+           first * 100 + second * 10 + calls[0]
+         }",
+    );
+    assert!(matches!(val, Value::Int(771)));
+}
+
+#[test]
 fn eval_mutable_map_get_or_insert_with_supports_recursive_memo_use() {
     let val = run_ok(
         "import collections

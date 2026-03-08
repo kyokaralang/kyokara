@@ -1661,16 +1661,13 @@ impl Interpreter {
         }
     }
 
-    /// Bind evaluated argument values into parameter slots.
-    ///
-    /// `arg_values` must be in source order (left-to-right evaluation order).
-    fn bind_call_values_for_param_names(
+    fn bind_call_items_for_param_names<T>(
         &self,
         callee_name: &str,
         args: &[CallArg],
-        arg_values: Vec<Value>,
+        arg_items: Vec<T>,
         param_names: &[Name],
-    ) -> Result<Args, RuntimeError> {
+    ) -> Result<Vec<T>, RuntimeError> {
         if args.len() != param_names.len() {
             return Err(RuntimeError::ArityMismatch {
                 callee: callee_name.to_string(),
@@ -1679,19 +1676,15 @@ impl Interpreter {
             });
         }
 
-        let mut out = Args::with_capacity(param_names.len());
         let has_named = args.iter().any(|arg| matches!(arg, CallArg::Named { .. }));
         if !has_named {
-            for value in arg_values {
-                out.push(value);
-            }
-            return Ok(out);
+            return Ok(arg_items);
         }
 
-        let mut slots: Vec<Option<Value>> = vec![None; param_names.len()];
+        let mut slots: Vec<Option<T>> = (0..param_names.len()).map(|_| None).collect();
         let mut next_pos = 0usize;
         let mut saw_named = false;
-        for (arg, value) in args.iter().zip(arg_values.into_iter()) {
+        for (arg, item) in args.iter().zip(arg_items.into_iter()) {
             match arg {
                 CallArg::Positional(_) => {
                     if saw_named {
@@ -1709,7 +1702,7 @@ impl Interpreter {
                             actual: args.len(),
                         });
                     }
-                    slots[next_pos] = Some(value);
+                    slots[next_pos] = Some(item);
                     next_pos += 1;
                 }
                 CallArg::Named { name, .. } => {
@@ -1726,14 +1719,15 @@ impl Interpreter {
                             name.resolve(&self.interner)
                         )));
                     }
-                    slots[slot_idx] = Some(value);
+                    slots[slot_idx] = Some(item);
                 }
             }
         }
 
+        let mut out = Vec::with_capacity(param_names.len());
         for (idx, slot) in slots.into_iter().enumerate() {
-            if let Some(value) = slot {
-                out.push(value);
+            if let Some(item) = slot {
+                out.push(item);
             } else {
                 return Err(RuntimeError::TypeError(format!(
                     "missing argument for parameter `{}`",
@@ -1743,6 +1737,167 @@ impl Interpreter {
         }
 
         Ok(out)
+    }
+
+    /// Bind evaluated argument values into parameter slots.
+    ///
+    /// `arg_values` must be in source order (left-to-right evaluation order).
+    fn bind_call_values_for_param_names(
+        &self,
+        callee_name: &str,
+        args: &[CallArg],
+        arg_values: Vec<Value>,
+        param_names: &[Name],
+    ) -> Result<Args, RuntimeError> {
+        let items = self.bind_call_items_for_param_names(callee_name, args, arg_values, param_names)?;
+        let mut out = Args::with_capacity(items.len());
+        for value in items {
+            out.push(value);
+        }
+        Ok(out)
+    }
+
+    fn intrinsic_for_fn_idx(&self, fn_idx: FnItemIdx) -> Option<IntrinsicFn> {
+        let fn_item = &self.item_tree.functions[fn_idx];
+        self.intrinsics.get(&fn_item.name).copied()
+    }
+
+    fn eval_immediate_zero_arg_lambda(
+        &mut self,
+        env: &mut Env,
+        body: &Body,
+        expr_idx: ExprIdx,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let Expr::Lambda {
+            params,
+            body: lambda_body,
+        } = &body.exprs[expr_idx]
+        else {
+            return Ok(None);
+        };
+        if !params.is_empty() {
+            return Ok(None);
+        }
+        env.push_scope();
+        let result = self.eval_terminal_expr(env, body, *lambda_body);
+        env.pop_scope();
+        result.map(|value| Some(value.into_value()))
+    }
+
+    fn try_eval_lazy_mutable_map_get_or_insert_with_local(
+        &mut self,
+        env: &mut Env,
+        body: &Body,
+        base_val: &Value,
+        args: &[CallArg],
+        fn_idx: FnItemIdx,
+    ) -> Result<Option<Value>, RuntimeError> {
+        if self.intrinsic_for_fn_idx(fn_idx) != Some(IntrinsicFn::MutableMapGetOrInsertWith) {
+            return Ok(None);
+        }
+        let Value::MutableMap(entries) = base_val else {
+            return Ok(None);
+        };
+        let (key_expr, thunk_expr) = match args {
+            [CallArg::Positional(key_expr), CallArg::Positional(thunk_expr)] => {
+                (*key_expr, *thunk_expr)
+            }
+            _ => {
+                let full_param_names = self.param_names_for_fn_idx(fn_idx);
+                let method_param_names: Vec<Name> = full_param_names.iter().skip(1).copied().collect();
+                let arg_exprs = self.bind_call_items_for_param_names(
+                    "method `get_or_insert_with`",
+                    args,
+                    self.args_in_source_order(args),
+                    &method_param_names,
+                )?;
+                (arg_exprs[0], arg_exprs[1])
+            }
+        };
+        let key = self.eval_terminal_expr(env, body, key_expr)?.into_value();
+        if let Some(existing) = {
+            let borrowed = entries.borrow();
+            self.map_get_value(&borrowed, &key)?
+        } {
+            return Ok(Some(existing.clone()));
+        }
+        let computed = if let Some(value) = self.eval_immediate_zero_arg_lambda(env, body, thunk_expr)? {
+            value
+        } else {
+            let thunk = self.eval_terminal_expr(env, body, thunk_expr)?.into_value();
+            self.call_value(thunk, Args::new())?
+        };
+        if let Some(existing) = {
+            let borrowed = entries.borrow();
+            self.map_get_value(&borrowed, &key)?
+        } {
+            return Ok(Some(existing.clone()));
+        }
+        let hash = self.hash_for_collection_key(&key)?;
+        entries.borrow_mut().insert_with(
+            hash,
+            key,
+            computed.clone(),
+            &mut |lhs, rhs| self.trait_eq_values(lhs, rhs),
+        )?;
+        Ok(Some(computed))
+    }
+
+    fn try_eval_lazy_mutable_map_get_or_insert_with<F>(
+        &mut self,
+        base_val: &Value,
+        args: &[CallArg],
+        fn_idx: FnItemIdx,
+        mut eval_expr_value: F,
+    ) -> Result<Option<Value>, RuntimeError>
+    where
+        F: FnMut(&mut Self, ExprIdx) -> Result<Value, RuntimeError>,
+    {
+        if self.intrinsic_for_fn_idx(fn_idx) != Some(IntrinsicFn::MutableMapGetOrInsertWith) {
+            return Ok(None);
+        }
+        let Value::MutableMap(entries) = base_val else {
+            return Ok(None);
+        };
+        let (key_expr, thunk_expr) = match args {
+            [CallArg::Positional(key_expr), CallArg::Positional(thunk_expr)] => {
+                (*key_expr, *thunk_expr)
+            }
+            _ => {
+                let full_param_names = self.param_names_for_fn_idx(fn_idx);
+                let method_param_names: Vec<Name> = full_param_names.iter().skip(1).copied().collect();
+                let arg_exprs = self.bind_call_items_for_param_names(
+                    "method `get_or_insert_with`",
+                    args,
+                    self.args_in_source_order(args),
+                    &method_param_names,
+                )?;
+                (arg_exprs[0], arg_exprs[1])
+            }
+        };
+        let key = eval_expr_value(self, key_expr)?;
+        if let Some(existing) = {
+            let borrowed = entries.borrow();
+            self.map_get_value(&borrowed, &key)?
+        } {
+            return Ok(Some(existing.clone()));
+        }
+        let thunk = eval_expr_value(self, thunk_expr)?;
+        let computed = self.call_value(thunk, Args::new())?;
+        if let Some(existing) = {
+            let borrowed = entries.borrow();
+            self.map_get_value(&borrowed, &key)?
+        } {
+            return Ok(Some(existing.clone()));
+        }
+        let hash = self.hash_for_collection_key(&key)?;
+        entries.borrow_mut().insert_with(
+            hash,
+            key,
+            computed.clone(),
+            &mut |lhs, rhs| self.trait_eq_values(lhs, rhs),
+        )?;
+        Ok(Some(computed))
     }
 
     fn fn_value_for_fn_idx(&self, fn_idx: FnItemIdx) -> Value {
@@ -2126,6 +2281,11 @@ impl Interpreter {
                     };
 
                     if let Some(fn_idx) = method_fn_idx {
+                        if let Some(value) = self.try_eval_lazy_mutable_map_get_or_insert_with_local(
+                            env, body, &base_val, &args, fn_idx,
+                        )? {
+                            return Ok(ControlFlow::Value(value));
+                        }
                         let source_order = self.args_in_source_order(&args);
                         let mut arg_values = Vec::with_capacity(source_order.len());
                         for idx in &source_order {
@@ -2539,6 +2699,17 @@ impl Interpreter {
                     };
 
                     if let Some(fn_idx) = method_fn_idx {
+                        if let Some(value) = self.try_eval_lazy_mutable_map_get_or_insert_with(
+                            &base_val,
+                            args,
+                            fn_idx,
+                            |this, idx| {
+                                this.eval_terminal_expr_shared(body, idx)
+                                    .map(ControlFlow::into_value)
+                            },
+                        )? {
+                            return Ok(ControlFlow::Value(value));
+                        }
                         let source_order = self.args_in_source_order(args);
                         let mut arg_values = Vec::with_capacity(source_order.len());
                         for idx in &source_order {
