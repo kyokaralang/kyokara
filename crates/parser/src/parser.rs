@@ -3,10 +3,10 @@
 //! Provides [`Parser`], [`Marker`], and [`CompletedMarker`] — the core
 //! API used by grammar modules to build the event stream.
 
-use crate::SyntaxKind;
 use crate::event::Event;
 use crate::input::Input;
 use crate::token_set::TokenSet;
+use crate::SyntaxKind;
 
 /// A parse error message with location info.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +36,7 @@ pub(crate) enum IdentifierRole {
     FieldName,
     ArgumentName,
     PatternName,
+    ExpressionName,
 }
 
 impl IdentifierRole {
@@ -55,6 +56,7 @@ impl IdentifierRole {
             Self::FieldName => "a field name",
             Self::ArgumentName => "an argument name",
             Self::PatternName => "a pattern name",
+            Self::ExpressionName => "an expression name",
         }
     }
 }
@@ -369,7 +371,7 @@ impl<'i> Parser<'i> {
         }
     }
 
-    fn error_keyword_as_identifier(&mut self, role: IdentifierRole) {
+    pub(crate) fn error_keyword_as_identifier(&mut self, role: IdentifierRole) {
         let keyword = self.current();
         let keyword_text = keyword
             .keyword_text()
@@ -502,6 +504,7 @@ mod tests {
             IdentifierRole::FieldName,
             IdentifierRole::ArgumentName,
             IdentifierRole::PatternName,
+            IdentifierRole::ExpressionName,
         ];
 
         for keyword in keywords {

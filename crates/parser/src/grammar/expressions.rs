@@ -15,9 +15,9 @@
 //! - Prefix `!` `-` `~`: right_bp 23
 //! - Postfix `?` `.` `()` `[]` : left_bp 25
 
-use crate::SyntaxKind::*;
 use crate::parser::{CompletedMarker, IdentifierRole, Parser};
 use crate::token_set::TokenSet;
+use crate::SyntaxKind::*;
 
 /// Tokens that signal we should stop parsing an expression (recovery).
 const EXPR_RECOVERY: TokenSet = TokenSet::new(&[
@@ -90,7 +90,7 @@ fn expr_bp(p: &mut Parser<'_>, min_bp: u8) -> Option<CompletedMarker> {
 
         let m = lhs.precede(p);
         p.bump(); // operator
-        if current == DotDotLt && !can_start_expr(p.current()) {
+        if current == DotDotLt && !can_start_expr_or_keyword(p.current()) {
             p.error_recover("expected expression after `..<`", RANGE_RHS_RECOVERY);
         } else {
             expr_bp(p, right_bp);
@@ -127,6 +127,10 @@ fn primary(p: &mut Parser<'_>) -> Option<CompletedMarker> {
         OldKw => old_expr(p),
         FnKw => lambda_expr(p),
         Ident => ident_or_path_or_record(p),
+        _ if p.current().is_keyword() => {
+            p.error_keyword_as_identifier(IdentifierRole::ExpressionName);
+            return None;
+        }
         LeftArrow => {
             p.error_recover(
                 "unexpected `<-` outside property parameter; \
@@ -274,7 +278,7 @@ fn for_stmt(p: &mut Parser<'_>) -> CompletedMarker {
             expr(p);
         } else {
             p.error("for loop requires 'in'");
-            if can_start_expr(p.current()) {
+            if can_start_expr_or_keyword(p.current()) {
                 expr(p);
             } else {
                 p.recover_parenthesized_head_content(FOR_HEAD_RECOVERY);
@@ -361,8 +365,8 @@ fn match_arm(p: &mut Parser<'_>) {
 fn return_expr(p: &mut Parser<'_>) -> CompletedMarker {
     let m = p.open();
     p.bump(); // return
-    // Parse expression if the next token can start one.
-    if can_start_expr(p.current()) {
+              // Parse expression if the next token can start one.
+    if can_start_expr_or_keyword(p.current()) {
         expr(p);
     }
     m.complete(p, ReturnExpr)
@@ -509,4 +513,8 @@ fn can_start_expr(kind: crate::SyntaxKind) -> bool {
             | OldKw
             | FnKw
     ) || kind.is_unary_prefix_operator()
+}
+
+fn can_start_expr_or_keyword(kind: crate::SyntaxKind) -> bool {
+    can_start_expr(kind) || kind.is_keyword()
 }

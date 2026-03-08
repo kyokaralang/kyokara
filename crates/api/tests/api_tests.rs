@@ -2,8 +2,9 @@
 #![allow(clippy::unwrap_used)]
 
 use kyokara_api::{
-    CheckOptions, CheckOutput, check as raw_check, check_project, check_project_with_options,
-    check_with_options as raw_check_with_options, refactor, refactor_project,
+    check as raw_check, check_project, check_project_with_options,
+    check_with_options as raw_check_with_options, refactor, refactor_project, CheckOptions,
+    CheckOutput,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -433,6 +434,70 @@ fn check_keyword_local_binding_reports_single_targeted_parse_error() {
     );
     assert_eq!(parse_diags[0].span.start, 23);
     assert_eq!(parse_diags[0].span.end, 29);
+}
+
+#[test]
+fn check_keyword_bare_expression_reports_single_targeted_parse_error() {
+    let src = "fn main() -> Int { module }";
+    let output = check(src, "test.ky");
+    let parse_diags: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0100")
+        .collect();
+    assert_eq!(
+        parse_diags.len(),
+        1,
+        "expected one targeted parse diagnostic, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        parse_diags[0]
+            .message
+            .contains("reserved keyword `module` cannot be used as an expression name"),
+        "expected targeted expression-name message, got: {:?}",
+        parse_diags[0]
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|d| !d.message.contains("expected expression")),
+        "unexpected cascade diagnostics: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_keyword_return_expression_reports_single_targeted_parse_error() {
+    let src = "fn main() -> Int { return module }";
+    let output = check(src, "test.ky");
+    let parse_diags: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "E0100")
+        .collect();
+    assert_eq!(
+        parse_diags.len(),
+        1,
+        "expected one targeted parse diagnostic, got: {:?}",
+        output.diagnostics
+    );
+    assert!(
+        parse_diags[0]
+            .message
+            .contains("reserved keyword `module` cannot be used as an expression name"),
+        "expected targeted expression-name message, got: {:?}",
+        parse_diags[0]
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|d| !d.message.contains("expected expression")),
+        "unexpected cascade diagnostics: {:?}",
+        output.diagnostics
+    );
 }
 
 #[test]

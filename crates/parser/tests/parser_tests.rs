@@ -1,8 +1,8 @@
 //! Parser unit tests — verify event structure for various constructs.
 #![allow(clippy::unwrap_used)]
 
+use kyokara_parser::{parse, Event, Input, ParseError, SyntaxKind};
 use SyntaxKind::*;
-use kyokara_parser::{Event, Input, ParseError, SyntaxKind, parse};
 
 /// Helper: lex token kinds from a list (simulating a lexer), build Input, parse.
 fn parse_tokens(kinds: &[SyntaxKind]) -> (Vec<Event>, Vec<ParseError>) {
@@ -241,8 +241,22 @@ fn trait_def_with_supertraits() {
 fn impl_def_is_parsed() {
     // impl Show for Point { fn show(self) -> String { "" } }
     let (events, errors) = parse_tokens(&[
-        ImplKw, Ident, ForKw, Ident, LBrace, FnKw, Ident, LParen, Ident, RParen, Arrow, Ident,
-        LBrace, StringLiteral, RBrace, RBrace,
+        ImplKw,
+        Ident,
+        ForKw,
+        Ident,
+        LBrace,
+        FnKw,
+        Ident,
+        LParen,
+        Ident,
+        RParen,
+        Arrow,
+        Ident,
+        LBrace,
+        StringLiteral,
+        RBrace,
+        RBrace,
     ]);
     assert!(has_no_errors(&errors), "unexpected errors: {errors:?}");
     assert!(has_node(&events, ImplDef));
@@ -254,8 +268,8 @@ fn impl_def_is_parsed() {
 fn bounded_type_params_are_parsed() {
     // fn less<T: Ord + Show>(a: T) -> Bool { true }
     let (events, errors) = parse_tokens(&[
-        FnKw, Ident, Lt, Ident, Colon, Ident, Plus, Ident, Gt, LParen, Ident, Colon, Ident,
-        RParen, Arrow, Ident, LBrace, TrueKw, RBrace,
+        FnKw, Ident, Lt, Ident, Colon, Ident, Plus, Ident, Gt, LParen, Ident, Colon, Ident, RParen,
+        Arrow, Ident, LBrace, TrueKw, RBrace,
     ]);
     assert!(has_no_errors(&errors), "unexpected errors: {errors:?}");
     assert!(has_node(&events, FnDef));
@@ -1033,6 +1047,23 @@ fn malformed_range_until_reports_single_targeted_error() {
 }
 
 #[test]
+fn range_until_keyword_rhs_reports_targeted_expression_name_error() {
+    // let x = 0..<module
+    let (_events, errors) = parse_tokens(&[LetKw, Ident, Eq, IntLiteral, DotDotLt, ModuleKw]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted keyword diagnostic, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("reserved keyword `module` cannot be used as an expression name"),
+        "expected targeted expression-name message, got: {errors:?}"
+    );
+}
+
+#[test]
 fn unary_expr() {
     // let x = !true
     let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, Bang, TrueKw]);
@@ -1289,6 +1320,44 @@ fn return_expr() {
         FnKw, Ident, LParen, RParen, LBrace, ReturnKw, IntLiteral, RBrace,
     ]);
     assert!(has_no_errors(&errors));
+    assert!(has_node(&events, ReturnExpr));
+}
+
+#[test]
+fn bare_keyword_expression_reports_targeted_error() {
+    // fn foo() { module }
+    let (events, errors) = parse_tokens(&[FnKw, Ident, LParen, RParen, LBrace, ModuleKw, RBrace]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted keyword diagnostic, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("reserved keyword `module` cannot be used as an expression name"),
+        "expected targeted expression-name message, got: {errors:?}"
+    );
+    assert!(has_node(&events, BlockExpr));
+}
+
+#[test]
+fn return_keyword_expression_reports_targeted_error() {
+    // fn foo() { return module }
+    let (events, errors) = parse_tokens(&[
+        FnKw, Ident, LParen, RParen, LBrace, ReturnKw, ModuleKw, RBrace,
+    ]);
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one targeted keyword diagnostic, got: {errors:?}"
+    );
+    assert!(
+        errors[0]
+            .message
+            .contains("reserved keyword `module` cannot be used as an expression name"),
+        "expected targeted expression-name message, got: {errors:?}"
+    );
     assert!(has_node(&events, ReturnExpr));
 }
 
