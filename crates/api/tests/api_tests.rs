@@ -4576,11 +4576,34 @@ fn check_set_invalid_element_type_reports_e0028() {
     );
 
     assert!(
-        output
-            .diagnostics
-            .iter()
-            .any(|d| d.code == "E0028" && d.message.contains("set element")),
+        output.diagnostics.iter().any(|d| {
+            d.code == "E0028"
+                && d.message.contains("set element")
+                && d.message.contains("Hash + Eq")
+        }),
         "expected E0028 set element diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_set_derived_hash_eq_element_has_no_set_diagnostic() {
+    let output = check(
+        r#"import collections
+
+        type Point derive(Eq, Hash) = { x: Int, y: Int }
+
+        fn main() -> Int {
+            let p = Point { x: 1, y: 2 }
+            let s = collections.Set.new().insert(p)
+            if (s.contains(p)) { s.len() } else { 0 }
+        }"#,
+        "test.ky",
+    );
+
+    assert!(
+        output.diagnostics.iter().all(|d| d.code != "E0028"),
+        "expected no E0028 diagnostics for derived Hash/Eq set element, got: {:?}",
         output.diagnostics
     );
 }
@@ -4618,11 +4641,32 @@ fn check_map_invalid_key_type_reports_e0024() {
     );
 
     assert!(
-        output
-            .diagnostics
-            .iter()
-            .any(|d| d.code == "E0024" && d.message.contains("map key")),
+        output.diagnostics.iter().any(|d| {
+            d.code == "E0024" && d.message.contains("map key") && d.message.contains("Hash + Eq")
+        }),
         "expected E0024 map key diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_map_derived_hash_eq_key_has_no_map_key_diagnostic() {
+    let output = check(
+        r#"import collections
+
+        type Point derive(Eq, Hash) = { x: Int, y: Int }
+
+        fn main() -> Int {
+            let p = Point { x: 1, y: 2 }
+            let m = collections.Map.new().insert(p, 7)
+            m.get(p).unwrap_or(0)
+        }"#,
+        "test.ky",
+    );
+
+    assert!(
+        output.diagnostics.iter().all(|d| d.code != "E0024"),
+        "expected no E0024 diagnostics for derived Hash/Eq map key, got: {:?}",
         output.diagnostics
     );
 }
@@ -5297,11 +5341,32 @@ fn check_mutable_map_invalid_key_type_reports_e0024() {
     "#;
     let output = check(src, "test.ky");
     assert!(
-        output
-            .diagnostics
-            .iter()
-            .any(|d| d.code == "E0024" && d.message.contains("map key")),
+        output.diagnostics.iter().any(|d| {
+            d.code == "E0024" && d.message.contains("map key") && d.message.contains("Hash + Eq")
+        }),
         "expected E0024 map key diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_mutable_map_derived_hash_eq_key_has_no_map_key_diagnostic() {
+    let output = check(
+        r#"import collections
+
+        type Point derive(Eq, Hash) = { x: Int, y: Int }
+
+        fn main() -> Int {
+            let p = Point { x: 1, y: 2 }
+            let m = collections.MutableMap.new().insert(p, 11)
+            m.get(p).unwrap_or(0)
+        }"#,
+        "test.ky",
+    );
+
+    assert!(
+        output.diagnostics.iter().all(|d| d.code != "E0024"),
+        "expected no E0024 diagnostics for derived Hash/Eq mutable-map key, got: {:?}",
         output.diagnostics
     );
 }
@@ -5356,11 +5421,34 @@ fn check_mutable_set_invalid_element_type_reports_e0028() {
     "#;
     let output = check(src, "test.ky");
     assert!(
-        output
-            .diagnostics
-            .iter()
-            .any(|d| d.code == "E0028" && d.message.contains("set element")),
+        output.diagnostics.iter().any(|d| {
+            d.code == "E0028"
+                && d.message.contains("set element")
+                && d.message.contains("Hash + Eq")
+        }),
         "expected E0028 set element diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_mutable_set_derived_hash_eq_element_has_no_set_diagnostic() {
+    let output = check(
+        r#"import collections
+
+        type Point derive(Eq, Hash) = { x: Int, y: Int }
+
+        fn main() -> Int {
+            let p = Point { x: 1, y: 2 }
+            let s = collections.MutableSet.new().insert(p)
+            if (s.contains(p)) { s.len() } else { 0 }
+        }"#,
+        "test.ky",
+    );
+
+    assert!(
+        output.diagnostics.iter().all(|d| d.code != "E0028"),
+        "expected no E0028 diagnostics for derived Hash/Eq mutable-set element, got: {:?}",
         output.diagnostics
     );
 }
@@ -5384,7 +5472,8 @@ fn main() -> Int {
 }
 
 #[test]
-fn check_collections_mutable_priority_queue_alias_constructor_surface_has_no_diagnostics_rfc_0012() {
+fn check_collections_mutable_priority_queue_alias_constructor_surface_has_no_diagnostics_rfc_0012()
+{
     assert_check_no_diagnostics(
         r#"import collections as c
 

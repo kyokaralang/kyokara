@@ -259,13 +259,13 @@ impl TyDiagnosticData {
             }
             TyDiagnosticData::InvalidMapKey { ty } => {
                 format!(
-                    "`{}` cannot be used as a map key (only Int, String, Char, Bool, Unit)",
+                    "`{}` cannot be used as a map key (keys must implement `Hash + Eq`)",
                     dt(ty),
                 )
             }
             TyDiagnosticData::InvalidSetElement { ty } => {
                 format!(
-                    "`{}` cannot be used as a set element (only Int, String, Char, Bool, Unit)",
+                    "`{}` cannot be used as a set element (elements must implement `Hash + Eq`)",
                     dt(ty),
                 )
             }
