@@ -2,6 +2,7 @@
 
 > PEG-style reference grammar for Kyokara (v0 parser contract).
 > This document tracks implemented parser behavior.
+> Sections explicitly labeled "RFC-planned" are design targets only and are not implemented parser behavior yet.
 
 ## Notation
 
@@ -302,3 +303,74 @@ let      match    module   old       property  pub      var
 requires return   true     type      where    while     with
 break    continue
 ```
+
+---
+
+## RFC-Planned Grammar Additions
+
+This section records draft grammar from [RFC 0011: Static Trait System and Constraint Semantics](rfcs/0011-static-trait-system-and-constraint-semantics.md).
+It is a design target for review and tightening, not current parser behavior.
+
+### Trait System (Planned)
+
+```peg
+# Planned additions to Keyword:
+# 'trait' / 'impl' / 'deriving'
+# `Self` is reserved in trait declarations and impl blocks as the self-type placeholder.
+
+TraitRef             <- Path TypeArgList?
+
+PlannedItem          <- 'pub'? (PlannedTypeDef
+                         / TraitDef
+                         / FnDef
+                         / EffectDef
+                         / PropertyDef
+                         / LetBinding)
+                       / ImplDef
+
+PlannedTypeDef       <- 'type' Ident TypeParamList? DeriveClause? '=' TypeBody
+DeriveClause         <- 'deriving' '(' TraitRef (',' TraitRef)* ','? ')'
+
+TraitDef             <- 'trait' Ident TypeParamList? SupertraitList? '{' TraitMethodSig* '}'
+SupertraitList       <- ':' TraitRef ('+' TraitRef)*
+TraitMethodSig       <- 'fn' Ident ParamList ReturnType?
+
+ImplDef              <- 'impl' TypeParamList? TraitRef 'for' TypeExpr '{' ImplMethodDef* '}'
+ImplMethodDef        <- 'fn' Ident ParamList ReturnType? BlockExpr
+```
+
+Notes:
+
+1. Planned trait calls reuse the existing qualified call surface: `Ord.compare(a, b)`.
+2. Planned dot-call behavior stays inherent-only: trait methods do not appear through `x.foo()`.
+3. `impl` blocks are not independently `pub`.
+
+### Minimal Planned Example
+
+This is the simplest full-shape example the planned grammar is aiming for:
+
+```kyokara
+pub trait Show {
+  fn show(self) -> String
+}
+
+type Point deriving (Eq, Hash) = { x: Int, y: Int }
+
+impl Show for Point {
+  fn show(self) -> String {
+    "(".concat(self.x.to_string()).concat(", ").concat(self.y.to_string()).concat(")")
+  }
+}
+
+fn less<T: Ord>(a: T, b: T) -> Bool {
+  Ord.compare(a, b) < 0
+}
+```
+
+Why this example is canonical:
+
+1. `trait` declaration stays small.
+2. `deriving(...)` shows nominal conformance with no extra boilerplate.
+3. `impl Show for Point` shows explicit user conformance.
+4. `Ord.compare(a, b)` shows the qualified trait-call rule.
+5. The only generic syntax needed for power is `fn less<T: Ord>(...)`.

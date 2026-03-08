@@ -69,7 +69,7 @@ Canonical grammar additions:
 ```peg
 Keyword          <- ... / 'trait' / 'impl' / 'deriving'
 
-TraitRef         <- Path
+TraitRef         <- Path TypeArgList?
 
 Item             <- 'pub'? (TypeDef
                    / TraitDef
