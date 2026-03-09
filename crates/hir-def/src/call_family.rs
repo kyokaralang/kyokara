@@ -335,6 +335,35 @@ mod tests {
     }
 
     #[test]
+    fn family_reports_deduped_sorted_arity_choices_when_multiple_candidates_share_arity() {
+        let mut interner = Interner::default();
+        let zero = Vec::<FnParam>::new();
+        let one_a = vec![param(&mut interner, "x")];
+        let one_b = vec![param(&mut interner, "y")];
+        let three = vec![
+            param(&mut interner, "x"),
+            param(&mut interner, "y"),
+            param(&mut interner, "z"),
+        ];
+        let families = [0usize, 1usize, 2usize, 3usize];
+        let args = [pos(0), pos(1)];
+        let selection = select_call_family_candidate(&args, &families, |candidate| match candidate {
+            0 => zero.as_slice(),
+            1 => one_a.as_slice(),
+            2 => one_b.as_slice(),
+            3 => three.as_slice(),
+            _ => unreachable!(),
+        });
+        assert_eq!(
+            selection,
+            CallFamilySelection::ArgCountMismatch {
+                expected: vec![0, 1, 3],
+                actual: 2,
+            }
+        );
+    }
+
+    #[test]
     fn family_marks_ambiguous_same_shape_candidates() {
         let mut interner = Interner::default();
         let one = vec![param(&mut interner, "x")];
@@ -357,6 +386,14 @@ mod tests {
         let mut interner = Interner::default();
         let lhs = vec![param(&mut interner, "x")];
         let rhs = vec![param(&mut interner, "x")];
+        assert!(call_shapes_overlap(&lhs, &rhs));
+    }
+
+    #[test]
+    fn overlap_rejects_same_arity_families_distinguished_only_by_param_names() {
+        let mut interner = Interner::default();
+        let lhs = vec![param(&mut interner, "x"), param(&mut interner, "y")];
+        let rhs = vec![param(&mut interner, "left"), param(&mut interner, "right")];
         assert!(call_shapes_overlap(&lhs, &rhs));
     }
 
