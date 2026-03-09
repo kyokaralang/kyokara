@@ -4603,8 +4603,11 @@ impl Interpreter {
                     Ok(())
                 }
                 SeqSource::MapKeys(entries) => {
-                    for entry in entries.entries() {
-                        match emit(self, entry.key.clone())? {
+                    for idx in 0..entries.len() {
+                        let item = entries
+                            .key_at(idx)
+                            .expect("map key iteration index should stay in bounds");
+                        match emit(self, item)? {
                             Continue => {}
                             Break => return Ok(()),
                         }
@@ -4612,8 +4615,11 @@ impl Interpreter {
                     Ok(())
                 }
                 SeqSource::MapValues(entries) => {
-                    for entry in entries.entries() {
-                        match emit(self, entry.value.clone())? {
+                    for idx in 0..entries.len() {
+                        let item = entries
+                            .value_at(idx)
+                            .expect("map value iteration index should stay in bounds");
+                        match emit(self, item)? {
                             Continue => {}
                             Break => return Ok(()),
                         }
@@ -4621,8 +4627,11 @@ impl Interpreter {
                     Ok(())
                 }
                 SeqSource::SetValues(entries) => {
-                    for entry in entries.entries() {
-                        match emit(self, entry.value.clone())? {
+                    for idx in 0..entries.len() {
+                        let item = entries
+                            .value_at(idx)
+                            .expect("set value iteration index should stay in bounds");
+                        match emit(self, item)? {
                             Continue => {}
                             Break => return Ok(()),
                         }

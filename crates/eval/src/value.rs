@@ -73,12 +73,12 @@ pub struct MapEntry {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct MapValue {
+struct GenericMapValue {
     entries: Vec<MapEntry>,
     buckets: HashMap<i64, Vec<usize>>,
 }
 
-impl PartialEq for MapValue {
+impl PartialEq for GenericMapValue {
     fn eq(&self, other: &Self) -> bool {
         if self.entries.len() != other.entries.len() {
             return false;
@@ -94,9 +94,9 @@ impl PartialEq for MapValue {
     }
 }
 
-impl Eq for MapValue {}
+impl Eq for GenericMapValue {}
 
-impl MapValue {
+impl GenericMapValue {
     fn push_bucket_index(&mut self, hash: i64, idx: usize) {
         self.buckets.entry(hash).or_default().push(idx);
     }
@@ -125,22 +125,6 @@ impl MapValue {
         });
     }
 
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn from_primitive_indexmap(entries: IndexMap<MapKey, Value>) -> Self {
-        let entries = entries
-            .into_iter()
-            .map(|(key, value)| MapEntry {
-                hash: primitive_map_key_hash(&key),
-                key: key.to_value(),
-                value,
-            })
-            .collect();
-        Self::from_entries(entries)
-    }
-
     pub fn from_entries(entries: Vec<MapEntry>) -> Self {
         let mut buckets: HashMap<i64, Vec<usize>> = HashMap::new();
         for (idx, entry) in entries.iter().enumerate() {
@@ -153,20 +137,12 @@ impl MapValue {
         self.entries.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
     pub fn key_at(&self, idx: usize) -> Option<Value> {
         self.entries.get(idx).map(|entry| entry.key.clone())
     }
 
     pub fn value_at(&self, idx: usize) -> Option<Value> {
         self.entries.get(idx).map(|entry| entry.value.clone())
-    }
-
-    pub fn entries(&self) -> &[MapEntry] {
-        &self.entries
     }
 
     pub fn find_index_with<E>(
@@ -295,6 +271,379 @@ impl MapValue {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct PrimitivePersistentMapValue {
+    entries: IndexMap<MapKey, Value>,
+}
+
+impl PrimitivePersistentMapValue {
+    #[cfg(test)]
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn from_indexmap(entries: IndexMap<MapKey, Value>) -> Self {
+        Self { entries }
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    fn key_at(&self, idx: usize) -> Option<Value> {
+        self.entries.get_index(idx).map(|(key, _)| key.to_value())
+    }
+
+    fn value_at(&self, idx: usize) -> Option<Value> {
+        self.entries.get_index(idx).map(|(_, value)| value.clone())
+    }
+
+    fn snapshot_entries(&self) -> Vec<MapEntry> {
+        self.entries
+            .iter()
+            .map(|(key, value)| MapEntry {
+                hash: key.primitive_hash(),
+                key: key.to_value(),
+                value: value.clone(),
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    fn snapshot(&self) -> MapValue {
+        MapValue::from_primitive_storage(self.clone())
+    }
+
+    fn to_generic(&self) -> GenericMapValue {
+        GenericMapValue::from_entries(self.snapshot_entries())
+    }
+
+    fn find_index(&self, key: &MapKey) -> Option<usize> {
+        self.entries.get_index_of(key)
+    }
+
+    fn get_cloned(&self, key: &MapKey) -> Option<Value> {
+        self.entries.get(key).cloned()
+    }
+
+    fn contains(&self, key: &MapKey) -> bool {
+        self.entries.contains_key(key)
+    }
+
+    fn insert_persistent(&self, key: MapKey, value: Value) -> Self {
+        let mut entries = self.entries.clone();
+        if entries.get(&key).is_some_and(|current| current == &value) {
+            return self.clone();
+        }
+        entries.insert(key, value);
+        Self { entries }
+    }
+
+    fn remove_persistent(&self, key: &MapKey) -> Self {
+        if !self.entries.contains_key(key) {
+            return self.clone();
+        }
+        let mut entries = self.entries.clone();
+        entries.shift_remove(key);
+        Self { entries }
+    }
+
+    fn insert(&mut self, key: MapKey, value: Value) {
+        self.entries.insert(key, value);
+    }
+
+    fn remove(&mut self, key: &MapKey) {
+        self.entries.shift_remove(key);
+    }
+}
+
+#[derive(Debug, Clone)]
+enum PersistentMapStorage {
+    Primitive(PrimitivePersistentMapValue),
+    Generic(GenericMapValue),
+}
+
+#[derive(Debug, Clone)]
+pub struct MapValue {
+    storage: PersistentMapStorage,
+}
+
+impl Default for MapValue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PartialEq for MapValue {
+    fn eq(&self, other: &Self) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+
+        let mut eq = |lhs: &Value, rhs: &Value| Ok(lhs == rhs);
+        self.snapshot_entries().into_iter().all(|entry| {
+            other
+                .get_cloned_with(entry.hash, &entry.key, &mut eq)
+                .ok()
+                .flatten()
+                .is_some_and(|candidate| candidate == entry.value)
+        })
+    }
+}
+
+impl Eq for MapValue {}
+
+impl MapValue {
+    fn from_primitive_storage(entries: PrimitivePersistentMapValue) -> Self {
+        Self {
+            storage: PersistentMapStorage::Primitive(entries),
+        }
+    }
+
+    fn from_generic_storage(entries: GenericMapValue) -> Self {
+        Self {
+            storage: PersistentMapStorage::Generic(entries),
+        }
+    }
+
+    pub fn new() -> Self {
+        Self::from_primitive_storage(PrimitivePersistentMapValue::default())
+    }
+
+    pub fn from_primitive_indexmap(entries: IndexMap<MapKey, Value>) -> Self {
+        Self::from_primitive_storage(PrimitivePersistentMapValue::from_indexmap(entries))
+    }
+
+    pub fn from_entries(entries: Vec<MapEntry>) -> Self {
+        Self::from_generic_storage(GenericMapValue::from_entries(entries))
+    }
+
+    pub fn len(&self) -> usize {
+        match &self.storage {
+            PersistentMapStorage::Primitive(entries) => entries.len(),
+            PersistentMapStorage::Generic(entries) => entries.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn key_at(&self, idx: usize) -> Option<Value> {
+        match &self.storage {
+            PersistentMapStorage::Primitive(entries) => entries.key_at(idx),
+            PersistentMapStorage::Generic(entries) => entries.key_at(idx),
+        }
+    }
+
+    pub fn value_at(&self, idx: usize) -> Option<Value> {
+        match &self.storage {
+            PersistentMapStorage::Primitive(entries) => entries.value_at(idx),
+            PersistentMapStorage::Generic(entries) => entries.value_at(idx),
+        }
+    }
+
+    pub fn snapshot_entries(&self) -> Vec<MapEntry> {
+        match &self.storage {
+            PersistentMapStorage::Primitive(entries) => entries.snapshot_entries(),
+            PersistentMapStorage::Generic(entries) => entries.entries.clone(),
+        }
+    }
+
+    pub fn entries(&self) -> Vec<MapEntry> {
+        self.snapshot_entries()
+    }
+
+    pub fn find_index_with<E>(
+        &self,
+        hash: i64,
+        key: &Value,
+        eq: &mut E,
+    ) -> Result<Option<usize>, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(key) {
+            return Ok(match &self.storage {
+                PersistentMapStorage::Primitive(entries) => entries.find_index(&primitive),
+                PersistentMapStorage::Generic(entries) => entries.find_index_with(hash, key, eq)?,
+            });
+        }
+        match &self.storage {
+            PersistentMapStorage::Primitive(_) => Ok(None),
+            PersistentMapStorage::Generic(entries) => entries.find_index_with(hash, key, eq),
+        }
+    }
+
+    pub fn get_cloned_with<E>(
+        &self,
+        hash: i64,
+        key: &Value,
+        eq: &mut E,
+    ) -> Result<Option<Value>, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(key) {
+            return Ok(match &self.storage {
+                PersistentMapStorage::Primitive(entries) => entries.get_cloned(&primitive),
+                PersistentMapStorage::Generic(entries) => entries.get(&primitive).cloned(),
+            });
+        }
+        match &self.storage {
+            PersistentMapStorage::Primitive(_) => Ok(None),
+            PersistentMapStorage::Generic(entries) => entries.get_cloned_with(hash, key, eq),
+        }
+    }
+
+    pub fn contains_with<E>(&self, hash: i64, key: &Value, eq: &mut E) -> Result<bool, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(key) {
+            return Ok(match &self.storage {
+                PersistentMapStorage::Primitive(entries) => entries.contains(&primitive),
+                PersistentMapStorage::Generic(entries) => entries.get(&primitive).is_some(),
+            });
+        }
+        match &self.storage {
+            PersistentMapStorage::Primitive(_) => Ok(false),
+            PersistentMapStorage::Generic(entries) => entries.contains_with(hash, key, eq),
+        }
+    }
+
+    pub fn insert_persistent_with<E>(
+        &self,
+        hash: i64,
+        key: Value,
+        value: Value,
+        eq: &mut E,
+    ) -> Result<Self, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(&key) {
+            return Ok(match &self.storage {
+                PersistentMapStorage::Primitive(entries) => {
+                    Self::from_primitive_storage(entries.insert_persistent(primitive, value))
+                }
+                PersistentMapStorage::Generic(entries) => {
+                    let mut generic = entries.clone();
+                    generic.insert_with(hash, key, value, eq)?;
+                    Self::from_generic_storage(generic)
+                }
+            });
+        }
+
+        match &self.storage {
+            PersistentMapStorage::Primitive(entries) => {
+                let mut generic = entries.to_generic();
+                generic.insert_with(hash, key, value, eq)?;
+                Ok(Self::from_generic_storage(generic))
+            }
+            PersistentMapStorage::Generic(entries) => {
+                let generic = entries.insert_persistent_with(hash, key, value, eq)?;
+                Ok(Self::from_generic_storage(generic))
+            }
+        }
+    }
+
+    pub fn remove_persistent_with<E>(
+        &self,
+        hash: i64,
+        key: &Value,
+        eq: &mut E,
+    ) -> Result<Self, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(key) {
+            return Ok(match &self.storage {
+                PersistentMapStorage::Primitive(entries) => {
+                    Self::from_primitive_storage(entries.remove_persistent(&primitive))
+                }
+                PersistentMapStorage::Generic(entries) => {
+                    let generic = entries.remove_persistent_with(hash, key, eq)?;
+                    Self::from_generic_storage(generic)
+                }
+            });
+        }
+
+        match &self.storage {
+            PersistentMapStorage::Primitive(_) => Ok(self.clone()),
+            PersistentMapStorage::Generic(entries) => {
+                let generic = entries.remove_persistent_with(hash, key, eq)?;
+                Ok(Self::from_generic_storage(generic))
+            }
+        }
+    }
+
+    pub fn insert_with<E>(
+        &mut self,
+        hash: i64,
+        key: Value,
+        value: Value,
+        eq: &mut E,
+    ) -> Result<(), RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(&key) {
+            match &mut self.storage {
+                PersistentMapStorage::Primitive(entries) => entries.insert(primitive, value),
+                PersistentMapStorage::Generic(entries) => {
+                    entries.insert_with(hash, key, value, eq)?;
+                }
+            }
+            return Ok(());
+        }
+
+        match &mut self.storage {
+            PersistentMapStorage::Primitive(entries) => {
+                let mut generic = entries.to_generic();
+                generic.insert_with(hash, key, value, eq)?;
+                self.storage = PersistentMapStorage::Generic(generic);
+            }
+            PersistentMapStorage::Generic(entries) => {
+                entries.insert_with(hash, key, value, eq)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn remove_with<E>(&mut self, hash: i64, key: &Value, eq: &mut E) -> Result<(), RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(key) {
+            match &mut self.storage {
+                PersistentMapStorage::Primitive(entries) => entries.remove(&primitive),
+                PersistentMapStorage::Generic(entries) => {
+                    entries.remove_with(hash, key, eq)?;
+                }
+            }
+            return Ok(());
+        }
+
+        if let PersistentMapStorage::Generic(entries) = &mut self.storage {
+            entries.remove_with(hash, key, eq)?;
+        }
+        Ok(())
+    }
+
+    pub fn get(&self, key: &MapKey) -> Option<&Value> {
+        match &self.storage {
+            PersistentMapStorage::Primitive(entries) => entries.entries.get(key),
+            PersistentMapStorage::Generic(entries) => entries.get(key),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetEntry {
     pub hash: i64,
@@ -302,12 +651,12 @@ pub struct SetEntry {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct SetValue {
+struct GenericSetValue {
     entries: Vec<SetEntry>,
     buckets: HashMap<i64, Vec<usize>>,
 }
 
-impl PartialEq for SetValue {
+impl PartialEq for GenericSetValue {
     fn eq(&self, other: &Self) -> bool {
         if self.entries.len() != other.entries.len() {
             return false;
@@ -322,9 +671,9 @@ impl PartialEq for SetValue {
     }
 }
 
-impl Eq for SetValue {}
+impl Eq for GenericSetValue {}
 
-impl SetValue {
+impl GenericSetValue {
     fn push_bucket_index(&mut self, hash: i64, idx: usize) {
         self.buckets.entry(hash).or_default().push(idx);
     }
@@ -353,21 +702,6 @@ impl SetValue {
         });
     }
 
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn from_primitive_indexset(entries: IndexSet<MapKey>) -> Self {
-        let entries = entries
-            .into_iter()
-            .map(|value| SetEntry {
-                hash: primitive_map_key_hash(&value),
-                value: value.to_value(),
-            })
-            .collect();
-        Self::from_entries(entries)
-    }
-
     pub fn from_entries(entries: Vec<SetEntry>) -> Self {
         let mut buckets: HashMap<i64, Vec<usize>> = HashMap::new();
         for (idx, entry) in entries.iter().enumerate() {
@@ -380,16 +714,8 @@ impl SetValue {
         self.entries.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
     pub fn value_at(&self, idx: usize) -> Option<Value> {
         self.entries.get(idx).map(|entry| entry.value.clone())
-    }
-
-    pub fn entries(&self) -> &[SetEntry] {
-        &self.entries
     }
 
     pub fn find_index_with<E>(
@@ -505,6 +831,342 @@ impl SetValue {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct PrimitivePersistentSetValue {
+    entries: IndexSet<MapKey>,
+}
+
+impl PrimitivePersistentSetValue {
+    #[cfg(test)]
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn from_indexset(entries: IndexSet<MapKey>) -> Self {
+        Self { entries }
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    fn value_at(&self, idx: usize) -> Option<Value> {
+        self.entries.get_index(idx).map(MapKey::to_value)
+    }
+
+    fn snapshot_entries(&self) -> Vec<SetEntry> {
+        self.entries
+            .iter()
+            .map(|key| SetEntry {
+                hash: key.primitive_hash(),
+                value: key.to_value(),
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    fn snapshot(&self) -> SetValue {
+        SetValue::from_primitive_storage(self.clone())
+    }
+
+    fn to_generic(&self) -> GenericSetValue {
+        GenericSetValue::from_entries(self.snapshot_entries())
+    }
+
+    fn find_index(&self, key: &MapKey) -> Option<usize> {
+        self.entries.get_index_of(key)
+    }
+
+    fn contains(&self, key: &MapKey) -> bool {
+        self.entries.contains(key)
+    }
+
+    fn insert_persistent(&self, key: MapKey) -> Self {
+        if self.entries.contains(&key) {
+            return self.clone();
+        }
+        let mut entries = self.entries.clone();
+        entries.insert(key);
+        Self { entries }
+    }
+
+    fn remove_persistent(&self, key: &MapKey) -> Self {
+        if !self.entries.contains(key) {
+            return self.clone();
+        }
+        let mut entries = self.entries.clone();
+        entries.shift_remove(key);
+        Self { entries }
+    }
+
+    fn insert(&mut self, key: MapKey) {
+        self.entries.insert(key);
+    }
+
+    fn remove(&mut self, key: &MapKey) {
+        self.entries.shift_remove(key);
+    }
+}
+
+#[derive(Debug, Clone)]
+enum PersistentSetStorage {
+    Primitive(PrimitivePersistentSetValue),
+    Generic(GenericSetValue),
+}
+
+#[derive(Debug, Clone)]
+pub struct SetValue {
+    storage: PersistentSetStorage,
+}
+
+impl Default for SetValue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PartialEq for SetValue {
+    fn eq(&self, other: &Self) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+
+        let mut eq = |lhs: &Value, rhs: &Value| Ok(lhs == rhs);
+        self.snapshot_entries().into_iter().all(|entry| {
+            other
+                .contains_with(entry.hash, &entry.value, &mut eq)
+                .ok()
+                .unwrap_or(false)
+        })
+    }
+}
+
+impl Eq for SetValue {}
+
+impl SetValue {
+    fn from_primitive_storage(entries: PrimitivePersistentSetValue) -> Self {
+        Self {
+            storage: PersistentSetStorage::Primitive(entries),
+        }
+    }
+
+    fn from_generic_storage(entries: GenericSetValue) -> Self {
+        Self {
+            storage: PersistentSetStorage::Generic(entries),
+        }
+    }
+
+    pub fn new() -> Self {
+        Self::from_primitive_storage(PrimitivePersistentSetValue::default())
+    }
+
+    pub fn from_primitive_indexset(entries: IndexSet<MapKey>) -> Self {
+        Self::from_primitive_storage(PrimitivePersistentSetValue::from_indexset(entries))
+    }
+
+    pub fn from_entries(entries: Vec<SetEntry>) -> Self {
+        Self::from_generic_storage(GenericSetValue::from_entries(entries))
+    }
+
+    pub fn len(&self) -> usize {
+        match &self.storage {
+            PersistentSetStorage::Primitive(entries) => entries.len(),
+            PersistentSetStorage::Generic(entries) => entries.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn value_at(&self, idx: usize) -> Option<Value> {
+        match &self.storage {
+            PersistentSetStorage::Primitive(entries) => entries.value_at(idx),
+            PersistentSetStorage::Generic(entries) => entries.value_at(idx),
+        }
+    }
+
+    pub fn snapshot_entries(&self) -> Vec<SetEntry> {
+        match &self.storage {
+            PersistentSetStorage::Primitive(entries) => entries.snapshot_entries(),
+            PersistentSetStorage::Generic(entries) => entries.entries.clone(),
+        }
+    }
+
+    pub fn entries(&self) -> Vec<SetEntry> {
+        self.snapshot_entries()
+    }
+
+    pub fn find_index_with<E>(
+        &self,
+        hash: i64,
+        value: &Value,
+        eq: &mut E,
+    ) -> Result<Option<usize>, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(value) {
+            return Ok(match &self.storage {
+                PersistentSetStorage::Primitive(entries) => entries.find_index(&primitive),
+                PersistentSetStorage::Generic(entries) => entries.find_index_with(hash, value, eq)?,
+            });
+        }
+        match &self.storage {
+            PersistentSetStorage::Primitive(_) => Ok(None),
+            PersistentSetStorage::Generic(entries) => entries.find_index_with(hash, value, eq),
+        }
+    }
+
+    pub fn contains_with<E>(
+        &self,
+        hash: i64,
+        value: &Value,
+        eq: &mut E,
+    ) -> Result<bool, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(value) {
+            return Ok(match &self.storage {
+                PersistentSetStorage::Primitive(entries) => entries.contains(&primitive),
+                PersistentSetStorage::Generic(entries) => entries.contains(&primitive),
+            });
+        }
+        match &self.storage {
+            PersistentSetStorage::Primitive(_) => Ok(false),
+            PersistentSetStorage::Generic(entries) => entries.contains_with(hash, value, eq),
+        }
+    }
+
+    pub fn insert_persistent_with<E>(
+        &self,
+        hash: i64,
+        value: Value,
+        eq: &mut E,
+    ) -> Result<Self, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(&value) {
+            return Ok(match &self.storage {
+                PersistentSetStorage::Primitive(entries) => {
+                    Self::from_primitive_storage(entries.insert_persistent(primitive))
+                }
+                PersistentSetStorage::Generic(entries) => {
+                    let generic = entries.insert_persistent_with(hash, value, eq)?;
+                    Self::from_generic_storage(generic)
+                }
+            });
+        }
+
+        match &self.storage {
+            PersistentSetStorage::Primitive(entries) => {
+                let mut generic = entries.to_generic();
+                generic.insert_with(hash, value, eq)?;
+                Ok(Self::from_generic_storage(generic))
+            }
+            PersistentSetStorage::Generic(entries) => {
+                let generic = entries.insert_persistent_with(hash, value, eq)?;
+                Ok(Self::from_generic_storage(generic))
+            }
+        }
+    }
+
+    pub fn remove_persistent_with<E>(
+        &self,
+        hash: i64,
+        value: &Value,
+        eq: &mut E,
+    ) -> Result<Self, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(value) {
+            return Ok(match &self.storage {
+                PersistentSetStorage::Primitive(entries) => {
+                    Self::from_primitive_storage(entries.remove_persistent(&primitive))
+                }
+                PersistentSetStorage::Generic(entries) => {
+                    let generic = entries.remove_persistent_with(hash, value, eq)?;
+                    Self::from_generic_storage(generic)
+                }
+            });
+        }
+
+        match &self.storage {
+            PersistentSetStorage::Primitive(_) => Ok(self.clone()),
+            PersistentSetStorage::Generic(entries) => {
+                let generic = entries.remove_persistent_with(hash, value, eq)?;
+                Ok(Self::from_generic_storage(generic))
+            }
+        }
+    }
+
+    pub fn insert_with<E>(
+        &mut self,
+        hash: i64,
+        value: Value,
+        eq: &mut E,
+    ) -> Result<(), RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(&value) {
+            match &mut self.storage {
+                PersistentSetStorage::Primitive(entries) => entries.insert(primitive),
+                PersistentSetStorage::Generic(entries) => entries.insert_with(hash, value, eq)?,
+            }
+            return Ok(());
+        }
+
+        match &mut self.storage {
+            PersistentSetStorage::Primitive(entries) => {
+                let mut generic = entries.to_generic();
+                generic.insert_with(hash, value, eq)?;
+                self.storage = PersistentSetStorage::Generic(generic);
+            }
+            PersistentSetStorage::Generic(entries) => entries.insert_with(hash, value, eq)?,
+        }
+        Ok(())
+    }
+
+    pub fn remove_with<E>(
+        &mut self,
+        hash: i64,
+        value: &Value,
+        eq: &mut E,
+    ) -> Result<(), RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(value) {
+            match &mut self.storage {
+                PersistentSetStorage::Primitive(entries) => entries.remove(&primitive),
+                PersistentSetStorage::Generic(entries) => entries.remove_with(hash, value, eq)?,
+            }
+            return Ok(());
+        }
+
+        if let PersistentSetStorage::Generic(entries) = &mut self.storage {
+            entries.remove_with(hash, value, eq)?;
+        }
+        Ok(())
+    }
+
+    pub fn contains(&self, key: &MapKey) -> bool {
+        match &self.storage {
+            PersistentSetStorage::Primitive(entries) => entries.contains(key),
+            PersistentSetStorage::Generic(entries) => entries.contains(key),
+        }
+    }
+}
+
 fn primitive_map_key_hash(key: &MapKey) -> i64 {
     match key {
         MapKey::Int(n) => *n,
@@ -601,17 +1263,13 @@ impl PrimitiveMutableMapValue {
     }
 
     fn snapshot(&self) -> MapValue {
-        let mut entries = Vec::with_capacity(self.live_len);
+        let mut entries = IndexMap::with_capacity(self.live_len);
         for entry in &self.entries {
             if entry.live {
-                entries.push(MapEntry {
-                    hash: entry.hash,
-                    key: entry.key.to_value(),
-                    value: entry.value.clone(),
-                });
+                entries.insert(entry.key.clone(), entry.value.clone());
             }
         }
-        MapValue::from_entries(entries)
+        MapValue::from_primitive_indexmap(entries)
     }
 
     fn get_cloned(&self, key: &MapKey) -> Option<Value> {
@@ -800,16 +1458,13 @@ impl PrimitiveMutableSetValue {
     }
 
     fn snapshot(&self) -> SetValue {
-        let mut entries = Vec::with_capacity(self.live_len);
+        let mut entries = IndexSet::with_capacity(self.live_len);
         for entry in &self.entries {
             if entry.live {
-                entries.push(SetEntry {
-                    hash: entry.hash,
-                    value: entry.key.to_value(),
-                });
+                entries.insert(entry.key.clone());
             }
         }
-        SetValue::from_entries(entries)
+        SetValue::from_primitive_indexset(entries)
     }
 
     fn contains(&self, key: &MapKey) -> bool {
@@ -2426,6 +3081,55 @@ mod tests {
             .entries()
             .iter()
             .map(|entry| entry.value.clone())
+            .collect();
+        assert_eq!(
+            values,
+            vec![Value::String("a".into()), Value::String("b".into())]
+        );
+        assert!(snapshot.contains(&MapKey::String("b".into())));
+    }
+
+    #[test]
+    fn primitive_persistent_map_remove_reinsert_appends_to_end() {
+        let mut map = PrimitivePersistentMapValue::new();
+        assert!(map.is_empty(), "new primitive persistent map should start empty");
+
+        map.insert(MapKey::String("b".into()), Value::Int(1));
+        map.insert(MapKey::String("a".into()), Value::Int(2));
+        map.remove(&MapKey::String("b".into()));
+        map.insert(MapKey::String("b".into()), Value::Int(3));
+
+        let snapshot = map.snapshot();
+        let keys: Vec<_> = snapshot
+            .snapshot_entries()
+            .into_iter()
+            .map(|entry| entry.key)
+            .collect();
+        assert_eq!(
+            keys,
+            vec![Value::String("a".into()), Value::String("b".into())]
+        );
+        assert_eq!(
+            snapshot.get(&MapKey::String("b".into())),
+            Some(&Value::Int(3))
+        );
+    }
+
+    #[test]
+    fn primitive_persistent_set_remove_reinsert_appends_to_end() {
+        let mut set = PrimitivePersistentSetValue::new();
+        assert!(set.is_empty(), "new primitive persistent set should start empty");
+
+        set.insert(MapKey::String("b".into()));
+        set.insert(MapKey::String("a".into()));
+        set.remove(&MapKey::String("b".into()));
+        set.insert(MapKey::String("b".into()));
+
+        let snapshot = set.snapshot();
+        let values: Vec<_> = snapshot
+            .snapshot_entries()
+            .into_iter()
+            .map(|entry| entry.value)
             .collect();
         assert_eq!(
             values,
