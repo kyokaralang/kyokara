@@ -151,6 +151,7 @@ Canonical example:
 
 - `xs.count()` counts all elements
 - `xs.count(f)` counts matching elements
+- `xs.contains(value)` checks direct element membership
 - `xs.frequencies()` returns `Map<T, Int>` bucket counts in first-seen key order
 
 Non-canonical parallel synonym:
@@ -234,7 +235,7 @@ Canonical consequences:
 - integer ranges use `start..<end` (constructor surface)
 - stateful sources use `seed.unfold(step)` (constructor surface)
 - `List`/`Deque` expose storage methods and traversal methods directly
-- traversal transforms/terminals (`map/filter/enumerate/zip/chunks/windows/fold/any/all/find/count/frequencies/to_list`) are callable on collection and producer values
+- traversal transforms/terminals (`map/filter/enumerate/zip/chunks/windows/fold/any/all/find/count/contains/frequencies/to_list`) are callable on collection and producer values
 - `count` is a constrained arity family under `L7A`: `count()` for all elements, `count(predicate)` for matching elements
 - producer traversal APIs stay traversal-capable (`String.split/lines/chars`, `Map.keys/values`, `Set.values`)
 

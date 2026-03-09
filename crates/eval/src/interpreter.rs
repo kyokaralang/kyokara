@@ -5031,6 +5031,20 @@ impl Interpreter {
                 })?;
                 Ok(Value::Int(count))
             }
+            IntrinsicFn::SeqContains => {
+                let plan = self.require_traversal_plan(&args[0], "seq_contains")?;
+                let needle = args[1].clone();
+                let mut found = false;
+                self.seq_for_each_control(&plan, &mut |interp, item| {
+                    if interp.trait_eq_values(&item, &needle)? {
+                        found = true;
+                        Ok(SeqEmitControl::Break)
+                    } else {
+                        Ok(SeqEmitControl::Continue)
+                    }
+                })?;
+                Ok(Value::Bool(found))
+            }
             IntrinsicFn::SeqFrequencies => {
                 let plan = self.require_traversal_plan(&args[0], "seq_frequencies")?;
                 let mut entries = MapValue::new();

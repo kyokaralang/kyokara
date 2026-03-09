@@ -7071,6 +7071,39 @@ fn main() -> Int {
 }
 
 #[test]
+fn eval_collection_first_contains_semantics() {
+    let val = run_ok(
+        r#"import collections
+
+fn main() -> Int {
+    let a = collections.List.new().push(1).push(2).contains(2)
+    let b = collections.MutableList.from_list(collections.List.new().push(1).push(2)).contains(1)
+    let c = collections.Deque.new().push_back(1).push_back(2).contains(3)
+    let d = (0..<4).contains(3)
+    let e = "a,b,c".split(",").contains("b")
+    let f = collections.Map.new().insert("x", 1).contains("x")
+    let g = collections.MutableSet.new().insert("x").contains("x")
+
+    if (a && b && !c && d && e && f && g) {
+        1
+    } else {
+        0
+    }
+}"#,
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
+fn eval_contains_requires_eq() {
+    let err = run_err("fn main() -> Bool { (0..<3).map(fn(n: Int) => n.to_float()).contains(1.0) }");
+    assert!(
+        err.contains("Eq") || err.contains("trait"),
+        "expected Eq/trait error, got: {err}"
+    );
+}
+
+#[test]
 fn eval_collection_first_count_predicate_semantics_rfc_0002() {
     let val = run_ok(
         r#"import collections

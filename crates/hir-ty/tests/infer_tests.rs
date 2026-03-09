@@ -852,6 +852,47 @@ fn infer_seq_any_all_find_happy_paths() {
 }
 
 #[test]
+fn infer_seq_contains_happy_paths() {
+    let cases = [r#"import collections
+
+fn main() -> Int {
+    let a = collections.List.new().push(1).push(2).contains(2)
+    let b = collections.MutableList.from_list(collections.List.new().push(1).push(2)).contains(1)
+    let c = collections.Deque.new().push_back(1).push_back(2).contains(3)
+    let d = (0..<4).contains(3)
+    let e = "a,b,c".split(",").contains("b")
+
+    if (a && b && !c && d && e) {
+        1
+    } else {
+        0
+    }
+}"#];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected no diagnostics, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn infer_seq_contains_requires_eq() {
+    let (result, _) = check("fn main() -> Bool { (0..<3).map(fn(n: Int) => n.to_float()).contains(1.0) }");
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("Eq") || d.message.contains("trait")),
+        "expected Eq/trait diagnostic, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn infer_seq_scan_unfold_int_pow_happy_paths() {
     let cases = [r#"fn main() -> Int {
             let scanned = (1..<4).scan(0, fn(acc: Int, n: Int) => acc + n).to_list()

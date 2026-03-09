@@ -628,7 +628,7 @@ while `io`/`fs` are module namespaces for effectful operations.
 * `List<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<Vec<Value>>`) ✓
   * Constructor: `collections.List.new()` (requires `import collections`)
   * Methods (storage/random-access): `xs.push(v)`, `xs.len()`, `xs.get(i)` → `Option<T>`, `xs.head()` → `Option<T>`, `xs.tail()`, `xs.is_empty()`, `xs.reverse()`, `xs.concat(ys)`, `xs.set(i, v)`, `xs.update(i, f)`, `xs.sort()`, `xs.sort_by(f)`, `xs.binary_search(x)`
-  * Methods (traversal): `xs.map(f)`, `xs.filter(f)`, `xs.scan(init, f)`, `xs.enumerate()`, `xs.zip(other)`, `xs.chunks(n)`, `xs.windows(n)`, `xs.fold(init, f)`, `xs.count()`, `xs.count(f)`, `xs.frequencies()`, `xs.any(f)`, `xs.all(f)`, `xs.find(f)`, `xs.to_list()`
+  * Methods (traversal): `xs.map(f)`, `xs.filter(f)`, `xs.scan(init, f)`, `xs.enumerate()`, `xs.zip(other)`, `xs.chunks(n)`, `xs.windows(n)`, `xs.fold(init, f)`, `xs.count()`, `xs.count(f)`, `xs.contains(value)`, `xs.frequencies()`, `xs.any(f)`, `xs.all(f)`, `xs.find(f)`, `xs.to_list()`
   * Index update semantics: `set/update` require `0 <= i < len`; out-of-bounds is a direct runtime error.
   * Search helper: `xs.binary_search(x)` → `Int` with Rust/Java-style insertion contract:
     found index returns `>= 0`; missing element returns `-(insertion_point + 1)`.
@@ -637,7 +637,7 @@ while `io`/`fs` are module namespaces for effectful operations.
 * `MutableList<T>` — opaque builtin type with alias-visible in-place runtime storage (`Rc<RefCell<Vec<Value>>>`) ✓
   * Constructors: `collections.MutableList.new()` and `collections.MutableList.from_list(xs)` (requires `import collections`)
   * Methods (storage/random-access): `xs.push(v)`, `xs.last()` → `Option<T>`, `xs.pop()` → `Option<T>`, `xs.extend(ys)` where `ys: List<T>`, `xs.len()`, `xs.is_empty()`, `xs.get(i)` → `Option<T>`, `xs.set(i, v)`, `xs.update(i, f)`, `xs[i]`
-  * Methods (traversal): `xs.map(f)`, `xs.filter(f)`, `xs.scan(init, f)`, `xs.enumerate()`, `xs.zip(other)`, `xs.chunks(n)`, `xs.windows(n)`, `xs.fold(init, f)`, `xs.count()`, `xs.count(f)`, `xs.frequencies()`, `xs.any(f)`, `xs.all(f)`, `xs.find(f)`, `xs.to_list()`
+  * Methods (traversal): `xs.map(f)`, `xs.filter(f)`, `xs.scan(init, f)`, `xs.enumerate()`, `xs.zip(other)`, `xs.chunks(n)`, `xs.windows(n)`, `xs.fold(init, f)`, `xs.count()`, `xs.count(f)`, `xs.contains(value)`, `xs.frequencies()`, `xs.any(f)`, `xs.all(f)`, `xs.find(f)`, `xs.to_list()`
   * Mutation semantics: updates are visible across aliases that reference the same `MutableList`.
 * `MutableMap<K, V>` — opaque builtin type with alias-visible mutable key/value storage. Keys must satisfy `Hash + Eq`; invalid key types are rejected at compile time for typed mutable-map operations (E0024). For nominal keys, derive or implement those traits explicitly, e.g. `type Point derive(Eq, Hash) = { x: Int, y: Int }`. Primitive keys (`Int`, `String`, `Char`, `Bool`, `Unit`) use an internal ordered open-address fast path in mutable workloads; this is an implementation detail, not a separate surface type. ✓
   * Constructors: `collections.MutableMap.new()` and `collections.MutableMap.with_capacity(capacity)` (requires `import collections`; capacity is a minimum live-element hint only)
@@ -663,13 +663,13 @@ while `io`/`fs` are module namespaces for effectful operations.
 * `Deque<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<VecDeque<Value>>`) ✓
   * Constructor: `collections.Deque.new()` (requires `import collections`)
   * Methods (queue/storage): `q.push_front(v)`, `q.push_back(v)`, `q.pop_front()` → `Option<{ value: T, rest: Deque<T> }>`, `q.pop_back()` → `Option<{ value: T, rest: Deque<T> }>`, `q.len()`, `q.is_empty()`
-  * Methods (traversal): `q.map(f)`, `q.filter(f)`, `q.scan(init, f)`, `q.enumerate()`, `q.zip(other)`, `q.chunks(n)`, `q.windows(n)`, `q.fold(init, f)`, `q.count()`, `q.count(f)`, `q.frequencies()`, `q.any(f)`, `q.all(f)`, `q.find(f)`, `q.to_list()`
+  * Methods (traversal): `q.map(f)`, `q.filter(f)`, `q.scan(init, f)`, `q.enumerate()`, `q.zip(other)`, `q.chunks(n)`, `q.windows(n)`, `q.fold(init, f)`, `q.count()`, `q.count(f)`, `q.contains(value)`, `q.frequencies()`, `q.any(f)`, `q.all(f)`, `q.find(f)`, `q.to_list()`
 * Traversal constructors and behavior (public surface) ✓
   * Half-open range source: `start..<end` (ascending, empty when `start >= end`)
   * Stateful source: `seed.unfold(step)` where `step: fn(S) -> Option<{ value: T, state: S }>`
-  * Canonical user style is collection-first traversal (`xs.map(...).filter(...).count()` when the filtered traversal is reused; `xs.count(f)` for direct predicate counts) on `List`, `MutableList`, `Deque`, and producer values (`String.split/lines/chars`, `Map.keys/values`, `Set.values`, ranges, unfolds)
-* Supports transforms (`map/filter/scan/enumerate/zip/chunks/windows`) and terminals (`fold/count()/count(f)/frequencies()/any/all/find/to_list`) with the same semantics as collection traversal
-* Guidance: for predicate/search traversal, default to `s.any(f)`, `s.all(f)`, `s.find(f)`, `s.count(f)`; use `s.frequencies()` for direct histogram/tally queries; reserve `s.fold(...)` for true accumulation/reduction
+  * Canonical user style is collection-first traversal (`xs.map(...).filter(...).count()` when the filtered traversal is reused; `xs.count(f)` for direct predicate counts; `xs.contains(value)` for direct membership checks) on `List`, `MutableList`, `Deque`, and producer values (`String.split/lines/chars`, `Map.keys/values`, `Set.values`, ranges, unfolds)
+* Supports transforms (`map/filter/scan/enumerate/zip/chunks/windows`) and terminals (`fold/count()/count(f)/contains(value)/frequencies()/any/all/find/to_list`) with the same semantics as collection traversal
+* Guidance: for predicate/search traversal, default to `s.any(f)`, `s.all(f)`, `s.find(f)`, `s.count(f)`, and `s.contains(value)`; use `s.frequencies()` for direct histogram/tally queries; reserve `s.fold(...)` for true accumulation/reduction
   * Evaluation model: each terminal re-runs the traversal pipeline from source (no single-use consumption state)
   * Implementation note: traversal is backed by an internal runtime/compiler engine type and is not nameable in user code
 * `Map<K, V>` — opaque builtin type with witness-backed persistent runtime storage and deterministic insertion-order iteration. Keys must satisfy `Hash + Eq`; invalid key types are rejected at compile time for typed map operations (E0024). For nominal keys, derive or implement those traits explicitly, e.g. `type Point derive(Eq, Hash) = { x: Int, y: Int }`. `m.keys()` and `m.values()` return deterministic insertion order traversal values. ✓
