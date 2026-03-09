@@ -3,7 +3,7 @@
 - Status: Accepted
 - Owner: Language Design
 - Tracking issue: TBD
-- Last updated: 2026-03-04
+- Last updated: 2026-03-09
 
 ## Summary
 
@@ -94,7 +94,8 @@ Predicate terminal query family:
 
 `xs.filter(f).count()` remains valid composition when the filtered traversal is
 also reused, but `xs.count(f)` is the canonical direct count query because it
-completes the terminal predicate family and satisfies RFC 0001 `L7A`.
+completes the terminal predicate family and satisfies RFC 0001 `L7A`
+constrained-call-family rules.
 
 These operations are available on traversal-capable values, including:
 
@@ -253,7 +254,7 @@ Decision: reject permanent dual surface.
 2. Common previous near-miss (`List.enumerate`) is valid by construction.
 3. No loss of traversal expressiveness compared with current `Seq` surface.
 4. `count()` and `count(predicate)` are both explicitly documented as the terminal count family, `contains(value)` is documented as the direct membership terminal, and `frequencies()` is documented as the canonical full-histogram terminal.
-5. RFC 0001 law text updated to reflect canonical model and the `L7A` family-completion rule.
+5. RFC 0001 law text updated to reflect canonical model and the `L7A` constrained-call-family rule.
 
 ## Follow-up
 

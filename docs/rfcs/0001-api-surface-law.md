@@ -3,7 +3,7 @@
 - Status: Draft
 - Owner: Language Design
 - Tracking issue: [#243](https://github.com/kyokaralang/kyokara/issues/243)
-- Last updated: 2026-03-02
+- Last updated: 2026-03-09
 
 ## Summary
 
@@ -136,27 +136,37 @@ Non-canonical aliases must not be introduced as parallel public APIs:
 Do not ship duplicate entrypoints for the same semantic operation.
 Do not rely on type/arity overload ambiguity as the primary API shape.
 
-### L7A. Family-completing arity variants (`MAY`, constrained)
+### L7A. Constrained call families (`MAY`, constrained)
 
-A small fixed arity family on one API name is allowed only when all of the
-following are true:
+Kyokara does not support general overload resolution.
 
-1. each arity encodes a distinct, obvious operation
-2. arity alone selects semantics mechanically; type-directed overload resolution is not required
-3. the family completes an established query/terminal set and is the least-surprising predicted form
-4. no parallel synonym name is introduced for the same operation
-5. docs/examples/diagnostics specify the full family explicitly
+Kyokara may define a constrained call family only when all of the following are
+true:
 
-Canonical example:
+1. all variants share one semantic operation under one canonical name
+2. call resolution depends only on argument count and/or presence of declared named arguments
+3. call resolution does not depend on argument types
+4. each valid call shape maps to exactly one variant mechanically
+5. no parallel synonym name is introduced for the same operation
+6. docs/examples/diagnostics/completion specify the full family explicitly
+
+Canonical examples:
 
 - `xs.count()` counts all elements
 - `xs.count(f)` counts matching elements
+- `s.starts_with(prefix)` checks a prefix from the beginning
+- `s.starts_with(prefix, start: idx)` checks a prefix from a given offset
+
+Related direct terminals that remain separate operations, not family variants:
+
 - `xs.contains(value)` checks direct element membership
 - `xs.frequencies()` returns `Map<T, Int>` bucket counts in first-seen key order
 
-Non-canonical parallel synonym:
+Non-canonical shapes:
 
 - `xs.count_if(f)`
+- `s.starts_with_at(idx, prefix)` once the constrained family exists
+- any same-name family that requires type-directed dispatch
 
 ### L8. No implicit coercions (`MUST`)
 
@@ -236,7 +246,7 @@ Canonical consequences:
 - stateful sources use `seed.unfold(step)` (constructor surface)
 - `List`/`Deque` expose storage methods and traversal methods directly
 - traversal transforms/terminals (`map/filter/enumerate/zip/chunks/windows/fold/any/all/find/count/contains/frequencies/to_list`) are callable on collection and producer values
-- `count` is a constrained arity family under `L7A`: `count()` for all elements, `count(predicate)` for matching elements
+- `count` is a constrained call family under `L7A`: `count()` for all elements, `count(predicate)` for matching elements
 - producer traversal APIs stay traversal-capable (`String.split/lines/chars`, `Map.keys/values`, `Set.values`)
 
 ## Visibility policy (canonical decision)
@@ -267,7 +277,7 @@ The following can be enforced by lints/tooling:
 7. forbidden global intrinsic spellings resolving in user scope
 8. core method/static/constructor dispatch keyed by surface names instead of owner identity
 9. unqualified user constructors colliding with reserved core constructor names while reservation is active
-10. arity families that are not explicitly documented and justified under `L7A`
+10. call families that are not explicitly documented and justified under `L7A`
 
 ## API-surface conformance checklist
 
@@ -275,7 +285,7 @@ Use this checklist in PRs that add or change stdlib/intrinsic/public APIs.
 
 ### A. New API checklist
 
-- [ ] Canonical spelling is unique, or any constrained arity family is explicitly justified under `L7A`.
+- [ ] Canonical spelling is unique, or any constrained call family is explicitly justified under `L7A`.
 - [ ] Placement follows owner rule (method vs module vs type constructor) (`L2`, `L5`).
 - [ ] Canonical form is namespaced (not a runtime global) (`L3`).
 - [ ] Effectful behavior is capability-scoped (`L4`).
@@ -292,7 +302,7 @@ Use this checklist in PRs that add or change stdlib/intrinsic/public APIs.
 ### B. API change checklist
 
 - [ ] Parameter order in existing APIs is unchanged unless breaking change is explicitly approved (`L10`, `L15`).
-- [ ] No new synonym path is introduced, and any arity family remains within the `L7A` guardrails.
+- [ ] No new synonym path is introduced, and any constrained call family remains within the `L7A` guardrails.
 - [ ] Existing canonical call sites remain valid or have migration guidance (`L15`).
 - [ ] Deprecation/migration notes are included when behavior or naming changes (`L15`).
 - [ ] Docs and machine-facing outputs are updated in the same PR.
