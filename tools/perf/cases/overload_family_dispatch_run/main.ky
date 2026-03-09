@@ -1,0 +1,73 @@
+import io
+
+type Counter = { total: Int }
+
+fn score() -> Int {
+  3
+}
+
+fn score(x: Int) -> Int {
+  x + 5
+}
+
+fn score(x: Int, y: Int, z: Int) -> Int {
+  (x * 2) + (y * 3) + (z * 5)
+}
+
+fn Counter.bump(self) -> Counter {
+  Counter { total: self.total + 1 }
+}
+
+fn Counter.bump(self, delta: Int) -> Counter {
+  Counter { total: self.total + delta }
+}
+
+fn exercise_function_family(rounds: Int) -> Int {
+  var acc = 0
+  var i = 0
+  while (i < rounds) {
+    acc = acc + score()
+    acc = acc + score(i % 17)
+    acc = acc + score(i % 5, i % 7, i % 11)
+    i = i + 1
+  }
+  acc
+}
+
+fn exercise_method_family(rounds: Int) -> Int {
+  var c = Counter { total: 0 }
+  var i = 0
+  while (i < rounds) {
+    c = c.bump()
+    c = c.bump((i % 13) + 1)
+    i = i + 1
+  }
+  c.total
+}
+
+fn exercise_builtin_family(rounds: Int) -> Int {
+  let word = "kyokara-overloading"
+  var hits = 0
+  var i = 0
+  while (i < rounds) {
+    if (word.starts_with("kyo")) {
+      hits = hits + 1
+    }
+    if (word.starts_with("over", start: 8)) {
+      hits = hits + 2
+    }
+    if (word.starts_with("load", start: 12)) {
+      hits = hits + 3
+    }
+    i = i + 1
+  }
+  hits
+}
+
+fn main() -> Unit {
+  let rounds = 40000
+  let total = exercise_function_family(rounds)
+    + exercise_method_family(rounds)
+    + exercise_builtin_family(rounds)
+  io.println(total.to_string())
+}
