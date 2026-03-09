@@ -190,8 +190,8 @@ pub struct WellKnownNames {
 pub struct ModuleScope {
     /// Top-level immutable let bindings.
     pub lets: FxHashMap<Name, LetItemIdx>,
-    /// Top-level function definitions.
-    pub functions: FxHashMap<Name, FnItemIdx>,
+    /// Top-level function definitions grouped into constrained call families.
+    pub functions: FxHashMap<Name, Vec<FnItemIdx>>,
     /// Type definitions.
     pub types: FxHashMap<Name, TypeItemIdx>,
     /// Capability definitions.
@@ -251,6 +251,8 @@ pub enum ResolvedName {
     Let(LetItemIdx),
     /// A function item at module level.
     Fn(FnItemIdx),
+    /// A constrained call family at module level.
+    FnFamily(Vec<FnItemIdx>),
     /// A type at module level.
     Type(TypeItemIdx),
     /// A capability at module level.
@@ -296,8 +298,11 @@ impl<'a> Resolver<'a> {
         if let Some(&idx) = self.module.lets.get(&name) {
             return Some(ResolvedName::Let(idx));
         }
-        if let Some(&idx) = self.module.functions.get(&name) {
-            return Some(ResolvedName::Fn(idx));
+        if let Some(fns) = self.module.functions.get(&name) {
+            return Some(match fns.as_slice() {
+                [idx] => ResolvedName::Fn(*idx),
+                many => ResolvedName::FnFamily(many.to_vec()),
+            });
         }
         if let Some(&idx) = self.module.types.get(&name) {
             return Some(ResolvedName::Type(idx));
@@ -353,8 +358,11 @@ impl<'a> Resolver<'a> {
         if let Some(&idx) = self.module.lets.get(&name) {
             return Some(ResolvedName::Let(idx));
         }
-        if let Some(&idx) = self.module.functions.get(&name) {
-            return Some(ResolvedName::Fn(idx));
+        if let Some(fns) = self.module.functions.get(&name) {
+            return Some(match fns.as_slice() {
+                [idx] => ResolvedName::Fn(*idx),
+                many => ResolvedName::FnFamily(many.to_vec()),
+            });
         }
         if let Some(&idx) = self.module.types.get(&name) {
             return Some(ResolvedName::Type(idx));

@@ -2,6 +2,7 @@
 
 use rustc_hash::FxHashSet;
 
+use kyokara_hir_def::call_family::{CallFamilySelection, bind_call_args_to_params, select_call_family_candidate};
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, MatchArm, Stmt};
 use kyokara_hir_def::item_tree::TypeDefKind;
 use kyokara_hir_def::name::Name;
@@ -127,7 +128,13 @@ impl<'a> LoweringCtx<'a> {
         }
 
         // Function reference — first-class fn value.
-        if self.module_scope.functions.contains_key(&first) {
+        if self
+            .module_scope
+            .functions
+            .get(&first)
+            .map(|candidates| candidates.len() == 1)
+            .unwrap_or(false)
+        {
             return self.builder.push_fn_ref(first, ty);
         }
 
@@ -164,17 +171,24 @@ impl<'a> LoweringCtx<'a> {
             .collect()
     }
 
-    fn select_method_candidate_by_arity(
+    fn param_named_only_for_fn_idx(
+        &self,
+        fn_idx: kyokara_hir_def::item_tree::FnItemIdx,
+    ) -> Vec<bool> {
+        self.item_tree.functions[fn_idx]
+            .params
+            .iter()
+            .map(|p| p.named_only)
+            .collect()
+    }
+
+    fn select_method_candidate_by_call_shape(
         &self,
         candidates: &[kyokara_hir_def::item_tree::FnItemIdx],
-        actual_arg_count: usize,
-    ) -> Option<kyokara_hir_def::item_tree::FnItemIdx> {
-        candidates.iter().copied().find(|&fn_idx| {
-            self.item_tree.functions[fn_idx]
-                .params
-                .len()
-                .saturating_sub(1)
-                == actual_arg_count
+        args: &[CallArg],
+    ) -> CallFamilySelection<kyokara_hir_def::item_tree::FnItemIdx> {
+        select_call_family_candidate(args, candidates, |fn_idx| {
+            &self.item_tree.functions[fn_idx].params[1..]
         })
     }
 
@@ -254,6 +268,38 @@ impl<'a> LoweringCtx<'a> {
         self.reorder_lowered_args_for_names(args, lowered, param_names)
     }
 
+    fn lower_call_args_for_param_specs(
+        &mut self,
+        args: &[CallArg],
+        param_names: &[Name],
+        param_named_only: Option<&[bool]>,
+    ) -> Vec<ValueId> {
+        let params: Vec<kyokara_hir_def::item_tree::FnParam> = param_names
+            .iter()
+            .enumerate()
+            .map(|(idx, name)| kyokara_hir_def::item_tree::FnParam {
+                name: *name,
+                ty: TypeRef::Error,
+                named_only: param_named_only
+                    .and_then(|flags| flags.get(idx))
+                    .copied()
+                    .unwrap_or(false),
+            })
+            .collect();
+        let lowered = self.lower_call_args_source_order(args);
+        let binding = bind_call_args_to_params(args, &params);
+        if !binding.errors.is_empty() {
+            return lowered;
+        }
+        let mut source = lowered.into_iter().map(Some).collect::<Vec<_>>();
+        let mut out = Vec::with_capacity(params.len());
+        for arg_idx in binding.param_to_arg {
+            let arg_idx = arg_idx.expect("valid binding fills all params");
+            out.push(source[arg_idx].take().expect("arg consumed once"));
+        }
+        out
+    }
+
     fn receiver_key_for_ty(&self, ty: &Ty) -> Option<ReceiverKey> {
         match ty {
             Ty::String => Some(ReceiverKey::Primitive(PrimitiveType::String)),
@@ -329,12 +375,28 @@ impl<'a> LoweringCtx<'a> {
             }
 
             // 3. Module-level function (direct call — user-defined takes precedence).
-            if let Some(&fn_idx) = self.module_scope.functions.get(&name) {
-                let param_names = self.param_names_for_fn_idx(fn_idx);
-                let arg_vals = self.lower_call_args_for_param_names(&args, &param_names);
-                return self
-                    .builder
-                    .push_call(CallTarget::Direct(name), arg_vals, ty);
+            if let Some(candidates) = self.module_scope.functions.get(&name) {
+                let fn_idx = match candidates.as_slice() {
+                    [fn_idx] => Some(*fn_idx),
+                    _ => match select_call_family_candidate(&args, candidates, |fn_idx| {
+                        &self.item_tree.functions[fn_idx].params
+                    }) {
+                        CallFamilySelection::Selected { candidate, .. } => Some(candidate),
+                        _ => None,
+                    },
+                };
+                if let Some(fn_idx) = fn_idx {
+                    let param_names = self.param_names_for_fn_idx(fn_idx);
+                    let param_named_only = self.param_named_only_for_fn_idx(fn_idx);
+                    let arg_vals = self.lower_call_args_for_param_specs(
+                        &args,
+                        &param_names,
+                        Some(&param_named_only),
+                    );
+                    return self
+                        .builder
+                        .push_call(CallTarget::Direct(name), arg_vals, ty);
+                }
             }
 
             // 4. Intrinsic (has entry in intrinsic lookup but no body).
@@ -430,35 +492,43 @@ impl<'a> LoweringCtx<'a> {
             let method_fn_idx = if self.type_has_field_named(&base_ty, field) {
                 None
             } else {
-                self.receiver_key_for_ty(&base_ty)
+                let selection = self
+                    .receiver_key_for_ty(&base_ty)
                     .and_then(|receiver_key| {
                         self.module_scope
                             .methods
                             .get(&(receiver_key, field))
-                            .and_then(|candidates| {
-                                self.select_method_candidate_by_arity(candidates, args.len())
-                            })
+                            .map(Vec::as_slice)
                     })
                     .or_else(|| {
                         self.module_scope
                             .methods
                             .get(&(ReceiverKey::Any, field))
-                            .and_then(|candidates| {
-                                self.select_method_candidate_by_arity(candidates, args.len())
-                            })
+                            .map(Vec::as_slice)
                     })
+                    .map(|candidates| self.select_method_candidate_by_call_shape(candidates, &args));
+                match selection {
+                    Some(CallFamilySelection::Selected { candidate, .. }) => Some(candidate),
+                    _ => None,
+                }
             };
             if let Some(fn_idx) = method_fn_idx {
                 let base_val = self.lower_expr(base);
                 let full_param_names = self.param_names_for_fn_idx(fn_idx);
+                let full_param_named_only = self.param_named_only_for_fn_idx(fn_idx);
                 let method_param_names: Vec<Name> =
                     full_param_names.iter().skip(1).copied().collect();
+                let method_param_named_only: Vec<bool> =
+                    full_param_named_only.iter().skip(1).copied().collect();
 
                 let mut arg_vals =
                     Vec::with_capacity(1usize.saturating_add(method_param_names.len()));
                 arg_vals.push(base_val);
-                let mut lowered_method_args =
-                    self.lower_call_args_for_param_names(&args, &method_param_names);
+                let mut lowered_method_args = self.lower_call_args_for_param_specs(
+                    &args,
+                    &method_param_names,
+                    Some(&method_param_named_only),
+                );
                 arg_vals.append(&mut lowered_method_args);
 
                 let fn_item = &self.item_tree.functions[fn_idx];

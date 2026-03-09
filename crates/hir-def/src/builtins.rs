@@ -172,10 +172,12 @@ pub fn register_builtin_traits(
                     FnParam {
                         name: Name::new(interner, "self"),
                         ty: path_type(interner, "Self"),
+                        named_only: false,
                     },
                     FnParam {
                         name: Name::new(interner, "other"),
                         ty: path_type(interner, "Self"),
+                        named_only: false,
                     },
                 ],
                 ret_type: Some(bool_ty.clone()),
@@ -197,10 +199,12 @@ pub fn register_builtin_traits(
                     FnParam {
                         name: Name::new(interner, "self"),
                         ty: path_type(interner, "Self"),
+                        named_only: false,
                     },
                     FnParam {
                         name: Name::new(interner, "other"),
                         ty: path_type(interner, "Self"),
+                        named_only: false,
                     },
                 ],
                 ret_type: Some(int_ty.clone()),
@@ -221,6 +225,7 @@ pub fn register_builtin_traits(
                 params: vec![FnParam {
                     name: Name::new(interner, "self"),
                     ty: path_type(interner, "Self"),
+                    named_only: false,
                 }],
                 ret_type: Some(int_ty.clone()),
                 with_effects: Vec::new(),
@@ -237,6 +242,7 @@ pub fn register_builtin_traits(
                 params: vec![FnParam {
                     name: Name::new(interner, "self"),
                     ty: path_type(interner, "Self"),
+                    named_only: false,
                 }],
                 ret_type: Some(string_ty),
                 with_effects: Vec::new(),
@@ -586,6 +592,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ),
         (
             "string_starts_with",
+            ReceiverKey::Primitive(PrimitiveType::String),
+            "starts_with",
+        ),
+        (
+            "string_starts_with_from",
             ReceiverKey::Primitive(PrimitiveType::String),
             "starts_with",
         ),
@@ -1375,6 +1386,7 @@ fn mk_module_intrinsic(
             params: vec![FnParam {
                 name: Name::new(interner, "s"),
                 ty: string_ty,
+                named_only: false,
             }],
             ret_type: Some(unit_ty),
             with_effects: cap_refs,
@@ -1512,19 +1524,20 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
 }
 
 /// Helper to build a simple intrinsic FnItem.
-fn mk_intrinsic_with_type_params(
+fn mk_intrinsic_with_param_specs(
     interner: &mut Interner,
     name_str: &str,
     type_params: Vec<TypeParamDef>,
-    params: Vec<(&str, TypeRef)>,
+    params: Vec<(&str, TypeRef, bool)>,
     ret: TypeRef,
 ) -> (Name, FnItem) {
     let name = Name::new(interner, name_str);
     let fn_params = params
         .into_iter()
-        .map(|(pname, ty)| FnParam {
+        .map(|(pname, ty, named_only)| FnParam {
             name: Name::new(interner, pname),
             ty,
+            named_only,
         })
         .collect();
     (
@@ -1540,6 +1553,25 @@ fn mk_intrinsic_with_type_params(
             source_range: None,
             receiver_type: None,
         },
+    )
+}
+
+fn mk_intrinsic_with_type_params(
+    interner: &mut Interner,
+    name_str: &str,
+    type_params: Vec<TypeParamDef>,
+    params: Vec<(&str, TypeRef)>,
+    ret: TypeRef,
+) -> (Name, FnItem) {
+    mk_intrinsic_with_param_specs(
+        interner,
+        name_str,
+        type_params,
+        params
+            .into_iter()
+            .map(|(pname, ty)| (pname, ty, false))
+            .collect(),
+        ret,
     )
 }
 
@@ -3089,6 +3121,18 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             "string_starts_with",
             vec![],
             vec![("s", string_ty.clone()), ("prefix", string_ty.clone())],
+            bool_ty.clone(),
+        ),
+        // string_starts_with_from(s: String, prefix: String, start named: Int) -> Bool
+        mk_intrinsic_with_param_specs(
+            interner,
+            "string_starts_with_from",
+            vec![],
+            vec![
+                ("s", string_ty.clone(), false),
+                ("prefix", string_ty.clone(), false),
+                ("start", int_ty.clone(), true),
+            ],
             bool_ty.clone(),
         ),
         // string_ends_with(s: String, suffix: String) -> Bool

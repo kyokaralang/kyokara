@@ -295,9 +295,12 @@ fn add_module_scope_completions(analysis: &FileAnalysis, items: &mut Vec<Complet
     let tree = &analysis.item_tree;
 
     // Functions.
-    for (name, idx) in &scope.functions {
+    for (name, candidates) in &scope.functions {
         let label = name.resolve(interner).to_string();
-        let fn_item = &tree.functions[*idx];
+        let Some(&fn_idx) = candidates.first() else {
+            continue;
+        };
+        let fn_item = &tree.functions[fn_idx];
         let detail = {
             let params: Vec<String> = fn_item
                 .params

@@ -513,6 +513,7 @@ impl<'a> InferenceCtx<'a> {
 }
 
 /// Infer types for a single function body.
+#[allow(clippy::too_many_arguments)]
 pub fn infer_body(
     fn_idx: FnItemIdx,
     fn_item: &FnItem,

@@ -152,7 +152,25 @@ fn duplicate_fn_diagnostic() {
     let result = collect_item_tree(&sf, file_id(), &mut interner);
 
     assert!(!result.diagnostics.is_empty());
-    assert!(result.diagnostics[0].message.contains("duplicate function"));
+    assert!(
+        result.diagnostics[0]
+            .message
+            .contains("invalid overload family for function `foo`: call shapes overlap")
+    );
+}
+
+#[test]
+fn arity_distinct_functions_do_not_diagnose_overlap() {
+    let root = parse_source("fn foo() { 1 }\nfn foo(x: Int) -> Int { x }");
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
 }
 
 #[test]

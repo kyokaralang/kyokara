@@ -1583,6 +1583,87 @@ fn check_duplicate_definition_maps_to_e0102() {
     );
 }
 
+#[test]
+fn check_user_defined_function_overload_family_by_arity_is_allowed() {
+    let src = r#"fn foo() -> Int { 1 }
+fn foo(x: Int) -> Int { x + 1 }
+fn main() -> Int { foo() + foo(2) }"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_user_defined_method_overload_family_by_arity_is_allowed() {
+    let src = r#"type Box = { value: Int }
+fn Box.size(self) -> Int { self.value }
+fn Box.size(self, extra: Int) -> Int { self.value + extra }
+fn main() -> Int {
+    let b = Box { value: 2 }
+    b.size() + b.size(3)
+}"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_user_defined_function_type_based_overload_is_rejected() {
+    let src = r#"fn foo(x: Int) -> Int { x }
+fn foo(x: String) -> String { x }
+fn main() -> Int { 0 }"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0102" && d.message.contains("call shapes overlap")),
+        "expected overload-family overlap diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_user_defined_method_type_based_overload_is_rejected() {
+    let src = r#"type Box = { value: Int }
+fn Box.size(self, x: Int) -> Int { x }
+fn Box.size(self, x: String) -> String { x }
+fn main() -> Int { 0 }"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0102" && d.message.contains("call shapes overlap")),
+        "expected overload-family overlap diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_overloaded_function_family_cannot_be_used_as_value() {
+    let src = r#"fn foo() -> Int { 1 }
+fn foo(x: Int) -> Int { x }
+fn main() -> Int {
+    let f = foo
+    0
+}"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.iter().any(|d| {
+            d.code == "E0039" && d.message.contains("overloaded function family `foo`")
+        }),
+        "expected overloaded-family-as-value diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
 // ── Stable symbol ID tests ──────────────────────────────────────────
 
 #[test]
@@ -6242,6 +6323,59 @@ fn main() -> Int {
             .iter()
             .any(|d| d.code == "E0001" && d.message.contains("expected `Int`")),
         "expected E0001 type mismatch diagnostic for math.lcm, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_string_starts_with_offset_family_accepts_named_start() {
+    let output = check(
+        r#"fn main() -> Bool {
+    "hello".starts_with("ell", start: 1)
+}"#,
+        "test.ky",
+    );
+
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_string_starts_with_offset_family_rejects_positional_start() {
+    let output = check(
+        r#"fn main() -> Bool {
+    "hello".starts_with("ell", 1)
+}"#,
+        "test.ky",
+    );
+
+    assert!(
+        output.diagnostics.iter().any(|d| {
+            d.code == "E0038" || d.message.contains("parameter `start` must be passed by name")
+        }),
+        "expected named-only start diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_string_starts_with_offset_family_rejects_unknown_named_arg() {
+    let output = check(
+        r#"fn main() -> Bool {
+    "hello".starts_with("ell", offset: 1)
+}"#,
+        "test.ky",
+    );
+
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0018" || d.message.contains("unknown named argument")),
+        "expected unknown named argument diagnostic, got: {:?}",
         output.diagnostics
     );
 }

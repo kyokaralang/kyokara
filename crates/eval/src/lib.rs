@@ -302,7 +302,7 @@ pub fn run_project_with_manifest(
     // leaking names into entry scope.
     let mut fn_scope_overrides: FxHashMap<
         kyokara_hir_def::item_tree::FnItemIdx,
-        FxHashMap<kyokara_hir_def::name::Name, kyokara_hir_def::item_tree::FnItemIdx>,
+        FxHashMap<kyokara_hir_def::name::Name, Vec<kyokara_hir_def::item_tree::FnItemIdx>>,
     > = FxHashMap::default();
     let mut let_scope_overrides: FxHashMap<
         kyokara_hir_def::item_tree::FnItemIdx,
@@ -323,10 +323,10 @@ pub fn run_project_with_manifest(
         let mod_item_tree = mod_info.item_tree.clone();
         let mod_scope = mod_info.scope.clone();
 
-        // Build a module-local name -> runtime fn index map.
+        // Build a module-local name -> runtime function family map.
         let mut module_fn_map: FxHashMap<
             kyokara_hir_def::name::Name,
-            kyokara_hir_def::item_tree::FnItemIdx,
+            Vec<kyokara_hir_def::item_tree::FnItemIdx>,
         > = FxHashMap::default();
 
         // Collect private function items + bodies to splice after immutable borrows end.
@@ -345,11 +345,21 @@ pub fn run_project_with_manifest(
                     .module_graph
                     .get(&entry_path)
                     .ok_or(RuntimeError::TypeError("entry module not found".into()))?;
-                if let Some(&entry_fn_idx) = entry_info.scope.functions.get(&src_fn_item.name) {
+                if let Some(entry_candidates) = entry_info.scope.functions.get(&src_fn_item.name)
+                    && let Some(&entry_fn_idx) = entry_candidates.iter().find(|&&candidate_idx| {
+                        let candidate = &entry_info.item_tree.functions[candidate_idx];
+                        candidate.params == src_fn_item.params
+                            && candidate.ret_type == src_fn_item.ret_type
+                            && candidate.type_params == src_fn_item.type_params
+                    })
+                {
                     fn_bodies
                         .entry(entry_fn_idx)
                         .or_insert_with(|| body.clone());
-                    module_fn_map.insert(src_fn_item.name, entry_fn_idx);
+                    module_fn_map
+                        .entry(src_fn_item.name)
+                        .or_default()
+                        .push(entry_fn_idx);
                 }
                 continue;
             }
@@ -368,12 +378,12 @@ pub fn run_project_with_manifest(
             for (name, fn_item, body) in private_fns_to_splice {
                 let idx = entry_info.item_tree.functions.alloc(fn_item);
                 fn_bodies.insert(idx, body);
-                module_fn_map.insert(name, idx);
+                module_fn_map.entry(name).or_default().push(idx);
             }
         }
 
         // Attach the same module-local map to every function from this module.
-        for &fn_idx in module_fn_map.values() {
+        for fn_idx in module_fn_map.values().flat_map(|candidates| candidates.iter().copied()) {
             fn_scope_overrides.insert(fn_idx, module_fn_map.clone());
         }
 
@@ -392,7 +402,7 @@ pub fn run_project_with_manifest(
             );
             let module_let_values = let_interp.materialize_top_level_let_values()?;
             project.interner = let_interp.into_interner();
-            for &fn_idx in module_fn_map.values() {
+            for fn_idx in module_fn_map.values().flat_map(|candidates| candidates.iter().copied()) {
                 let_scope_overrides.insert(fn_idx, module_let_values.clone());
             }
         }

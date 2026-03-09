@@ -2,6 +2,9 @@
 
 use std::collections::HashSet;
 
+use kyokara_hir_def::call_family::{
+    CallFamilySelection, CallShapeError, select_call_family_candidate,
+};
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, Stmt, UnaryOp};
 use kyokara_hir_def::item_tree::{FnItemIdx, TypeDefKind};
 use kyokara_hir_def::pat::Pat;
@@ -230,6 +233,12 @@ impl<'a> InferenceCtx<'a> {
                     params,
                     ret: Box::new(ret),
                 }
+            }
+            Some(ResolvedName::FnFamily(_)) => {
+                self.push_diag(TyDiagnosticData::OverloadedFunctionFamily {
+                    name: name.resolve(self.interner).to_string(),
+                });
+                Ty::Error
             }
 
             Some(ResolvedName::Constructor {
@@ -478,24 +487,51 @@ impl<'a> InferenceCtx<'a> {
         args: &[CallArg],
         param_tys: &[Ty],
         param_names: Option<&[kyokara_hir_def::name::Name]>,
+        param_named_only: Option<&[bool]>,
     ) -> bool {
         let names = param_names.filter(|names| names.len() == param_tys.len());
+        let named_only = param_named_only.filter(|flags| flags.len() == param_tys.len());
 
         let mut has_errors = false;
         let mut seen = vec![false; param_tys.len()];
         let mut next_pos = 0;
         let mut saw_named = false;
+        let mut saw_shape_error = false;
+        let mut suppress_missing_args = false;
 
         for arg in args {
             match arg {
                 CallArg::Positional(arg_idx) => {
                     if saw_named {
                         has_errors = true;
+                        saw_shape_error = true;
+                        suppress_missing_args = true;
                         self.push_diag(TyDiagnosticData::PositionalAfterNamedArg);
+                        self.infer_expr(*arg_idx, &Expectation::None);
+                        continue;
                     }
 
                     while next_pos < seen.len() && seen[next_pos] {
                         next_pos += 1;
+                    }
+
+                    if next_pos < param_tys.len()
+                        && named_only
+                            .and_then(|flags| flags.get(next_pos))
+                            .copied()
+                            .unwrap_or(false)
+                    {
+                        has_errors = true;
+                        saw_shape_error = true;
+                        suppress_missing_args = true;
+                        let name = names
+                            .and_then(|param_names| param_names.get(next_pos))
+                            .map(|name| name.resolve(self.interner).to_string())
+                            .unwrap_or_else(|| "argument".to_string());
+                        self.push_diag(TyDiagnosticData::NamedArgRequired { name });
+                        self.infer_expr(*arg_idx, &Expectation::None);
+                        next_pos += 1;
+                        continue;
                     }
 
                     let expectation = if next_pos < param_tys.len() {
@@ -515,6 +551,7 @@ impl<'a> InferenceCtx<'a> {
                         if let Some(idx) = names.iter().position(|param_name| param_name == name) {
                             if seen[idx] {
                                 has_errors = true;
+                                saw_shape_error = true;
                                 self.push_diag(TyDiagnosticData::DuplicateNamedArg {
                                     name: name.resolve(self.interner).to_string(),
                                 });
@@ -524,6 +561,7 @@ impl<'a> InferenceCtx<'a> {
                             Expectation::Has(param_tys[idx].clone())
                         } else {
                             has_errors = true;
+                            saw_shape_error = true;
                             self.push_diag(TyDiagnosticData::UnknownNamedArg {
                                 name: name.resolve(self.interner).to_string(),
                             });
@@ -531,6 +569,7 @@ impl<'a> InferenceCtx<'a> {
                         }
                     } else {
                         has_errors = true;
+                        saw_shape_error = true;
                         self.push_diag(TyDiagnosticData::UnknownNamedArg {
                             name: name.resolve(self.interner).to_string(),
                         });
@@ -541,7 +580,7 @@ impl<'a> InferenceCtx<'a> {
             }
         }
 
-        if let Some(names) = names {
+        if (!saw_shape_error || !suppress_missing_args) && let Some(names) = names {
             for (idx, provided) in seen.iter().enumerate() {
                 if !provided {
                     has_errors = true;
@@ -555,7 +594,54 @@ impl<'a> InferenceCtx<'a> {
         has_errors
     }
 
+    fn push_call_shape_errors(&mut self, errors: &[CallShapeError]) {
+        for error in errors {
+            match error {
+                CallShapeError::ArgCountMismatch { expected, actual } => {
+                    self.push_diag(TyDiagnosticData::ArgCountMismatch {
+                        expected: *expected,
+                        actual: *actual,
+                    });
+                }
+                CallShapeError::UnknownNamedArg { name } => {
+                    self.push_diag(TyDiagnosticData::UnknownNamedArg {
+                        name: name.resolve(self.interner).to_string(),
+                    });
+                }
+                CallShapeError::DuplicateNamedArg { name } => {
+                    self.push_diag(TyDiagnosticData::DuplicateNamedArg {
+                        name: name.resolve(self.interner).to_string(),
+                    });
+                }
+                CallShapeError::PositionalAfterNamedArg => {
+                    self.push_diag(TyDiagnosticData::PositionalAfterNamedArg);
+                }
+                CallShapeError::MissingArg { name } => {
+                    self.push_diag(TyDiagnosticData::MissingNamedArg {
+                        name: name.resolve(self.interner).to_string(),
+                    });
+                }
+                CallShapeError::NamedOnlyArg { name } => {
+                    self.push_diag(TyDiagnosticData::NamedArgRequired {
+                        name: name.resolve(self.interner).to_string(),
+                    });
+                }
+            }
+        }
+    }
+
     fn infer_call(&mut self, callee: ExprIdx, args: &[CallArg]) -> Ty {
+        if let Expr::Path(path) = &self.body.exprs[callee]
+            && path.is_single()
+        {
+            let name = path.segments[0];
+            if let Some(resolved) = self.body.resolve_name_at(self.module_scope, callee, name)
+                && let ResolvedName::FnFamily(candidates) = resolved.resolved
+            {
+                return self.infer_constrained_fn_family_call(callee, name, &candidates, args);
+            }
+        }
+
         let field_callee = match &self.body.exprs[callee] {
             Expr::Field { base, field } => Some((*base, *field)),
             _ => None,
@@ -613,7 +699,7 @@ impl<'a> InferenceCtx<'a> {
                 // Resolve callee parameter names so named args can be matched
                 // to the correct parameter type.
                 let param_names = self.callee_param_names(callee);
-                if self.infer_call_args_with_binding(args, &params, param_names.as_deref()) {
+                if self.infer_call_args_with_binding(args, &params, param_names.as_deref(), None) {
                     return Ty::Error;
                 }
 
@@ -668,6 +754,61 @@ impl<'a> InferenceCtx<'a> {
         }
     }
 
+    fn infer_constrained_fn_family_call(
+        &mut self,
+        callee: ExprIdx,
+        name: kyokara_hir_def::name::Name,
+        candidates: &[FnItemIdx],
+        args: &[CallArg],
+    ) -> Ty {
+        match select_call_family_candidate(args, candidates, |fn_idx| {
+            &self.item_tree.functions[fn_idx].params
+        }) {
+            CallFamilySelection::Selected { candidate, .. } => {
+                self.infer_qualified_fn_call(callee, candidate, args)
+            }
+            CallFamilySelection::ArgCountMismatch { expected, actual } => {
+                self.push_diag(TyDiagnosticData::ArgCountMismatchOneOf { expected, actual });
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(e) | CallArg::Named { value: e, .. } => {
+                            self.infer_expr(*e, &Expectation::None);
+                        }
+                    }
+                }
+                Ty::Error
+            }
+            CallFamilySelection::InvalidShape { errors } => {
+                self.push_call_shape_errors(&errors);
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(e) | CallArg::Named { value: e, .. } => {
+                            self.infer_expr(*e, &Expectation::None);
+                        }
+                    }
+                }
+                self.calls.push(name);
+                self.check_call_effects_if_function(Some(name));
+                Ty::Error
+            }
+            CallFamilySelection::Ambiguous => {
+                self.push_diag(TyDiagnosticData::OverloadedFunctionFamily {
+                    name: name.resolve(self.interner).to_string(),
+                });
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(e) | CallArg::Named { value: e, .. } => {
+                            self.infer_expr(*e, &Expectation::None);
+                        }
+                    }
+                }
+                self.calls.push(name);
+                self.check_call_effects_if_function(Some(name));
+                Ty::Error
+            }
+        }
+    }
+
     fn call_target_for_attribution(&self, callee: ExprIdx) -> Option<kyokara_hir_def::name::Name> {
         let Expr::Path(path) = &self.body.exprs[callee] else {
             return None;
@@ -703,8 +844,11 @@ impl<'a> InferenceCtx<'a> {
             .module_scope
             .functions
             .get(&name)
-            .or_else(|| self.module_scope.intrinsic_fn_lookup.get(&name))
-            .copied();
+            .and_then(|candidates| match candidates.as_slice() {
+                [fn_idx] => Some(*fn_idx),
+                _ => None,
+            })
+            .or_else(|| self.module_scope.intrinsic_fn_lookup.get(&name).copied());
 
         if let Some(fn_idx) = fn_idx {
             let fn_item = &self.item_tree.functions[fn_idx];
@@ -1624,7 +1768,7 @@ impl<'a> InferenceCtx<'a> {
                     .map(|param| param.name)
                     .collect::<Vec<_>>();
                 let has_arg_errors =
-                    self.infer_call_args_with_binding(args, &param_tys, Some(&param_names));
+                    self.infer_call_args_with_binding(args, &param_tys, Some(&param_names), None);
                 if has_arg_errors {
                     return Some(Ty::Error);
                 }
@@ -1747,8 +1891,18 @@ impl<'a> InferenceCtx<'a> {
             .iter()
             .map(|p| p.name)
             .collect();
+        let param_named_only: Vec<_> = self.item_tree.functions[fn_idx]
+            .params
+            .iter()
+            .map(|p| p.named_only)
+            .collect();
 
-        if self.infer_call_args_with_binding(args, &params, Some(&param_names)) {
+        if self.infer_call_args_with_binding(
+            args,
+            &params,
+            Some(&param_names),
+            Some(&param_named_only),
+        ) {
             return Ty::Error;
         }
 
@@ -1802,33 +1956,14 @@ impl<'a> InferenceCtx<'a> {
             })
     }
 
-    fn select_method_candidate_by_arity(
+    fn select_method_candidate_by_call_shape(
         &self,
         candidates: &[FnItemIdx],
-        actual_arg_count: usize,
-    ) -> Result<FnItemIdx, Vec<usize>> {
-        if let Some(&fn_idx) = candidates.iter().find(|&&fn_idx| {
-            self.item_tree.functions[fn_idx]
-                .params
-                .len()
-                .saturating_sub(1)
-                == actual_arg_count
-        }) {
-            return Ok(fn_idx);
-        }
-
-        let mut expected: Vec<usize> = candidates
-            .iter()
-            .map(|&fn_idx| {
-                self.item_tree.functions[fn_idx]
-                    .params
-                    .len()
-                    .saturating_sub(1)
-            })
-            .collect();
-        expected.sort_unstable();
-        expected.dedup();
-        Err(expected)
+        args: &[CallArg],
+    ) -> CallFamilySelection<FnItemIdx> {
+        select_call_family_candidate(args, candidates, |fn_idx| {
+            &self.item_tree.functions[fn_idx].params[1..]
+        })
     }
 
     /// Try to resolve `base.field(args)` as a method call.
@@ -1895,12 +2030,39 @@ impl<'a> InferenceCtx<'a> {
                 return Some(Ty::Error);
             }
         };
-        let fn_idx = match self.select_method_candidate_by_arity(candidates, args.len()) {
-            Ok(fn_idx) => fn_idx,
-            Err(expected) => {
+        let fn_idx = match self.select_method_candidate_by_call_shape(candidates, args) {
+            CallFamilySelection::Selected { candidate, .. } => candidate,
+            CallFamilySelection::ArgCountMismatch { expected, actual } => {
                 self.push_diag(TyDiagnosticData::ArgCountMismatchOneOf {
                     expected,
-                    actual: args.len(),
+                    actual,
+                });
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(e) | CallArg::Named { value: e, .. } => {
+                            self.infer_expr(*e, &Expectation::None);
+                        }
+                    }
+                }
+                self.expr_types.insert(callee, Ty::Error);
+                return Some(Ty::Error);
+            }
+            CallFamilySelection::InvalidShape { errors } => {
+                self.push_call_shape_errors(&errors);
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(e) | CallArg::Named { value: e, .. } => {
+                            self.infer_expr(*e, &Expectation::None);
+                        }
+                    }
+                }
+                self.expr_types.insert(callee, Ty::Error);
+                return Some(Ty::Error);
+            }
+            CallFamilySelection::Ambiguous => {
+                self.push_diag(TyDiagnosticData::NoSuchMethod {
+                    method: field.resolve(self.interner).to_owned(),
+                    ty: base_ty_resolved.clone(),
                 });
                 for arg in args {
                     match arg {
@@ -1980,12 +2142,28 @@ impl<'a> InferenceCtx<'a> {
             .skip(1)
             .map(|p| p.name)
             .collect();
+        let method_param_named_only: Vec<_> = self.item_tree.functions[fn_idx]
+            .params
+            .iter()
+            .skip(1)
+            .map(|p| p.named_only)
+            .collect();
         let has_arg_errors = if traversal_intrinsic {
             self.with_traversal_seq_compat_scope(|ctx| {
-                ctx.infer_call_args_with_binding(args, method_param_tys, Some(&method_param_names))
+                ctx.infer_call_args_with_binding(
+                    args,
+                    method_param_tys,
+                    Some(&method_param_names),
+                    Some(&method_param_named_only),
+                )
             })
         } else {
-            self.infer_call_args_with_binding(args, method_param_tys, Some(&method_param_names))
+            self.infer_call_args_with_binding(
+                args,
+                method_param_tys,
+                Some(&method_param_names),
+                Some(&method_param_named_only),
+            )
         };
         if has_arg_errors {
             return Some(Ty::Error);
