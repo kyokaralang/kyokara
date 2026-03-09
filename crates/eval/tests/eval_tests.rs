@@ -2139,6 +2139,33 @@ fn eval_collections_mutable_map_alias_constructor_surface_rfc_0008() {
 }
 
 #[test]
+fn eval_collections_mutable_map_with_capacity_surface() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let m = collections.MutableMap.with_capacity(8).insert(\"a\", 1).insert(\"b\", 2)
+           m.get(\"b\").unwrap_or(0) * 10 + m.len()
+         }",
+    );
+    assert!(matches!(val, Value::Int(22)));
+}
+
+#[test]
+fn eval_collections_mutable_map_alias_with_capacity_surface() {
+    let val = run_ok(
+        "import collections as c
+         fn main() -> Int {
+           let m: MutableMap<String, Int> = c.MutableMap.with_capacity(4).insert(\"x\", 5)
+           match (m.get(\"x\")) {
+             Some(v) => v
+             None => 0
+           }
+         }",
+    );
+    assert!(matches!(val, Value::Int(5)));
+}
+
+#[test]
 fn eval_global_mutable_map_constructor_surface_is_removed_rfc_0008() {
     let err = run_err("fn main() -> Int { MutableMap.new().len() }");
     assert!(
@@ -2147,6 +2174,43 @@ fn eval_global_mutable_map_constructor_surface_is_removed_rfc_0008() {
             || err.contains("import name"),
         "unexpected error: {err}"
     );
+}
+
+#[test]
+fn eval_global_mutable_map_with_capacity_surface_is_removed() {
+    let err = run_err("fn main() -> Int { MutableMap.with_capacity(4).len() }");
+    assert!(
+        err.contains("no method `with_capacity`")
+            || err.contains("unresolved name")
+            || err.contains("import name"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn eval_mutable_map_with_capacity_negative_capacity_is_runtime_error() {
+    let err = run_err(
+        "import collections
+         fn main() -> Int {
+           collections.MutableMap.with_capacity(-1).len()
+         }",
+    );
+    assert!(
+        err.contains("mutable_map_with_capacity: capacity must be >= 0"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn eval_mutable_map_with_capacity_zero_capacity_succeeds() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let m: MutableMap<Int, Int> = collections.MutableMap.with_capacity(0)
+           if (m.is_empty()) { 1 } else { 0 }
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
 }
 
 #[test]
@@ -2178,6 +2242,62 @@ fn eval_mutable_map_key_order_is_deterministic() {
          }",
     );
     assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_mutable_map_updates_existing_key_without_moving_order() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let m = collections.MutableMap.with_capacity(4)
+             .insert(\"a\", 1)
+             .insert(\"b\", 2)
+             .insert(\"a\", 9)
+           let ks = m.keys().to_list()
+           if (ks[0] == \"a\" && ks[1] == \"b\") { m.get(\"a\").unwrap_or(0) } else { 0 }
+         }",
+    );
+    assert!(matches!(val, Value::Int(9)));
+}
+
+#[test]
+fn eval_mutable_map_tombstone_churn_preserves_lookups() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let m = collections.MutableMap.with_capacity(1)
+           let _m1 = m.insert(1, 10)
+           let _m2 = m.insert(2, 20)
+           let _m3 = m.insert(3, 30)
+           let _m4 = m.remove(2)
+           let _m5 = m.insert(4, 40)
+           let _m6 = m.insert(5, 50)
+           m.get(1).unwrap_or(0) + m.get(3).unwrap_or(0) + m.get(4).unwrap_or(0) + m.get(5).unwrap_or(0)
+         }",
+    );
+    assert!(matches!(val, Value::Int(130)));
+}
+
+#[test]
+fn eval_mutable_map_supports_all_primitive_key_kinds_with_fast_path() {
+    let val = run_ok(
+        "import collections
+         fn unit_value() -> Unit {}
+         fn main() -> Int {
+           let ints = collections.MutableMap.with_capacity(2).insert(1, 10)
+           let strings = collections.MutableMap.with_capacity(2).insert(\"x\", 20)
+           let chars = collections.MutableMap.with_capacity(2).insert('z', 30)
+           let bools = collections.MutableMap.with_capacity(2).insert(true, 40)
+           let u = unit_value()
+           let units = collections.MutableMap.with_capacity(2).insert(u, 50)
+           ints.get(1).unwrap_or(0)
+             + strings.get(\"x\").unwrap_or(0)
+             + chars.get('z').unwrap_or(0)
+             + bools.get(true).unwrap_or(0)
+             + units.get(u).unwrap_or(0)
+         }",
+    );
+    assert!(matches!(val, Value::Int(150)));
 }
 
 #[test]
@@ -2303,6 +2423,30 @@ fn eval_collections_mutable_set_alias_constructor_surface_rfc_0008() {
 }
 
 #[test]
+fn eval_collections_mutable_set_with_capacity_surface() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let s = collections.MutableSet.with_capacity(8).insert(\"a\").insert(\"b\")
+           s.len()
+         }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_collections_mutable_set_alias_with_capacity_surface() {
+    let val = run_ok(
+        "import collections as c
+         fn main() -> Int {
+           let s: MutableSet<String> = c.MutableSet.with_capacity(4).insert(\"x\")
+           if (s.contains(\"x\")) { 1 } else { 0 }
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
 fn eval_global_mutable_set_constructor_surface_is_removed_rfc_0008() {
     let err = run_err("fn main() -> Int { MutableSet.new().len() }");
     assert!(
@@ -2311,6 +2455,43 @@ fn eval_global_mutable_set_constructor_surface_is_removed_rfc_0008() {
             || err.contains("import name"),
         "unexpected error: {err}"
     );
+}
+
+#[test]
+fn eval_global_mutable_set_with_capacity_surface_is_removed() {
+    let err = run_err("fn main() -> Int { MutableSet.with_capacity(4).len() }");
+    assert!(
+        err.contains("no method `with_capacity`")
+            || err.contains("unresolved name")
+            || err.contains("import name"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn eval_mutable_set_with_capacity_negative_capacity_is_runtime_error() {
+    let err = run_err(
+        "import collections
+         fn main() -> Int {
+           collections.MutableSet.with_capacity(-1).len()
+         }",
+    );
+    assert!(
+        err.contains("mutable_set_with_capacity: capacity must be >= 0"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn eval_mutable_set_with_capacity_zero_capacity_succeeds() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let s: MutableSet<Int> = collections.MutableSet.with_capacity(0)
+           if (s.is_empty()) { 1 } else { 0 }
+         }",
+    );
+    assert!(matches!(val, Value::Int(1)));
 }
 
 #[test]
@@ -2325,6 +2506,49 @@ fn eval_mutable_set_aliases_observe_in_place_mutation() {
          }",
     );
     assert!(matches!(val, Value::Int(1)));
+}
+
+#[test]
+fn eval_mutable_set_tombstone_churn_preserves_membership() {
+    let val = run_ok(
+        "import collections
+         fn main() -> Int {
+           let s = collections.MutableSet.with_capacity(1)
+           let _s1 = s.insert(1)
+           let _s2 = s.insert(2)
+           let _s3 = s.insert(3)
+           let _s4 = s.remove(2)
+           let _s5 = s.insert(4)
+           let _s6 = s.insert(5)
+           (if (s.contains(1)) { 100 } else { 0 })
+             + (if (s.contains(3)) { 10 } else { 0 })
+             + (if (s.contains(4)) { 1 } else { 0 })
+             + (if (s.contains(5)) { 1000 } else { 0 })
+         }",
+    );
+    assert!(matches!(val, Value::Int(1111)));
+}
+
+#[test]
+fn eval_mutable_set_supports_all_primitive_key_kinds_with_fast_path() {
+    let val = run_ok(
+        "import collections
+         fn unit_value() -> Unit {}
+         fn main() -> Int {
+           let ints = collections.MutableSet.with_capacity(2).insert(1)
+           let strings = collections.MutableSet.with_capacity(2).insert(\"x\")
+           let chars = collections.MutableSet.with_capacity(2).insert('z')
+           let bools = collections.MutableSet.with_capacity(2).insert(true)
+           let u = unit_value()
+           let units = collections.MutableSet.with_capacity(2).insert(u)
+           (if (ints.contains(1)) { 10000 } else { 0 })
+             + (if (strings.contains(\"x\")) { 1000 } else { 0 })
+             + (if (chars.contains('z')) { 100 } else { 0 })
+             + (if (bools.contains(true)) { 10 } else { 0 })
+             + (if (units.contains(u)) { 1 } else { 0 })
+         }",
+    );
+    assert!(matches!(val, Value::Int(11111)));
 }
 
 #[test]

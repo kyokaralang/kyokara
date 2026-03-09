@@ -1,0 +1,29 @@
+import collections
+
+fn sparse_probe(rounds: Int, width: Int) -> Int {
+  let grid: MutableMap<Int, Int> = collections.MutableMap.with_capacity(width / 2)
+  var acc = 0
+  var i = 0
+  while (i < rounds) {
+    let key = ((i * 193) + ((i % 97) * 389)) % width
+    let probe = (key + 257) % width
+    let cur = grid.get(key).unwrap_or(0)
+    if (cur == 0) {
+      grid.insert(key, (i % 4) + 1)
+    } else if (cur == 4) {
+      grid.remove(key)
+    } else {
+      grid.insert(key, cur + 1)
+    }
+    acc = acc + grid.get(probe).unwrap_or(0)
+    if (i % 5 == 0 && grid.contains((probe + 17) % width)) {
+      acc = acc + 7
+    }
+    i = i + 1
+  }
+  acc + grid.len()
+}
+
+fn main() -> Int {
+  sparse_probe(40000, 65521)
+}

@@ -26,6 +26,7 @@ RFC 0005 intentionally scoped to `MutableList` and marked additional mutable col
 3. Keep constructor placement predictable and non-prelude (`collections.*`).
 4. Preserve deterministic output order for `keys()/values()`.
 5. Preserve static invalid key/element diagnostics.
+6. Support explicit mutable capacity hints without adding new public specialized map/set types.
 
 ## Proposal
 
@@ -40,7 +41,9 @@ Constructor surface:
 
 1. `import collections`
 2. `collections.MutableMap.new()`
-3. `collections.MutableSet.new()`
+3. `collections.MutableMap.with_capacity(capacity)`
+4. `collections.MutableSet.new()`
+5. `collections.MutableSet.with_capacity(capacity)`
 
 No prelude-global constructor aliases.
 
@@ -72,6 +75,7 @@ No prelude-global constructor aliases.
 1. Alias-visible mutation semantics (same class as `MutableList`).
 2. Deterministic iteration order for `keys()/values()`.
 3. Compile-time key/element validity checks aligned with immutable `Map`/`Set` diagnostics.
+4. `with_capacity(capacity)` is a minimum live-element hint only; it does not affect equality, display, or iteration order.
 
 ## Out of scope
 

@@ -73,7 +73,9 @@ All collection constructors are canonically under `collections`:
 5. `collections.PriorityQueue.new_min()` / `new_max()` (reserved for a future immutable mirror if one is justified)
 6. `collections.MutableList.new()`
 7. `collections.MutableMap.new()`
-8. `collections.MutableSet.new()`
+8. `collections.MutableMap.with_capacity(capacity)`
+9. `collections.MutableSet.new()`
+10. `collections.MutableSet.with_capacity(capacity)`
 9. `collections.MutablePriorityQueue.new_min()` / `new_max()` (defined by RFC 0012)
 
 Global/type-local constructor spellings for collections become non-canonical.

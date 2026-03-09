@@ -799,6 +799,46 @@ mod tests {
     }
 
     #[test]
+    fn completion_dot_after_mutable_map_type_shows_new_and_with_capacity() {
+        let source = "import collections\nfn main() -> Int {\n  let m: MutableMap<String, Int> = collections.MutableMap.with_capacity(4)\n  m.len()\n}";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let pos = source
+            .find("with_capacity")
+            .expect("with_capacity offset");
+        let offset = TextSize::from(pos as u32);
+        let items = completion_items(&analysis, source, offset);
+        assert!(
+            items.iter().any(|i| i.label == "new"),
+            "expected 'new' in MutableMap dot-completion: {items:?}"
+        );
+        assert!(
+            items.iter().any(|i| i.label == "with_capacity"),
+            "expected 'with_capacity' in MutableMap dot-completion: {items:?}"
+        );
+    }
+
+    #[test]
+    fn completion_dot_after_mutable_set_type_shows_new_and_with_capacity() {
+        let source = "import collections\nfn main() -> Int {\n  let s: MutableSet<String> = collections.MutableSet.with_capacity(4)\n  s.len()\n}";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let pos = source
+            .find("with_capacity")
+            .expect("with_capacity offset");
+        let offset = TextSize::from(pos as u32);
+        let items = completion_items(&analysis, source, offset);
+        assert!(
+            items.iter().any(|i| i.label == "new"),
+            "expected 'new' in MutableSet dot-completion: {items:?}"
+        );
+        assert!(
+            items.iter().any(|i| i.label == "with_capacity"),
+            "expected 'with_capacity' in MutableSet dot-completion: {items:?}"
+        );
+    }
+
+    #[test]
     fn completion_dot_after_mutable_map_value_shows_get_or_insert_with() {
         let source = "import collections\nfn main() -> Int {\n  let m = collections.MutableMap.new()\n  m.get(\"a\").unwrap_or(0)\n}";
         let result = kyokara_hir::check_file(source);

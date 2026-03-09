@@ -521,6 +521,779 @@ fn primitive_map_key_hash(key: &MapKey) -> i64 {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProbeSlot {
+    Empty,
+    Tombstone,
+    Occupied(usize),
+}
+
+fn slot_count_for_min_live(min_live: usize) -> usize {
+    if min_live == 0 {
+        return 0;
+    }
+    let min_slots = min_live.saturating_mul(10).div_ceil(7);
+    min_slots.max(8).next_power_of_two()
+}
+
+fn initial_slot_count_from_hint(capacity_hint: usize) -> usize {
+    slot_count_for_min_live(capacity_hint)
+}
+
+fn probe_index(hash: i64, slot_count: usize) -> usize {
+    debug_assert!(slot_count.is_power_of_two());
+    (hash as u64 as usize) & (slot_count - 1)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PrimitiveMapEntry {
+    hash: i64,
+    key: MapKey,
+    value: Value,
+    live: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PrimitiveSetEntry {
+    hash: i64,
+    key: MapKey,
+    live: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PrimitiveMutableMapValue {
+    entries: Vec<PrimitiveMapEntry>,
+    slots: Vec<ProbeSlot>,
+    live_len: usize,
+    tombstones: usize,
+}
+
+impl PrimitiveMutableMapValue {
+    #[cfg(test)]
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn with_capacity(capacity_hint: usize) -> Self {
+        Self {
+            entries: Vec::with_capacity(capacity_hint),
+            slots: vec![ProbeSlot::Empty; initial_slot_count_from_hint(capacity_hint)],
+            live_len: 0,
+            tombstones: 0,
+        }
+    }
+
+    fn from_indexmap(entries: IndexMap<MapKey, Value>) -> Self {
+        let mut out = Self::with_capacity(entries.len());
+        for (key, value) in entries {
+            out.insert(key, value);
+        }
+        out
+    }
+
+    fn len(&self) -> usize {
+        self.live_len
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.live_len == 0
+    }
+
+    fn snapshot(&self) -> MapValue {
+        let mut entries = Vec::with_capacity(self.live_len);
+        for entry in &self.entries {
+            if entry.live {
+                entries.push(MapEntry {
+                    hash: entry.hash,
+                    key: entry.key.to_value(),
+                    value: entry.value.clone(),
+                });
+            }
+        }
+        MapValue::from_entries(entries)
+    }
+
+    fn get_cloned(&self, key: &MapKey) -> Option<Value> {
+        let (_, entry_idx) = self.lookup(key)?;
+        Some(self.entries[entry_idx].value.clone())
+    }
+
+    fn contains(&self, key: &MapKey) -> bool {
+        self.lookup(key).is_some()
+    }
+
+    fn insert(&mut self, key: MapKey, value: Value) {
+        self.ensure_ready_for_insert();
+        match self.find_slot(&key) {
+            ProbeSlot::Occupied(entry_idx) => {
+                self.entries[entry_idx].value = value;
+            }
+            ProbeSlot::Empty | ProbeSlot::Tombstone => {
+                let slot_idx = self.find_slot_index_for_insert(&key);
+                let entry_idx = self.entries.len();
+                self.entries.push(PrimitiveMapEntry {
+                    hash: key.primitive_hash(),
+                    key,
+                    value,
+                    live: true,
+                });
+                if matches!(self.slots[slot_idx], ProbeSlot::Tombstone) {
+                    self.tombstones = self.tombstones.saturating_sub(1);
+                }
+                self.slots[slot_idx] = ProbeSlot::Occupied(entry_idx);
+                self.live_len += 1;
+            }
+        }
+    }
+
+    fn remove(&mut self, key: &MapKey) {
+        let Some((slot_idx, entry_idx)) = self.lookup(key) else {
+            return;
+        };
+        self.entries[entry_idx].live = false;
+        self.slots[slot_idx] = ProbeSlot::Tombstone;
+        self.live_len = self.live_len.saturating_sub(1);
+        self.tombstones += 1;
+        if !self.slots.is_empty() && self.tombstones > self.live_len {
+            self.rehash(self.slots.len());
+        }
+    }
+
+    fn lookup(&self, key: &MapKey) -> Option<(usize, usize)> {
+        if self.slots.is_empty() {
+            return None;
+        }
+        let hash = key.primitive_hash();
+        let mut idx = probe_index(hash, self.slots.len());
+        loop {
+            match self.slots[idx] {
+                ProbeSlot::Empty => return None,
+                ProbeSlot::Tombstone => {}
+                ProbeSlot::Occupied(entry_idx) => {
+                    let entry = &self.entries[entry_idx];
+                    if entry.live && entry.hash == hash && entry.key == *key {
+                        return Some((idx, entry_idx));
+                    }
+                }
+            }
+            idx = (idx + 1) & (self.slots.len() - 1);
+        }
+    }
+
+    fn find_slot(&self, key: &MapKey) -> ProbeSlot {
+        self.lookup(key)
+            .map(|(_, entry_idx)| ProbeSlot::Occupied(entry_idx))
+            .unwrap_or_else(|| {
+                if self.slots.is_empty() {
+                    ProbeSlot::Empty
+                } else {
+                    ProbeSlot::Tombstone
+                }
+            })
+    }
+
+    fn find_slot_index_for_insert(&self, key: &MapKey) -> usize {
+        let hash = key.primitive_hash();
+        let mut idx = probe_index(hash, self.slots.len());
+        let mut first_tombstone = None;
+        loop {
+            match self.slots[idx] {
+                ProbeSlot::Empty => return first_tombstone.unwrap_or(idx),
+                ProbeSlot::Tombstone => {
+                    first_tombstone.get_or_insert(idx);
+                }
+                ProbeSlot::Occupied(entry_idx) => {
+                    let entry = &self.entries[entry_idx];
+                    if entry.live && entry.hash == hash && entry.key == *key {
+                        return idx;
+                    }
+                }
+            }
+            idx = (idx + 1) & (self.slots.len() - 1);
+        }
+    }
+
+    fn ensure_ready_for_insert(&mut self) {
+        if self.slots.is_empty() {
+            self.rehash(initial_slot_count_from_hint(self.entries.capacity().max(1)));
+            return;
+        }
+        if self.tombstones > self.live_len {
+            self.rehash(self.slots.len());
+        }
+        if (self.live_len + self.tombstones) * 10 >= self.slots.len() * 7 {
+            let next_slots = (self.slots.len() * 2)
+                .max(slot_count_for_min_live(self.live_len.saturating_add(1)));
+            self.rehash(next_slots);
+        }
+    }
+
+    fn rehash(&mut self, slot_count: usize) {
+        let live_entries: Vec<_> = self.entries.iter().filter(|entry| entry.live).cloned().collect();
+        let slot_count = slot_count
+            .max(initial_slot_count_from_hint(live_entries.len()))
+            .max(if live_entries.is_empty() { 0 } else { 8 });
+        self.entries = live_entries;
+        self.live_len = self.entries.len();
+        self.tombstones = 0;
+        self.slots = vec![ProbeSlot::Empty; slot_count];
+        if self.slots.is_empty() {
+            return;
+        }
+        for (entry_idx, entry) in self.entries.iter().enumerate() {
+            let mut idx = probe_index(entry.hash, self.slots.len());
+            loop {
+                if matches!(self.slots[idx], ProbeSlot::Empty) {
+                    self.slots[idx] = ProbeSlot::Occupied(entry_idx);
+                    break;
+                }
+                idx = (idx + 1) & (self.slots.len() - 1);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct PrimitiveMutableSetValue {
+    entries: Vec<PrimitiveSetEntry>,
+    slots: Vec<ProbeSlot>,
+    live_len: usize,
+    tombstones: usize,
+}
+
+impl PrimitiveMutableSetValue {
+    #[cfg(test)]
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn with_capacity(capacity_hint: usize) -> Self {
+        Self {
+            entries: Vec::with_capacity(capacity_hint),
+            slots: vec![ProbeSlot::Empty; initial_slot_count_from_hint(capacity_hint)],
+            live_len: 0,
+            tombstones: 0,
+        }
+    }
+
+    fn from_indexset(entries: IndexSet<MapKey>) -> Self {
+        let mut out = Self::with_capacity(entries.len());
+        for key in entries {
+            out.insert(key);
+        }
+        out
+    }
+
+    fn len(&self) -> usize {
+        self.live_len
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.live_len == 0
+    }
+
+    fn snapshot(&self) -> SetValue {
+        let mut entries = Vec::with_capacity(self.live_len);
+        for entry in &self.entries {
+            if entry.live {
+                entries.push(SetEntry {
+                    hash: entry.hash,
+                    value: entry.key.to_value(),
+                });
+            }
+        }
+        SetValue::from_entries(entries)
+    }
+
+    fn contains(&self, key: &MapKey) -> bool {
+        self.lookup(key).is_some()
+    }
+
+    fn insert(&mut self, key: MapKey) {
+        self.ensure_ready_for_insert();
+        if self.lookup(&key).is_some() {
+            return;
+        }
+        let slot_idx = self.find_slot_index_for_insert(&key);
+        let entry_idx = self.entries.len();
+        self.entries.push(PrimitiveSetEntry {
+            hash: key.primitive_hash(),
+            key,
+            live: true,
+        });
+        if matches!(self.slots[slot_idx], ProbeSlot::Tombstone) {
+            self.tombstones = self.tombstones.saturating_sub(1);
+        }
+        self.slots[slot_idx] = ProbeSlot::Occupied(entry_idx);
+        self.live_len += 1;
+    }
+
+    fn remove(&mut self, key: &MapKey) {
+        let Some((slot_idx, entry_idx)) = self.lookup(key) else {
+            return;
+        };
+        self.entries[entry_idx].live = false;
+        self.slots[slot_idx] = ProbeSlot::Tombstone;
+        self.live_len = self.live_len.saturating_sub(1);
+        self.tombstones += 1;
+        if !self.slots.is_empty() && self.tombstones > self.live_len {
+            self.rehash(self.slots.len());
+        }
+    }
+
+    fn lookup(&self, key: &MapKey) -> Option<(usize, usize)> {
+        if self.slots.is_empty() {
+            return None;
+        }
+        let hash = key.primitive_hash();
+        let mut idx = probe_index(hash, self.slots.len());
+        loop {
+            match self.slots[idx] {
+                ProbeSlot::Empty => return None,
+                ProbeSlot::Tombstone => {}
+                ProbeSlot::Occupied(entry_idx) => {
+                    let entry = &self.entries[entry_idx];
+                    if entry.live && entry.hash == hash && entry.key == *key {
+                        return Some((idx, entry_idx));
+                    }
+                }
+            }
+            idx = (idx + 1) & (self.slots.len() - 1);
+        }
+    }
+
+    fn find_slot_index_for_insert(&self, key: &MapKey) -> usize {
+        let hash = key.primitive_hash();
+        let mut idx = probe_index(hash, self.slots.len());
+        let mut first_tombstone = None;
+        loop {
+            match self.slots[idx] {
+                ProbeSlot::Empty => return first_tombstone.unwrap_or(idx),
+                ProbeSlot::Tombstone => {
+                    first_tombstone.get_or_insert(idx);
+                }
+                ProbeSlot::Occupied(entry_idx) => {
+                    let entry = &self.entries[entry_idx];
+                    if entry.live && entry.hash == hash && entry.key == *key {
+                        return idx;
+                    }
+                }
+            }
+            idx = (idx + 1) & (self.slots.len() - 1);
+        }
+    }
+
+    fn ensure_ready_for_insert(&mut self) {
+        if self.slots.is_empty() {
+            self.rehash(initial_slot_count_from_hint(self.entries.capacity().max(1)));
+            return;
+        }
+        if self.tombstones > self.live_len {
+            self.rehash(self.slots.len());
+        }
+        if (self.live_len + self.tombstones) * 10 >= self.slots.len() * 7 {
+            let next_slots = (self.slots.len() * 2)
+                .max(slot_count_for_min_live(self.live_len.saturating_add(1)));
+            self.rehash(next_slots);
+        }
+    }
+
+    fn rehash(&mut self, slot_count: usize) {
+        let live_entries: Vec<_> = self.entries.iter().filter(|entry| entry.live).cloned().collect();
+        let slot_count = slot_count
+            .max(initial_slot_count_from_hint(live_entries.len()))
+            .max(if live_entries.is_empty() { 0 } else { 8 });
+        self.entries = live_entries;
+        self.live_len = self.entries.len();
+        self.tombstones = 0;
+        self.slots = vec![ProbeSlot::Empty; slot_count];
+        if self.slots.is_empty() {
+            return;
+        }
+        for (entry_idx, entry) in self.entries.iter().enumerate() {
+            let mut idx = probe_index(entry.hash, self.slots.len());
+            loop {
+                if matches!(self.slots[idx], ProbeSlot::Empty) {
+                    self.slots[idx] = ProbeSlot::Occupied(entry_idx);
+                    break;
+                }
+                idx = (idx + 1) & (self.slots.len() - 1);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum MutableMapStorage {
+    Empty { capacity_hint: usize },
+    Primitive(PrimitiveMutableMapValue),
+    Generic(MapValue),
+}
+
+#[derive(Debug, Clone)]
+pub struct MutableMapValue {
+    storage: MutableMapStorage,
+}
+
+impl Default for MutableMapValue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PartialEq for MutableMapValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.snapshot() == other.snapshot()
+    }
+}
+
+impl Eq for MutableMapValue {}
+
+impl MutableMapValue {
+    pub fn new() -> Self {
+        Self {
+            storage: MutableMapStorage::Empty { capacity_hint: 0 },
+        }
+    }
+
+    pub fn with_capacity(capacity_hint: usize) -> Self {
+        Self {
+            storage: MutableMapStorage::Empty { capacity_hint },
+        }
+    }
+
+    pub fn from_primitive_indexmap(entries: IndexMap<MapKey, Value>) -> Self {
+        Self {
+            storage: MutableMapStorage::Primitive(PrimitiveMutableMapValue::from_indexmap(entries)),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match &self.storage {
+            MutableMapStorage::Empty { .. } => 0,
+            MutableMapStorage::Primitive(entries) => entries.len(),
+            MutableMapStorage::Generic(entries) => entries.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn snapshot(&self) -> MapValue {
+        match &self.storage {
+            MutableMapStorage::Empty { .. } => MapValue::new(),
+            MutableMapStorage::Primitive(entries) => entries.snapshot(),
+            MutableMapStorage::Generic(entries) => entries.clone(),
+        }
+    }
+
+    pub fn get_cloned_primitive(&self, key: &MapKey) -> Option<Value> {
+        match &self.storage {
+            MutableMapStorage::Empty { .. } => None,
+            MutableMapStorage::Primitive(entries) => entries.get_cloned(key),
+            MutableMapStorage::Generic(entries) => entries.get(key).cloned(),
+        }
+    }
+
+    pub fn contains_primitive(&self, key: &MapKey) -> bool {
+        match &self.storage {
+            MutableMapStorage::Empty { .. } => false,
+            MutableMapStorage::Primitive(entries) => entries.contains(key),
+            MutableMapStorage::Generic(entries) => entries.get(key).is_some(),
+        }
+    }
+
+    pub fn insert_primitive(&mut self, key: MapKey, value: Value) {
+        match &mut self.storage {
+            MutableMapStorage::Empty { capacity_hint } => {
+                let mut entries = PrimitiveMutableMapValue::with_capacity(*capacity_hint);
+                entries.insert(key, value);
+                self.storage = MutableMapStorage::Primitive(entries);
+            }
+            MutableMapStorage::Primitive(entries) => entries.insert(key, value),
+            MutableMapStorage::Generic(entries) => {
+                let hash = key.primitive_hash();
+                let key_value = key.to_value();
+                let _ = entries.insert_with(hash, key_value, value, &mut |lhs, rhs| Ok(lhs == rhs));
+            }
+        }
+    }
+
+    pub fn remove_primitive(&mut self, key: &MapKey) {
+        match &mut self.storage {
+            MutableMapStorage::Empty { .. } => {}
+            MutableMapStorage::Primitive(entries) => entries.remove(key),
+            MutableMapStorage::Generic(entries) => {
+                let hash = key.primitive_hash();
+                let key_value = key.to_value();
+                let _ = entries.remove_with(hash, &key_value, &mut |lhs, rhs| Ok(lhs == rhs));
+            }
+        }
+    }
+
+    pub fn get_cloned_with<E>(
+        &self,
+        hash: i64,
+        key: &Value,
+        eq: &mut E,
+    ) -> Result<Option<Value>, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(key) {
+            return Ok(self.get_cloned_primitive(&primitive));
+        }
+        match &self.storage {
+            MutableMapStorage::Empty { .. } => Ok(None),
+            MutableMapStorage::Primitive(_) => Ok(None),
+            MutableMapStorage::Generic(entries) => entries.get_cloned_with(hash, key, eq),
+        }
+    }
+
+    pub fn contains_with<E>(
+        &self,
+        hash: i64,
+        key: &Value,
+        eq: &mut E,
+    ) -> Result<bool, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(key) {
+            return Ok(self.contains_primitive(&primitive));
+        }
+        match &self.storage {
+            MutableMapStorage::Empty { .. } => Ok(false),
+            MutableMapStorage::Primitive(_) => Ok(false),
+            MutableMapStorage::Generic(entries) => entries.contains_with(hash, key, eq),
+        }
+    }
+
+    pub fn insert_with<E>(
+        &mut self,
+        hash: i64,
+        key: Value,
+        value: Value,
+        eq: &mut E,
+    ) -> Result<(), RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(&key) {
+            self.insert_primitive(primitive, value);
+            return Ok(());
+        }
+        match &mut self.storage {
+            MutableMapStorage::Empty { .. } => {
+                let mut entries = MapValue::new();
+                entries.insert_with(hash, key, value, eq)?;
+                self.storage = MutableMapStorage::Generic(entries);
+            }
+            MutableMapStorage::Primitive(entries) => {
+                let mut generic = entries.snapshot();
+                generic.insert_with(hash, key, value, eq)?;
+                self.storage = MutableMapStorage::Generic(generic);
+            }
+            MutableMapStorage::Generic(entries) => {
+                entries.insert_with(hash, key, value, eq)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn remove_with<E>(&mut self, hash: i64, key: &Value, eq: &mut E) -> Result<(), RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(key) {
+            self.remove_primitive(&primitive);
+            return Ok(());
+        }
+        match &mut self.storage {
+            MutableMapStorage::Empty { .. } => {}
+            MutableMapStorage::Primitive(_) => {}
+            MutableMapStorage::Generic(entries) => entries.remove_with(hash, key, eq)?,
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+enum MutableSetStorage {
+    Empty { capacity_hint: usize },
+    Primitive(PrimitiveMutableSetValue),
+    Generic(SetValue),
+}
+
+#[derive(Debug, Clone)]
+pub struct MutableSetValue {
+    storage: MutableSetStorage,
+}
+
+impl Default for MutableSetValue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PartialEq for MutableSetValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.snapshot() == other.snapshot()
+    }
+}
+
+impl Eq for MutableSetValue {}
+
+impl MutableSetValue {
+    pub fn new() -> Self {
+        Self {
+            storage: MutableSetStorage::Empty { capacity_hint: 0 },
+        }
+    }
+
+    pub fn with_capacity(capacity_hint: usize) -> Self {
+        Self {
+            storage: MutableSetStorage::Empty { capacity_hint },
+        }
+    }
+
+    pub fn from_primitive_indexset(entries: IndexSet<MapKey>) -> Self {
+        Self {
+            storage: MutableSetStorage::Primitive(PrimitiveMutableSetValue::from_indexset(entries)),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match &self.storage {
+            MutableSetStorage::Empty { .. } => 0,
+            MutableSetStorage::Primitive(entries) => entries.len(),
+            MutableSetStorage::Generic(entries) => entries.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn snapshot(&self) -> SetValue {
+        match &self.storage {
+            MutableSetStorage::Empty { .. } => SetValue::new(),
+            MutableSetStorage::Primitive(entries) => entries.snapshot(),
+            MutableSetStorage::Generic(entries) => entries.clone(),
+        }
+    }
+
+    pub fn contains_primitive(&self, key: &MapKey) -> bool {
+        match &self.storage {
+            MutableSetStorage::Empty { .. } => false,
+            MutableSetStorage::Primitive(entries) => entries.contains(key),
+            MutableSetStorage::Generic(entries) => entries.contains(key),
+        }
+    }
+
+    pub fn insert_primitive(&mut self, key: MapKey) {
+        match &mut self.storage {
+            MutableSetStorage::Empty { capacity_hint } => {
+                let mut entries = PrimitiveMutableSetValue::with_capacity(*capacity_hint);
+                entries.insert(key);
+                self.storage = MutableSetStorage::Primitive(entries);
+            }
+            MutableSetStorage::Primitive(entries) => entries.insert(key),
+            MutableSetStorage::Generic(entries) => {
+                let hash = key.primitive_hash();
+                let value = key.to_value();
+                let _ = entries.insert_with(hash, value, &mut |lhs, rhs| Ok(lhs == rhs));
+            }
+        }
+    }
+
+    pub fn remove_primitive(&mut self, key: &MapKey) {
+        match &mut self.storage {
+            MutableSetStorage::Empty { .. } => {}
+            MutableSetStorage::Primitive(entries) => entries.remove(key),
+            MutableSetStorage::Generic(entries) => {
+                let hash = key.primitive_hash();
+                let value = key.to_value();
+                let _ = entries.remove_with(hash, &value, &mut |lhs, rhs| Ok(lhs == rhs));
+            }
+        }
+    }
+
+    pub fn contains_with<E>(
+        &self,
+        hash: i64,
+        value: &Value,
+        eq: &mut E,
+    ) -> Result<bool, RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(value) {
+            return Ok(self.contains_primitive(&primitive));
+        }
+        match &self.storage {
+            MutableSetStorage::Empty { .. } => Ok(false),
+            MutableSetStorage::Primitive(_) => Ok(false),
+            MutableSetStorage::Generic(entries) => entries.contains_with(hash, value, eq),
+        }
+    }
+
+    pub fn insert_with<E>(
+        &mut self,
+        hash: i64,
+        value: Value,
+        eq: &mut E,
+    ) -> Result<(), RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(&value) {
+            self.insert_primitive(primitive);
+            return Ok(());
+        }
+        match &mut self.storage {
+            MutableSetStorage::Empty { .. } => {
+                let mut entries = SetValue::new();
+                entries.insert_with(hash, value, eq)?;
+                self.storage = MutableSetStorage::Generic(entries);
+            }
+            MutableSetStorage::Primitive(entries) => {
+                let mut generic = entries.snapshot();
+                generic.insert_with(hash, value, eq)?;
+                self.storage = MutableSetStorage::Generic(generic);
+            }
+            MutableSetStorage::Generic(entries) => {
+                entries.insert_with(hash, value, eq)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn remove_with<E>(
+        &mut self,
+        hash: i64,
+        value: &Value,
+        eq: &mut E,
+    ) -> Result<(), RuntimeError>
+    where
+        E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
+    {
+        if let Ok(primitive) = MapKey::from_value(value) {
+            self.remove_primitive(&primitive);
+            return Ok(());
+        }
+        match &mut self.storage {
+            MutableSetStorage::Empty { .. } => {}
+            MutableSetStorage::Primitive(_) => {}
+            MutableSetStorage::Generic(entries) => entries.remove_with(hash, value, eq)?,
+        }
+        Ok(())
+    }
+}
+
 /// Mutable list runtime storage.
 ///
 /// Aliases share the outer `RefCell`, so mutation is visible across aliases.
@@ -884,8 +1657,8 @@ pub enum Value {
     BitSet(BitSetValue),
     MutableList(MutableListValue),
     MutablePriorityQueue(Rc<RefCell<MutablePriorityQueueValue>>),
-    MutableMap(Rc<RefCell<MapValue>>),
-    MutableSet(Rc<RefCell<SetValue>>),
+    MutableMap(Rc<RefCell<MutableMapValue>>),
+    MutableSet(Rc<RefCell<MutableSetValue>>),
     MutableBitSet(MutableBitSetValue),
     Deque(Rc<VecDeque<Value>>),
     Seq(Rc<SeqPlan>),
@@ -1065,14 +1838,26 @@ impl Value {
     }
 
     pub fn mutable_map(entries: IndexMap<MapKey, Value>) -> Self {
-        Value::MutableMap(Rc::new(RefCell::new(MapValue::from_primitive_indexmap(
-            entries,
+        Value::MutableMap(Rc::new(RefCell::new(
+            MutableMapValue::from_primitive_indexmap(entries),
+        )))
+    }
+
+    pub fn mutable_map_with_capacity(capacity: usize) -> Self {
+        Value::MutableMap(Rc::new(RefCell::new(MutableMapValue::with_capacity(
+            capacity,
         ))))
     }
 
     pub fn mutable_set(entries: IndexSet<MapKey>) -> Self {
-        Value::MutableSet(Rc::new(RefCell::new(SetValue::from_primitive_indexset(
-            entries,
+        Value::MutableSet(Rc::new(RefCell::new(
+            MutableSetValue::from_primitive_indexset(entries),
+        )))
+    }
+
+    pub fn mutable_set_with_capacity(capacity: usize) -> Self {
+        Value::MutableSet(Rc::new(RefCell::new(MutableSetValue::with_capacity(
+            capacity,
         ))))
     }
 
@@ -1172,8 +1957,8 @@ impl Value {
                 )
             }
             Value::MutableMap(entries) => {
-                let fs: Vec<String> = entries
-                    .borrow()
+                let snapshot = entries.borrow().snapshot();
+                let fs: Vec<String> = snapshot
                     .entries()
                     .iter()
                     .map(|entry| {
@@ -1187,8 +1972,8 @@ impl Value {
                 format!("MutableMap({{{}}})", fs.join(", "))
             }
             Value::MutableSet(entries) => {
-                let fs: Vec<String> = entries
-                    .borrow()
+                let snapshot = entries.borrow().snapshot();
+                let fs: Vec<String> = snapshot
                     .entries()
                     .iter()
                     .map(|entry| entry.value.display(interner))
@@ -1474,5 +2259,45 @@ mod tests {
             !set.contains_with(0, &Value::Int(2), &mut eq)
                 .expect("lookup should succeed")
         );
+    }
+
+    #[test]
+    fn primitive_mutable_map_remove_reinsert_appends_to_end() {
+        let mut map = PrimitiveMutableMapValue::new();
+        assert!(map.is_empty(), "new primitive map should start empty");
+
+        map.insert(MapKey::String("b".into()), Value::Int(1));
+        map.insert(MapKey::String("a".into()), Value::Int(2));
+        map.remove(&MapKey::String("b".into()));
+        map.insert(MapKey::String("b".into()), Value::Int(3));
+
+        let snapshot = map.snapshot();
+        let keys: Vec<_> = snapshot
+            .entries()
+            .iter()
+            .map(|entry| entry.key.clone())
+            .collect();
+        assert_eq!(keys, vec![Value::String("a".into()), Value::String("b".into())]);
+        assert_eq!(snapshot.get(&MapKey::String("b".into())), Some(&Value::Int(3)));
+    }
+
+    #[test]
+    fn primitive_mutable_set_remove_reinsert_appends_to_end() {
+        let mut set = PrimitiveMutableSetValue::new();
+        assert!(set.is_empty(), "new primitive set should start empty");
+
+        set.insert(MapKey::String("b".into()));
+        set.insert(MapKey::String("a".into()));
+        set.remove(&MapKey::String("b".into()));
+        set.insert(MapKey::String("b".into()));
+
+        let snapshot = set.snapshot();
+        let values: Vec<_> = snapshot
+            .entries()
+            .iter()
+            .map(|entry| entry.value.clone())
+            .collect();
+        assert_eq!(values, vec![Value::String("a".into()), Value::String("b".into())]);
+        assert!(snapshot.contains(&MapKey::String("b".into())));
     }
 }

@@ -1392,6 +1392,7 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     let mutable_set = Name::new(interner, "MutableSet");
     let mutable_bitset = Name::new(interner, "MutableBitSet");
     let new = Name::new(interner, "new");
+    let with_capacity = Name::new(interner, "with_capacity");
     let new_min = Name::new(interner, "new_min");
     let new_max = Name::new(interner, "new_max");
     let from_list = Name::new(interner, "from_list");
@@ -1405,7 +1406,9 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     let mutable_priority_queue_new_min = Name::new(interner, "mutable_priority_queue_new_min");
     let mutable_priority_queue_new_max = Name::new(interner, "mutable_priority_queue_new_max");
     let mutable_map_new = Name::new(interner, "mutable_map_new");
+    let mutable_map_with_capacity = Name::new(interner, "mutable_map_with_capacity");
     let mutable_set_new = Name::new(interner, "mutable_set_new");
+    let mutable_set_with_capacity = Name::new(interner, "mutable_set_with_capacity");
     let mutable_bitset_new = Name::new(interner, "mutable_bitset_new");
     if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&list_new) {
         scope
@@ -1463,10 +1466,20 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
             .synthetic_module_static_methods
             .insert((collections, mutable_map, new), fn_idx);
     }
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_map_with_capacity) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, mutable_map, with_capacity), fn_idx);
+    }
     if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_set_new) {
         scope
             .synthetic_module_static_methods
             .insert((collections, mutable_set, new), fn_idx);
+    }
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_set_with_capacity) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, mutable_set, with_capacity), fn_idx);
     }
     if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_bitset_new) {
         scope
@@ -2321,6 +2334,14 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![],
             mutable_map_kv.clone(),
         ),
+        // mutable_map_with_capacity<K, V>(capacity: Int) -> MutableMap<K, V>
+        mk_intrinsic(
+            interner,
+            "mutable_map_with_capacity",
+            vec![k_name, v_name],
+            vec![("capacity", int_ty.clone())],
+            mutable_map_kv.clone(),
+        ),
         // mutable_map_insert<K, V>(m: MutableMap<K,V>, k: K, v: V) -> MutableMap<K,V>
         mk_intrinsic(
             interner,
@@ -2407,6 +2428,14 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             "mutable_set_new",
             vec![t_name],
             vec![],
+            mutable_set_t.clone(),
+        ),
+        // mutable_set_with_capacity<T>(capacity: Int) -> MutableSet<T>
+        mk_intrinsic(
+            interner,
+            "mutable_set_with_capacity",
+            vec![t_name],
+            vec![("capacity", int_ty.clone())],
             mutable_set_t.clone(),
         ),
         // mutable_set_insert<T>(s: MutableSet<T>, x: T) -> MutableSet<T>

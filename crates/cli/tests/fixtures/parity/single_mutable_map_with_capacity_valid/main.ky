@@ -1,0 +1,8 @@
+import collections
+
+fn main() -> Int {
+  let m: MutableMap<String, Int> = collections.MutableMap.with_capacity(8)
+    .insert("a", 1)
+    .insert("b", 2)
+  m.len()
+}

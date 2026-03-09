@@ -1,0 +1,8 @@
+import collections
+
+fn main() -> Int {
+  let s: MutableSet<String> = collections.MutableSet.with_capacity(8)
+    .insert("a")
+    .insert("b")
+  s.len()
+}
