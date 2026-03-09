@@ -52,6 +52,7 @@ pub enum IntrinsicFn {
     MutableListNew,
     MutableListFromList,
     MutableListPush,
+    MutableListInsert,
     MutableListLast,
     MutableListPop,
     MutableListExtend,
@@ -59,6 +60,8 @@ pub enum IntrinsicFn {
     MutableListIsEmpty,
     MutableListGet,
     MutableListSet,
+    MutableListDeleteAt,
+    MutableListRemoveAt,
     MutableListUpdate,
     MutablePriorityQueueNewMin,
     MutablePriorityQueueNewMax,
@@ -616,6 +619,39 @@ impl IntrinsicFn {
                 xs.push(val);
                 Ok(Value::MutableList(xs))
             }
+            IntrinsicFn::MutableListInsert => {
+                let mut args = args;
+                let val = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_list_insert: missing value argument".into(),
+                ))?;
+                let Value::Int(i) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_list_insert: missing index argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_insert expects an Int index".into(),
+                    ));
+                };
+                let Value::MutableList(xs) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_list_insert: missing mutable list argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_insert expects a MutableList".into(),
+                    ));
+                };
+
+                let len = xs.len();
+                if i < 0 || i as usize > len {
+                    return Err(RuntimeError::IndexOutOfBounds {
+                        index: i,
+                        len: len as i64,
+                    });
+                }
+
+                xs.insert(i as usize, val);
+                Ok(Value::MutableList(xs))
+            }
             IntrinsicFn::MutableListExtend => {
                 let mut args = args;
                 let Value::List(values) = args.pop().ok_or(RuntimeError::TypeError(
@@ -686,6 +722,65 @@ impl IntrinsicFn {
                 xs.set(i as usize, val);
                 Ok(Value::MutableList(xs))
             }
+            IntrinsicFn::MutableListDeleteAt => {
+                let mut args = args;
+                let Value::Int(i) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_list_delete_at: missing index argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_delete_at expects an Int index".into(),
+                    ));
+                };
+                let Value::MutableList(xs) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_list_delete_at: missing mutable list argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_delete_at expects a MutableList".into(),
+                    ));
+                };
+
+                let len = xs.len();
+                if i < 0 || i as usize >= len {
+                    return Err(RuntimeError::IndexOutOfBounds {
+                        index: i,
+                        len: len as i64,
+                    });
+                }
+
+                xs.delete_at(i as usize);
+                Ok(Value::MutableList(xs))
+            }
+            IntrinsicFn::MutableListRemoveAt => {
+                let mut args = args;
+                let Value::Int(i) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_list_remove_at: missing index argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_remove_at expects an Int index".into(),
+                    ));
+                };
+                let Value::MutableList(xs) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_list_remove_at: missing mutable list argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_remove_at expects a MutableList".into(),
+                    ));
+                };
+
+                let len = xs.len();
+                if i < 0 || i as usize >= len {
+                    return Err(RuntimeError::IndexOutOfBounds {
+                        index: i,
+                        len: len as i64,
+                    });
+                }
+
+                Ok(xs.remove_at(i as usize))
+            }
             IntrinsicFn::MutablePriorityQueueNewMin => {
                 Ok(Value::mutable_priority_queue(PriorityQueueDirection::Min))
             }
@@ -716,7 +811,9 @@ impl IntrinsicFn {
                     ));
                 };
                 let capacity = usize::try_from(capacity).map_err(|_| {
-                    RuntimeError::TypeError("mutable_map_with_capacity: capacity must be >= 0".into())
+                    RuntimeError::TypeError(
+                        "mutable_map_with_capacity: capacity must be >= 0".into(),
+                    )
                 })?;
                 Ok(Value::mutable_map_with_capacity(capacity))
             }
@@ -824,7 +921,9 @@ impl IntrinsicFn {
                     ));
                 };
                 let capacity = usize::try_from(capacity).map_err(|_| {
-                    RuntimeError::TypeError("mutable_set_with_capacity: capacity must be >= 0".into())
+                    RuntimeError::TypeError(
+                        "mutable_set_with_capacity: capacity must be >= 0".into(),
+                    )
                 })?;
                 Ok(Value::mutable_set_with_capacity(capacity))
             }
@@ -1966,6 +2065,10 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
             IntrinsicFn::MutableListPush,
         ),
         (
+            Name::new(interner, "mutable_list_insert"),
+            IntrinsicFn::MutableListInsert,
+        ),
+        (
             Name::new(interner, "mutable_list_last"),
             IntrinsicFn::MutableListLast,
         ),
@@ -1992,6 +2095,14 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (
             Name::new(interner, "mutable_list_set"),
             IntrinsicFn::MutableListSet,
+        ),
+        (
+            Name::new(interner, "mutable_list_delete_at"),
+            IntrinsicFn::MutableListDeleteAt,
+        ),
+        (
+            Name::new(interner, "mutable_list_remove_at"),
+            IntrinsicFn::MutableListRemoveAt,
         ),
         (
             Name::new(interner, "mutable_list_update"),

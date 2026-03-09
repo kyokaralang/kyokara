@@ -1403,6 +1403,12 @@ fn infer_collections_mutable_list_constructor_happy_paths_rfc_0005() {
         }"#,
         r#"import collections
         fn main() -> Int {
+            let xs = collections.MutableList.new().insert(0, 1).insert(1, 3).insert(1, 2)
+            let removed = xs.remove_at(0)
+            xs.delete_at(1).len() + removed
+        }"#,
+        r#"import collections
+        fn main() -> Int {
             collections.MutableList.from_list(collections.List.new().push(1).push(2).push(3))
                 .map(fn(n: Int) => n * 2)
                 .zip(collections.List.new().push(10))
@@ -1470,7 +1476,23 @@ fn err_mutable_list_wrong_arity_or_type_rfc_0005() {
             expected_fragment: "type mismatch",
         },
         Case {
+            src: "import collections\nfn main() -> Int { collections.MutableList.new().push(1).insert(0, \"x\").len() }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "import collections\nfn main() -> Int { collections.MutableList.new().insert(false, 1).len() }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
             src: "import collections\nfn main() -> Int { collections.MutableList.new().push(1).get(false).unwrap_or(0) }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "import collections\nfn main() -> Int { collections.MutableList.new().push(1).delete_at(false).len() }",
+            expected_fragment: "type mismatch",
+        },
+        Case {
+            src: "import collections\nfn main() -> Int { collections.MutableList.new().push(1).remove_at(false) }",
             expected_fragment: "type mismatch",
         },
         Case {
@@ -1480,6 +1502,18 @@ fn err_mutable_list_wrong_arity_or_type_rfc_0005() {
         Case {
             src: "import collections\nfn main() -> Int { collections.MutableList.new().push(1).pop(1).unwrap_or(0) }",
             expected_fragment: "expected 0 argument(s)",
+        },
+        Case {
+            src: "import collections\nfn main() -> Int { collections.MutableList.new().insert(0).len() }",
+            expected_fragment: "expected 2 argument(s)",
+        },
+        Case {
+            src: "import collections\nfn main() -> Int { collections.MutableList.new().push(1).delete_at().len() }",
+            expected_fragment: "expected 1 argument(s)",
+        },
+        Case {
+            src: "import collections\nfn main() -> Int { collections.MutableList.new().push(1).remove_at(0, 1) }",
+            expected_fragment: "expected 1 argument(s)",
         },
         Case {
             src: "import collections\nfn main() -> Int { collections.MutableList.new().extend(1).len() }",

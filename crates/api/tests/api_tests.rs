@@ -5443,6 +5443,21 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_mutable_list_indexed_edit_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+fn main() -> Int {
+    let xs = collections.MutableList.new().insert(0, 1).insert(1, 3).insert(1, 2)
+    let removed = xs.remove_at(0)
+    let alias = xs.delete_at(1)
+    removed + alias.get(0).unwrap_or(0)
+}"#,
+        "collections.MutableList indexed edit canonical surface",
+    );
+}
+
+#[test]
 fn check_collections_mutable_list_alias_constructor_surface_has_no_diagnostics_rfc_0005() {
     assert_check_no_diagnostics(
         r#"import collections as c

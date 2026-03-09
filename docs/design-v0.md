@@ -634,9 +634,10 @@ while `io`/`fs` are module namespaces for effectful operations.
     found index returns `>= 0`; missing element returns `-(insertion_point + 1)`.
     `insertion_point` is where `x` would be inserted to keep sorted order.
     Only naturally orderable element types are allowed (same as `xs.sort()`).
-* `MutableList<T>` — opaque builtin type with alias-visible in-place runtime storage (`Rc<RefCell<Vec<Value>>>`) ✓
+* `MutableList<T>` — opaque builtin type with alias-visible in-place runtime storage (`Rc<RefCell<Rc<Vec<Value>>>>`) ✓
   * Constructors: `collections.MutableList.new()` and `collections.MutableList.from_list(xs)` (requires `import collections`)
-  * Methods (storage/random-access): `xs.push(v)`, `xs.last()` → `Option<T>`, `xs.pop()` → `Option<T>`, `xs.extend(ys)` where `ys: List<T>`, `xs.len()`, `xs.is_empty()`, `xs.get(i)` → `Option<T>`, `xs.set(i, v)`, `xs.update(i, f)`, `xs[i]`
+  * Methods (storage/random-access): `xs.push(v)`, `xs.insert(i, v)`, `xs.last()` → `Option<T>`, `xs.pop()` → `Option<T>`, `xs.extend(ys)` where `ys: List<T>`, `xs.len()`, `xs.is_empty()`, `xs.get(i)` → `Option<T>`, `xs.set(i, v)`, `xs.delete_at(i)`, `xs.remove_at(i)` → `T`, `xs.update(i, f)`, `xs[i]`
+  * Indexed edit semantics: `insert` requires `0 <= i <= len`; `delete_at/remove_at/set/update` require `0 <= i < len`; out-of-bounds is a direct runtime error. Use `delete_at` for fluent deletion and `remove_at` when you need the removed value.
   * Methods (traversal): `xs.map(f)`, `xs.filter(f)`, `xs.scan(init, f)`, `xs.enumerate()`, `xs.zip(other)`, `xs.chunks(n)`, `xs.windows(n)`, `xs.fold(init, f)`, `xs.count()`, `xs.count(f)`, `xs.contains(value)`, `xs.frequencies()`, `xs.any(f)`, `xs.all(f)`, `xs.find(f)`, `xs.to_list()`
   * Mutation semantics: updates are visible across aliases that reference the same `MutableList`.
 * `MutableMap<K, V>` — opaque builtin type with alias-visible mutable key/value storage. Keys must satisfy `Hash + Eq`; invalid key types are rejected at compile time for typed mutable-map operations (E0024). For nominal keys, derive or implement those traits explicitly, e.g. `type Point derive(Eq, Hash) = { x: Int, y: Int }`. Primitive keys (`Int`, `String`, `Char`, `Bool`, `Unit`) use an internal ordered open-address fast path in mutable workloads; this is an implementation detail, not a separate surface type. ✓

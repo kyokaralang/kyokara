@@ -2646,6 +2646,41 @@ fn main() -> Int {
 }
 
 #[test]
+fn eval_mutable_list_insert_delete_at_and_remove_at_semantics() {
+    let val = run_ok(
+        r#"import collections
+
+fn main() -> Int {
+    let xs = collections.MutableList.new()
+    let alias = xs
+    let _ = xs.insert(0, 10).insert(1, 30).insert(1, 20).insert(xs.len(), 40)
+    let last_removed = xs.remove_at(xs.len() - 1)
+    let _ = xs.delete_at(1).insert(1, 25).delete_at(0)
+    if (last_removed == 40 && alias.len() == 2 && alias.get(0).unwrap_or(0) == 25 && alias.get(1).unwrap_or(0) == 30) {
+        1
+    } else {
+        0
+    }
+}"#,
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
+fn eval_mutable_list_remove_at_singleton_leaves_empty() {
+    let val = run_ok(
+        r#"import collections
+
+fn main() -> Int {
+    let xs = collections.MutableList.new().insert(0, 42)
+    let removed = xs.remove_at(0)
+    if (removed == 42 && xs.is_empty() && xs.len() == 0) { 1 } else { 0 }
+}"#,
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
 fn eval_mutable_list_last_and_pop_return_none_on_empty() {
     let val = run_ok(
         r#"import collections
@@ -2688,6 +2723,51 @@ fn eval_mutable_list_indexing_and_bounds_behavior() {
          }",
     );
     assert!(matches!(val, Value::Int(1)));
+
+    let err = run_err(
+        "import collections
+         fn main() -> Int {
+           let xs = collections.MutableList.new()
+           xs.delete_at(0).len()
+         }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
+
+    let err = run_err(
+        "import collections
+         fn main() -> Int {
+           let xs = collections.MutableList.new()
+           xs.remove_at(0)
+         }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
+
+    let err = run_err(
+        "import collections
+         fn main() -> Int {
+           let xs = collections.MutableList.from_list(collections.List.new().push(3).push(4))
+           xs.insert(3, 0).len()
+         }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
+
+    let err = run_err(
+        "import collections
+         fn main() -> Int {
+           let xs = collections.MutableList.from_list(collections.List.new().push(3).push(4))
+           xs.delete_at(-1).len()
+         }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
+
+    let err = run_err(
+        "import collections
+         fn main() -> Int {
+           let xs = collections.MutableList.from_list(collections.List.new().push(3).push(4))
+           xs.remove_at(2)
+         }",
+    );
+    assert!(err.contains("index out of bounds"), "got: {err}");
 
     let err = run_err(
         "import collections
@@ -2773,6 +2853,21 @@ fn main() -> Int {
 }"#,
     );
     assert_eq!(val, Value::Int(1020));
+}
+
+#[test]
+fn eval_mutable_list_seq_snapshot_excludes_indexed_edits_after_pipeline_creation() {
+    let val = run_ok(
+        r#"import collections
+
+fn main() -> Int {
+    let xs = collections.MutableList.from_list(collections.List.new().push(10).push(20).push(30))
+    let seq = xs.map(fn(n: Int) => n)
+    let _ = xs.insert(1, 99).delete_at(0)
+    seq.fold(0, fn(acc: Int, n: Int) => acc * 100 + n)
+}"#,
+    );
+    assert_eq!(val, Value::Int(102030));
 }
 
 #[test]

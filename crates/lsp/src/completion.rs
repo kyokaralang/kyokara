@@ -803,9 +803,7 @@ mod tests {
         let source = "import collections\nfn main() -> Int {\n  let m: MutableMap<String, Int> = collections.MutableMap.with_capacity(4)\n  m.len()\n}";
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
-        let pos = source
-            .find("with_capacity")
-            .expect("with_capacity offset");
+        let pos = source.find("with_capacity").expect("with_capacity offset");
         let offset = TextSize::from(pos as u32);
         let items = completion_items(&analysis, source, offset);
         assert!(
@@ -823,9 +821,7 @@ mod tests {
         let source = "import collections\nfn main() -> Int {\n  let s: MutableSet<String> = collections.MutableSet.with_capacity(4)\n  s.len()\n}";
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
-        let pos = source
-            .find("with_capacity")
-            .expect("with_capacity offset");
+        let pos = source.find("with_capacity").expect("with_capacity offset");
         let offset = TextSize::from(pos as u32);
         let items = completion_items(&analysis, source, offset);
         assert!(
@@ -849,6 +845,28 @@ mod tests {
         assert!(
             items.iter().any(|i| i.label == "get_or_insert_with"),
             "expected 'get_or_insert_with' in MutableMap receiver completion: {items:?}"
+        );
+    }
+
+    #[test]
+    fn completion_dot_after_mutable_list_value_shows_indexed_edit_methods() {
+        let source = "import collections\nfn main() -> Int {\n  let xs = collections.MutableList.new().push(1)\n  xs.len()\n}";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let field_pos = source.find("len").expect("len offset");
+        let offset = TextSize::from(field_pos as u32);
+        let items = completion_items(&analysis, source, offset);
+        assert!(
+            items.iter().any(|i| i.label == "insert"),
+            "expected 'insert' in MutableList receiver completion: {items:?}"
+        );
+        assert!(
+            items.iter().any(|i| i.label == "delete_at"),
+            "expected 'delete_at' in MutableList receiver completion: {items:?}"
+        );
+        assert!(
+            items.iter().any(|i| i.label == "remove_at"),
+            "expected 'remove_at' in MutableList receiver completion: {items:?}"
         );
     }
 

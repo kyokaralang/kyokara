@@ -730,7 +730,12 @@ impl PrimitiveMutableMapValue {
     }
 
     fn rehash(&mut self, slot_count: usize) {
-        let live_entries: Vec<_> = self.entries.iter().filter(|entry| entry.live).cloned().collect();
+        let live_entries: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|entry| entry.live)
+            .cloned()
+            .collect();
         let slot_count = slot_count
             .max(initial_slot_count_from_hint(live_entries.len()))
             .max(if live_entries.is_empty() { 0 } else { 8 });
@@ -901,7 +906,12 @@ impl PrimitiveMutableSetValue {
     }
 
     fn rehash(&mut self, slot_count: usize) {
-        let live_entries: Vec<_> = self.entries.iter().filter(|entry| entry.live).cloned().collect();
+        let live_entries: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|entry| entry.live)
+            .cloned()
+            .collect();
         let slot_count = slot_count
             .max(initial_slot_count_from_hint(live_entries.len()))
             .max(if live_entries.is_empty() { 0 } else { 8 });
@@ -1053,12 +1063,7 @@ impl MutableMapValue {
         }
     }
 
-    pub fn contains_with<E>(
-        &self,
-        hash: i64,
-        key: &Value,
-        eq: &mut E,
-    ) -> Result<bool, RuntimeError>
+    pub fn contains_with<E>(&self, hash: i64, key: &Value, eq: &mut E) -> Result<bool, RuntimeError>
     where
         E: FnMut(&Value, &Value) -> Result<bool, RuntimeError>,
     {
@@ -1335,6 +1340,11 @@ impl MutableListValue {
         Rc::make_mut(&mut *items).push(value);
     }
 
+    pub fn insert(&self, idx: usize, value: Value) {
+        let mut items = self.items.borrow_mut();
+        Rc::make_mut(&mut *items).insert(idx, value);
+    }
+
     pub fn pop(&self) -> Option<Value> {
         let mut items = self.items.borrow_mut();
         Rc::make_mut(&mut *items).pop()
@@ -1351,6 +1361,16 @@ impl MutableListValue {
     pub fn set(&self, idx: usize, value: Value) {
         let mut items = self.items.borrow_mut();
         Rc::make_mut(&mut *items)[idx] = value;
+    }
+
+    pub fn delete_at(&self, idx: usize) {
+        let mut items = self.items.borrow_mut();
+        Rc::make_mut(&mut *items).remove(idx);
+    }
+
+    pub fn remove_at(&self, idx: usize) -> Value {
+        let mut items = self.items.borrow_mut();
+        Rc::make_mut(&mut *items).remove(idx)
     }
 
     pub fn shares_alias_storage_with(&self, other: &Self) -> bool {
@@ -2022,6 +2042,71 @@ impl Value {
 mod tests {
     use super::*;
 
+    fn int_values(xs: &[i64]) -> Vec<Value> {
+        xs.iter().map(|&n| Value::Int(n)).collect()
+    }
+
+    fn assert_mutable_list_matches_model(items: &MutableListValue, expected: &[i64]) {
+        let expected_values = int_values(expected);
+        assert_eq!(items.len(), expected.len());
+        assert_eq!(items.is_empty(), expected.is_empty());
+        assert_eq!(items.snapshot().as_ref(), expected_values.as_slice());
+        for (idx, expected_value) in expected_values.iter().enumerate() {
+            assert_eq!(items.get_cloned(idx), Some(expected_value.clone()));
+        }
+        assert_eq!(items.get_cloned(expected.len()), None);
+        assert_eq!(items.last_cloned(), expected_values.last().cloned());
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum IndexedEditOp {
+        Insert { idx: usize, value: i64 },
+        DeleteAt { idx: usize },
+        RemoveAt { idx: usize },
+    }
+
+    fn explore_mutable_list_indexed_edit_model(expected: Vec<i64>, remaining_depth: usize) {
+        let items = MutableListValue::new(int_values(&expected));
+        assert_mutable_list_matches_model(&items, &expected);
+
+        if remaining_depth == 0 {
+            return;
+        }
+
+        let mut ops = Vec::new();
+        for idx in 0..=expected.len() {
+            for value in [0, 1, 2] {
+                ops.push(IndexedEditOp::Insert { idx, value });
+            }
+        }
+        for idx in 0..expected.len() {
+            ops.push(IndexedEditOp::DeleteAt { idx });
+            ops.push(IndexedEditOp::RemoveAt { idx });
+        }
+
+        for op in ops {
+            let branch_items = MutableListValue::new(int_values(&expected));
+            let mut branch_expected = expected.clone();
+            match op {
+                IndexedEditOp::Insert { idx, value } => {
+                    branch_items.insert(idx, Value::Int(value));
+                    branch_expected.insert(idx, value);
+                }
+                IndexedEditOp::DeleteAt { idx } => {
+                    branch_items.delete_at(idx);
+                    branch_expected.remove(idx);
+                }
+                IndexedEditOp::RemoveAt { idx } => {
+                    let removed = branch_items.remove_at(idx);
+                    let expected_removed = branch_expected.remove(idx);
+                    assert_eq!(removed, Value::Int(expected_removed));
+                }
+            }
+            assert_mutable_list_matches_model(&branch_items, &branch_expected);
+            explore_mutable_list_indexed_edit_model(branch_expected, remaining_depth - 1);
+        }
+    }
+
     #[test]
     fn list_clone_shares_storage_for_cow() {
         let original = Value::list(vec![Value::Int(1), Value::Int(2)]);
@@ -2092,6 +2177,38 @@ mod tests {
             items.current_backing_ptr(),
             "mutation should move aliases to a new current backing while preserving the old snapshot"
         );
+    }
+
+    #[test]
+    fn mutable_list_snapshot_preserves_old_backing_after_remove_at() {
+        let value = Value::mutable_list(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
+        let Value::MutableList(items) = &value else {
+            panic!("expected mutable list value");
+        };
+
+        let snapshot = items.snapshot();
+        let snapshot_ptr = Rc::as_ptr(&snapshot);
+
+        let removed = items.remove_at(1);
+
+        assert_eq!(removed, Value::Int(2));
+        assert_eq!(
+            snapshot.as_ref(),
+            &vec![Value::Int(1), Value::Int(2), Value::Int(3)]
+        );
+        assert_eq!(items.snapshot().as_ref(), &vec![Value::Int(1), Value::Int(3)]);
+        assert_ne!(
+            snapshot_ptr,
+            items.current_backing_ptr(),
+            "remove_at should move aliases to a new current backing while preserving the old snapshot"
+        );
+    }
+
+    #[test]
+    fn mutable_list_indexed_edits_match_vec_model_for_short_sequences() {
+        for initial in [vec![], vec![0], vec![0, 1]] {
+            explore_mutable_list_indexed_edit_model(initial, 4);
+        }
     }
 
     #[test]
@@ -2277,8 +2394,14 @@ mod tests {
             .iter()
             .map(|entry| entry.key.clone())
             .collect();
-        assert_eq!(keys, vec![Value::String("a".into()), Value::String("b".into())]);
-        assert_eq!(snapshot.get(&MapKey::String("b".into())), Some(&Value::Int(3)));
+        assert_eq!(
+            keys,
+            vec![Value::String("a".into()), Value::String("b".into())]
+        );
+        assert_eq!(
+            snapshot.get(&MapKey::String("b".into())),
+            Some(&Value::Int(3))
+        );
     }
 
     #[test]
@@ -2297,7 +2420,10 @@ mod tests {
             .iter()
             .map(|entry| entry.value.clone())
             .collect();
-        assert_eq!(values, vec![Value::String("a".into()), Value::String("b".into())]);
+        assert_eq!(
+            values,
+            vec![Value::String("a".into()), Value::String("b".into())]
+        );
         assert!(snapshot.contains(&MapKey::String("b".into())));
     }
 }

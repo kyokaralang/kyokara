@@ -731,6 +731,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             "push",
         ),
         (
+            "mutable_list_insert",
+            ReceiverKey::Core(CoreType::MutableList),
+            "insert",
+        ),
+        (
             "mutable_list_last",
             ReceiverKey::Core(CoreType::MutableList),
             "last",
@@ -764,6 +769,16 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             "mutable_list_set",
             ReceiverKey::Core(CoreType::MutableList),
             "set",
+        ),
+        (
+            "mutable_list_delete_at",
+            ReceiverKey::Core(CoreType::MutableList),
+            "delete_at",
+        ),
+        (
+            "mutable_list_remove_at",
+            ReceiverKey::Core(CoreType::MutableList),
+            "remove_at",
         ),
         (
             "mutable_list_update",
@@ -2139,6 +2154,18 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![("xs", mutable_list_t.clone()), ("x", t_ref.clone())],
             mutable_list_t.clone(),
         ),
+        // mutable_list_insert<T>(xs: MutableList<T>, i: Int, x: T) -> MutableList<T>
+        mk_intrinsic(
+            interner,
+            "mutable_list_insert",
+            vec![t_name],
+            vec![
+                ("xs", mutable_list_t.clone()),
+                ("i", int_ty.clone()),
+                ("x", t_ref.clone()),
+            ],
+            mutable_list_t.clone(),
+        ),
         // mutable_list_last<T>(xs: MutableList<T>) -> Option<T>
         mk_intrinsic(
             interner,
@@ -2198,6 +2225,22 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
                 ("x", t_ref.clone()),
             ],
             mutable_list_t.clone(),
+        ),
+        // mutable_list_delete_at<T>(xs: MutableList<T>, i: Int) -> MutableList<T>
+        mk_intrinsic(
+            interner,
+            "mutable_list_delete_at",
+            vec![t_name],
+            vec![("xs", mutable_list_t.clone()), ("i", int_ty.clone())],
+            mutable_list_t.clone(),
+        ),
+        // mutable_list_remove_at<T>(xs: MutableList<T>, i: Int) -> T
+        mk_intrinsic(
+            interner,
+            "mutable_list_remove_at",
+            vec![t_name],
+            vec![("xs", mutable_list_t.clone()), ("i", int_ty.clone())],
+            t_ref.clone(),
         ),
         // mutable_list_update<T>(xs: MutableList<T>, i: Int, f: fn(T) -> T) -> MutableList<T>
         mk_intrinsic(
