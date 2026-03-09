@@ -714,6 +714,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_windows", ReceiverKey::Core(CoreType::List), "windows"),
         ("seq_count", ReceiverKey::Core(CoreType::List), "count"),
         ("seq_count_by", ReceiverKey::Core(CoreType::List), "count"),
+        ("seq_contains", ReceiverKey::Core(CoreType::List), "contains"),
         (
             "seq_frequencies",
             ReceiverKey::Core(CoreType::List),
@@ -968,6 +969,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             "count",
         ),
         (
+            "seq_contains",
+            ReceiverKey::Core(CoreType::MutableList),
+            "contains",
+        ),
+        (
             "seq_frequencies",
             ReceiverKey::Core(CoreType::MutableList),
             "frequencies",
@@ -1021,6 +1027,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_windows", ReceiverKey::Core(CoreType::Deque), "windows"),
         ("seq_count", ReceiverKey::Core(CoreType::Deque), "count"),
         ("seq_count_by", ReceiverKey::Core(CoreType::Deque), "count"),
+        ("seq_contains", ReceiverKey::Core(CoreType::Deque), "contains"),
         (
             "seq_frequencies",
             ReceiverKey::Core(CoreType::Deque),
@@ -1045,6 +1052,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_windows", ReceiverKey::Core(CoreType::Seq), "windows"),
         ("seq_count", ReceiverKey::Core(CoreType::Seq), "count"),
         ("seq_count_by", ReceiverKey::Core(CoreType::Seq), "count"),
+        ("seq_contains", ReceiverKey::Core(CoreType::Seq), "contains"),
         (
             "seq_frequencies",
             ReceiverKey::Core(CoreType::Seq),
@@ -2758,6 +2766,14 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![t_name],
             vec![("s", seq_t.clone()), ("f", fn_t_to_bool.clone())],
             int_ty.clone(),
+        ),
+        // seq_contains<T>(s: Seq<T>, needle: T) -> Bool
+        mk_intrinsic(
+            interner,
+            "seq_contains",
+            vec![t_name],
+            vec![("s", seq_t.clone()), ("needle", t_ref.clone())],
+            bool_ty.clone(),
         ),
         // seq_frequencies<T>(s: Seq<T>) -> Map<T, Int>
         mk_intrinsic(

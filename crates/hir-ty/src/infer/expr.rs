@@ -1773,6 +1773,7 @@ impl<'a> InferenceCtx<'a> {
                 | "seq_windows"
                 | "seq_count"
                 | "seq_count_by"
+                | "seq_contains"
                 | "seq_frequencies"
                 | "seq_any"
                 | "seq_all"
@@ -2082,6 +2083,22 @@ impl<'a> InferenceCtx<'a> {
                     && self.ty_satisfies_trait(&elem_ty, "Eq"))
                 {
                     self.push_diag(TyDiagnosticData::InvalidMapKey { ty: elem_ty });
+                }
+            }
+
+            // Check contains() element type: traversal elements must implement Eq.
+            if matches!(
+                core,
+                Some(CoreType::List | CoreType::MutableList | CoreType::Deque | CoreType::Seq)
+            ) && !args.is_empty()
+                && method_str == "seq_contains"
+            {
+                let elem_ty = self.table.resolve_deep(&args[0]);
+                if !self.ty_satisfies_trait(&elem_ty, "Eq") {
+                    self.push_diag(TyDiagnosticData::MissingTraitImpl {
+                        trait_name: "Eq".to_owned(),
+                        ty: elem_ty,
+                    });
                 }
             }
 
