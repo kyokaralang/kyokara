@@ -36,6 +36,8 @@ pub enum TyDiagnosticData {
     PositionalAfterNamedArg,
     /// Required parameter not provided by call arguments.
     MissingNamedArg { name: String },
+    /// Parameter must be passed by name.
+    NamedArgRequired { name: String },
     /// Field access on non-record type.
     NoSuchField { field: String, ty: Ty },
     /// Missing match arms for an ADT.
@@ -84,6 +86,8 @@ pub enum TyDiagnosticData {
     CapturedMutableLocal { name: String },
     /// Type does not implement a required trait.
     MissingTraitImpl { trait_name: String, ty: Ty },
+    /// Overloaded function family used as a value instead of a call.
+    OverloadedFunctionFamily { name: String },
 }
 
 impl TyDiagnosticData {
@@ -103,6 +107,7 @@ impl TyDiagnosticData {
             TyDiagnosticData::DuplicateNamedArg { .. } => "E0019",
             TyDiagnosticData::MissingNamedArg { .. } => "E0020",
             TyDiagnosticData::PositionalAfterNamedArg => "E0026",
+            TyDiagnosticData::NamedArgRequired { .. } => "E0038",
             TyDiagnosticData::NoSuchField { .. } => "E0008",
             TyDiagnosticData::MissingMatchArms { .. } => "E0009",
             TyDiagnosticData::RedundantMatchArm => "E0010",
@@ -127,6 +132,7 @@ impl TyDiagnosticData {
             TyDiagnosticData::ImmutableAssignment { .. } => "E0034",
             TyDiagnosticData::CapturedMutableLocal { .. } => "E0035",
             TyDiagnosticData::MissingTraitImpl { .. } => "E0037",
+            TyDiagnosticData::OverloadedFunctionFamily { .. } => "E0039",
         }
     }
 
@@ -217,6 +223,9 @@ impl TyDiagnosticData {
             TyDiagnosticData::MissingNamedArg { name } => {
                 format!("missing argument for parameter `{name}`")
             }
+            TyDiagnosticData::NamedArgRequired { name } => {
+                format!("parameter `{name}` must be passed by name")
+            }
             TyDiagnosticData::NoSuchField { field, ty } => {
                 format!("no field `{field}` on type `{}`", dt(ty),)
             }
@@ -294,6 +303,11 @@ impl TyDiagnosticData {
             }
             TyDiagnosticData::MissingTraitImpl { trait_name, ty } => {
                 format!("type `{}` does not implement trait `{trait_name}`", dt(ty))
+            }
+            TyDiagnosticData::OverloadedFunctionFamily { name } => {
+                format!(
+                    "overloaded function family `{name}` must be called with arguments to disambiguate"
+                )
             }
         };
         Diagnostic::error(message, span)

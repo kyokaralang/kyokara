@@ -162,6 +162,7 @@ pub enum IntrinsicFn {
     StringLen,
     StringContains,
     StringStartsWith,
+    StringStartsWithFrom,
     StringEndsWith,
     StringTrim,
     StringMd5,
@@ -1428,6 +1429,33 @@ impl IntrinsicFn {
                 };
                 Ok(Value::Bool(s.starts_with(prefix.as_str())))
             }
+            IntrinsicFn::StringStartsWithFrom => {
+                let Value::String(s) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "string_starts_with_from expects String arguments".into(),
+                    ));
+                };
+                let Value::String(prefix) = &args[1] else {
+                    return Err(RuntimeError::TypeError(
+                        "string_starts_with_from expects String arguments".into(),
+                    ));
+                };
+                let Value::Int(start) = &args[2] else {
+                    return Err(RuntimeError::TypeError(
+                        "string_starts_with_from expects Int start".into(),
+                    ));
+                };
+                if *start < 0 {
+                    return Ok(Value::Bool(false));
+                }
+                let start = *start as usize;
+                let chars: Vec<char> = s.chars().collect();
+                if start > chars.len() {
+                    return Ok(Value::Bool(false));
+                }
+                let tail: String = chars[start..].iter().collect();
+                Ok(Value::Bool(tail.starts_with(prefix.as_str())))
+            }
             IntrinsicFn::StringEndsWith => {
                 let Value::String(s) = &args[0] else {
                     return Err(RuntimeError::TypeError(
@@ -2375,6 +2403,10 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (
             Name::new(interner, "string_starts_with"),
             IntrinsicFn::StringStartsWith,
+        ),
+        (
+            Name::new(interner, "string_starts_with_from"),
+            IntrinsicFn::StringStartsWithFrom,
         ),
         (
             Name::new(interner, "string_ends_with"),

@@ -67,10 +67,11 @@ pub struct FnItem {
 }
 
 /// A function parameter.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FnParam {
     pub name: Name,
     pub ty: TypeRef,
+    pub named_only: bool,
 }
 
 /// A type definition.

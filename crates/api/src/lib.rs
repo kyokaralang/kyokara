@@ -1394,6 +1394,7 @@ fn resolved_symbol_id(
     match resolved {
         ResolvedName::Local(ScopeDef::Local(pat_idx)) => Some(local_symbol_id(fn_id, *pat_idx)),
         ResolvedName::Fn(fn_idx) => fn_id_map.get(fn_idx).cloned(),
+        ResolvedName::FnFamily(_) => None,
         ResolvedName::Type(type_idx) => {
             let name = item_tree.types[*type_idx].name.resolve(interner);
             Some(symbol_id("type", name, module_prefix))

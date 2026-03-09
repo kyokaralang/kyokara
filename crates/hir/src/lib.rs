@@ -14,6 +14,7 @@ pub use kyokara_hir_def::builtins::register_builtin_traits;
 pub use kyokara_hir_def::builtins::register_builtin_types;
 pub use kyokara_hir_def::builtins::register_static_methods;
 pub use kyokara_hir_def::builtins::register_synthetic_modules;
+pub use kyokara_hir_def::call_family::call_shapes_overlap;
 pub use kyokara_hir_def::item_tree::lower::collect_item_tree;
 pub use kyokara_hir_def::item_tree::{
     EffectItem, FnItem, FnParam, ItemTree, PropertyItem, PropertyItemIdx, TypeDefKind, TypeItem,
@@ -524,10 +525,25 @@ fn resolve_project_imports(
             match item {
                 PubData::Fn(mut fn_item) => {
                     let name = fn_item.name;
-                    if importing_info.scope.functions.contains_key(&name) {
+                    let overlaps_existing = importing_info
+                        .scope
+                        .functions
+                        .get(&name)
+                        .map(|existing| {
+                            existing.iter().any(|existing_idx| {
+                                call_shapes_overlap(
+                                    &importing_info.item_tree.functions[*existing_idx].params,
+                                    &fn_item.params,
+                                )
+                            })
+                        })
+                        .unwrap_or(false);
+                    if overlaps_existing {
                         let name_str = name.resolve(interner);
                         diagnostics.push(kyokara_diagnostics::Diagnostic::error(
-                            format!("conflicting import: `{name_str}` is already defined"),
+                            format!(
+                                "conflicting import: overload family for `{name_str}` overlaps an existing definition"
+                            ),
                             kyokara_span::Span {
                                 file: import_file_id,
                                 range: import_range,
@@ -539,7 +555,7 @@ fn resolve_project_imports(
                         // symbol-graph function nodes in the importing module.
                         fn_item.source_range = None;
                         let idx = importing_info.item_tree.functions.alloc(fn_item);
-                        importing_info.scope.functions.insert(name, idx);
+                        importing_info.scope.functions.entry(name).or_default().push(idx);
                     }
                 }
                 PubData::Type(type_item) => {

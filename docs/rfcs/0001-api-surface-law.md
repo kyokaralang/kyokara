@@ -150,6 +150,13 @@ true:
 5. no parallel synonym name is introduced for the same operation
 6. docs/examples/diagnostics/completion specify the full family explicitly
 
+This rule applies to both builtin APIs and user-defined functions/methods.
+Current user-declared source syntax exposes arity-distinct families directly.
+Named-only family branches are also supported by the call-family mechanism and
+used by builtin APIs such as `starts_with(prefix, start: idx)`, but
+user-declared named-only parameter syntax remains deferred until that source
+surface is specified separately.
+
 Canonical examples:
 
 - `xs.count()` counts all elements
@@ -247,6 +254,7 @@ Canonical consequences:
 - `List`/`Deque` expose storage methods and traversal methods directly
 - traversal transforms/terminals (`map/filter/enumerate/zip/chunks/windows/fold/any/all/find/count/contains/frequencies/to_list`) are callable on collection and producer values
 - `count` is a constrained call family under `L7A`: `count()` for all elements, `count(predicate)` for matching elements
+- user-defined arity-distinct families are allowed under `L7A` (for example `fn foo()` and `fn foo(x: Int)`)
 - producer traversal APIs stay traversal-capable (`String.split/lines/chars`, `Map.keys/values`, `Set.values`)
 
 ## Visibility policy (canonical decision)

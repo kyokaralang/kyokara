@@ -4564,6 +4564,30 @@ fn run_project_uses_imported_module_body_not_sibling() {
 }
 
 #[test]
+fn run_project_imported_overload_family_by_arity_dispatches() {
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let util_path = dir.path().join("util.ky");
+    let mut util_file = std::fs::File::create(&util_path).unwrap();
+    writeln!(util_file, "pub fn foo() -> Int {{ 1 }}").unwrap();
+    writeln!(util_file, "pub fn foo(x: Int) -> Int {{ x + 1 }}").unwrap();
+
+    let main_path = dir.path().join("main.ky");
+    let mut main_file = std::fs::File::create(&main_path).unwrap();
+    writeln!(main_file, "import util").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ foo() + foo(2) }}").unwrap();
+
+    let result = kyokara_eval::run_project(&main_path).expect("should succeed");
+    assert_eq!(
+        result.value,
+        Value::Int(4),
+        "imported overload family should dispatch by arity"
+    );
+}
+
+#[test]
 fn run_project_dual_import_same_name_is_conflict() {
     // When main.ky imports both util and other, and both export `foo`,
     // the second import should produce a conflicting-import error.
@@ -7822,6 +7846,64 @@ fn main() -> String { h.md5("abc") }"#,
 fn eval_method_string_starts_with() {
     let val = run_ok(r#"fn main() -> Bool { "hello world".starts_with("hello") }"#);
     assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_method_string_starts_with_named_offset() {
+    let val = run_ok(r#"fn main() -> Bool { "hello world".starts_with("lo", start: 3) }"#);
+    assert!(matches!(val, Value::Bool(true)));
+}
+
+#[test]
+fn eval_method_string_starts_with_named_offset_out_of_range_is_false() {
+    let val = run_ok(r#"fn main() -> Bool { "hello".starts_with("he", start: 99) }"#);
+    assert!(matches!(val, Value::Bool(false)));
+}
+
+#[test]
+fn eval_method_string_starts_with_named_offset_negative_is_false() {
+    let val = run_ok(r#"fn main() -> Bool { "hello".starts_with("he", start: -1) }"#);
+    assert!(matches!(val, Value::Bool(false)));
+}
+
+#[test]
+fn eval_user_defined_function_overload_family_by_arity_dispatches() {
+    let val = run_ok(
+        r#"fn foo() -> Int { 1 }
+fn foo(x: Int) -> Int { x + 1 }
+fn main() -> Int { foo() + foo(2) }"#,
+    );
+    assert_eq!(val, Value::Int(4));
+}
+
+#[test]
+fn eval_user_defined_method_overload_family_by_arity_dispatches() {
+    let val = run_ok(
+        r#"type Box = { value: Int }
+fn Box.size(self) -> Int { self.value }
+fn Box.size(self, extra: Int) -> Int { self.value + extra }
+fn main() -> Int {
+    let b = Box { value: 2 }
+    b.size() + b.size(3)
+}"#,
+    );
+    assert_eq!(val, Value::Int(7));
+}
+
+#[test]
+fn eval_overloaded_function_family_as_value_is_compile_error() {
+    let err = run_err(
+        r#"fn foo() -> Int { 1 }
+fn foo(x: Int) -> Int { x }
+fn main() -> Int {
+    let f = foo
+    0
+}"#,
+    );
+    assert!(
+        err.contains("E0039") || err.contains("overloaded function family `foo`"),
+        "expected overloaded-family-as-value error, got: {err}"
+    );
 }
 
 #[test]

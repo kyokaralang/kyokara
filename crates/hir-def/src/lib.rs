@@ -11,6 +11,7 @@
 
 pub mod body;
 pub mod builtins;
+pub mod call_family;
 pub mod expr;
 pub mod item_tree;
 pub mod module_graph;

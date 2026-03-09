@@ -10,6 +10,7 @@ use kyokara_syntax::ast::nodes::*;
 use kyokara_syntax::ast::traits::{HasName, HasTypeParams, HasVisibility};
 
 use crate::builtins::is_reserved_core_constructor_name;
+use crate::call_family::call_shapes_overlap;
 use crate::item_tree::*;
 use crate::name::Name;
 use crate::path::Path;
@@ -172,7 +173,11 @@ impl ItemTreeCtx<'_> {
                             ));
                             TypeRef::Error
                         };
-                        FnParam { name: pname, ty }
+                        FnParam {
+                            name: pname,
+                            ty,
+                            named_only: false,
+                        }
                     })
                     .collect::<Vec<_>>()
             })
@@ -409,7 +414,11 @@ impl ItemTreeCtx<'_> {
                             .type_expr()
                             .map(|te| self.lower_type_ref(&te))
                             .unwrap_or_else(|| self.self_type_ref());
-                        FnParam { name: pname, ty }
+                        FnParam {
+                            name: pname,
+                            ty,
+                            named_only: false,
+                        }
                     })
                     .collect::<Vec<_>>()
             })
@@ -473,7 +482,11 @@ impl ItemTreeCtx<'_> {
                                 self.substitute_self_type_ref(ty, impl_self_ty)
                             },
                         );
-                        FnParam { name: pname, ty }
+                        FnParam {
+                            name: pname,
+                            ty,
+                            named_only: false,
+                        }
                     })
                     .collect::<Vec<_>>()
             })
@@ -575,9 +588,30 @@ impl ItemTreeCtx<'_> {
                 continue;
             };
 
-            self.module_scope
+            let entry = self
+                .module_scope
                 .methods
-                .insert((receiver_key, method_name), vec![fn_idx]);
+                .entry((receiver_key, method_name))
+                .or_default();
+            if entry.iter().any(|existing_idx| {
+                call_shapes_overlap(
+                    &self.tree.functions[*existing_idx].params[1..],
+                    &self.tree.functions[fn_idx].params[1..],
+                )
+            }) {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        format!(
+                            "invalid overload family for method `{}`: call shapes overlap",
+                            method_name.resolve(self.interner)
+                        ),
+                        span,
+                    )
+                    .with_kind(DiagnosticKind::DuplicateDefinition),
+                );
+                continue;
+            }
+            entry.push(fn_idx);
         }
     }
 
@@ -667,7 +701,11 @@ impl ItemTreeCtx<'_> {
                 }
 
                 params.push(PropertyParamSpec {
-                    param: FnParam { name: pname, ty },
+                    param: FnParam {
+                        name: pname,
+                        ty,
+                        named_only: false,
+                    },
                     gen_spec,
                 });
             }
@@ -1037,19 +1075,26 @@ impl ItemTreeCtx<'_> {
     }
 
     fn register_fn(&mut self, name: Name, idx: FnItemIdx, syntax: &kyokara_syntax::SyntaxNode) {
-        if let std::collections::hash_map::Entry::Vacant(e) =
-            self.module_scope.functions.entry(name)
-        {
-            e.insert(idx);
-        } else {
+        let entry = self.module_scope.functions.entry(name).or_default();
+        if entry.iter().any(|existing_idx| {
+            call_shapes_overlap(
+                &self.tree.functions[*existing_idx].params,
+                &self.tree.functions[idx].params,
+            )
+        }) {
             let span = self.node_span(syntax);
             self.diagnostics.push(
                 Diagnostic::error(
-                    format!("duplicate function `{}`", name.resolve(self.interner)),
+                    format!(
+                        "invalid overload family for function `{}`: call shapes overlap",
+                        name.resolve(self.interner)
+                    ),
                     span,
                 )
                 .with_kind(DiagnosticKind::DuplicateDefinition),
             );
+        } else {
+            entry.push(idx);
         }
     }
 
