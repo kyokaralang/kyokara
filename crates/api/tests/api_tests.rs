@@ -2,9 +2,8 @@
 #![allow(clippy::unwrap_used)]
 
 use kyokara_api::{
-    check as raw_check, check_project, check_project_with_options,
-    check_with_options as raw_check_with_options, refactor, refactor_project, CheckOptions,
-    CheckOutput,
+    CheckOptions, CheckOutput, check as raw_check, check_project, check_project_with_options,
+    check_with_options as raw_check_with_options, refactor, refactor_project,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -5060,7 +5059,28 @@ fn check_result_ergonomics_canonical_surface_has_no_diagnostics() {
 
 #[test]
 fn check_string_md5_canonical_surface_has_no_diagnostics() {
-    assert_check_no_diagnostics(r#"fn main() -> String { "abc".md5() }"#, "string md5 canonical surface");
+    assert_check_no_diagnostics(
+        r#"fn main() -> String { "abc".md5() }"#,
+        "string md5 canonical surface",
+    );
+}
+
+#[test]
+fn check_hash_md5_canonical_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import hash
+fn main() -> String { hash.md5("abc") }"#,
+        "hash md5 canonical surface",
+    );
+}
+
+#[test]
+fn check_hash_md5_alias_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import hash as h
+fn main() -> String { h.md5("abc") }"#,
+        "hash md5 alias canonical surface",
+    );
 }
 
 #[test]

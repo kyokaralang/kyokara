@@ -714,7 +714,7 @@ while `io`/`fs` are module namespaces for effectful operations.
 * Canonical formatter (`kyokara fmt`, `kyokara-fmt` crate, Wadler-Lindig Doc IR) ✓
 * Stable symbol IDs (`kind::name` / `kind::parent::child` format, unique across symbol kinds) ✓
 * Runtime contract checks (requires/ensures/old) ✓
-* Core stdlib (List, MutableList, MutableMap, MutableSet, MutablePriorityQueue, Deque, Map, Set, BitSet, MutableBitSet, String, Int/Float, io, math, fs — intrinsic functions exposed via canonical method/module API) ✓
+* Core stdlib (List, MutableList, MutableMap, MutableSet, MutablePriorityQueue, Deque, Map, Set, BitSet, MutableBitSet, String, Int/Float, io, math, hash, fs — intrinsic functions exposed via canonical method/module API) ✓
 
 **v0.2 — Refactoring + LSP + Capabilities**
 * Module system: convention-based file layout, `pub` visibility, flat imports ✓

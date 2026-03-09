@@ -7413,6 +7413,30 @@ fn eval_method_string_md5() {
 }
 
 #[test]
+fn eval_hash_module_md5() {
+    let val = run_ok(
+        r#"import hash
+fn main() -> String { hash.md5("abc") }"#,
+    );
+    match val {
+        Value::String(s) => assert_eq!(s, "900150983cd24fb0d6963f7d28e17f72"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_hash_module_alias_md5() {
+    let val = run_ok(
+        r#"import hash as h
+fn main() -> String { h.md5("abc") }"#,
+    );
+    match val {
+        Value::String(s) => assert_eq!(s, "900150983cd24fb0d6963f7d28e17f72"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
 fn eval_method_string_starts_with() {
     let val = run_ok(r#"fn main() -> Bool { "hello world".starts_with("hello") }"#);
     assert!(matches!(val, Value::Bool(true)));

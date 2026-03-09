@@ -150,7 +150,7 @@ fn try_dot_completion(
 
     let base_name = base_text;
 
-    // Check synthetic modules: io.println, math.min, fs.read_file, etc.
+    // Check synthetic modules: io.println, math.min, hash.md5, fs.read_file, etc.
     for (mod_name, mod_fns) in &scope.synthetic_modules {
         if !scope.imported_modules.contains(mod_name) {
             continue;
@@ -351,7 +351,7 @@ fn add_module_scope_completions(analysis: &FileAnalysis, items: &mut Vec<Complet
         });
     }
 
-    // Synthetic modules (io, math, fs) — only when explicitly imported.
+    // Synthetic modules (io, math, hash, fs) — only when explicitly imported.
     for mod_name in &scope.imported_modules {
         if !scope.synthetic_modules.contains_key(mod_name) {
             continue;
@@ -647,11 +647,16 @@ mod tests {
             !items.iter().any(|i| i.label == "fs"),
             "did not expect 'fs' module in completions without import: {items:?}"
         );
+        assert!(
+            !items.iter().any(|i| i.label == "hash"),
+            "did not expect 'hash' module in completions without import: {items:?}"
+        );
     }
 
     #[test]
     fn completion_includes_only_imported_synthetic_modules() {
-        let source = "import io\nimport math\nfn main() -> Unit { io.println(\"hi\") }";
+        let source =
+            "import io\nimport math\nimport hash\nfn main() -> Unit { io.println(\"hi\") }";
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
         let items = completion_items(&analysis, source, TextSize::from(0));
@@ -664,8 +669,25 @@ mod tests {
             "expected imported 'math' module in completions: {items:?}"
         );
         assert!(
+            items.iter().any(|i| i.label == "hash"),
+            "expected imported 'hash' module in completions: {items:?}"
+        );
+        assert!(
             !items.iter().any(|i| i.label == "fs"),
             "did not expect unimported 'fs' module in completions: {items:?}"
+        );
+    }
+
+    #[test]
+    fn completion_dot_after_hash_module_shows_members() {
+        let source = "import hash\nfn main() -> String { hash.md5(\"hi\") }";
+        let result = kyokara_hir::check_file(source);
+        let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
+        let offset = TextSize::from(source.find("md5").expect("md5 offset") as u32);
+        let items = completion_items(&analysis, source, offset);
+        assert!(
+            items.iter().any(|i| i.label == "md5"),
+            "expected 'md5' in hash dot-completion: {items:?}"
         );
     }
 

@@ -906,6 +906,7 @@ fn infer_result_ergonomics_happy_paths() {
         "fn main() -> Int { \"42\".parse_int().map_or(0, fn(n: Int) => n + 1) }",
         "fn main() -> Int { \"abc\".parse_int().map_or(7, fn(n: Int) => n + 1) }",
         "fn main() -> String { \"abc\".md5() }",
+        "import hash\nfn main() -> String { hash.md5(\"abc\") }",
     ];
 
     for src in cases {

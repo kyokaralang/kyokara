@@ -433,7 +433,7 @@ fn resolve_project_imports(
             };
 
             if candidates.is_empty() {
-                // Check if it's a synthetic module import (io, math, fs).
+                // Check if it's a synthetic module import (io, math, hash, fs).
                 // If so, the modules are already registered — this import just
                 // makes the name available in scope. Nothing else to do.
                 if import_path.segments.len() == 1 {

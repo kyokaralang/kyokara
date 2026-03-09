@@ -242,7 +242,7 @@ impl<'a> InferenceCtx<'a> {
             Some(ResolvedName::Trait(_)) => Ty::Error,
             Some(ResolvedName::Import(_)) => self.non_value_name_in_expr("import", name),
 
-            // Module names (io, math, fs) are not values — they're only valid
+            // Module names (io, math, hash, fs) are not values — they're only valid
             // as dot-call prefixes (io.println). Bare usage is an error.
             Some(ResolvedName::Module(_)) => Ty::Error,
             Some(ResolvedName::StaticMethodType(_)) => Ty::Error,

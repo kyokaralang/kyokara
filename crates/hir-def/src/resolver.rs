@@ -260,7 +260,7 @@ pub enum ResolvedName {
     },
     /// An import.
     Import(usize),
-    /// A synthetic module (io, math, fs).
+    /// A synthetic module (io, math, hash, fs).
     Module(Name),
     /// A static method target type (e.g., `List` in `collections.List.new()`).
     StaticMethodType(Name),
@@ -302,7 +302,7 @@ impl<'a> Resolver<'a> {
             return Some(ResolvedName::Trait(idx));
         }
 
-        // 2b. Synthetic modules (io, math, fs) — only if explicitly imported.
+        // 2b. Synthetic modules (io, math, hash, fs) — only if explicitly imported.
         if self.module.imported_modules.contains(&name)
             && self.module.synthetic_modules.contains_key(&name)
         {

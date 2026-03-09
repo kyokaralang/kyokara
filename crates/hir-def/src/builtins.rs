@@ -1178,7 +1178,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
     }
 }
 
-/// Register synthetic modules (`io`, `math`, `fs`, `collections`) that hold
+/// Register synthetic modules (`io`, `math`, `hash`, `fs`, `collections`) that hold
 /// module-qualified intrinsics.
 ///
 /// Module-qualified calls like `io.println(s)` resolve through `scope.synthetic_modules`.
@@ -1214,6 +1214,7 @@ pub fn register_synthetic_modules(
                 ("float_max", "fmax"),
             ],
         ),
+        ("hash", &[("string_md5", "md5")]),
         ("fs", &[("read_file", "read_file")]),
         ("collections", &[]),
     ];
@@ -1245,7 +1246,7 @@ pub fn register_synthetic_modules(
 
 /// Scan an item tree's import list and activate any synthetic module imports.
 ///
-/// For each `import io` / `import math` / `import fs` found in the item tree,
+/// For each `import io` / `import math` / `import hash` / `import fs` found in the item tree,
 /// adds the module name to `scope.imported_modules` so that the resolver and
 /// type inference allow module-qualified calls through that module.
 pub fn activate_synthetic_imports(
