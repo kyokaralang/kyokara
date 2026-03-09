@@ -41,6 +41,7 @@ pub struct Interpreter {
     fn_bodies: FxHashMap<FnItemIdx, Rc<Body>>,
     let_bodies: FxHashMap<LetItemIdx, Rc<Body>>,
     body_local_accesses: FxHashMap<usize, ArenaMap<ExprIdx, LocalSlotRef>>,
+    lambda_capture_uses_outer_locals: FxHashMap<usize, ArenaMap<ExprIdx, bool>>,
     /// Per-function module-level immutable let overrides used for project mode.
     /// Maps `current_fn_idx -> (name -> value)` for the function's source module.
     let_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, Value>>,
@@ -429,6 +430,7 @@ impl Interpreter {
             fn_bodies,
             let_bodies,
             body_local_accesses,
+            lambda_capture_uses_outer_locals: FxHashMap::default(),
             let_scope_overrides,
             fn_scope_overrides,
             interner,
@@ -447,6 +449,103 @@ impl Interpreter {
             consuming_local: None,
             top_level_lets_initialized: false,
         }
+    }
+
+    fn expr_uses_outer_local_capture(&mut self, body: &Body, expr_idx: ExprIdx) -> bool {
+        let body_key = Self::body_key(body);
+        if let Some(cached) = self
+            .lambda_capture_uses_outer_locals
+            .get(&body_key)
+            .and_then(|entries| entries.get(expr_idx).copied())
+        {
+            return cached;
+        }
+
+        let result = match &body.exprs[expr_idx] {
+            Expr::Missing | Expr::Hole | Expr::Literal(_) => false,
+            Expr::Path(_) => self
+                .local_access_for_expr(body, expr_idx)
+                .is_some_and(|access| access.depth > 0),
+            Expr::Binary { lhs, rhs, .. } => {
+                self.expr_uses_outer_local_capture(body, *lhs)
+                    || self.expr_uses_outer_local_capture(body, *rhs)
+            }
+            Expr::Unary { operand, .. } | Expr::Old(operand) => {
+                self.expr_uses_outer_local_capture(body, *operand)
+            }
+            Expr::Call { callee, args } => {
+                self.expr_uses_outer_local_capture(body, *callee)
+                    || args.iter().any(|arg| {
+                        let arg_idx = match arg {
+                            CallArg::Positional(idx) => *idx,
+                            CallArg::Named { value, .. } => *value,
+                        };
+                        self.expr_uses_outer_local_capture(body, arg_idx)
+                    })
+            }
+            Expr::Field { base, .. } => self.expr_uses_outer_local_capture(body, *base),
+            Expr::Index { base, index } => {
+                self.expr_uses_outer_local_capture(body, *base)
+                    || self.expr_uses_outer_local_capture(body, *index)
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.expr_uses_outer_local_capture(body, *condition)
+                    || self.expr_uses_outer_local_capture(body, *then_branch)
+                    || else_branch
+                        .is_some_and(|else_idx| self.expr_uses_outer_local_capture(body, else_idx))
+            }
+            Expr::Match { scrutinee, arms } => {
+                self.expr_uses_outer_local_capture(body, *scrutinee)
+                    || arms
+                        .iter()
+                        .any(|arm| self.expr_uses_outer_local_capture(body, arm.body))
+            }
+            Expr::Block { stmts, tail } => {
+                stmts.iter().any(|stmt| match stmt {
+                    Stmt::Let { init, .. } => self.expr_uses_outer_local_capture(body, *init),
+                    Stmt::Assign { target, value } => {
+                        self.expr_uses_outer_local_capture(body, *target)
+                            || self.expr_uses_outer_local_capture(body, *value)
+                    }
+                    Stmt::While {
+                        condition,
+                        body: loop_body,
+                    } => {
+                        self.expr_uses_outer_local_capture(body, *condition)
+                            || self.expr_uses_outer_local_capture(body, *loop_body)
+                    }
+                    Stmt::For {
+                        source,
+                        body: loop_body,
+                        ..
+                    } => {
+                        self.expr_uses_outer_local_capture(body, *source)
+                            || self.expr_uses_outer_local_capture(body, *loop_body)
+                    }
+                    Stmt::Expr(idx) => self.expr_uses_outer_local_capture(body, *idx),
+                    Stmt::Break | Stmt::Continue => false,
+                }) || tail
+                    .is_some_and(|tail_idx| self.expr_uses_outer_local_capture(body, tail_idx))
+            }
+            Expr::Return(value) => value
+                .is_some_and(|return_value| self.expr_uses_outer_local_capture(body, return_value)),
+            Expr::RecordLit { fields, .. } => fields
+                .iter()
+                .any(|(_, value)| self.expr_uses_outer_local_capture(body, *value)),
+            Expr::Lambda {
+                body: lambda_body, ..
+            } => self.expr_uses_outer_local_capture(body, *lambda_body),
+        };
+
+        self.lambda_capture_uses_outer_locals
+            .entry(body_key)
+            .or_default()
+            .insert(expr_idx, result);
+        result
     }
 
     /// Consume the interpreter and return the interner (for display).
@@ -2695,11 +2794,16 @@ impl Interpreter {
                     .as_ref()
                     .cloned()
                     .expect("lambda evaluation should have a current shared body handle");
+                let captured_env = if self.expr_uses_outer_local_capture(body, lambda_body_idx) {
+                    env.clone()
+                } else {
+                    Env::new()
+                };
                 Ok(ControlFlow::Value(Value::Fn(Box::new(FnValue::Lambda {
                     params: param_pats,
                     body_expr: lambda_body_idx,
                     body: body_handle,
-                    env: env.clone(),
+                    env: captured_env,
                 }))))
             }
 
@@ -3204,11 +3308,16 @@ impl Interpreter {
                     .as_ref()
                     .cloned()
                     .expect("lambda evaluation should have a current shared body handle");
+                let captured_env = if self.expr_uses_outer_local_capture(body, lambda_body_idx) {
+                    self.env.clone()
+                } else {
+                    Env::new()
+                };
                 Ok(ControlFlow::Value(Value::Fn(Box::new(FnValue::Lambda {
                     params: param_pats,
                     body_expr: lambda_body_idx,
                     body: body_handle,
-                    env: self.env.clone(),
+                    env: captured_env,
                 }))))
             }
 
@@ -3501,6 +3610,62 @@ impl Interpreter {
                 expected,
                 actual,
             })
+        }
+    }
+
+    fn call_fn_value_ref(&mut self, fv: &FnValue, args: Args) -> Result<Value, RuntimeError> {
+        match fv {
+            FnValue::User(fn_idx) => self.call_fn(*fn_idx, args),
+            FnValue::Intrinsic(intr) if intr.needs_interpreter() => {
+                self.check_intrinsic_cap(*intr)?;
+                self.call_complex_intrinsic(*intr, args)
+            }
+            FnValue::Intrinsic(intr) => {
+                self.check_intrinsic_cap(*intr)?;
+                intr.call(args)
+            }
+            FnValue::Lambda {
+                params,
+                body_expr,
+                body,
+                env: captured_env,
+            } => {
+                self.ensure_arity("lambda", params.len(), args.len())?;
+                let mut env = captured_env.clone();
+                env.push_scope();
+                let prev_body = self.current_body.replace(body.clone());
+                let result = (|| -> Result<Value, RuntimeError> {
+                    for (pat_idx, val) in params.iter().zip(args) {
+                        self.bind_pat(body, *pat_idx, &val, &mut env)?;
+                    }
+                    let result = self.eval_terminal_expr(&mut env, body, *body_expr)?;
+                    Ok(result.into_value())
+                })();
+                self.current_body = prev_body;
+                result
+            }
+            FnValue::Constructor {
+                type_idx,
+                variant_idx,
+                arity,
+                ..
+            } => Ok(Value::Adt {
+                type_idx: *type_idx,
+                variant: *variant_idx,
+                fields: {
+                    self.ensure_arity("constructor", *arity, args.len())?;
+                    args.into_vec()
+                },
+            }),
+        }
+    }
+
+    fn call_value_ref(&mut self, callee: &Value, args: Args) -> Result<Value, RuntimeError> {
+        match callee {
+            Value::Fn(fv) => self.call_fn_value_ref(fv, args),
+            _ => Err(RuntimeError::TypeError(
+                "called value is not a function".into(),
+            )),
         }
     }
 
@@ -4207,7 +4372,7 @@ impl Interpreter {
                 let Some(item) = self.seq_iter_next(input)? else {
                     return Ok(None);
                 };
-                let mapped = self.call_value(f.clone(), smallvec::smallvec![item])?;
+                let mapped = self.call_value_ref(f, smallvec::smallvec![item])?;
                 Ok(Some(mapped))
             }
             SeqIterState::FlatMap {
@@ -4225,7 +4390,7 @@ impl Interpreter {
                 let Some(outer_item) = self.seq_iter_next(input)? else {
                     return Ok(None);
                 };
-                let produced = self.call_value(f.clone(), smallvec::smallvec![outer_item])?;
+                let produced = self.call_value_ref(f, smallvec::smallvec![outer_item])?;
                 let inner_plan = self.require_into_traversal_plan(&produced, "seq_flat_map")?;
                 *current_inner = Some(Box::new(self.seq_iter_from_plan(&inner_plan)?));
             },
@@ -4233,7 +4398,7 @@ impl Interpreter {
                 let Some(item) = self.seq_iter_next(input)? else {
                     return Ok(None);
                 };
-                let keep = self.call_value(f.clone(), smallvec::smallvec![item.clone()])?;
+                let keep = self.call_value_ref(f, smallvec::smallvec![item.clone()])?;
                 match keep {
                     Value::Bool(true) => return Ok(Some(item)),
                     Value::Bool(false) => {}
@@ -4259,8 +4424,7 @@ impl Interpreter {
                     return Ok(None);
                 };
 
-                let next_acc =
-                    self.call_value(f.clone(), smallvec::smallvec![acc.clone(), item])?;
+                let next_acc = self.call_value_ref(f, smallvec::smallvec![acc.clone(), item])?;
                 *acc = next_acc.clone();
                 Ok(Some(next_acc))
             }
@@ -4269,7 +4433,7 @@ impl Interpreter {
                     return Ok(None);
                 };
 
-                let step_out = self.call_value(step.clone(), smallvec::smallvec![current_state])?;
+                let step_out = self.call_value_ref(step, smallvec::smallvec![current_state])?;
                 match self.decode_option_some_payload(&step_out, "seq_unfold")? {
                     Some(payload) => {
                         let (value, next_state) = self.decode_unfold_step_payload(payload)?;
@@ -4466,17 +4630,13 @@ impl Interpreter {
                     Ok(())
                 }
             },
-            SeqPlan::Map { input, f } => {
-                let mapper = f.clone();
-                self.seq_for_each_control(input, &mut |interp, item| {
-                    let mapped = interp.call_value(mapper.clone(), smallvec::smallvec![item])?;
-                    emit(interp, mapped)
-                })
-            }
+            SeqPlan::Map { input, f } => self.seq_for_each_control(input, &mut |interp, item| {
+                let mapped = interp.call_value_ref(f, smallvec::smallvec![item])?;
+                emit(interp, mapped)
+            }),
             SeqPlan::FlatMap { input, f } => {
-                let mapper = f.clone();
                 self.seq_for_each_control(input, &mut |interp, item| {
-                    let produced = interp.call_value(mapper.clone(), smallvec::smallvec![item])?;
+                    let produced = interp.call_value_ref(f, smallvec::smallvec![item])?;
                     let inner_plan =
                         interp.require_into_traversal_plan(&produced, "seq_flat_map")?;
                     let mut broke = false;
@@ -4493,10 +4653,8 @@ impl Interpreter {
                 })
             }
             SeqPlan::Filter { input, f } => {
-                let predicate = f.clone();
                 self.seq_for_each_control(input, &mut |interp, item| {
-                    let keep =
-                        interp.call_value(predicate.clone(), smallvec::smallvec![item.clone()])?;
+                    let keep = interp.call_value_ref(f, smallvec::smallvec![item.clone()])?;
                     match keep {
                         Value::Bool(true) => emit(interp, item),
                         Value::Bool(false) => Ok(Continue),
@@ -4513,23 +4671,19 @@ impl Interpreter {
                     Break => return Ok(()),
                 }
 
-                let folder = f.clone();
                 self.seq_for_each_control(input, &mut |interp, item| {
-                    acc = interp
-                        .call_value(folder.clone(), smallvec::smallvec![acc.clone(), item])?;
+                    acc = interp.call_value_ref(f, smallvec::smallvec![acc.clone(), item])?;
                     emit(interp, acc.clone())
                 })
             }
             SeqPlan::Unfold { seed, step } => {
                 let mut state = Some(seed.clone());
-                let step_fn = step.clone();
                 loop {
                     let Some(current_state) = state.take() else {
                         return Ok(());
                     };
 
-                    let step_out =
-                        self.call_value(step_fn.clone(), smallvec::smallvec![current_state])?;
+                    let step_out = self.call_value_ref(step, smallvec::smallvec![current_state])?;
                     let maybe_payload = self.decode_option_some_payload(&step_out, "seq_unfold")?;
                     let Some(payload) = maybe_payload else {
                         return Ok(());
@@ -5233,10 +5387,9 @@ impl Interpreter {
             IntrinsicFn::SeqFold => {
                 let plan = self.require_traversal_plan(&args[0], "seq_fold")?;
                 let mut acc = args[1].clone();
-                let folder = args[2].clone();
                 self.seq_for_each(&plan, &mut |interp, item| {
-                    acc = interp
-                        .call_value(folder.clone(), smallvec::smallvec![acc.clone(), item])?;
+                    acc =
+                        interp.call_value_ref(&args[2], smallvec::smallvec![acc.clone(), item])?;
                     Ok(())
                 })?;
                 Ok(acc)
@@ -5301,10 +5454,9 @@ impl Interpreter {
             }
             IntrinsicFn::SeqCountBy => {
                 let plan = self.require_traversal_plan(&args[0], "seq_count_by")?;
-                let predicate = args[1].clone();
                 let mut count: i64 = 0;
                 self.seq_for_each(&plan, &mut |interp, item| {
-                    let keep = interp.call_value(predicate.clone(), smallvec::smallvec![item])?;
+                    let keep = interp.call_value_ref(&args[1], smallvec::smallvec![item])?;
                     match keep {
                         Value::Bool(true) => {
                             count = count.checked_add(1).ok_or(RuntimeError::IntegerOverflow)?;
@@ -5354,10 +5506,9 @@ impl Interpreter {
             }
             IntrinsicFn::SeqAny => {
                 let plan = self.require_traversal_plan(&args[0], "seq_any")?;
-                let predicate = args[1].clone();
                 let mut result = false;
                 self.seq_for_each_control(&plan, &mut |interp, item| {
-                    let keep = interp.call_value(predicate.clone(), smallvec::smallvec![item])?;
+                    let keep = interp.call_value_ref(&args[1], smallvec::smallvec![item])?;
                     match keep {
                         Value::Bool(true) => {
                             result = true;
@@ -5373,10 +5524,9 @@ impl Interpreter {
             }
             IntrinsicFn::SeqAll => {
                 let plan = self.require_traversal_plan(&args[0], "seq_all")?;
-                let predicate = args[1].clone();
                 let mut result = true;
                 self.seq_for_each_control(&plan, &mut |interp, item| {
-                    let keep = interp.call_value(predicate.clone(), smallvec::smallvec![item])?;
+                    let keep = interp.call_value_ref(&args[1], smallvec::smallvec![item])?;
                     match keep {
                         Value::Bool(true) => Ok(SeqEmitControl::Continue),
                         Value::Bool(false) => {
@@ -5392,11 +5542,10 @@ impl Interpreter {
             }
             IntrinsicFn::SeqFind => {
                 let plan = self.require_traversal_plan(&args[0], "seq_find")?;
-                let predicate = args[1].clone();
                 let mut found: Option<Value> = None;
                 self.seq_for_each_control(&plan, &mut |interp, item| {
                     let keep =
-                        interp.call_value(predicate.clone(), smallvec::smallvec![item.clone()])?;
+                        interp.call_value_ref(&args[1], smallvec::smallvec![item.clone()])?;
                     match keep {
                         Value::Bool(true) => {
                             found = Some(item);
@@ -6793,6 +6942,16 @@ mod tests {
         Rc::as_ptr(body)
     }
 
+    fn lambda_captured_binding_count(value: &Value) -> usize {
+        let Value::Fn(fv) = value else {
+            panic!("expected function value");
+        };
+        let FnValue::Lambda { env, .. } = &**fv else {
+            panic!("expected lambda function value");
+        };
+        env.binding_count()
+    }
+
     #[test]
     fn user_function_call_reports_arity_mismatch() {
         let mut interp = make_checked_interpreter(
@@ -6906,6 +7065,46 @@ mod tests {
             .expect("second captured lambda should run");
         assert_eq!(first_value, Value::Int(1));
         assert_eq!(second_value, Value::Int(2));
+    }
+
+    #[test]
+    fn captureless_factory_lambda_does_not_clone_outer_env() {
+        let mut interp = make_checked_interpreter(
+            "fn make(x: Int) -> fn() -> Int { fn() => 1 } fn main() -> Int { 0 }",
+        );
+        let make_idx = fn_idx_by_name(&mut interp, "make");
+
+        let lambda = interp
+            .call_fn_by_idx(make_idx, smallvec![Value::Int(99)])
+            .expect("factory call should return lambda");
+
+        assert_eq!(lambda_captured_binding_count(&lambda), 0);
+        assert_eq!(
+            interp
+                .call_value(lambda, Args::new())
+                .expect("captureless lambda should run"),
+            Value::Int(1)
+        );
+    }
+
+    #[test]
+    fn capturing_factory_lambda_keeps_only_needed_outer_bindings() {
+        let mut interp = make_checked_interpreter(
+            "fn make(x: Int) -> fn() -> Int { fn() => x } fn main() -> Int { 0 }",
+        );
+        let make_idx = fn_idx_by_name(&mut interp, "make");
+
+        let lambda = interp
+            .call_fn_by_idx(make_idx, smallvec![Value::Int(42)])
+            .expect("factory call should return lambda");
+
+        assert_eq!(lambda_captured_binding_count(&lambda), 1);
+        assert_eq!(
+            interp
+                .call_value(lambda, Args::new())
+                .expect("capturing lambda should run"),
+            Value::Int(42)
+        );
     }
 
     #[test]

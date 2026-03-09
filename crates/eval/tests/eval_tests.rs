@@ -7188,6 +7188,49 @@ fn main() -> Int {
 }
 
 #[test]
+fn eval_seq_callable_values_work_when_reused_across_iterations() {
+    struct Case<'a> {
+        name: &'a str,
+        src: &'a str,
+        expected: Value,
+    }
+
+    let cases = [
+        Case {
+            name: "count predicate uses stored capturing lambda",
+            src: r#"fn greater_than(limit: Int) -> fn(Int) -> Bool {
+    fn(n: Int) => n > limit
+}
+
+fn main() -> Int {
+    let pred = greater_than(2)
+    (0..<6).count(pred)
+}"#,
+            expected: Value::Int(3),
+        },
+        Case {
+            name: "flat_map uses stored capturing lambda",
+            src: r#"import collections
+
+fn spread(offset: Int) -> fn(Int) -> List<Int> {
+    fn(n: Int) => collections.List.new().push(n).push(n + offset)
+}
+
+fn main() -> Int {
+    let f = spread(10)
+    (0..<3).flat_map(f).count()
+}"#,
+            expected: Value::Int(6),
+        },
+    ];
+
+    for case in cases {
+        let got = run_ok(case.src);
+        assert_eq!(got, case.expected, "case `{}` failed", case.name);
+    }
+}
+
+#[test]
 fn eval_seq_flat_map_requires_into_traversal() {
     let err = run_err("fn main() -> Int { (0..<3).flat_map(fn(n: Int) => n).count() }");
     assert!(
