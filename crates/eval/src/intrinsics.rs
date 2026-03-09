@@ -111,6 +111,7 @@ pub enum IntrinsicFn {
     DequeIsEmpty,
     SeqRange,
     SeqMap,
+    SeqFlatMap,
     SeqFilter,
     SeqFold,
     SeqScan,
@@ -267,6 +268,7 @@ impl IntrinsicFn {
                 | IntrinsicFn::DequePopFront
                 | IntrinsicFn::DequePopBack
                 | IntrinsicFn::SeqMap
+                | IntrinsicFn::SeqFlatMap
                 | IntrinsicFn::SeqFilter
                 | IntrinsicFn::SeqFold
                 | IntrinsicFn::SeqScan
@@ -1985,6 +1987,7 @@ impl IntrinsicFn {
             | IntrinsicFn::MutableMapGet
             | IntrinsicFn::MutableMapGetOrInsertWith
             | IntrinsicFn::SeqMap
+            | IntrinsicFn::SeqFlatMap
             | IntrinsicFn::SeqFilter
             | IntrinsicFn::SeqFold
             | IntrinsicFn::SeqScan
@@ -2318,6 +2321,7 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         // Seq
         (Name::new(interner, "seq_range"), IntrinsicFn::SeqRange),
         (Name::new(interner, "seq_map"), IntrinsicFn::SeqMap),
+        (Name::new(interner, "seq_flat_map"), IntrinsicFn::SeqFlatMap),
         (Name::new(interner, "seq_filter"), IntrinsicFn::SeqFilter),
         (Name::new(interner, "seq_fold"), IntrinsicFn::SeqFold),
         (Name::new(interner, "seq_scan"), IntrinsicFn::SeqScan),
@@ -2331,7 +2335,10 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (Name::new(interner, "seq_windows"), IntrinsicFn::SeqWindows),
         (Name::new(interner, "seq_count"), IntrinsicFn::SeqCount),
         (Name::new(interner, "seq_count_by"), IntrinsicFn::SeqCountBy),
-        (Name::new(interner, "seq_contains"), IntrinsicFn::SeqContains),
+        (
+            Name::new(interner, "seq_contains"),
+            IntrinsicFn::SeqContains,
+        ),
         (
             Name::new(interner, "seq_frequencies"),
             IntrinsicFn::SeqFrequencies,

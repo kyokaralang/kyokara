@@ -1605,7 +1605,8 @@ fn main() -> Int { foo(1, 2) }"#;
     let output = check(src, "test.ky");
     assert!(
         output.diagnostics.iter().any(|d| d.code == "E0007"
-            && d.message.contains("expected 0, 1, or 3 argument(s), found 2")),
+            && d.message
+                .contains("expected 0, 1, or 3 argument(s), found 2")),
         "expected constrained-family arity diagnostic, got: {:?}",
         output.diagnostics
     );
@@ -1641,7 +1642,8 @@ fn main() -> Int {
     let output = check(src, "test.ky");
     assert!(
         output.diagnostics.iter().any(|d| d.code == "E0007"
-            && d.message.contains("expected 0, 1, or 2 argument(s), found 3")),
+            && d.message
+                .contains("expected 0, 1, or 2 argument(s), found 3")),
         "expected constrained-family arity diagnostic, got: {:?}",
         output.diagnostics
     );
@@ -1766,7 +1768,10 @@ fn main() -> Int {
 #[test]
 fn check_project_imported_and_local_arity_distinct_family_is_allowed() {
     let output = check_project_from_files(&[
-        ("main.ky", "import util\nfn foo() -> Int { 1 }\nfn main() -> Int { foo() + foo(2) }\n"),
+        (
+            "main.ky",
+            "import util\nfn foo() -> Int { 1 }\nfn main() -> Int { foo() + foo(2) }\n",
+        ),
         ("util.ky", "pub fn foo(x: Int) -> Int { x + 1 }\n"),
     ]);
     assert!(
@@ -1779,12 +1784,17 @@ fn check_project_imported_and_local_arity_distinct_family_is_allowed() {
 #[test]
 fn check_project_import_overlap_same_shape_is_rejected() {
     let output = check_project_from_files(&[
-        ("main.ky", "import util\nfn foo(x: Int) -> Int { x }\nfn main() -> Int { 0 }\n"),
+        (
+            "main.ky",
+            "import util\nfn foo(x: Int) -> Int { x }\nfn main() -> Int { 0 }\n",
+        ),
         ("util.ky", "pub fn foo(x: Int) -> Int { x + 1 }\n"),
     ]);
     assert!(
-        output.diagnostics.iter().any(|d| d.code == "E0101"
-            && d.message.contains("overload family for `foo` overlaps")),
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0101" && d.message.contains("overload family for `foo` overlaps")),
         "expected conflicting imported overlap diagnostic, got: {:?}",
         output.diagnostics
     );
@@ -1793,12 +1803,20 @@ fn check_project_import_overlap_same_shape_is_rejected() {
 #[test]
 fn check_project_imported_overloaded_function_family_cannot_be_used_as_value() {
     let output = check_project_from_files(&[
-        ("main.ky", "import util\nfn main() -> Int {\n  let f = foo\n  0\n}\n"),
-        ("util.ky", "pub fn foo() -> Int { 1 }\npub fn foo(x: Int) -> Int { x }\n"),
+        (
+            "main.ky",
+            "import util\nfn main() -> Int {\n  let f = foo\n  0\n}\n",
+        ),
+        (
+            "util.ky",
+            "pub fn foo() -> Int { 1 }\npub fn foo(x: Int) -> Int { x }\n",
+        ),
     ]);
     assert!(
-        output.diagnostics.iter().any(|d| d.code == "E0039"
-            && d.message.contains("overloaded function family `foo`")),
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0039" && d.message.contains("overloaded function family `foo`")),
         "expected imported overloaded-family-as-value diagnostic, got: {:?}",
         output.diagnostics
     );
@@ -5503,6 +5521,58 @@ fn check_seq_surface_canonical_has_no_diagnostics() {
 }
 
 #[test]
+fn check_seq_flat_map_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+type Tokens = { items: List<String> }
+
+impl IntoTraversal<String> for Tokens {
+    fn into_seq(self) -> Seq<String> {
+        self.items.map(fn(x: String) => x)
+    }
+}
+
+fn tokenize(line: String) -> Tokens {
+    Tokens { items: line.split(",").to_list() }
+}
+
+fn main() -> Int {
+    let builtin = (0..<3)
+        .flat_map(fn(n: Int) => collections.List.new().push(n).push(n + 10))
+        .count()
+    let user = "a,b\nc,d"
+        .lines()
+        .flat_map(fn(line: String) => tokenize(line))
+        .count()
+    let direct = IntoTraversal.into_seq(Tokens {
+        items: collections.List.new().push("x").push("y")
+    }).count()
+    builtin + user + direct
+}"#,
+        "seq flat_map canonical surface",
+    );
+}
+
+#[test]
+fn check_seq_flat_map_non_traversal_mapper_reports_trait_diagnostic() {
+    let output = check(
+        r#"fn main() -> Int {
+            (0..<3).flat_map(fn(n: Int) => n).count()
+        }"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("IntoTraversal") || d.message.contains("trait")),
+        "expected IntoTraversal/trait diagnostic for flat_map mapper, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_removed_list_traversal_surface_reports_diagnostics() {
     let output = check(
         r#"fn main() -> Int {
@@ -6292,18 +6362,10 @@ fn check_seq_static_constructors_are_rejected_rfc_0003() {
 }
 
 #[test]
-fn check_seq_type_annotation_is_rejected_rfc_0003() {
-    let output = check(
+fn check_seq_type_annotation_has_no_diagnostics() {
+    assert_check_no_diagnostics(
         "fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }\nfn main() -> Int { 0 }",
-        "test.ky",
-    );
-    assert!(
-        output
-            .diagnostics
-            .iter()
-            .any(|d| d.message.contains("unresolved type") || d.message.contains("type mismatch")),
-        "expected Seq type rejection diagnostics, got: {:?}",
-        output.diagnostics
+        "Seq type annotation surface",
     );
 }
 
@@ -6339,8 +6401,9 @@ fn main() -> Int {
         output
             .diagnostics
             .iter()
-            .any(|d| d.message.contains("unresolved type") || d.message.contains("no method")),
-        "expected Seq type-annotation rejection diagnostics, got: {:?}",
+            .any(|d| d.message.contains("type mismatch")
+                || d.message.contains("expected `Seq<Int>`")),
+        "expected Seq/List mismatch diagnostics, got: {:?}",
         output.diagnostics
     );
 }
@@ -6494,7 +6557,9 @@ fn check_string_starts_with_offset_family_rejects_positional_start() {
 
     assert!(
         output.diagnostics.iter().any(|d| {
-            d.code == "E0038" || d.message.contains("parameter `start` must be passed by name")
+            d.code == "E0038"
+                || d.message
+                    .contains("parameter `start` must be passed by name")
         }),
         "expected named-only start diagnostic, got: {:?}",
         output.diagnostics

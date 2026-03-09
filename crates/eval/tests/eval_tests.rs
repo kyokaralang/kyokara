@@ -7109,6 +7109,94 @@ fn eval_seq_surface_happy_paths() {
 }
 
 #[test]
+fn eval_seq_flat_map_surface_happy_paths() {
+    struct Case<'a> {
+        name: &'a str,
+        src: &'a str,
+        expected: Value,
+    }
+
+    let cases = [
+        Case {
+            name: "builtin traversal sources flatten lazily",
+            src: r#"import collections
+
+fn main() -> Int {
+    let a = collections.List.new().push(1).push(2)
+        .flat_map(fn(n: Int) => collections.List.new().push(n).push(n + 10))
+        .count()
+    let b = collections.MutableList.from_list(collections.List.new().push(1).push(2))
+        .flat_map(fn(n: Int) => collections.MutableList.from_list(collections.List.new().push(n).push(n + 1)))
+        .count()
+    let c = collections.Deque.new().push_back(1).push_back(2)
+        .flat_map(fn(n: Int) => collections.Deque.new().push_back(n).push_back(n + 1))
+        .count()
+    let d = "a,b\nc,d".lines().flat_map(fn(line: String) => line.split(",")).count()
+    a * 1000 + b * 100 + c * 10 + d
+}"#,
+            expected: Value::Int(4444),
+        },
+        Case {
+            name: "user IntoTraversal impl participates and explicit qualified call works",
+            src: r#"import collections
+
+type Tokens = { items: List<String> }
+
+impl IntoTraversal<String> for Tokens {
+    fn into_seq(self) -> Seq<String> {
+        self.items.map(fn(x: String) => x)
+    }
+}
+
+fn tokenize(line: String) -> Tokens {
+    Tokens { items: line.split(",").to_list() }
+}
+
+fn main() -> Int {
+    let a = "a,b\nc,d".lines().flat_map(fn(line: String) => tokenize(line)).count()
+    let b = IntoTraversal.into_seq(Tokens {
+        items: collections.List.new().push("x").push("y")
+    }).count()
+    a * 10 + b
+}"#,
+            expected: Value::Int(42),
+        },
+        Case {
+            name: "flat_map preserves short-circuit through inner traversals",
+            src: r#"import collections
+
+fn main() -> Int {
+    let ok = collections.List.new().push(0).push(1)
+        .flat_map(fn(n: Int) =>
+            if (n == 0) {
+                collections.List.new().push(0)
+            } else {
+                collections.List.new().push(10 / (n - 1))
+            }
+        )
+        .any(fn(n: Int) => n == 0)
+    if (ok) { 1 } else { 0 }
+}"#,
+            expected: Value::Int(1),
+        },
+    ];
+
+    for case in cases {
+        let got = run_ok(case.src);
+        assert_eq!(got, case.expected, "case `{}` failed", case.name);
+    }
+}
+
+#[test]
+fn eval_seq_flat_map_requires_into_traversal() {
+    let err = run_err("fn main() -> Int { (0..<3).flat_map(fn(n: Int) => n).count() }");
+    assert!(
+        err.contains("IntoTraversal") || err.contains("trait"),
+        "expected IntoTraversal/trait error, got: {err}"
+    );
+}
+
+#[test]
 fn eval_collection_first_traversal_surface_semantics_rfc_0002() {
     let val = run_ok(
         r#"import collections
@@ -7215,7 +7303,8 @@ fn main() -> Int {
 
 #[test]
 fn eval_contains_requires_eq() {
-    let err = run_err("fn main() -> Bool { (0..<3).map(fn(n: Int) => n.to_float()).contains(1.0) }");
+    let err =
+        run_err("fn main() -> Bool { (0..<3).map(fn(n: Int) => n.to_float()).contains(1.0) }");
     assert!(
         err.contains("Eq") || err.contains("trait"),
         "expected Eq/trait error, got: {err}"
@@ -7298,13 +7387,6 @@ fn eval_seq_surface_is_rejected_rfc_0003() {
         err_unfold.contains("no method") || err_unfold.contains("unresolved"),
         "expected Seq.unfold rejection, got: {err_unfold}"
     );
-
-    let err_type =
-        run_err("fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }\nfn main() -> Int { 0 }");
-    assert!(
-        err_type.contains("unresolved type") || err_type.contains("type mismatch"),
-        "expected Seq type rejection, got: {err_type}"
-    );
 }
 
 #[test]
@@ -7317,6 +7399,28 @@ fn eval_list_seq_bridge_is_rejected_rfc_0002() {
     assert!(
         err.contains("no method") || err.contains("unresolved"),
         "expected removed .seq() diagnostic, got: {err}"
+    );
+}
+
+#[test]
+fn eval_seq_type_annotation_and_param_mismatch_behavior() {
+    assert_eq!(
+        run_ok(
+            "fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }\nfn main() -> Int { takes_seq(0..<4) }"
+        ),
+        Value::Int(4)
+    );
+
+    let err = run_err(
+        r#"fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }
+fn main() -> Int {
+    let xs = collections.List.new().push(1).push(2)
+    takes_seq(xs)
+}"#,
+    );
+    assert!(
+        err.contains("type mismatch") || err.contains("expected `Seq<Int>`"),
+        "expected Seq/List mismatch diagnostic, got: {err}"
     );
 }
 
@@ -7942,7 +8046,10 @@ fn main() -> Int {
 fn run_project_imported_and_local_overload_family_dispatches() {
     let val = run_project_with_files_manifest_ok(
         &[
-            ("main.ky", "import util\nfn foo() -> Int { 1 }\nfn main() -> Int { foo() + foo(2) }"),
+            (
+                "main.ky",
+                "import util\nfn foo() -> Int { 1 }\nfn main() -> Int { foo() + foo(2) }",
+            ),
             ("util.ky", "pub fn foo(x: Int) -> Int { x + 1 }"),
         ],
         None,
@@ -7953,7 +8060,10 @@ fn run_project_imported_and_local_overload_family_dispatches() {
 #[test]
 fn run_project_import_overlap_same_shape_is_compile_error() {
     let err = run_project_with_files_err(&[
-        ("main.ky", "import util\nfn foo(x: Int) -> Int { x }\nfn main() -> Int { 0 }"),
+        (
+            "main.ky",
+            "import util\nfn foo(x: Int) -> Int { x }\nfn main() -> Int { 0 }",
+        ),
         ("util.ky", "pub fn foo(x: Int) -> Int { x + 1 }"),
     ]);
     assert!(
@@ -7965,8 +8075,14 @@ fn run_project_import_overlap_same_shape_is_compile_error() {
 #[test]
 fn run_project_imported_overloaded_function_family_as_value_is_compile_error() {
     let err = run_project_with_files_err(&[
-        ("main.ky", "import util\nfn main() -> Int {\n  let f = foo\n  0\n}"),
-        ("util.ky", "pub fn foo() -> Int { 1 }\npub fn foo(x: Int) -> Int { x }"),
+        (
+            "main.ky",
+            "import util\nfn main() -> Int {\n  let f = foo\n  0\n}",
+        ),
+        (
+            "util.ky",
+            "pub fn foo() -> Int { 1 }\npub fn foo(x: Int) -> Int { x }",
+        ),
     ]);
     assert!(
         err.contains("E0039") || err.contains("overloaded function family `foo`"),

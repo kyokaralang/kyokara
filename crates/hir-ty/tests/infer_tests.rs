@@ -852,6 +852,70 @@ fn infer_seq_any_all_find_happy_paths() {
 }
 
 #[test]
+fn infer_seq_flat_map_happy_paths() {
+    let cases = [
+        r#"import collections
+
+fn main() -> Int {
+    let a = collections.List.new().push(1).push(2)
+        .flat_map(fn(n: Int) => collections.List.new().push(n).push(n + 10))
+        .count()
+    let b = collections.MutableList.from_list(collections.List.new().push(1).push(2))
+        .flat_map(fn(n: Int) => collections.MutableList.from_list(collections.List.new().push(n).push(n + 1)))
+        .count()
+    let c = collections.Deque.new().push_back(1).push_back(2)
+        .flat_map(fn(n: Int) => collections.Deque.new().push_back(n).push_back(n + 1))
+        .count()
+    let d = "a,b\nc,d".lines().flat_map(fn(line: String) => line.split(",")).count()
+    a + b + c + d
+}"#,
+        r#"import collections
+
+type Tokens = { items: List<String> }
+
+impl IntoTraversal<String> for Tokens {
+    fn into_seq(self) -> Seq<String> {
+        self.items.map(fn(x: String) => x)
+    }
+}
+
+fn tokenize(line: String) -> Tokens {
+    Tokens { items: line.split(",").to_list() }
+}
+
+fn main() -> Int {
+    let count = "a,b\nc,d".lines().flat_map(fn(line: String) => tokenize(line)).count()
+    let direct = IntoTraversal.into_seq(Tokens {
+        items: collections.List.new().push("x").push("y")
+    }).count()
+    count * 10 + direct
+}"#,
+    ];
+
+    for src in cases {
+        let (result, _) = check(src);
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected no diagnostics, got: {:?}\nsource:\n{src}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn infer_seq_flat_map_requires_into_traversal() {
+    let (result, _) = check("fn main() -> Int { (0..<3).flat_map(fn(n: Int) => n).count() }");
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("IntoTraversal") || d.message.contains("trait")),
+        "expected IntoTraversal/trait diagnostic, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn infer_seq_contains_happy_paths() {
     let cases = [r#"import collections
 
@@ -881,7 +945,8 @@ fn main() -> Int {
 
 #[test]
 fn infer_seq_contains_requires_eq() {
-    let (result, _) = check("fn main() -> Bool { (0..<3).map(fn(n: Int) => n.to_float()).contains(1.0) }");
+    let (result, _) =
+        check("fn main() -> Bool { (0..<3).map(fn(n: Int) => n.to_float()).contains(1.0) }");
     assert!(
         result
             .diagnostics
@@ -1992,15 +2057,12 @@ fn err_seq_static_constructors_are_rejected_rfc_0003() {
 }
 
 #[test]
-fn err_seq_type_annotation_is_rejected_rfc_0003() {
+fn infer_seq_type_annotation_happy_path() {
     let (result, _) =
         check("fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }\nfn main() -> Int { 0 }");
     assert!(
-        result
-            .diagnostics
-            .iter()
-            .any(|d| d.message.contains("unresolved type") || d.message.contains("type mismatch")),
-        "expected Seq type annotation rejection diagnostic, got: {:?}",
+        result.diagnostics.is_empty(),
+        "expected Seq type annotation to typecheck, got: {:?}",
         result.diagnostics
     );
 }
@@ -2030,8 +2092,9 @@ fn main() -> Int {
         result
             .diagnostics
             .iter()
-            .any(|d| d.message.contains("unresolved type") || d.message.contains("no method")),
-        "expected Seq type-annotation rejection diagnostics, got: {:?}",
+            .any(|d| d.message.contains("type mismatch")
+                || d.message.contains("expected `Seq<Int>`")),
+        "expected Seq/List mismatch diagnostics, got: {:?}",
         result.diagnostics
     );
 }

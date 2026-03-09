@@ -10,7 +10,7 @@ use kyokara_diagnostics::Diagnostic;
 use kyokara_hir_def::body::{Body, LocalBindingOrigin};
 use kyokara_hir_def::expr::ExprIdx;
 use kyokara_hir_def::item_tree::{
-    FnItem, FnItemIdx, ItemTree, LetItem, LetItemIdx, TypeDefKind, TypeItemIdx,
+    FnItem, FnItemIdx, ItemTree, LetItem, LetItemIdx, TypeDefKind, TypeItemIdx, TypeParamDef,
 };
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
@@ -230,7 +230,266 @@ impl<'a> InferenceCtx<'a> {
                     | "ParseError"
             ),
             "Show" => !matches!(type_name, "<fn>"),
+            "IntoTraversal" => matches!(type_name, "List" | "MutableList" | "Deque" | "Seq"),
             _ => false,
+        }
+    }
+
+    pub(crate) fn trait_type_bindings_for_receiver(
+        &mut self,
+        recv_ty: &Ty,
+        trait_name: Name,
+    ) -> Option<Vec<(Name, Ty)>> {
+        let recv_ty = self.table.resolve_deep(recv_ty);
+        let trait_item = self
+            .module_scope
+            .traits
+            .get(&trait_name)
+            .map(|idx| &self.item_tree.traits[*idx])?;
+
+        if trait_item.type_params.is_empty() {
+            return Some(Vec::new());
+        }
+
+        if trait_name.resolve(self.interner) == "IntoTraversal"
+            && let Some(elem_ty) = self.builtin_into_traversal_element_ty(&recv_ty)
+            && let Some(param) = trait_item.type_params.first()
+        {
+            return Some(vec![(param.name, elem_ty)]);
+        }
+
+        for (_, impl_item) in self.item_tree.impls.iter() {
+            let Some(impl_trait) = impl_item.trait_ref.path.last() else {
+                continue;
+            };
+            if impl_trait != trait_name {
+                continue;
+            }
+
+            let Some(bindings) = self.impl_type_bindings_for_self_ty(
+                &impl_item.self_ty,
+                &recv_ty,
+                &impl_item.type_params,
+            ) else {
+                continue;
+            };
+
+            let env = TyResolutionEnv {
+                item_tree: self.item_tree,
+                module_scope: self.module_scope,
+                interner: self.interner,
+                type_params: bindings,
+                resolving_aliases: vec![],
+            };
+
+            let mut out = Vec::new();
+            for (param, arg) in trait_item
+                .type_params
+                .iter()
+                .zip(impl_item.trait_ref.args.iter())
+            {
+                out.push((param.name, env.resolve_type_ref(arg, &mut self.table)));
+            }
+            return Some(out);
+        }
+
+        None
+    }
+
+    pub(crate) fn flat_map_output_elem_ty(&mut self, ty: &Ty) -> Option<Ty> {
+        let ty = self.table.resolve_deep(ty);
+        if let Some(elem_ty) = self.builtin_into_traversal_element_ty(&ty) {
+            return Some(elem_ty);
+        }
+
+        let Some(into_traversal_name) = self
+            .module_scope
+            .traits
+            .keys()
+            .find(|name| name.resolve(self.interner) == "IntoTraversal")
+            .copied()
+        else {
+            return None;
+        };
+        let bindings = self.trait_type_bindings_for_receiver(&ty, into_traversal_name)?;
+        bindings.first().map(|(_, elem_ty)| elem_ty.clone())
+    }
+
+    fn builtin_into_traversal_element_ty(&self, ty: &Ty) -> Option<Ty> {
+        let Ty::Adt { def, args } = ty else {
+            return None;
+        };
+        if args.len() != 1 {
+            return None;
+        }
+        match self.module_scope.core_types.kind_for_idx(*def) {
+            Some(CoreType::Seq | CoreType::List | CoreType::MutableList | CoreType::Deque) => {
+                Some(args[0].clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn impl_type_bindings_for_self_ty(
+        &mut self,
+        self_ty: &TypeRef,
+        actual_ty: &Ty,
+        type_params: &[TypeParamDef],
+    ) -> Option<Vec<(Name, Ty)>> {
+        let mut bindings = FxHashMap::default();
+        if !self.bind_type_ref_to_ty(self_ty, actual_ty, type_params, &mut bindings) {
+            return None;
+        }
+        Some(bindings.into_iter().collect())
+    }
+
+    fn bind_type_ref_to_ty(
+        &mut self,
+        ty_ref: &TypeRef,
+        actual_ty: &Ty,
+        type_params: &[TypeParamDef],
+        bindings: &mut FxHashMap<Name, Ty>,
+    ) -> bool {
+        let actual_ty = self.table.resolve_deep(actual_ty);
+        match ty_ref {
+            TypeRef::Path { path, args } => {
+                let Some(seg) = path.last() else {
+                    return false;
+                };
+                if path.is_single()
+                    && args.is_empty()
+                    && type_params.iter().any(|param| param.name == seg)
+                {
+                    if let Some(existing) = bindings.get(&seg) {
+                        return self.table.resolve_deep(existing) == actual_ty;
+                    }
+                    bindings.insert(seg, actual_ty);
+                    return true;
+                }
+
+                match actual_ty {
+                    Ty::Int => {
+                        path.is_single() && seg.resolve(self.interner) == "Int" && args.is_empty()
+                    }
+                    Ty::Float => {
+                        path.is_single() && seg.resolve(self.interner) == "Float" && args.is_empty()
+                    }
+                    Ty::String => {
+                        path.is_single()
+                            && seg.resolve(self.interner) == "String"
+                            && args.is_empty()
+                    }
+                    Ty::Char => {
+                        path.is_single() && seg.resolve(self.interner) == "Char" && args.is_empty()
+                    }
+                    Ty::Bool => {
+                        path.is_single() && seg.resolve(self.interner) == "Bool" && args.is_empty()
+                    }
+                    Ty::Unit => {
+                        path.is_single() && seg.resolve(self.interner) == "Unit" && args.is_empty()
+                    }
+                    Ty::Adt {
+                        def,
+                        args: actual_args,
+                    } => {
+                        if path.last() != Some(self.item_tree.types[def].name)
+                            || args.len() != actual_args.len()
+                        {
+                            return false;
+                        }
+                        args.iter()
+                            .zip(actual_args.iter())
+                            .all(|(arg_ref, actual_arg)| {
+                                self.bind_type_ref_to_ty(arg_ref, actual_arg, type_params, bindings)
+                            })
+                    }
+                    Ty::Record {
+                        fields: actual_fields,
+                    } => {
+                        let TypeRef::Record { fields } = ty_ref else {
+                            return false;
+                        };
+                        if fields.len() != actual_fields.len() {
+                            return false;
+                        }
+                        fields.iter().zip(actual_fields.iter()).all(
+                            |((exp_name, exp_ty), (act_name, act_ty))| {
+                                exp_name == act_name
+                                    && self.bind_type_ref_to_ty(
+                                        exp_ty,
+                                        act_ty,
+                                        type_params,
+                                        bindings,
+                                    )
+                            },
+                        )
+                    }
+                    Ty::Fn {
+                        params: actual_params,
+                        ret: actual_ret,
+                    } => {
+                        let TypeRef::Fn { params, ret } = ty_ref else {
+                            return false;
+                        };
+                        params.len() == actual_params.len()
+                            && params.iter().zip(actual_params.iter()).all(
+                                |(exp_param, act_param)| {
+                                    self.bind_type_ref_to_ty(
+                                        exp_param,
+                                        act_param,
+                                        type_params,
+                                        bindings,
+                                    )
+                                },
+                            )
+                            && self.bind_type_ref_to_ty(
+                                ret,
+                                actual_ret.as_ref(),
+                                type_params,
+                                bindings,
+                            )
+                    }
+                    Ty::Error | Ty::Never | Ty::Var(_) => false,
+                }
+            }
+            TypeRef::Record { fields } => {
+                let Ty::Record {
+                    fields: actual_fields,
+                } = actual_ty
+                else {
+                    return false;
+                };
+                if fields.len() != actual_fields.len() {
+                    return false;
+                }
+                fields.iter().zip(actual_fields.iter()).all(
+                    |((exp_name, exp_ty), (act_name, act_ty))| {
+                        exp_name == act_name
+                            && self.bind_type_ref_to_ty(exp_ty, act_ty, type_params, bindings)
+                    },
+                )
+            }
+            TypeRef::Fn { params, ret } => {
+                let Ty::Fn {
+                    params: actual_params,
+                    ret: actual_ret,
+                } = actual_ty
+                else {
+                    return false;
+                };
+                params.len() == actual_params.len()
+                    && params
+                        .iter()
+                        .zip(actual_params.iter())
+                        .all(|(exp_param, act_param)| {
+                            self.bind_type_ref_to_ty(exp_param, act_param, type_params, bindings)
+                        })
+                    && self.bind_type_ref_to_ty(ret, actual_ret.as_ref(), type_params, bindings)
+            }
+            TypeRef::Refined { base, .. } => {
+                self.bind_type_ref_to_ty(base, &actual_ty, type_params, bindings)
+            }
+            TypeRef::Error => false,
         }
     }
 

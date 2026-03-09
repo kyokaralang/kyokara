@@ -306,21 +306,19 @@ break    continue
 
 ---
 
-## RFC-Planned Grammar Additions
+## Trait Grammar
 
-This section records draft grammar from [RFC 0011: Static Trait System and Constraint Semantics](rfcs/0011-static-trait-system-and-constraint-semantics.md).
-It is a design target for review and tightening, not current parser behavior.
-
-### Trait System (Planned)
+This section records the shipped trait grammar introduced by [RFC 0011: Static Trait System and Constraint Semantics](rfcs/0011-static-trait-system-and-constraint-semantics.md).
+It is intentionally compact and may still be tightened, but it reflects current parser behavior rather than a future-only design target.
 
 ```peg
-# Planned additions to Keyword:
+# Implemented additions to Keyword:
 # 'trait' / 'impl' / 'derive'
 # `Self` is reserved in trait declarations and impl blocks as the self-type placeholder.
 
 TraitRef             <- Path TypeArgList?
 
-PlannedItem          <- 'pub'? (PlannedTypeDef
+TraitItem            <- 'pub'? (TraitTypeDef
                          / TraitDef
                          / FnDef
                          / EffectDef
@@ -328,7 +326,7 @@ PlannedItem          <- 'pub'? (PlannedTypeDef
                          / LetBinding)
                        / ImplDef
 
-PlannedTypeDef       <- 'type' Ident TypeParamList? DeriveClause? '=' TypeBody
+TraitTypeDef         <- 'type' Ident TypeParamList? DeriveClause? '=' TypeBody
 DeriveClause         <- 'derive' '(' TraitRef (',' TraitRef)* ','? ')'
 
 TraitDef             <- 'trait' Ident TypeParamList? SupertraitList? '{' TraitMethodSig* '}'
@@ -341,13 +339,13 @@ ImplMethodDef        <- 'fn' Ident ParamList ReturnType? BlockExpr
 
 Notes:
 
-1. Planned trait calls reuse the existing qualified call surface: `Ord.compare(a, b)`.
-2. Planned dot-call behavior stays inherent-only: trait methods do not appear through `x.foo()`.
+1. Trait calls reuse the existing qualified call surface: `Ord.compare(a, b)`.
+2. Dot-call behavior stays inherent-only: trait methods do not appear through `x.foo()`.
 3. `impl` blocks are not independently `pub`.
 
-### Minimal Planned Example
+### Minimal Example
 
-This is the simplest full-shape example the planned grammar is aiming for:
+This is the simplest full-shape example the implemented grammar supports:
 
 ```kyokara
 pub trait Show {

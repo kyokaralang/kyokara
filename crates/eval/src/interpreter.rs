@@ -11,7 +11,9 @@ use kyokara_hir_def::call_family::{
     CallFamilySelection, CallShapeError, select_call_family_candidate,
 };
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, MatchArm, Stmt, UnaryOp};
-use kyokara_hir_def::item_tree::{FnItemIdx, FnParam, ItemTree, LetItemIdx, TypeDefKind, TypeItemIdx};
+use kyokara_hir_def::item_tree::{
+    FnItemIdx, FnParam, ItemTree, LetItemIdx, TypeDefKind, TypeItemIdx,
+};
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::resolver::{
@@ -98,6 +100,11 @@ enum SeqIterState {
     Map {
         input: Box<SeqIterState>,
         f: Value,
+    },
+    FlatMap {
+        input: Box<SeqIterState>,
+        f: Value,
+        current_inner: Option<Box<SeqIterState>>,
     },
     Filter {
         input: Box<SeqIterState>,
@@ -1143,6 +1150,10 @@ impl Interpreter {
             ("Ord", "compare", [lhs, rhs]) => Ok(Value::Int(self.trait_compare_values(lhs, rhs)?)),
             ("Hash", "hash", [value]) => Ok(Value::Int(self.trait_hash_value(value)?)),
             ("Show", "show", [value]) => Ok(Value::String(self.trait_show_value(value)?)),
+            ("IntoTraversal", "into_seq", [value]) => {
+                let plan = self.require_traversal_plan(value, "IntoTraversal.into_seq")?;
+                Ok(Value::Seq(plan))
+            }
             _ => Err(RuntimeError::TypeError(format!(
                 "unsupported trait call `{}.{}`",
                 trait_name.resolve(&self.interner),
@@ -1803,7 +1814,10 @@ impl Interpreter {
                 format!("unknown named argument `{}`", name.resolve(&self.interner))
             }
             CallShapeError::DuplicateNamedArg { name } => {
-                format!("duplicate named argument `{}`", name.resolve(&self.interner))
+                format!(
+                    "duplicate named argument `{}`",
+                    name.resolve(&self.interner)
+                )
             }
             CallShapeError::PositionalAfterNamedArg => {
                 "positional argument cannot appear after named argument".into()
@@ -2282,66 +2296,68 @@ impl Interpreter {
                     let scope_candidates = self.module_scope.functions.get(&name);
                     let candidates = override_candidates.or(scope_candidates);
                     if let Some(candidates) = candidates {
-                    let selection = match candidates.as_slice() {
-                        [fn_idx] => Some(CallFamilySelection::Selected {
-                            candidate: *fn_idx,
-                            binding: kyokara_hir_def::call_family::bind_call_args_to_params(
-                                &args,
-                                &self.item_tree.functions[*fn_idx].params,
-                            ),
-                        }),
-                        _ => Some(select_call_family_candidate(&args, candidates, |fn_idx| {
-                            &self.item_tree.functions[fn_idx].params
-                        })),
-                    };
-                    if let Some(selection) = selection {
-                        match selection {
-                            CallFamilySelection::Selected { candidate: fn_idx, .. } => {
-                                let source_order = self.args_in_source_order(&args);
-                                let mut arg_values = Vec::with_capacity(source_order.len());
-                                for idx in &source_order {
-                                    let value = eval_propagate!(self, env, body, *idx);
-                                    arg_values.push(value);
-                                }
-                                let param_names = self.param_names_for_fn_idx(fn_idx);
-                                let param_named_only = self.param_named_only_for_fn_idx(fn_idx);
-                                let arg_vals = self.bind_call_items_for_param_specs(
-                                    &format!("function `{}`", name.resolve(&self.interner)),
+                        let selection = match candidates.as_slice() {
+                            [fn_idx] => Some(CallFamilySelection::Selected {
+                                candidate: *fn_idx,
+                                binding: kyokara_hir_def::call_family::bind_call_args_to_params(
                                     &args,
-                                    arg_values,
-                                    &param_names,
-                                    Some(&param_named_only),
-                                )?;
-                                let mut out = Args::with_capacity(arg_vals.len());
-                                for value in arg_vals {
-                                    out.push(value);
+                                    &self.item_tree.functions[*fn_idx].params,
+                                ),
+                            }),
+                            _ => Some(select_call_family_candidate(&args, candidates, |fn_idx| {
+                                &self.item_tree.functions[fn_idx].params
+                            })),
+                        };
+                        if let Some(selection) = selection {
+                            match selection {
+                                CallFamilySelection::Selected {
+                                    candidate: fn_idx, ..
+                                } => {
+                                    let source_order = self.args_in_source_order(&args);
+                                    let mut arg_values = Vec::with_capacity(source_order.len());
+                                    for idx in &source_order {
+                                        let value = eval_propagate!(self, env, body, *idx);
+                                        arg_values.push(value);
+                                    }
+                                    let param_names = self.param_names_for_fn_idx(fn_idx);
+                                    let param_named_only = self.param_named_only_for_fn_idx(fn_idx);
+                                    let arg_vals = self.bind_call_items_for_param_specs(
+                                        &format!("function `{}`", name.resolve(&self.interner)),
+                                        &args,
+                                        arg_values,
+                                        &param_names,
+                                        Some(&param_named_only),
+                                    )?;
+                                    let mut out = Args::with_capacity(arg_vals.len());
+                                    for value in arg_vals {
+                                        out.push(value);
+                                    }
+                                    return self.call_fn(fn_idx, out).map(ControlFlow::Value);
                                 }
-                                return self.call_fn(fn_idx, out).map(ControlFlow::Value);
-                            }
-                            CallFamilySelection::InvalidShape { errors } => {
-                                return Err(RuntimeError::TypeError(
-                                    self.runtime_call_shape_error_message(&errors[0]),
-                                ));
-                            }
-                            CallFamilySelection::ArgCountMismatch { expected, actual } => {
-                                return Err(RuntimeError::ArityMismatch {
-                                    callee: format!(
-                                        "function `{}`",
+                                CallFamilySelection::InvalidShape { errors } => {
+                                    return Err(RuntimeError::TypeError(
+                                        self.runtime_call_shape_error_message(&errors[0]),
+                                    ));
+                                }
+                                CallFamilySelection::ArgCountMismatch { expected, actual } => {
+                                    return Err(RuntimeError::ArityMismatch {
+                                        callee: format!(
+                                            "function `{}`",
+                                            name.resolve(&self.interner)
+                                        ),
+                                        expected: expected.first().copied().unwrap_or(0),
+                                        actual,
+                                    });
+                                }
+                                CallFamilySelection::Ambiguous => {
+                                    return Err(RuntimeError::TypeError(format!(
+                                        "overloaded function family `{}` is ambiguous for this call shape",
                                         name.resolve(&self.interner)
-                                    ),
-                                    expected: expected.first().copied().unwrap_or(0),
-                                    actual,
-                                });
-                            }
-                            CallFamilySelection::Ambiguous => {
-                                return Err(RuntimeError::TypeError(format!(
-                                    "overloaded function family `{}` is ambiguous for this call shape",
-                                    name.resolve(&self.interner)
-                                )));
+                                    )));
+                                }
                             }
                         }
                     }
-                }
                 }
 
                 // ── Module-qualified / static method / method call resolution ──
@@ -2480,7 +2496,9 @@ impl Interpreter {
                     } else {
                         match self.method_candidate_for_value(&base_val, field_name, &args) {
                             None => None,
-                            Some(CallFamilySelection::Selected { candidate, .. }) => Some(candidate),
+                            Some(CallFamilySelection::Selected { candidate, .. }) => {
+                                Some(candidate)
+                            }
                             Some(CallFamilySelection::InvalidShape { errors }) => {
                                 return Err(RuntimeError::TypeError(
                                     self.runtime_call_shape_error_message(&errors[0]),
@@ -2789,66 +2807,68 @@ impl Interpreter {
                     let scope_candidates = self.module_scope.functions.get(&name);
                     let candidates = override_candidates.or(scope_candidates);
                     if let Some(candidates) = candidates {
-                    let selection = match candidates.as_slice() {
-                        [fn_idx] => Some(CallFamilySelection::Selected {
-                            candidate: *fn_idx,
-                            binding: kyokara_hir_def::call_family::bind_call_args_to_params(
-                                args,
-                                &self.item_tree.functions[*fn_idx].params,
-                            ),
-                        }),
-                        _ => Some(select_call_family_candidate(args, candidates, |fn_idx| {
-                            &self.item_tree.functions[fn_idx].params
-                        })),
-                    };
-                    if let Some(selection) = selection {
-                        match selection {
-                            CallFamilySelection::Selected { candidate: fn_idx, .. } => {
-                                let source_order = self.args_in_source_order(args);
-                                let mut arg_values = Vec::with_capacity(source_order.len());
-                                for idx in &source_order {
-                                    let value = eval_propagate_shared!(self, body, *idx);
-                                    arg_values.push(value);
-                                }
-                                let param_names = self.param_names_for_fn_idx(fn_idx);
-                                let param_named_only = self.param_named_only_for_fn_idx(fn_idx);
-                                let arg_vals = self.bind_call_items_for_param_specs(
-                                    &format!("function `{}`", name.resolve(&self.interner)),
+                        let selection = match candidates.as_slice() {
+                            [fn_idx] => Some(CallFamilySelection::Selected {
+                                candidate: *fn_idx,
+                                binding: kyokara_hir_def::call_family::bind_call_args_to_params(
                                     args,
-                                    arg_values,
-                                    &param_names,
-                                    Some(&param_named_only),
-                                )?;
-                                let mut out = Args::with_capacity(arg_vals.len());
-                                for value in arg_vals {
-                                    out.push(value);
+                                    &self.item_tree.functions[*fn_idx].params,
+                                ),
+                            }),
+                            _ => Some(select_call_family_candidate(args, candidates, |fn_idx| {
+                                &self.item_tree.functions[fn_idx].params
+                            })),
+                        };
+                        if let Some(selection) = selection {
+                            match selection {
+                                CallFamilySelection::Selected {
+                                    candidate: fn_idx, ..
+                                } => {
+                                    let source_order = self.args_in_source_order(args);
+                                    let mut arg_values = Vec::with_capacity(source_order.len());
+                                    for idx in &source_order {
+                                        let value = eval_propagate_shared!(self, body, *idx);
+                                        arg_values.push(value);
+                                    }
+                                    let param_names = self.param_names_for_fn_idx(fn_idx);
+                                    let param_named_only = self.param_named_only_for_fn_idx(fn_idx);
+                                    let arg_vals = self.bind_call_items_for_param_specs(
+                                        &format!("function `{}`", name.resolve(&self.interner)),
+                                        args,
+                                        arg_values,
+                                        &param_names,
+                                        Some(&param_named_only),
+                                    )?;
+                                    let mut out = Args::with_capacity(arg_vals.len());
+                                    for value in arg_vals {
+                                        out.push(value);
+                                    }
+                                    return self.call_fn(fn_idx, out).map(ControlFlow::Value);
                                 }
-                                return self.call_fn(fn_idx, out).map(ControlFlow::Value);
-                            }
-                            CallFamilySelection::InvalidShape { errors } => {
-                                return Err(RuntimeError::TypeError(
-                                    self.runtime_call_shape_error_message(&errors[0]),
-                                ));
-                            }
-                            CallFamilySelection::ArgCountMismatch { expected, actual } => {
-                                return Err(RuntimeError::ArityMismatch {
-                                    callee: format!(
-                                        "function `{}`",
+                                CallFamilySelection::InvalidShape { errors } => {
+                                    return Err(RuntimeError::TypeError(
+                                        self.runtime_call_shape_error_message(&errors[0]),
+                                    ));
+                                }
+                                CallFamilySelection::ArgCountMismatch { expected, actual } => {
+                                    return Err(RuntimeError::ArityMismatch {
+                                        callee: format!(
+                                            "function `{}`",
+                                            name.resolve(&self.interner)
+                                        ),
+                                        expected: expected.first().copied().unwrap_or(0),
+                                        actual,
+                                    });
+                                }
+                                CallFamilySelection::Ambiguous => {
+                                    return Err(RuntimeError::TypeError(format!(
+                                        "overloaded function family `{}` is ambiguous for this call shape",
                                         name.resolve(&self.interner)
-                                    ),
-                                    expected: expected.first().copied().unwrap_or(0),
-                                    actual,
-                                });
-                            }
-                            CallFamilySelection::Ambiguous => {
-                                return Err(RuntimeError::TypeError(format!(
-                                    "overloaded function family `{}` is ambiguous for this call shape",
-                                    name.resolve(&self.interner)
-                                )));
+                                    )));
+                                }
                             }
                         }
                     }
-                }
                 }
 
                 // ── Module-qualified / static method / method call resolution (shared path) ──
@@ -2985,7 +3005,9 @@ impl Interpreter {
                     } else {
                         match self.method_candidate_for_value(&base_val, field_name, args) {
                             None => None,
-                            Some(CallFamilySelection::Selected { candidate, .. }) => Some(candidate),
+                            Some(CallFamilySelection::Selected { candidate, .. }) => {
+                                Some(candidate)
+                            }
                             Some(CallFamilySelection::InvalidShape { errors }) => {
                                 return Err(RuntimeError::TypeError(
                                     self.runtime_call_shape_error_message(&errors[0]),
@@ -3871,6 +3893,32 @@ impl Interpreter {
         }
     }
 
+    fn require_into_traversal_plan(
+        &mut self,
+        value: &Value,
+        intrinsic_name: &str,
+    ) -> Result<Rc<SeqPlan>, RuntimeError> {
+        if let Ok(plan) = self.require_traversal_plan(value, intrinsic_name) {
+            return Ok(plan);
+        }
+
+        let trait_name = Name::new(&mut self.interner, "IntoTraversal");
+        let method_name = Name::new(&mut self.interner, "into_seq");
+        let seq_value = if let Some(fn_idx) =
+            self.trait_method_dispatch_fn_idx(trait_name, method_name, value)
+        {
+            self.call_fn(fn_idx, smallvec::smallvec![value.clone()])?
+        } else {
+            self.call_builtin_trait_method(
+                trait_name,
+                method_name,
+                smallvec::smallvec![value.clone()],
+            )?
+        };
+
+        self.require_traversal_plan(&seq_value, "IntoTraversal.into_seq")
+    }
+
     fn seq_iter_from_plan(&mut self, plan: &SeqPlan) -> Result<SeqIterState, RuntimeError> {
         match plan {
             SeqPlan::Source(source) => {
@@ -3926,6 +3974,11 @@ impl Interpreter {
             SeqPlan::Map { input, f } => Ok(SeqIterState::Map {
                 input: Box::new(self.seq_iter_from_plan(input)?),
                 f: f.clone(),
+            }),
+            SeqPlan::FlatMap { input, f } => Ok(SeqIterState::FlatMap {
+                input: Box::new(self.seq_iter_from_plan(input)?),
+                f: f.clone(),
+                current_inner: None,
             }),
             SeqPlan::Filter { input, f } => Ok(SeqIterState::Filter {
                 input: Box::new(self.seq_iter_from_plan(input)?),
@@ -4157,6 +4210,25 @@ impl Interpreter {
                 let mapped = self.call_value(f.clone(), smallvec::smallvec![item])?;
                 Ok(Some(mapped))
             }
+            SeqIterState::FlatMap {
+                input,
+                f,
+                current_inner,
+            } => loop {
+                if let Some(inner) = current_inner.as_mut() {
+                    if let Some(item) = self.seq_iter_next(inner)? {
+                        return Ok(Some(item));
+                    }
+                    *current_inner = None;
+                }
+
+                let Some(outer_item) = self.seq_iter_next(input)? else {
+                    return Ok(None);
+                };
+                let produced = self.call_value(f.clone(), smallvec::smallvec![outer_item])?;
+                let inner_plan = self.require_into_traversal_plan(&produced, "seq_flat_map")?;
+                *current_inner = Some(Box::new(self.seq_iter_from_plan(&inner_plan)?));
+            },
             SeqIterState::Filter { input, f } => loop {
                 let Some(item) = self.seq_iter_next(input)? else {
                     return Ok(None);
@@ -4399,6 +4471,25 @@ impl Interpreter {
                 self.seq_for_each_control(input, &mut |interp, item| {
                     let mapped = interp.call_value(mapper.clone(), smallvec::smallvec![item])?;
                     emit(interp, mapped)
+                })
+            }
+            SeqPlan::FlatMap { input, f } => {
+                let mapper = f.clone();
+                self.seq_for_each_control(input, &mut |interp, item| {
+                    let produced = interp.call_value(mapper.clone(), smallvec::smallvec![item])?;
+                    let inner_plan =
+                        interp.require_into_traversal_plan(&produced, "seq_flat_map")?;
+                    let mut broke = false;
+                    interp.seq_for_each_control(&inner_plan, &mut |inner_interp, inner_item| {
+                        match emit(inner_interp, inner_item)? {
+                            Continue => Ok(Continue),
+                            Break => {
+                                broke = true;
+                                Ok(Break)
+                            }
+                        }
+                    })?;
+                    if broke { Ok(Break) } else { Ok(Continue) }
                 })
             }
             SeqPlan::Filter { input, f } => {
@@ -5121,6 +5212,13 @@ impl Interpreter {
             IntrinsicFn::SeqMap => {
                 let plan = self.require_traversal_plan(&args[0], "seq_map")?;
                 Ok(Value::seq_plan(SeqPlan::Map {
+                    input: plan,
+                    f: args[1].clone(),
+                }))
+            }
+            IntrinsicFn::SeqFlatMap => {
+                let plan = self.require_traversal_plan(&args[0], "seq_flat_map")?;
+                Ok(Value::seq_plan(SeqPlan::FlatMap {
                     input: plan,
                     f: args[1].clone(),
                 }))

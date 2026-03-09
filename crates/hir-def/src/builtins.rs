@@ -76,7 +76,7 @@ fn register_core_type_item(
     kind: TypeDefKind,
 ) -> (TypeItemIdx, Name) {
     let public_name = core_public_type_name(interner, core);
-    let type_name = if core == CoreType::Seq || scope.types.contains_key(&public_name) {
+    let type_name = if scope.types.contains_key(&public_name) {
         core_hidden_type_name(interner, core)
     } else {
         public_name
@@ -153,11 +153,19 @@ pub fn register_builtin_traits(
     let string_ty = path_type(interner, "String");
     let int_ty = path_type(interner, "Int");
     let bool_ty = path_type(interner, "Bool");
+    let seq_t = TypeRef::Path {
+        path: Path::single(Name::new(interner, "Seq")),
+        args: vec![TypeRef::Path {
+            path: Path::single(Name::new(interner, "T")),
+            args: Vec::new(),
+        }],
+    };
 
     let eq_name = Name::new(interner, "Eq");
     let ord_name = Name::new(interner, "Ord");
     let hash_name = Name::new(interner, "Hash");
     let show_name = Name::new(interner, "Show");
+    let into_traversal_name = Name::new(interner, "IntoTraversal");
 
     let traits = [
         TraitItem {
@@ -245,6 +253,26 @@ pub fn register_builtin_traits(
                     named_only: false,
                 }],
                 ret_type: Some(string_ty),
+                with_effects: Vec::new(),
+            }],
+        },
+        TraitItem {
+            name: into_traversal_name,
+            is_pub: false,
+            type_params: vec![TypeParamDef {
+                name: Name::new(interner, "T"),
+                bounds: Vec::new(),
+            }],
+            supertraits: Vec::new(),
+            methods: vec![TraitMethodItem {
+                name: Name::new(interner, "into_seq"),
+                type_params: Vec::new(),
+                params: vec![FnParam {
+                    name: Name::new(interner, "self"),
+                    ty: path_type(interner, "Self"),
+                    named_only: false,
+                }],
+                ret_type: Some(seq_t),
                 with_effects: Vec::new(),
             }],
         },
@@ -712,6 +740,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ),
         ("bitset_xor", ReceiverKey::Core(CoreType::BitSet), "xor"),
         ("seq_map", ReceiverKey::Core(CoreType::List), "map"),
+        (
+            "seq_flat_map",
+            ReceiverKey::Core(CoreType::List),
+            "flat_map",
+        ),
         ("seq_filter", ReceiverKey::Core(CoreType::List), "filter"),
         ("seq_fold", ReceiverKey::Core(CoreType::List), "fold"),
         ("seq_scan", ReceiverKey::Core(CoreType::List), "scan"),
@@ -725,7 +758,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_windows", ReceiverKey::Core(CoreType::List), "windows"),
         ("seq_count", ReceiverKey::Core(CoreType::List), "count"),
         ("seq_count_by", ReceiverKey::Core(CoreType::List), "count"),
-        ("seq_contains", ReceiverKey::Core(CoreType::List), "contains"),
+        (
+            "seq_contains",
+            ReceiverKey::Core(CoreType::List),
+            "contains",
+        ),
         (
             "seq_frequencies",
             ReceiverKey::Core(CoreType::List),
@@ -962,6 +999,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ),
         ("seq_map", ReceiverKey::Core(CoreType::MutableList), "map"),
         (
+            "seq_flat_map",
+            ReceiverKey::Core(CoreType::MutableList),
+            "flat_map",
+        ),
+        (
             "seq_filter",
             ReceiverKey::Core(CoreType::MutableList),
             "filter",
@@ -1040,6 +1082,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             "is_empty",
         ),
         ("seq_map", ReceiverKey::Core(CoreType::Deque), "map"),
+        (
+            "seq_flat_map",
+            ReceiverKey::Core(CoreType::Deque),
+            "flat_map",
+        ),
         ("seq_filter", ReceiverKey::Core(CoreType::Deque), "filter"),
         ("seq_fold", ReceiverKey::Core(CoreType::Deque), "fold"),
         ("seq_scan", ReceiverKey::Core(CoreType::Deque), "scan"),
@@ -1053,7 +1100,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_windows", ReceiverKey::Core(CoreType::Deque), "windows"),
         ("seq_count", ReceiverKey::Core(CoreType::Deque), "count"),
         ("seq_count_by", ReceiverKey::Core(CoreType::Deque), "count"),
-        ("seq_contains", ReceiverKey::Core(CoreType::Deque), "contains"),
+        (
+            "seq_contains",
+            ReceiverKey::Core(CoreType::Deque),
+            "contains",
+        ),
         (
             "seq_frequencies",
             ReceiverKey::Core(CoreType::Deque),
@@ -1065,6 +1116,7 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_to_list", ReceiverKey::Core(CoreType::Deque), "to_list"),
         // Seq methods
         ("seq_map", ReceiverKey::Core(CoreType::Seq), "map"),
+        ("seq_flat_map", ReceiverKey::Core(CoreType::Seq), "flat_map"),
         ("seq_filter", ReceiverKey::Core(CoreType::Seq), "filter"),
         ("seq_fold", ReceiverKey::Core(CoreType::Seq), "fold"),
         ("seq_scan", ReceiverKey::Core(CoreType::Seq), "scan"),
@@ -1711,6 +1763,7 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     let k_name = Name::new(interner, "K");
     let v_name = Name::new(interner, "V");
     let s_name = Name::new(interner, "S");
+    let r_name = Name::new(interner, "R");
 
     // Generic type refs.
     let t_ref = TypeRef::Path {
@@ -1739,6 +1792,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     };
     let s_ref = TypeRef::Path {
         path: Path::single(s_name),
+        args: Vec::new(),
+    };
+    let r_ref = TypeRef::Path {
+        path: Path::single(r_name),
         args: Vec::new(),
     };
 
@@ -1884,6 +1941,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         args: vec![priority_queue_item_pt],
     };
     let ord_bound = trait_ref_item(interner, "Ord");
+    let into_traversal_bound_u = TraitRefItem {
+        path: Path::single(Name::new(interner, "IntoTraversal")),
+        args: vec![u_ref.clone()],
+    };
     let unfold_step_record = TypeRef::Record {
         fields: vec![
             (Name::new(interner, "value"), t_ref.clone()),
@@ -1899,6 +1960,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     let fn_t_to_u = TypeRef::Fn {
         params: vec![t_ref.clone()],
         ret: Box::new(u_ref.clone()),
+    };
+    let fn_t_to_r = TypeRef::Fn {
+        params: vec![t_ref.clone()],
+        ret: Box::new(r_ref.clone()),
     };
     let fn_t_to_option_u = TypeRef::Fn {
         params: vec![t_ref.clone()],
@@ -2741,6 +2806,27 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             "seq_map",
             vec![t_name, u_name],
             vec![("s", seq_t.clone()), ("f", fn_t_to_u.clone())],
+            seq_u.clone(),
+        ),
+        // seq_flat_map<T, U, R: IntoTraversal<U>>(s: Seq<T>, f: fn(T) -> R) -> Seq<U>
+        mk_intrinsic_with_type_params(
+            interner,
+            "seq_flat_map",
+            vec![
+                TypeParamDef {
+                    name: t_name,
+                    bounds: Vec::new(),
+                },
+                TypeParamDef {
+                    name: u_name,
+                    bounds: Vec::new(),
+                },
+                TypeParamDef {
+                    name: r_name,
+                    bounds: vec![into_traversal_bound_u.clone()],
+                },
+            ],
+            vec![("s", seq_t.clone()), ("f", fn_t_to_r.clone())],
             seq_u.clone(),
         ),
         // seq_filter<T>(s: Seq<T>, f: fn(T) -> Bool) -> Seq<T>

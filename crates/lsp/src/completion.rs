@@ -871,6 +871,10 @@ mod tests {
             items.iter().any(|i| i.label == "remove_at"),
             "expected 'remove_at' in MutableList receiver completion: {items:?}"
         );
+        assert!(
+            items.iter().any(|i| i.label == "flat_map"),
+            "expected 'flat_map' in MutableList receiver completion: {items:?}"
+        );
     }
 
     #[test]

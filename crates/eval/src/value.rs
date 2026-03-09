@@ -1729,6 +1729,10 @@ pub enum SeqPlan {
         input: Rc<SeqPlan>,
         f: Value,
     },
+    FlatMap {
+        input: Rc<SeqPlan>,
+        f: Value,
+    },
     Filter {
         input: Rc<SeqPlan>,
         f: Value,
@@ -2196,7 +2200,10 @@ mod tests {
             snapshot.as_ref(),
             &vec![Value::Int(1), Value::Int(2), Value::Int(3)]
         );
-        assert_eq!(items.snapshot().as_ref(), &vec![Value::Int(1), Value::Int(3)]);
+        assert_eq!(
+            items.snapshot().as_ref(),
+            &vec![Value::Int(1), Value::Int(3)]
+        );
         assert_ne!(
             snapshot_ptr,
             items.current_backing_ptr(),

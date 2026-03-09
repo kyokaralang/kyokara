@@ -7,6 +7,7 @@ use kyokara_hir_def::call_family::{
 };
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, Stmt, UnaryOp};
 use kyokara_hir_def::item_tree::{FnItemIdx, TypeDefKind};
+use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::resolver::{
     CoreType, PrimitiveType, ReceiverKey, ResolvedName, StaticOwnerKey,
@@ -580,7 +581,9 @@ impl<'a> InferenceCtx<'a> {
             }
         }
 
-        if (!saw_shape_error || !suppress_missing_args) && let Some(names) = names {
+        if (!saw_shape_error || !suppress_missing_args)
+            && let Some(names) = names
+        {
             for (idx, provided) in seen.iter().enumerate() {
                 if !provided {
                     has_errors = true;
@@ -1757,10 +1760,20 @@ impl<'a> InferenceCtx<'a> {
                     self.interner,
                     &self.type_params,
                 );
+                let trait_type_params = self
+                    .trait_type_bindings_for_receiver(&recv_ty, name)
+                    .unwrap_or_default();
                 let param_tys = method
                     .params
                     .iter()
-                    .map(|param| self.resolve_trait_method_type(&param.ty, &recv_ty, &env))
+                    .map(|param| {
+                        self.resolve_trait_method_type(
+                            &param.ty,
+                            &recv_ty,
+                            &env,
+                            &trait_type_params,
+                        )
+                    })
                     .collect::<Vec<_>>();
                 let param_names = method
                     .params
@@ -1775,7 +1788,9 @@ impl<'a> InferenceCtx<'a> {
                 let ret = method
                     .ret_type
                     .as_ref()
-                    .map(|ret| self.resolve_trait_method_type(ret, &recv_ty, &env))
+                    .map(|ret| {
+                        self.resolve_trait_method_type(ret, &recv_ty, &env, &trait_type_params)
+                    })
                     .unwrap_or(Ty::Unit);
                 return Some(ret);
             }
@@ -1831,7 +1846,17 @@ impl<'a> InferenceCtx<'a> {
         ty_ref: &kyokara_hir_def::type_ref::TypeRef,
         recv_ty: &Ty,
         env: &TyResolutionEnv<'_>,
+        trait_type_params: &[(Name, Ty)],
     ) -> Ty {
+        let mut type_params = env.type_params.clone();
+        type_params.extend_from_slice(trait_type_params);
+        let trait_env = TyResolutionEnv {
+            item_tree: env.item_tree,
+            module_scope: env.module_scope,
+            interner: env.interner,
+            type_params,
+            resolving_aliases: env.resolving_aliases.clone(),
+        };
         match ty_ref {
             kyokara_hir_def::type_ref::TypeRef::Path { path, args }
                 if path.is_single() && args.is_empty() =>
@@ -1840,10 +1865,10 @@ impl<'a> InferenceCtx<'a> {
                 if seg.resolve(self.interner) == "Self" {
                     recv_ty.clone()
                 } else {
-                    env.resolve_type_ref(ty_ref, &mut self.table)
+                    trait_env.resolve_type_ref(ty_ref, &mut self.table)
                 }
             }
-            _ => env.resolve_type_ref(ty_ref, &mut self.table),
+            _ => trait_env.resolve_type_ref(ty_ref, &mut self.table),
         }
     }
 
@@ -1918,6 +1943,7 @@ impl<'a> InferenceCtx<'a> {
         matches!(
             name,
             "seq_map"
+                | "seq_flat_map"
                 | "seq_filter"
                 | "seq_fold"
                 | "seq_scan"
@@ -1964,6 +1990,48 @@ impl<'a> InferenceCtx<'a> {
         select_call_family_candidate(args, candidates, |fn_idx| {
             &self.item_tree.functions[fn_idx].params[1..]
         })
+    }
+
+    fn seq_ty(&self, elem_ty: Ty) -> Ty {
+        let seq_idx = self
+            .module_scope
+            .core_types
+            .get(CoreType::Seq)
+            .map(|info| info.type_idx)
+            .expect("Seq core type registered");
+        Ty::Adt {
+            def: seq_idx,
+            args: vec![elem_ty],
+        }
+    }
+
+    fn infer_flat_map_return_ty(&mut self, callback_arg: &CallArg, ret_ty: &Ty) -> Ty {
+        let callback_expr = match callback_arg {
+            CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => *expr,
+        };
+        let callback_ty = self
+            .table
+            .resolve_deep(&self.expr_types[callback_expr].clone());
+        let Ty::Fn { ret, .. } = callback_ty else {
+            return Ty::Error;
+        };
+        let callback_ret_ty = self.table.resolve_deep(ret.as_ref());
+        let Some(elem_ty) = self.flat_map_output_elem_ty(&callback_ret_ty) else {
+            self.push_diag(TyDiagnosticData::MissingTraitImpl {
+                trait_name: "IntoTraversal".to_owned(),
+                ty: callback_ret_ty,
+            });
+            return Ty::Error;
+        };
+        let seq_ty = self.seq_ty(elem_ty);
+        if matches!(
+            self.with_traversal_seq_compat_scope(|ctx| ctx.unify_or_err(ret_ty, &seq_ty)),
+            Ty::Error
+        ) {
+            Ty::Error
+        } else {
+            self.table.resolve_deep(ret_ty)
+        }
     }
 
     /// Try to resolve `base.field(args)` as a method call.
@@ -2033,10 +2101,7 @@ impl<'a> InferenceCtx<'a> {
         let fn_idx = match self.select_method_candidate_by_call_shape(candidates, args) {
             CallFamilySelection::Selected { candidate, .. } => candidate,
             CallFamilySelection::ArgCountMismatch { expected, actual } => {
-                self.push_diag(TyDiagnosticData::ArgCountMismatchOneOf {
-                    expected,
-                    actual,
-                });
+                self.push_diag(TyDiagnosticData::ArgCountMismatchOneOf { expected, actual });
                 for arg in args {
                     match arg {
                         CallArg::Positional(e) | CallArg::Named { value: e, .. } => {
@@ -2169,6 +2234,15 @@ impl<'a> InferenceCtx<'a> {
             return Some(Ty::Error);
         }
 
+        let resolved_ret = if method_intrinsic_str == "seq_flat_map" {
+            let Some(callback_arg) = args.first() else {
+                return Some(Ty::Error);
+            };
+            self.infer_flat_map_return_ty(callback_arg, &ret)
+        } else {
+            self.table.resolve_deep(&ret)
+        };
+
         // Record effect checking for the resolved method.
         let call_target = Some(method_name);
         self.record_call_edge_if_top_level(call_target);
@@ -2293,7 +2367,7 @@ impl<'a> InferenceCtx<'a> {
             }
         }
 
-        Some(ret)
+        Some(resolved_ret)
     }
 
     fn infer_index(&mut self, base: ExprIdx, index: ExprIdx) -> Ty {
