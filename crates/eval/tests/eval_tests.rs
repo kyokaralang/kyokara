@@ -7404,6 +7404,15 @@ fn eval_method_string_to_lower() {
 }
 
 #[test]
+fn eval_method_string_md5() {
+    let val = run_ok(r#"fn main() -> String { "abc".md5() }"#);
+    match val {
+        Value::String(s) => assert_eq!(s, "900150983cd24fb0d6963f7d28e17f72"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
 fn eval_method_string_starts_with() {
     let val = run_ok(r#"fn main() -> Bool { "hello world".starts_with("hello") }"#);
     assert!(matches!(val, Value::Bool(true)));

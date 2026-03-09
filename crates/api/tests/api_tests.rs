@@ -5059,6 +5059,11 @@ fn check_result_ergonomics_canonical_surface_has_no_diagnostics() {
 }
 
 #[test]
+fn check_string_md5_canonical_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(r#"fn main() -> String { "abc".md5() }"#, "string md5 canonical surface");
+}
+
+#[test]
 fn check_option_result_combinator_parity_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
         r#"fn main() -> Int {

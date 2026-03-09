@@ -600,6 +600,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             "trim",
         ),
         (
+            "string_md5",
+            ReceiverKey::Primitive(PrimitiveType::String),
+            "md5",
+        ),
+        (
             "string_split",
             ReceiverKey::Primitive(PrimitiveType::String),
             "split",
@@ -3009,6 +3014,14 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         mk_intrinsic(
             interner,
             "string_trim",
+            vec![],
+            vec![("s", string_ty.clone())],
+            string_ty.clone(),
+        ),
+        // string_md5(s: String) -> String
+        mk_intrinsic(
+            interner,
+            "string_md5",
             vec![],
             vec![("s", string_ty.clone())],
             string_ty.clone(),

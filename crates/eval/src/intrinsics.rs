@@ -6,6 +6,7 @@ use std::rc::Rc;
 use indexmap::{IndexMap, IndexSet};
 use kyokara_hir_def::name::Name;
 use kyokara_intern::Interner;
+use md5::{Digest, Md5};
 use smallvec::SmallVec;
 
 use crate::error::RuntimeError;
@@ -157,6 +158,7 @@ pub enum IntrinsicFn {
     StringStartsWith,
     StringEndsWith,
     StringTrim,
+    StringMd5,
     StringSplit,
     StringSubstring,
     StringToUpper,
@@ -1322,6 +1324,14 @@ impl IntrinsicFn {
                 };
                 Ok(Value::String(s.trim().to_string()))
             }
+            IntrinsicFn::StringMd5 => {
+                let Value::String(s) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "string_md5 expects a String".into(),
+                    ));
+                };
+                Ok(Value::String(format!("{:x}", Md5::digest(s.as_bytes()))))
+            }
             IntrinsicFn::StringSplit => {
                 let Value::String(s) = &args[0] else {
                     return Err(RuntimeError::TypeError(
@@ -2224,6 +2234,7 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
             IntrinsicFn::StringEndsWith,
         ),
         (Name::new(interner, "string_trim"), IntrinsicFn::StringTrim),
+        (Name::new(interner, "string_md5"), IntrinsicFn::StringMd5),
         (
             Name::new(interner, "string_split"),
             IntrinsicFn::StringSplit,
