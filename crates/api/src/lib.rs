@@ -1418,7 +1418,8 @@ fn resolved_symbol_id(
                 module_prefix,
             ))
         }
-        ResolvedName::Import(_)
+        ResolvedName::Let(_)
+        | ResolvedName::Import(_)
         | ResolvedName::Trait(_)
         | ResolvedName::Module(_)
         | ResolvedName::StaticMethodType(_)

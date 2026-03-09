@@ -7,7 +7,7 @@ use kyokara_stdx::{FxHashMap, FxHashSet};
 
 use kyokara_intern::Interner;
 
-use crate::item_tree::{EffectItemIdx, FnItemIdx, TraitItemIdx, TypeItemIdx};
+use crate::item_tree::{EffectItemIdx, FnItemIdx, LetItemIdx, TraitItemIdx, TypeItemIdx};
 use crate::name::Name;
 use crate::scope::{ScopeDef, ScopeIdx, ScopeTree};
 
@@ -188,6 +188,8 @@ pub struct WellKnownNames {
 /// Module-level scope: items + constructors + imports.
 #[derive(Debug, Default, Clone)]
 pub struct ModuleScope {
+    /// Top-level immutable let bindings.
+    pub lets: FxHashMap<Name, LetItemIdx>,
     /// Top-level function definitions.
     pub functions: FxHashMap<Name, FnItemIdx>,
     /// Type definitions.
@@ -245,6 +247,8 @@ pub struct Resolver<'a> {
 pub enum ResolvedName {
     /// Found in a local scope.
     Local(ScopeDef),
+    /// A module-level immutable let binding.
+    Let(LetItemIdx),
     /// A function item at module level.
     Fn(FnItemIdx),
     /// A type at module level.
@@ -289,6 +293,9 @@ impl<'a> Resolver<'a> {
         }
 
         // 2. Module-level items
+        if let Some(&idx) = self.module.lets.get(&name) {
+            return Some(ResolvedName::Let(idx));
+        }
         if let Some(&idx) = self.module.functions.get(&name) {
             return Some(ResolvedName::Fn(idx));
         }
@@ -343,6 +350,9 @@ impl<'a> Resolver<'a> {
         }
 
         // 2. Module-level items
+        if let Some(&idx) = self.module.lets.get(&name) {
+            return Some(ResolvedName::Let(idx));
+        }
         if let Some(&idx) = self.module.functions.get(&name) {
             return Some(ResolvedName::Fn(idx));
         }

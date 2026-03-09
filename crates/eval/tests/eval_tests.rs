@@ -139,6 +139,36 @@ fn eval_pipe_identifier_is_allowed_and_pipeline_still_runs() {
 }
 
 #[test]
+fn eval_top_level_let_constant_is_available_in_main() {
+    let val = run_ok("let off = 1\nfn main() -> Int { off }");
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
+fn eval_later_top_level_let_can_use_earlier_top_level_let() {
+    let val = run_ok("let off = 1\nlet off2 = off + 1\nfn main() -> Int { off2 }");
+    assert_eq!(val, Value::Int(2));
+}
+
+#[test]
+fn eval_function_body_can_read_top_level_let() {
+    let val = run_ok("let off = 1\nfn add(x: Int) -> Int { x + off }\nfn main() -> Int { add(1) }");
+    assert_eq!(val, Value::Int(2));
+}
+
+#[test]
+fn eval_imported_module_function_can_read_its_top_level_let() {
+    let val = run_project_with_files_manifest_ok(
+        &[
+            ("main.ky", "import util\nfn main() -> Int { util() }"),
+            ("util.ky", "let off = 1\npub fn util() -> Int { off }"),
+        ],
+        None,
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
 fn eval_builtin_trait_qualified_call() {
     let val = run_ok("fn main() -> Int { Ord.compare(3, 1) }");
     assert!(matches!(val, Value::Int(1)));

@@ -9,13 +9,16 @@ mod pat;
 use kyokara_diagnostics::Diagnostic;
 use kyokara_hir_def::body::{Body, LocalBindingOrigin};
 use kyokara_hir_def::expr::ExprIdx;
-use kyokara_hir_def::item_tree::{FnItem, FnItemIdx, ItemTree, TypeDefKind, TypeItemIdx};
+use kyokara_hir_def::item_tree::{
+    FnItem, FnItemIdx, ItemTree, LetItem, LetItemIdx, TypeDefKind, TypeItemIdx,
+};
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::resolver::{CoreType, ModuleScope};
 use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_intern::Interner;
 use kyokara_span::Span;
+use kyokara_stdx::FxHashMap;
 use la_arena::ArenaMap;
 
 use crate::diagnostics::TyDiagnosticData;
@@ -104,6 +107,8 @@ pub(crate) struct InferenceCtx<'a> {
     pub traversal_seq_compat_depth: usize,
     /// Nesting depth of loop statements (`while` / `for`) during inference.
     pub loop_depth: usize,
+    /// Already-inferred top-level let types visible from this body.
+    pub top_level_let_types: &'a FxHashMap<LetItemIdx, Ty>,
 }
 
 impl<'a> InferenceCtx<'a> {
@@ -128,7 +133,9 @@ impl<'a> InferenceCtx<'a> {
             Ty::Var(var) => self
                 .type_params
                 .iter()
-                .find(|(_, param_ty)| matches!(self.table.resolve(param_ty), Ty::Var(v) if v == var))
+                .find(
+                    |(_, param_ty)| matches!(self.table.resolve(param_ty), Ty::Var(v) if v == var),
+                )
                 .and_then(|(name, _)| self.type_param_bounds.iter().find(|(n, _)| n == name))
                 .is_some_and(|(_, bounds)| {
                     bounds
@@ -333,11 +340,7 @@ impl<'a> InferenceCtx<'a> {
         let mut exact_table = self.table.clone();
         if exact_table.unify(expected, actual)
             || (self.traversal_seq_compat_enabled()
-                && self.unify_seq_traversal_compat_with_table(
-                    &mut exact_table,
-                    expected,
-                    actual,
-                ))
+                && self.unify_seq_traversal_compat_with_table(&mut exact_table, expected, actual))
         {
             self.table = exact_table;
             return self.table.resolve_deep(expected);
@@ -516,6 +519,7 @@ pub fn infer_body(
     body: &Body,
     item_tree: &ItemTree,
     module_scope: &ModuleScope,
+    top_level_let_types: &FxHashMap<LetItemIdx, Ty>,
     interner: &Interner,
     fn_span: Span,
 ) -> InferenceResult {
@@ -615,6 +619,7 @@ pub fn infer_body(
         local_types: ArenaMap::default(),
         traversal_seq_compat_depth: 0,
         loop_depth: 0,
+        top_level_let_types,
     };
 
     // Also try to bind param types to any matching pat_scopes entries.
@@ -727,6 +732,134 @@ pub fn infer_body(
         raw_diagnostics,
         calls: ctx.calls,
         param_types: resolved_param_types,
+        ret_ty: resolved_ret_ty,
+    }
+}
+
+/// Infer the type of a top-level immutable let initializer.
+pub fn infer_top_level_let(
+    let_item: &LetItem,
+    body: &Body,
+    item_tree: &ItemTree,
+    module_scope: &ModuleScope,
+    top_level_let_types: &FxHashMap<LetItemIdx, Ty>,
+    interner: &Interner,
+    let_span: Span,
+) -> InferenceResult {
+    let mut table = UnificationTable::new();
+
+    let env = TyResolutionEnv {
+        item_tree,
+        module_scope,
+        interner,
+        type_params: Vec::new(),
+        resolving_aliases: vec![],
+    };
+
+    let mut diags: Vec<(TyDiagnosticData, DiagLoc)> = Vec::new();
+    let declared_ty = let_item
+        .ty
+        .as_ref()
+        .map(|t| env.resolve_type_ref(t, &mut table));
+    if declared_ty == Some(Ty::Error)
+        && let Some(type_ref) = &let_item.ty
+    {
+        collect_unresolved_type_names(type_ref, interner, body.root, &mut diags);
+    }
+
+    let caller_effects = EffectSet::default();
+    let ret_ty = declared_ty.clone().unwrap_or_else(|| table.fresh_var());
+
+    let mut ctx = InferenceCtx {
+        table,
+        expr_types: ArenaMap::default(),
+        pat_types: ArenaMap::default(),
+        holes: Vec::new(),
+        diags,
+        calls: Vec::new(),
+        body,
+        item_tree,
+        module_scope,
+        interner,
+        _fn_span: let_span,
+        current_expr: None,
+        ret_ty,
+        caller_effects,
+        type_params: Vec::new(),
+        type_param_bounds: Vec::new(),
+        param_types: Vec::new(),
+        param_names: Vec::new(),
+        local_types: ArenaMap::default(),
+        traversal_seq_compat_depth: 0,
+        loop_depth: 0,
+        top_level_let_types,
+    };
+
+    let body_ty = if let Some(ty) = declared_ty.clone() {
+        ctx.infer_expr(body.root, &Expectation::Has(ty))
+    } else {
+        ctx.infer_expr(body.root, &Expectation::None)
+    };
+
+    ctx.current_expr = Some(body.root);
+    let ret = ctx.ret_ty.clone();
+    ctx.unify_or_err(&ret, &body_ty);
+
+    let mut expr_types = ArenaMap::default();
+    for (idx, ty) in ctx.expr_types.into_iter() {
+        expr_types.insert(idx, ctx.table.resolve_deep(&ty));
+    }
+    let mut pat_types = ArenaMap::default();
+    for (idx, ty) in ctx.pat_types.into_iter() {
+        pat_types.insert(idx, ctx.table.resolve_deep(&ty));
+    }
+
+    let raw_diagnostics: Vec<(TyDiagnosticData, Span)> = ctx
+        .diags
+        .iter()
+        .map(|(d, loc)| {
+            let range = match loc {
+                DiagLoc::Expr(expr_idx) => body.expr_source_map.get(*expr_idx).copied(),
+                DiagLoc::Pat(pat_idx) => body.pat_source_map.get(*pat_idx).copied(),
+            }
+            .unwrap_or(let_span.range);
+            (
+                d.clone(),
+                Span {
+                    file: let_span.file,
+                    range,
+                },
+            )
+        })
+        .collect();
+
+    let diagnostics: Vec<Diagnostic> = ctx
+        .diags
+        .into_iter()
+        .map(|(d, loc)| {
+            let range = match loc {
+                DiagLoc::Expr(expr_idx) => body.expr_source_map.get(expr_idx).copied(),
+                DiagLoc::Pat(pat_idx) => body.pat_source_map.get(pat_idx).copied(),
+            }
+            .unwrap_or(let_span.range);
+            let span = Span {
+                file: let_span.file,
+                range,
+            };
+            d.into_diagnostic(span, interner, item_tree)
+        })
+        .collect();
+
+    let resolved_ret_ty = ctx.table.resolve_deep(&ctx.ret_ty);
+
+    InferenceResult {
+        expr_types,
+        pat_types,
+        holes: ctx.holes,
+        diagnostics,
+        raw_diagnostics,
+        calls: ctx.calls,
+        param_types: Vec::new(),
         ret_ty: resolved_ret_ty,
     }
 }

@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use kyokara_hir_def::body::{Body, LocalSlotRef};
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, MatchArm, Stmt, UnaryOp};
-use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree, TypeDefKind, TypeItemIdx};
+use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree, LetItemIdx, TypeDefKind, TypeItemIdx};
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::resolver::{
@@ -34,7 +34,11 @@ pub struct Interpreter {
     item_tree: ItemTree,
     module_scope: ModuleScope,
     fn_bodies: FxHashMap<FnItemIdx, Rc<Body>>,
+    let_bodies: FxHashMap<LetItemIdx, Rc<Body>>,
     body_local_accesses: FxHashMap<usize, ArenaMap<ExprIdx, LocalSlotRef>>,
+    /// Per-function module-level immutable let overrides used for project mode.
+    /// Maps `current_fn_idx -> (name -> value)` for the function's source module.
+    let_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, Value>>,
     /// Per-function module-level function overrides used for project mode.
     /// Maps `current_fn_idx -> (name -> resolved fn_idx)`.
     fn_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, FnItemIdx>>,
@@ -64,6 +68,8 @@ pub struct Interpreter {
     current_body: Option<Rc<Body>>,
     /// Optional local slot to move instead of clone during a dead-after-use eval path.
     consuming_local: Option<LocalSlotRef>,
+    /// Top-level immutable let bindings are materialized before user code runs.
+    top_level_lets_initialized: bool,
 }
 
 /// Used to implement early return from functions.
@@ -335,6 +341,8 @@ impl Interpreter {
         item_tree: ItemTree,
         module_scope: ModuleScope,
         fn_bodies: FxHashMap<FnItemIdx, Body>,
+        let_bodies: FxHashMap<LetItemIdx, Body>,
+        let_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, Value>>,
         fn_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, FnItemIdx>>,
         mut interner: Interner,
         manifest: Option<CapabilityManifest>,
@@ -389,8 +397,13 @@ impl Interpreter {
             .into_iter()
             .map(|(fn_idx, body)| (fn_idx, Rc::new(body)))
             .collect::<FxHashMap<_, _>>();
+        let let_bodies = let_bodies
+            .into_iter()
+            .map(|(let_idx, body)| (let_idx, Rc::new(body)))
+            .collect::<FxHashMap<_, _>>();
         let body_local_accesses = fn_bodies
             .values()
+            .chain(let_bodies.values())
             .map(|body| {
                 (
                     Self::body_key(body),
@@ -403,7 +416,9 @@ impl Interpreter {
             item_tree,
             module_scope,
             fn_bodies,
+            let_bodies,
             body_local_accesses,
+            let_scope_overrides,
             fn_scope_overrides,
             interner,
             intrinsics,
@@ -419,6 +434,7 @@ impl Interpreter {
             current_fn: None,
             current_body: None,
             consuming_local: None,
+            top_level_lets_initialized: false,
         }
     }
 
@@ -427,8 +443,68 @@ impl Interpreter {
         self.interner
     }
 
+    pub fn materialize_top_level_let_values(
+        &mut self,
+    ) -> Result<FxHashMap<Name, Value>, RuntimeError> {
+        self.initialize_top_level_lets()?;
+        let mut values = FxHashMap::default();
+        for (_, let_item) in self.item_tree.lets.iter() {
+            if let Some(value) = self.env.lookup(let_item.name) {
+                values.insert(let_item.name, value.clone());
+            }
+        }
+        Ok(values)
+    }
+
+    fn initialize_top_level_lets(&mut self) -> Result<(), RuntimeError> {
+        if self.top_level_lets_initialized {
+            return Ok(());
+        }
+
+        let lets: Vec<_> = self
+            .item_tree
+            .lets
+            .iter()
+            .map(|(let_idx, let_item)| (let_idx, let_item.name))
+            .collect();
+
+        for (let_idx, let_name) in lets {
+            let Some(body) = self.let_bodies.get(&let_idx).cloned() else {
+                continue;
+            };
+            let prev_body = self.current_body.replace(body.clone());
+            let result = self.eval_expr_shared(&body, body.root);
+            self.current_body = prev_body;
+
+            let value = match result? {
+                ControlFlow::Value(value) => value,
+                ControlFlow::Return(_) => {
+                    return Err(RuntimeError::TypeError(
+                        "top-level let initializer cannot return early".into(),
+                    ));
+                }
+                ControlFlow::Break => {
+                    return Err(RuntimeError::TypeError(
+                        "top-level let initializer cannot use `break`".into(),
+                    ));
+                }
+                ControlFlow::Continue => {
+                    return Err(RuntimeError::TypeError(
+                        "top-level let initializer cannot use `continue`".into(),
+                    ));
+                }
+            };
+
+            self.env.bind(let_name, value);
+        }
+
+        self.top_level_lets_initialized = true;
+        Ok(())
+    }
+
     /// Call a user-defined function by arena index (public wrapper for PBT).
     pub fn call_fn_by_idx(&mut self, fn_idx: FnItemIdx, args: Args) -> Result<Value, RuntimeError> {
+        self.initialize_top_level_lets()?;
         self.call_fn(fn_idx, args)
     }
 
@@ -873,6 +949,7 @@ impl Interpreter {
 
     /// Find and run the `main` function.
     pub fn run_main(&mut self) -> Result<Value, RuntimeError> {
+        self.initialize_top_level_lets()?;
         let main_name = Name::new(&mut self.interner, "main");
         let main_idx = self
             .module_scope
@@ -1797,7 +1874,8 @@ impl Interpreter {
         arg_values: Vec<Value>,
         param_names: &[Name],
     ) -> Result<Args, RuntimeError> {
-        let items = self.bind_call_items_for_param_names(callee_name, args, arg_values, param_names)?;
+        let items =
+            self.bind_call_items_for_param_names(callee_name, args, arg_values, param_names)?;
         let mut out = Args::with_capacity(items.len());
         for value in items {
             out.push(value);
@@ -1847,12 +1925,14 @@ impl Interpreter {
             return Ok(None);
         };
         let (key_expr, thunk_expr) = match args {
-            [CallArg::Positional(key_expr), CallArg::Positional(thunk_expr)] => {
-                (*key_expr, *thunk_expr)
-            }
+            [
+                CallArg::Positional(key_expr),
+                CallArg::Positional(thunk_expr),
+            ] => (*key_expr, *thunk_expr),
             _ => {
                 let full_param_names = self.param_names_for_fn_idx(fn_idx);
-                let method_param_names: Vec<Name> = full_param_names.iter().skip(1).copied().collect();
+                let method_param_names: Vec<Name> =
+                    full_param_names.iter().skip(1).copied().collect();
                 let arg_exprs = self.bind_call_items_for_param_names(
                     "method `get_or_insert_with`",
                     args,
@@ -1869,12 +1949,13 @@ impl Interpreter {
         } {
             return Ok(Some(existing.clone()));
         }
-        let computed = if let Some(value) = self.eval_immediate_zero_arg_lambda(env, body, thunk_expr)? {
-            value
-        } else {
-            let thunk = self.eval_terminal_expr(env, body, thunk_expr)?.into_value();
-            self.call_value(thunk, Args::new())?
-        };
+        let computed =
+            if let Some(value) = self.eval_immediate_zero_arg_lambda(env, body, thunk_expr)? {
+                value
+            } else {
+                let thunk = self.eval_terminal_expr(env, body, thunk_expr)?.into_value();
+                self.call_value(thunk, Args::new())?
+            };
         if let Some(existing) = {
             let borrowed = entries.borrow();
             self.mutable_map_get_value(&borrowed, &key)?
@@ -1882,15 +1963,16 @@ impl Interpreter {
             return Ok(Some(existing.clone()));
         }
         if let Ok(primitive_key) = MapKey::from_value(&key) {
-            entries.borrow_mut().insert_primitive(primitive_key, computed.clone());
+            entries
+                .borrow_mut()
+                .insert_primitive(primitive_key, computed.clone());
         } else {
             let hash = self.hash_for_collection_key(&key)?;
-            entries.borrow_mut().insert_with(
-                hash,
-                key,
-                computed.clone(),
-                &mut |lhs, rhs| self.trait_eq_values(lhs, rhs),
-            )?;
+            entries
+                .borrow_mut()
+                .insert_with(hash, key, computed.clone(), &mut |lhs, rhs| {
+                    self.trait_eq_values(lhs, rhs)
+                })?;
         }
         Ok(Some(computed))
     }
@@ -1912,12 +1994,14 @@ impl Interpreter {
             return Ok(None);
         };
         let (key_expr, thunk_expr) = match args {
-            [CallArg::Positional(key_expr), CallArg::Positional(thunk_expr)] => {
-                (*key_expr, *thunk_expr)
-            }
+            [
+                CallArg::Positional(key_expr),
+                CallArg::Positional(thunk_expr),
+            ] => (*key_expr, *thunk_expr),
             _ => {
                 let full_param_names = self.param_names_for_fn_idx(fn_idx);
-                let method_param_names: Vec<Name> = full_param_names.iter().skip(1).copied().collect();
+                let method_param_names: Vec<Name> =
+                    full_param_names.iter().skip(1).copied().collect();
                 let arg_exprs = self.bind_call_items_for_param_names(
                     "method `get_or_insert_with`",
                     args,
@@ -1943,15 +2027,16 @@ impl Interpreter {
             return Ok(Some(existing.clone()));
         }
         if let Ok(primitive_key) = MapKey::from_value(&key) {
-            entries.borrow_mut().insert_primitive(primitive_key, computed.clone());
+            entries
+                .borrow_mut()
+                .insert_primitive(primitive_key, computed.clone());
         } else {
             let hash = self.hash_for_collection_key(&key)?;
-            entries.borrow_mut().insert_with(
-                hash,
-                key,
-                computed.clone(),
-                &mut |lhs, rhs| self.trait_eq_values(lhs, rhs),
-            )?;
+            entries
+                .borrow_mut()
+                .insert_with(hash, key, computed.clone(), &mut |lhs, rhs| {
+                    self.trait_eq_values(lhs, rhs)
+                })?;
         }
         Ok(Some(computed))
     }
@@ -2337,9 +2422,11 @@ impl Interpreter {
                     };
 
                     if let Some(fn_idx) = method_fn_idx {
-                        if let Some(value) = self.try_eval_lazy_mutable_map_get_or_insert_with_local(
-                            env, body, &base_val, &args, fn_idx,
-                        )? {
+                        if let Some(value) = self
+                            .try_eval_lazy_mutable_map_get_or_insert_with_local(
+                                env, body, &base_val, &args, fn_idx,
+                            )?
+                        {
                             return Ok(ControlFlow::Value(value));
                         }
                         let source_order = self.args_in_source_order(&args);
@@ -2986,12 +3073,20 @@ impl Interpreter {
 
     #[inline(always)]
     fn resolve_name(&self, env: &Env, name: Name) -> Result<Value, RuntimeError> {
-        // 1. Local variables (most common in hot loops).
+        // 1. Function-local module immutable lets (project mode).
+        if let Some(cur_fn) = self.current_fn
+            && let Some(overrides) = self.let_scope_overrides.get(&cur_fn)
+            && let Some(value) = overrides.get(&name)
+        {
+            return Ok(value.clone());
+        }
+
+        // 2. Local variables and entry-module top-level lets.
         if let Some(val) = env.lookup(name) {
             return Ok(val.clone());
         }
 
-        // 2. Function-local module overrides (project mode): resolve names in the
+        // 3. Function-local module overrides (project mode): resolve names in the
         // source module of the currently executing function before global scope.
         if let Some(cur_fn) = self.current_fn
             && let Some(overrides) = self.fn_scope_overrides.get(&cur_fn)
@@ -3000,7 +3095,7 @@ impl Interpreter {
             return Ok(Value::Fn(Box::new(FnValue::User(fn_idx))));
         }
 
-        // 3. Module-level user functions (with bodies).
+        // 4. Module-level user functions (with bodies).
         //    Intrinsic stubs are no longer in scope.functions — they're only
         //    reachable via methods, modules, or static methods.
         if let Some(&fn_idx) = self.module_scope.functions.get(&name)
@@ -3009,7 +3104,7 @@ impl Interpreter {
             return Ok(Value::Fn(Box::new(FnValue::User(fn_idx))));
         }
 
-        // 4. ADT constructors.
+        // 5. ADT constructors.
         if let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&name) {
             let type_item = &self.item_tree.types[type_idx];
             if let TypeDefKind::Adt { variants } = &type_item.kind {
@@ -4642,7 +4737,9 @@ impl Interpreter {
                     ));
                 };
                 let borrowed = entries.borrow();
-                Ok(Value::Bool(self.mutable_map_contains_value(&borrowed, &args[1])?))
+                Ok(Value::Bool(
+                    self.mutable_map_contains_value(&borrowed, &args[1])?,
+                ))
             }
             IntrinsicFn::MutableMapRemove => {
                 let Value::MutableMap(entries) = &args[0] else {
@@ -4771,9 +4868,9 @@ impl Interpreter {
                     entries.borrow_mut().insert_primitive(primitive_key);
                 } else {
                     let hash = self.hash_for_collection_key(&value)?;
-                    entries.borrow_mut().insert_with(hash, value, &mut |lhs, rhs| {
-                        self.trait_eq_values(lhs, rhs)
-                    })?;
+                    entries
+                        .borrow_mut()
+                        .insert_with(hash, value, &mut |lhs, rhs| self.trait_eq_values(lhs, rhs))?;
                 }
                 Ok(Value::MutableSet(entries.clone()))
             }
@@ -4784,7 +4881,9 @@ impl Interpreter {
                     ));
                 };
                 let borrowed = entries.borrow();
-                Ok(Value::Bool(self.mutable_set_contains_value(&borrowed, &args[1])?))
+                Ok(Value::Bool(
+                    self.mutable_set_contains_value(&borrowed, &args[1])?,
+                ))
             }
             IntrinsicFn::MutableSetRemove => {
                 let Value::MutableSet(entries) = &args[0] else {
@@ -6226,6 +6325,8 @@ mod tests {
             module_scope,
             FxHashMap::default(),
             FxHashMap::default(),
+            FxHashMap::default(),
+            FxHashMap::default(),
             interner,
             None,
         );
@@ -6327,6 +6428,8 @@ mod tests {
             checked.item_tree,
             checked.module_scope,
             checked.type_check.fn_bodies,
+            checked.type_check.let_bodies,
+            FxHashMap::default(),
             FxHashMap::default(),
             checked.interner,
             None,
@@ -6340,6 +6443,20 @@ mod tests {
             .functions
             .get(&name)
             .expect("function should exist")
+    }
+
+    #[test]
+    fn call_fn_by_idx_initializes_top_level_lets() {
+        let mut interp = make_checked_interpreter(
+            "let off = 1\nfn read() -> Int { off }\nfn main() -> Int { 0 }",
+        );
+        let read_idx = fn_idx_by_name(&mut interp, "read");
+
+        let value = interp
+            .call_fn_by_idx(read_idx, Args::new())
+            .expect("top-level lets should be initialized before direct function calls");
+
+        assert_eq!(value, Value::Int(1));
     }
 
     trait SharedBodyRef {

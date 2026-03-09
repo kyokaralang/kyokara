@@ -859,6 +859,30 @@ where (x > 0)
 }
 
 #[test]
+fn top_level_let_is_available_when_pbt_calls_functions_directly() {
+    let source = r#"
+let off = 1
+
+fn add_one(x: Int) -> Int
+contract ensures (result == x + off)
+{
+  x + off
+}
+"#;
+    let config = test_config();
+    let report = run_tests(source, &config).unwrap();
+
+    assert!(
+        report.all_passed(),
+        "top-level let should be visible in direct PBT function calls: {}",
+        report.format_human()
+    );
+    assert_eq!(report.results.len(), 1);
+    assert_eq!(report.results[0].name, "add_one");
+    assert!(report.results[0].passed > 0);
+}
+
+#[test]
 fn property_invalid_range_reports_generator_error_not_where_unsat() {
     let source = "property p(x: Int <- Gen.int_range(10, 1)) { x > 0 }";
     let config = test_config();

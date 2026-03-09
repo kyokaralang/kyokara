@@ -212,6 +212,12 @@ impl<'a> InferenceCtx<'a> {
                 ScopeDef::Import(_) => self.non_value_name_in_expr("import", name),
             },
 
+            Some(ResolvedName::Let(let_idx)) => self
+                .top_level_let_types
+                .get(&let_idx)
+                .cloned()
+                .unwrap_or(Ty::Error),
+
             Some(ResolvedName::Fn(fn_idx)) => {
                 let env = Self::make_env(
                     self.item_tree,
@@ -673,7 +679,7 @@ impl<'a> InferenceCtx<'a> {
         let name = path.segments[0];
         match self.body.resolve_name_at(self.module_scope, callee, name) {
             Some(resolved) => match resolved.resolved {
-                ResolvedName::Local(_) => None,
+                ResolvedName::Local(_) | ResolvedName::Let(_) => None,
                 _ => Some(name),
             },
             None => None,

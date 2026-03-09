@@ -157,6 +157,80 @@ fn check_char_to_digit_requires_int_radix() {
 }
 
 #[test]
+fn check_top_level_let_constant_typechecks() {
+    let output = check("let off = 1\nfn main() -> Int { off }", "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_typed_top_level_let_constant_typechecks() {
+    let output = check("let off: Int = 1\nfn main() -> Int { off }", "test.ky");
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_later_top_level_let_can_use_earlier_top_level_let() {
+    let output = check(
+        "let off = 1\nlet off2 = off + 1\nfn main() -> Int { off2 }",
+        "test.ky",
+    );
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_function_body_can_read_top_level_let() {
+    let output = check(
+        "let off = 1\nfn add(x: Int) -> Int { x + off }\nfn main() -> Int { add(1) }",
+        "test.ky",
+    );
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_top_level_let_forward_reference_reports_unresolved_name() {
+    let output = check(
+        "let off2 = off + 1\nlet off = 1\nfn main() -> Int { off2 }",
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("unresolved name `off`")),
+        "expected unresolved forward reference diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_top_level_let_rejects_non_identifier_pattern() {
+    let output = check("let _ = 1\nfn main() -> Int { 0 }", "test.ky");
+    assert!(
+        output.diagnostics.iter().any(|d| d
+            .message
+            .contains("top-level let bindings must use a simple identifier pattern")),
+        "expected targeted top-level let pattern diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_hole_produces_spec() {
     let output = check("fn foo() -> Int { _ }", "test.ky");
     assert_eq!(output.holes.len(), 1);
@@ -1699,6 +1773,19 @@ fn check_project_with_options_from_files(
 ) -> kyokara_api::CheckOutput {
     let (_dir, main_path) = write_project(files);
     check_project_with_options(&main_path, options)
+}
+
+#[test]
+fn check_project_imported_function_can_read_its_top_level_let() {
+    let output = check_project_from_files(&[
+        ("main.ky", "import util\nfn main() -> Int { util() }\n"),
+        ("util.ky", "let off = 1\npub fn util() -> Int { off }\n"),
+    ]);
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        output.diagnostics
+    );
 }
 
 #[test]
@@ -5448,7 +5535,10 @@ fn check_global_mutable_map_constructor_surface_is_removed_rfc_0008() {
 
 #[test]
 fn check_global_mutable_map_with_capacity_surface_is_removed() {
-    let output = check("fn main() -> Int { MutableMap.with_capacity(4).len() }", "test.ky");
+    let output = check(
+        "fn main() -> Int { MutableMap.with_capacity(4).len() }",
+        "test.ky",
+    );
     assert!(
         output
             .diagnostics
@@ -5629,7 +5719,10 @@ fn check_global_mutable_set_constructor_surface_is_removed_rfc_0008() {
 
 #[test]
 fn check_global_mutable_set_with_capacity_surface_is_removed() {
-    let output = check("fn main() -> Int { MutableSet.with_capacity(4).len() }", "test.ky");
+    let output = check(
+        "fn main() -> Int { MutableSet.with_capacity(4).len() }",
+        "test.ky",
+    );
     assert!(
         output
             .diagnostics

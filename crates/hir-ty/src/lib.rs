@@ -20,8 +20,10 @@ pub mod unify;
 
 use kyokara_diagnostics::Diagnostic;
 use kyokara_hir_def::body::Body;
-use kyokara_hir_def::body::lower::{lower_body, lower_impl_method_body, lower_property_body};
-use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree};
+use kyokara_hir_def::body::lower::{
+    lower_body, lower_impl_method_body, lower_property_body, lower_top_level_let_body,
+};
+use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree, LetItemIdx};
 use kyokara_hir_def::resolver::ModuleScope;
 use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_intern::Interner;
@@ -29,30 +31,34 @@ use kyokara_span::{FileId, Span, TextRange};
 use kyokara_stdx::FxHashMap;
 use kyokara_syntax::SyntaxNode;
 use kyokara_syntax::ast::AstNode;
-use kyokara_syntax::ast::nodes::{FnDef, ImplMethodDef, PropertyDef};
+use kyokara_syntax::ast::nodes::{FnDef, ImplMethodDef, LetBinding, PropertyDef};
 use kyokara_syntax::ast::traits::HasName;
 
 use kyokara_hir_def::name::Name;
 
 use crate::diagnostics::TyDiagnosticData;
 use crate::infer::InferenceResult;
+use crate::ty::Ty;
 
 struct BodyLookupIndex {
     fn_by_range: FxHashMap<TextRange, FnDef>,
     fn_by_name: FxHashMap<String, FnDef>,
     impl_by_range: FxHashMap<TextRange, ImplMethodDef>,
     prop_by_range: FxHashMap<TextRange, PropertyDef>,
+    let_by_range: FxHashMap<TextRange, LetBinding>,
 }
 
 fn build_body_lookup_index(
     fn_defs: &[FnDef],
     impl_defs: &[ImplMethodDef],
     prop_defs: &[PropertyDef],
+    let_defs: &[LetBinding],
 ) -> BodyLookupIndex {
     let mut fn_by_range = FxHashMap::default();
     let mut fn_by_name = FxHashMap::default();
     let mut impl_by_range = FxHashMap::default();
     let mut prop_by_range = FxHashMap::default();
+    let mut let_by_range = FxHashMap::default();
 
     for fd in fn_defs {
         let range = fd.syntax().text_range();
@@ -74,11 +80,17 @@ fn build_body_lookup_index(
         prop_by_range.insert(range, pd.clone());
     }
 
+    for let_def in let_defs {
+        let range = let_def.syntax().text_range();
+        let_by_range.insert(range, let_def.clone());
+    }
+
     BodyLookupIndex {
         fn_by_range,
         fn_by_name,
         impl_by_range,
         prop_by_range,
+        let_by_range,
     }
 }
 
@@ -108,6 +120,13 @@ fn lookup_impl_method_def(
     source_range.and_then(|range| index.impl_by_range.get(&range))
 }
 
+fn lookup_let_binding(
+    index: &BodyLookupIndex,
+    source_range: Option<TextRange>,
+) -> Option<&LetBinding> {
+    source_range.and_then(|range| index.let_by_range.get(&range))
+}
+
 /// Result of type-checking an entire module.
 #[derive(Debug)]
 pub struct TypeCheckResult {
@@ -115,6 +134,10 @@ pub struct TypeCheckResult {
     pub fn_results: FxHashMap<FnItemIdx, InferenceResult>,
     /// Lowered bodies for each function, keyed by function item index.
     pub fn_bodies: FxHashMap<FnItemIdx, Body>,
+    /// Per-top-level-let inference results, keyed by let item index.
+    pub let_results: FxHashMap<LetItemIdx, InferenceResult>,
+    /// Lowered bodies for each top-level let initializer.
+    pub let_bodies: FxHashMap<LetItemIdx, Body>,
     /// All diagnostics from type checking.
     pub diagnostics: Vec<Diagnostic>,
     /// Raw diagnostic data with spans for structured output.
@@ -123,6 +146,60 @@ pub struct TypeCheckResult {
     pub body_lowering_diagnostics: Vec<Diagnostic>,
     /// Per-function call edges: (caller name, list of callee names).
     pub fn_calls: Vec<(Name, Vec<Name>)>,
+}
+
+fn module_scope_with_visible_lets(
+    module_scope: &ModuleScope,
+    item_tree: &ItemTree,
+    visible_until: LetItemIdx,
+) -> ModuleScope {
+    let mut scoped = module_scope.clone();
+    scoped.lets.clear();
+    for (let_idx, let_item) in item_tree.lets.iter() {
+        if let_idx == visible_until {
+            break;
+        }
+        scoped.lets.insert(let_item.name, let_idx);
+    }
+    scoped
+}
+
+fn visible_let_types(
+    inferred: &FxHashMap<LetItemIdx, Ty>,
+    item_tree: &ItemTree,
+    visible_until: LetItemIdx,
+) -> FxHashMap<LetItemIdx, Ty> {
+    let mut visible = FxHashMap::default();
+    for (let_idx, _) in item_tree.lets.iter() {
+        if let_idx == visible_until {
+            break;
+        }
+        if let Some(ty) = inferred.get(&let_idx) {
+            visible.insert(let_idx, ty.clone());
+        }
+    }
+    visible
+}
+
+fn stabilize_top_level_let_ty(ty: &Ty) -> Ty {
+    match ty {
+        Ty::Var(_) => Ty::Error,
+        Ty::Adt { def, args } => Ty::Adt {
+            def: *def,
+            args: args.iter().map(stabilize_top_level_let_ty).collect(),
+        },
+        Ty::Record { fields } => Ty::Record {
+            fields: fields
+                .iter()
+                .map(|(name, field_ty)| (*name, stabilize_top_level_let_ty(field_ty)))
+                .collect(),
+        },
+        Ty::Fn { params, ret } => Ty::Fn {
+            params: params.iter().map(stabilize_top_level_let_ty).collect(),
+            ret: Box::new(stabilize_top_level_let_ty(ret)),
+        },
+        _ => ty.clone(),
+    }
 }
 
 /// Type-check all functions in a module.
@@ -139,6 +216,9 @@ pub fn check_module(
 ) -> TypeCheckResult {
     let mut fn_results = FxHashMap::default();
     let mut fn_bodies = FxHashMap::default();
+    let mut let_results = FxHashMap::default();
+    let mut let_bodies = FxHashMap::default();
+    let mut let_types = FxHashMap::default();
     let mut all_diagnostics = Vec::new();
     let mut all_raw_diagnostics = Vec::new();
     let mut body_lowering_diagnostics = Vec::new();
@@ -148,7 +228,50 @@ pub fn check_module(
     let impl_method_defs: Vec<ImplMethodDef> =
         root.descendants().filter_map(ImplMethodDef::cast).collect();
     let prop_defs: Vec<PropertyDef> = root.descendants().filter_map(PropertyDef::cast).collect();
-    let body_lookup = build_body_lookup_index(&fn_defs, &impl_method_defs, &prop_defs);
+    let let_defs: Vec<LetBinding> = root.descendants().filter_map(LetBinding::cast).collect();
+    let body_lookup = build_body_lookup_index(&fn_defs, &impl_method_defs, &prop_defs, &let_defs);
+
+    for (let_idx, let_item) in item_tree.lets.iter() {
+        if let_item
+            .source_range
+            .is_some_and(|range| overlaps_parse_error(range, parse_error_ranges))
+        {
+            continue;
+        }
+
+        let Some(let_binding) = lookup_let_binding(&body_lookup, let_item.source_range) else {
+            continue;
+        };
+
+        let scoped_module = module_scope_with_visible_lets(module_scope, item_tree, let_idx);
+        let body_result = lower_top_level_let_body(let_binding, &scoped_module, file_id, interner);
+        let let_span = Span {
+            file: file_id,
+            range: let_item
+                .source_range
+                .unwrap_or(kyokara_span::TextRange::default()),
+        };
+
+        body_lowering_diagnostics.extend(body_result.diagnostics.iter().cloned());
+        all_diagnostics.extend(body_result.diagnostics);
+
+        let visible_types = visible_let_types(&let_types, item_tree, let_idx);
+        let result = infer::infer_top_level_let(
+            let_item,
+            &body_result.body,
+            item_tree,
+            &scoped_module,
+            &visible_types,
+            interner,
+            let_span,
+        );
+
+        all_diagnostics.extend(result.diagnostics.iter().cloned());
+        all_raw_diagnostics.extend(result.raw_diagnostics.iter().cloned());
+        let_types.insert(let_idx, stabilize_top_level_let_ty(&result.ret_ty));
+        let_results.insert(let_idx, result);
+        let_bodies.insert(let_idx, body_result.body);
+    }
 
     for (fn_idx, fn_item) in item_tree.functions.iter() {
         if !fn_item.has_body {
@@ -194,6 +317,7 @@ pub fn check_module(
             &body_result.body,
             item_tree,
             module_scope,
+            &let_types,
             interner,
             fn_span,
         );
@@ -248,6 +372,8 @@ pub fn check_module(
     TypeCheckResult {
         fn_results,
         fn_bodies,
+        let_results,
+        let_bodies,
         diagnostics: all_diagnostics,
         raw_diagnostics: all_raw_diagnostics,
         body_lowering_diagnostics,
@@ -332,7 +458,7 @@ mod tests {
         let fn_defs: Vec<FnDef> = root.descendants().filter_map(FnDef::cast).collect();
         let prop_defs: Vec<PropertyDef> =
             root.descendants().filter_map(PropertyDef::cast).collect();
-        let index = build_body_lookup_index(&fn_defs, &[], &prop_defs);
+        let index = build_body_lookup_index(&fn_defs, &[], &prop_defs, &[]);
 
         let beta = &fn_defs[1];
         let beta_range = beta.syntax().text_range();
@@ -355,7 +481,7 @@ mod tests {
         let fn_defs: Vec<FnDef> = root.descendants().filter_map(FnDef::cast).collect();
         let prop_defs: Vec<PropertyDef> =
             root.descendants().filter_map(PropertyDef::cast).collect();
-        let index = build_body_lookup_index(&fn_defs, &[], &prop_defs);
+        let index = build_body_lookup_index(&fn_defs, &[], &prop_defs, &[]);
 
         let by_name =
             lookup_fn_def(&index, None, "helper").expect("name fallback should resolve helper");

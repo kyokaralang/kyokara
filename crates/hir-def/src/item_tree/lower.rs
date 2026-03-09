@@ -291,7 +291,11 @@ impl ItemTreeCtx<'_> {
         let is_pub = t.is_pub();
         let derives = t
             .derive_clause()
-            .map(|dc| dc.trait_refs().map(|tr| self.lower_trait_ref(&tr)).collect())
+            .map(|dc| {
+                dc.trait_refs()
+                    .map(|tr| self.lower_trait_ref(&tr))
+                    .collect()
+            })
             .unwrap_or_default();
         let idx = self.tree.types.alloc(TypeItem {
             name,
@@ -356,7 +360,11 @@ impl ItemTreeCtx<'_> {
         let type_params = self.collect_type_params(t);
         let supertraits = t
             .supertrait_list()
-            .map(|st| st.trait_refs().map(|tr| self.lower_trait_ref(&tr)).collect())
+            .map(|st| {
+                st.trait_refs()
+                    .map(|tr| self.lower_trait_ref(&tr))
+                    .collect()
+            })
             .unwrap_or_default();
         let methods = t
             .method_sigs()
@@ -429,7 +437,10 @@ impl ItemTreeCtx<'_> {
                 path: Path { segments: vec![] },
                 args: vec![],
             });
-        let self_ty = i.self_type().map(|ty| self.lower_type_ref(&ty)).unwrap_or(TypeRef::Error);
+        let self_ty = i
+            .self_type()
+            .map(|ty| self.lower_type_ref(&ty))
+            .unwrap_or(TypeRef::Error);
         let methods = i
             .methods()
             .map(|m| self.lower_impl_method_def(&m, &self_ty))
@@ -467,13 +478,10 @@ impl ItemTreeCtx<'_> {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let ret_type = m
-            .return_type()
-            .and_then(|rt| rt.type_expr())
-            .map(|t| {
-                let ty = self.lower_type_ref(&t);
-                self.substitute_self_type_ref(ty, impl_self_ty)
-            });
+        let ret_type = m.return_type().and_then(|rt| rt.type_expr()).map(|t| {
+            let ty = self.lower_type_ref(&t);
+            self.substitute_self_type_ref(ty, impl_self_ty)
+        });
         self.tree.functions.alloc(FnItem {
             name,
             is_pub: false,
@@ -936,27 +944,31 @@ impl ItemTreeCtx<'_> {
     }
 
     fn lower_let_binding(&mut self, l: &LetBinding) {
-        let span = self.node_span(l.syntax());
-        self.diagnostics.push(Diagnostic::error(
-            "top-level let bindings are not semantically checked yet".to_string(),
-            span,
-        ));
-
         // For top-level lets, extract the name from the pattern.
-        let name = l
-            .pat()
-            .and_then(|p| match p {
-                Pat::Ident(ip) => ip
-                    .path()
-                    .and_then(|path| path.segments().next())
-                    .map(|tok| Name::new(self.interner, tok.text())),
-                _ => None,
-            })
-            .unwrap_or_else(|| Name::new(self.interner, "_"));
+        let Some(name) = l.pat().and_then(|p| match p {
+            Pat::Ident(ip) => ip
+                .path()
+                .and_then(|path| path.segments().next())
+                .map(|tok| Name::new(self.interner, tok.text())),
+            _ => None,
+        }) else {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "top-level let bindings must use a simple identifier pattern".to_string(),
+                    self.node_span(l.syntax()),
+                )
+                .with_kind(DiagnosticKind::General),
+            );
+            return;
+        };
 
         let ty = l.type_expr().map(|te| self.lower_type_ref(&te));
-
-        self.tree.lets.alloc(LetItem { name, ty });
+        let idx = self.tree.lets.alloc(LetItem {
+            name,
+            ty,
+            source_range: Some(l.syntax().text_range()),
+        });
+        self.register_let(name, idx, l.syntax());
     }
 
     // ── Helpers ────────────────────────────────────────────────────
@@ -989,7 +1001,11 @@ impl ItemTreeCtx<'_> {
                             name: Name::new(self.interner, text),
                             bounds: tp
                                 .bound_list()
-                                .map(|bl| bl.trait_refs().map(|tr| self.lower_trait_ref(&tr)).collect())
+                                .map(|bl| {
+                                    bl.trait_refs()
+                                        .map(|tr| self.lower_trait_ref(&tr))
+                                        .collect()
+                                })
                                 .unwrap_or_default(),
                         })
                     })
@@ -998,7 +1014,10 @@ impl ItemTreeCtx<'_> {
             .unwrap_or_default()
     }
 
-    fn lower_trait_ref(&mut self, trait_ref: &kyokara_syntax::ast::nodes::TraitRef) -> TraitRefItem {
+    fn lower_trait_ref(
+        &mut self,
+        trait_ref: &kyokara_syntax::ast::nodes::TraitRef,
+    ) -> TraitRefItem {
         let path = trait_ref
             .path()
             .map(|p| self.lower_path(&p))
@@ -1032,6 +1051,30 @@ impl ItemTreeCtx<'_> {
                 .with_kind(DiagnosticKind::DuplicateDefinition),
             );
         }
+    }
+
+    fn register_let(&mut self, name: Name, idx: LetItemIdx, syntax: &kyokara_syntax::SyntaxNode) {
+        let conflicts_with_value_name = self.module_scope.lets.contains_key(&name)
+            || self.module_scope.functions.contains_key(&name)
+            || self.module_scope.imports.contains_key(&name)
+            || self.module_scope.constructors.contains_key(&name);
+
+        if conflicts_with_value_name {
+            let span = self.node_span(syntax);
+            self.diagnostics.push(
+                Diagnostic::error(
+                    format!(
+                        "duplicate top-level value `{}`",
+                        name.resolve(self.interner)
+                    ),
+                    span,
+                )
+                .with_kind(DiagnosticKind::DuplicateDefinition),
+            );
+            return;
+        }
+
+        self.module_scope.lets.insert(name, idx);
     }
 
     fn node_span(&self, node: &kyokara_syntax::SyntaxNode) -> Span {

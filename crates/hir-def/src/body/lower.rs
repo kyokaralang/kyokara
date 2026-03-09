@@ -12,9 +12,9 @@ use kyokara_syntax::SyntaxKind;
 use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::{
     self, ArgList, AssignStmt, BinaryExpr, BlockExpr, BlockItem, CallExpr, ElseBranch, FieldExpr,
-    FnDef, IfExpr, ImplDef, ImplMethodDef, IndexExpr, LambdaExpr, LiteralExpr, MatchExpr, NamedArg,
-    OldExpr, PathExpr, PipelineExpr, PropagateExpr, PropertyDef, RecordExpr, ReturnExpr,
-    TypeExpr, UnaryExpr, VarBinding,
+    FnDef, IfExpr, ImplDef, ImplMethodDef, IndexExpr, LambdaExpr, LetBinding, LiteralExpr,
+    MatchExpr, NamedArg, OldExpr, PathExpr, PipelineExpr, PropagateExpr, PropertyDef, RecordExpr,
+    ReturnExpr, TypeExpr, UnaryExpr, VarBinding,
 };
 use kyokara_syntax::ast::traits::{HasName, HasTypeParams};
 
@@ -355,6 +355,60 @@ pub fn lower_property_body(
             pats: ctx.pats,
             root,
             requires,
+            ensures: Vec::new(),
+            invariant: Vec::new(),
+            scopes: ctx.scopes,
+            pat_scopes: ctx.pat_scopes,
+            expr_scopes: ctx.expr_scopes,
+            expr_source_map: ctx.expr_source_map,
+            pat_source_map: ctx.pat_source_map,
+            local_binding_meta: ctx.local_binding_meta,
+        },
+        diagnostics: ctx.diagnostics,
+    }
+}
+
+/// Lower a top-level immutable let initializer from CST to HIR.
+pub fn lower_top_level_let_body(
+    let_binding: &LetBinding,
+    module_scope: &ModuleScope,
+    file_id: FileId,
+    interner: &mut Interner,
+) -> BodyLowerResult {
+    let mut ctx = BodyLowerCtx {
+        exprs: Arena::new(),
+        pats: Arena::new(),
+        scopes: ScopeTree::default(),
+        scope_slot_counts: ArenaMap::default(),
+        pat_scopes: Vec::new(),
+        expr_scopes: ArenaMap::default(),
+        expr_source_map: ArenaMap::default(),
+        pat_source_map: ArenaMap::default(),
+        local_binding_meta: ArenaMap::default(),
+        diagnostics: Vec::new(),
+        file_id,
+        interner,
+        module_scope,
+        current_scope: None,
+        in_contract: false,
+        impl_self_ty: None,
+    };
+
+    let root_scope = ctx.scopes.new_root();
+    ctx.current_scope = Some(root_scope);
+    ctx.scope_slot_counts.insert(root_scope, 0);
+
+    let root = let_binding
+        .value()
+        .map(|expr| ctx.lower_expr(&expr))
+        .unwrap_or_else(|| ctx.alloc_expr(Expr::Missing));
+
+    BodyLowerResult {
+        body: Body {
+            exprs: ctx.exprs,
+            pats: ctx.pats,
+            root,
+            requires: Vec::new(),
             ensures: Vec::new(),
             invariant: Vec::new(),
             scopes: ctx.scopes,

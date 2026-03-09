@@ -7,8 +7,7 @@ use kyokara_hir::ModulePath;
 use kyokara_hir::{
     activate_synthetic_imports, check_module, check_project, collect_item_tree,
     register_builtin_intrinsics, register_builtin_methods, register_builtin_traits,
-    register_builtin_types,
-    register_static_methods, register_synthetic_modules,
+    register_builtin_types, register_static_methods, register_synthetic_modules,
 };
 use kyokara_hir_def::item_tree::FnItemIdx;
 use kyokara_intern::Interner;
@@ -152,6 +151,8 @@ pub fn run_tests(source: &str, config: &TestConfig) -> Result<TestReport, String
         item_result.tree,
         item_result.module_scope,
         type_check.fn_bodies,
+        type_check.let_bodies,
+        FxHashMap::default(),
         FxHashMap::default(),
         interner,
         None,
@@ -220,6 +221,8 @@ pub fn run_project_tests(
         entry_info.item_tree.clone(),
         entry_info.scope.clone(),
         fn_bodies,
+        entry_tc.let_bodies.clone(),
+        FxHashMap::default(),
         FxHashMap::default(),
         project.interner,
         None,

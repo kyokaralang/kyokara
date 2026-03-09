@@ -13,8 +13,7 @@ pub mod value;
 use kyokara_hir::{
     ModulePath, activate_synthetic_imports, check_module, check_project, collect_item_tree,
     register_builtin_intrinsics, register_builtin_methods, register_builtin_traits,
-    register_builtin_types,
-    register_static_methods, register_synthetic_modules,
+    register_builtin_types, register_static_methods, register_synthetic_modules,
 };
 use kyokara_intern::Interner;
 use kyokara_span::{FileId, TextRange, TextSize};
@@ -195,6 +194,8 @@ pub fn run_with_manifest(
         item_result.tree,
         item_result.module_scope,
         type_check.fn_bodies,
+        type_check.let_bodies,
+        FxHashMap::default(),
         FxHashMap::default(),
         interner,
         manifest,
@@ -303,6 +304,10 @@ pub fn run_project_with_manifest(
         kyokara_hir_def::item_tree::FnItemIdx,
         FxHashMap<kyokara_hir_def::name::Name, kyokara_hir_def::item_tree::FnItemIdx>,
     > = FxHashMap::default();
+    let mut let_scope_overrides: FxHashMap<
+        kyokara_hir_def::item_tree::FnItemIdx,
+        FxHashMap<kyokara_hir_def::name::Name, Value>,
+    > = FxHashMap::default();
 
     for (mod_path, tc) in &project.type_checks {
         if *mod_path == entry_path {
@@ -315,6 +320,8 @@ pub fn run_project_with_manifest(
         let Some(mod_info) = project.module_graph.get(mod_path) else {
             continue;
         };
+        let mod_item_tree = mod_info.item_tree.clone();
+        let mod_scope = mod_info.scope.clone();
 
         // Build a module-local name -> runtime fn index map.
         let mut module_fn_map: FxHashMap<
@@ -369,6 +376,26 @@ pub fn run_project_with_manifest(
         for &fn_idx in module_fn_map.values() {
             fn_scope_overrides.insert(fn_idx, module_fn_map.clone());
         }
+
+        if !tc.let_bodies.is_empty() {
+            let module_interner =
+                std::mem::replace(&mut project.interner, kyokara_intern::Interner::new());
+            let mut let_interp = Interpreter::new(
+                mod_item_tree.clone(),
+                mod_scope.clone(),
+                tc.fn_bodies.clone(),
+                tc.let_bodies.clone(),
+                FxHashMap::default(),
+                FxHashMap::default(),
+                module_interner,
+                manifest.clone(),
+            );
+            let module_let_values = let_interp.materialize_top_level_let_values()?;
+            project.interner = let_interp.into_interner();
+            for &fn_idx in module_fn_map.values() {
+                let_scope_overrides.insert(fn_idx, module_let_values.clone());
+            }
+        }
     }
 
     let entry_info = project
@@ -379,6 +406,8 @@ pub fn run_project_with_manifest(
         entry_info.item_tree.clone(),
         entry_info.scope.clone(),
         fn_bodies,
+        entry_tc.let_bodies.clone(),
+        let_scope_overrides,
         fn_scope_overrides,
         project.interner,
         manifest,

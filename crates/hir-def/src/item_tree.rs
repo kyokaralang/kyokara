@@ -206,4 +206,6 @@ pub struct PropertyItem {
 pub struct LetItem {
     pub name: Name,
     pub ty: Option<TypeRef>,
+    /// Source range of the CST `LetBinding` node (for matching back to syntax).
+    pub source_range: Option<TextRange>,
 }

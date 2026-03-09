@@ -1,5 +1,5 @@
-let x = foo
+let off = 1
 
 fn main() -> Int {
-  1
+  off
 }
