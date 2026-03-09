@@ -1597,6 +1597,21 @@ fn main() -> Int { foo() + foo(2) }"#;
 }
 
 #[test]
+fn check_user_defined_function_overload_family_wrong_arity_reports_one_of() {
+    let src = r#"fn foo() -> Int { 1 }
+fn foo(x: Int) -> Int { x + 1 }
+fn foo(x: Int, y: Int, z: Int) -> Int { x + y + z }
+fn main() -> Int { foo(1, 2) }"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.iter().any(|d| d.code == "E0007"
+            && d.message.contains("expected 0, 1, or 3 argument(s), found 2")),
+        "expected constrained-family arity diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_user_defined_method_overload_family_by_arity_is_allowed() {
     let src = r#"type Box = { value: Int }
 fn Box.size(self) -> Int { self.value }
@@ -1614,6 +1629,25 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_user_defined_method_overload_family_wrong_arity_reports_one_of() {
+    let src = r#"type Box = { value: Int }
+fn Box.size(self) -> Int { self.value }
+fn Box.size(self, extra: Int) -> Int { self.value + extra }
+fn Box.size(self, extra: Int, extra2: Int) -> Int { self.value + extra + extra2 }
+fn main() -> Int {
+    let b = Box { value: 2 }
+    b.size(1, 2, 3)
+}"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output.diagnostics.iter().any(|d| d.code == "E0007"
+            && d.message.contains("expected 0, 1, or 2 argument(s), found 3")),
+        "expected constrained-family arity diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_user_defined_function_type_based_overload_is_rejected() {
     let src = r#"fn foo(x: Int) -> Int { x }
 fn foo(x: String) -> String { x }
@@ -1625,6 +1659,54 @@ fn main() -> Int { 0 }"#;
             .iter()
             .any(|d| d.code == "E0102" && d.message.contains("call shapes overlap")),
         "expected overload-family overlap diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_user_defined_function_return_type_only_overload_is_rejected() {
+    let src = r#"fn foo(x: Int) -> Int { x }
+fn foo(x: Int) -> String { "x" }
+fn main() -> Int { 0 }"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0102" && d.message.contains("call shapes overlap")),
+        "expected return-type-only overlap diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_user_defined_function_param_name_only_overload_is_rejected() {
+    let src = r#"fn foo(x: Int, y: Int) -> Int { x + y }
+fn foo(left: Int, right: Int) -> Int { left + right }
+fn main() -> Int { 0 }"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0102" && d.message.contains("call shapes overlap")),
+        "expected param-name-only overlap diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_user_defined_function_generic_overlap_is_rejected() {
+    let src = r#"fn foo<T>(x: T) -> T { x }
+fn foo(x: Int) -> Int { x }
+fn main() -> Int { 0 }"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0102" && d.message.contains("call shapes overlap")),
+        "expected generic overlap diagnostic, got: {:?}",
         output.diagnostics
     );
 }
@@ -1647,6 +1729,23 @@ fn main() -> Int { 0 }"#;
 }
 
 #[test]
+fn check_user_defined_method_param_name_only_overload_is_rejected() {
+    let src = r#"type Box = { value: Int }
+fn Box.size(self, x: Int, y: Int) -> Int { x + y }
+fn Box.size(self, left: Int, right: Int) -> Int { left + right }
+fn main() -> Int { 0 }"#;
+    let output = check(src, "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0102" && d.message.contains("call shapes overlap")),
+        "expected method param-name-only overlap diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_overloaded_function_family_cannot_be_used_as_value() {
     let src = r#"fn foo() -> Int { 1 }
 fn foo(x: Int) -> Int { x }
@@ -1660,6 +1759,47 @@ fn main() -> Int {
             d.code == "E0039" && d.message.contains("overloaded function family `foo`")
         }),
         "expected overloaded-family-as-value diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_project_imported_and_local_arity_distinct_family_is_allowed() {
+    let output = check_project_from_files(&[
+        ("main.ky", "import util\nfn foo() -> Int { 1 }\nfn main() -> Int { foo() + foo(2) }\n"),
+        ("util.ky", "pub fn foo(x: Int) -> Int { x + 1 }\n"),
+    ]);
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_project_import_overlap_same_shape_is_rejected() {
+    let output = check_project_from_files(&[
+        ("main.ky", "import util\nfn foo(x: Int) -> Int { x }\nfn main() -> Int { 0 }\n"),
+        ("util.ky", "pub fn foo(x: Int) -> Int { x + 1 }\n"),
+    ]);
+    assert!(
+        output.diagnostics.iter().any(|d| d.code == "E0101"
+            && d.message.contains("overload family for `foo` overlaps")),
+        "expected conflicting imported overlap diagnostic, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_project_imported_overloaded_function_family_cannot_be_used_as_value() {
+    let output = check_project_from_files(&[
+        ("main.ky", "import util\nfn main() -> Int {\n  let f = foo\n  0\n}\n"),
+        ("util.ky", "pub fn foo() -> Int { 1 }\npub fn foo(x: Int) -> Int { x }\n"),
+    ]);
+    assert!(
+        output.diagnostics.iter().any(|d| d.code == "E0039"
+            && d.message.contains("overloaded function family `foo`")),
+        "expected imported overloaded-family-as-value diagnostic, got: {:?}",
         output.diagnostics
     );
 }

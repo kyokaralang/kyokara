@@ -32,8 +32,6 @@ use kyokara_stdx::FxHashMap;
 use kyokara_syntax::SyntaxNode;
 use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::{FnDef, ImplMethodDef, LetBinding, PropertyDef};
-use kyokara_syntax::ast::traits::HasName;
-
 use kyokara_hir_def::name::Name;
 
 use crate::diagnostics::TyDiagnosticData;
@@ -42,7 +40,6 @@ use crate::ty::Ty;
 
 struct BodyLookupIndex {
     fn_by_range: FxHashMap<TextRange, FnDef>,
-    fn_by_name: FxHashMap<String, FnDef>,
     impl_by_range: FxHashMap<TextRange, ImplMethodDef>,
     prop_by_range: FxHashMap<TextRange, PropertyDef>,
     let_by_range: FxHashMap<TextRange, LetBinding>,
@@ -55,7 +52,6 @@ fn build_body_lookup_index(
     let_defs: &[LetBinding],
 ) -> BodyLookupIndex {
     let mut fn_by_range = FxHashMap::default();
-    let mut fn_by_name = FxHashMap::default();
     let mut impl_by_range = FxHashMap::default();
     let mut prop_by_range = FxHashMap::default();
     let mut let_by_range = FxHashMap::default();
@@ -63,11 +59,6 @@ fn build_body_lookup_index(
     for fd in fn_defs {
         let range = fd.syntax().text_range();
         fn_by_range.insert(range, fd.clone());
-        if let Some(name) = fd.name_token() {
-            fn_by_name
-                .entry(name.text().to_owned())
-                .or_insert_with(|| fd.clone());
-        }
     }
 
     for fd in impl_defs {
@@ -87,23 +78,14 @@ fn build_body_lookup_index(
 
     BodyLookupIndex {
         fn_by_range,
-        fn_by_name,
         impl_by_range,
         prop_by_range,
         let_by_range,
     }
 }
 
-fn lookup_fn_def<'a>(
-    index: &'a BodyLookupIndex,
-    source_range: Option<TextRange>,
-    fn_name: &str,
-) -> Option<&'a FnDef> {
-    if let Some(range) = source_range {
-        index.fn_by_range.get(&range)
-    } else {
-        index.fn_by_name.get(fn_name)
-    }
+fn lookup_fn_def(index: &BodyLookupIndex, source_range: Option<TextRange>) -> Option<&FnDef> {
+    source_range.and_then(|range| index.fn_by_range.get(&range))
 }
 
 fn lookup_property_def(
@@ -284,10 +266,9 @@ pub fn check_module(
             continue;
         }
 
-        // Match by source range when available (exact CST node identity),
-        // falling back to name-based matching for imported functions.
-        let fn_name_str = fn_item.name.resolve(interner);
-        let fn_def = lookup_fn_def(&body_lookup, fn_item.source_range, fn_name_str);
+        // Match only by source range. Imported clones intentionally have no
+        // body in this module; runtime wires their actual bodies separately.
+        let fn_def = lookup_fn_def(&body_lookup, fn_item.source_range);
 
         // Try FnDef first; if not found, try PropertyDef (synthetic FnItems
         // created for properties point at PropertyDef source ranges).
@@ -462,13 +443,13 @@ mod tests {
 
         let beta = &fn_defs[1];
         let beta_range = beta.syntax().text_range();
-        let by_range = lookup_fn_def(&index, Some(beta_range), "alpha")
+        let by_range = lookup_fn_def(&index, Some(beta_range))
             .expect("range lookup should prefer exact node");
         assert_eq!(by_range.syntax().text_range(), beta_range);
     }
 
     #[test]
-    fn body_lookup_uses_name_fallback_when_range_missing() {
+    fn body_lookup_returns_none_when_range_is_missing() {
         let parse = kyokara_syntax::parse(
             r#"
             fn main() -> Int { helper() }
@@ -483,8 +464,9 @@ mod tests {
             root.descendants().filter_map(PropertyDef::cast).collect();
         let index = build_body_lookup_index(&fn_defs, &[], &prop_defs, &[]);
 
-        let by_name =
-            lookup_fn_def(&index, None, "helper").expect("name fallback should resolve helper");
-        assert_eq!(by_name.name_token().expect("name token").text(), "helper");
+        assert!(
+            lookup_fn_def(&index, None).is_none(),
+            "missing source range should not guess a body by name"
+        );
     }
 }

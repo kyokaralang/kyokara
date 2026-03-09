@@ -7877,6 +7877,20 @@ fn main() -> Int { foo() + foo(2) }"#,
 }
 
 #[test]
+fn eval_user_defined_function_overload_family_wrong_arity_is_compile_error() {
+    let err = run_err(
+        r#"fn foo() -> Int { 1 }
+fn foo(x: Int) -> Int { x + 1 }
+fn foo(x: Int, y: Int, z: Int) -> Int { x + y + z }
+fn main() -> Int { foo(1, 2) }"#,
+    );
+    assert!(
+        err.contains("expected 0, 1, or 3 argument(s), found 2"),
+        "expected constrained-family wrong-arity error, got: {err}"
+    );
+}
+
+#[test]
 fn eval_user_defined_method_overload_family_by_arity_dispatches() {
     let val = run_ok(
         r#"type Box = { value: Int }
@@ -7888,6 +7902,24 @@ fn main() -> Int {
 }"#,
     );
     assert_eq!(val, Value::Int(7));
+}
+
+#[test]
+fn eval_user_defined_method_overload_family_wrong_arity_is_compile_error() {
+    let err = run_err(
+        r#"type Box = { value: Int }
+fn Box.size(self) -> Int { self.value }
+fn Box.size(self, extra: Int) -> Int { self.value + extra }
+fn Box.size(self, extra: Int, extra2: Int) -> Int { self.value + extra + extra2 }
+fn main() -> Int {
+    let b = Box { value: 2 }
+    b.size(1, 2, 3)
+}"#,
+    );
+    assert!(
+        err.contains("expected 0, 1, or 2 argument(s), found 3"),
+        "expected constrained-family wrong-arity error, got: {err}"
+    );
 }
 
 #[test]
@@ -7903,6 +7935,42 @@ fn main() -> Int {
     assert!(
         err.contains("E0039") || err.contains("overloaded function family `foo`"),
         "expected overloaded-family-as-value error, got: {err}"
+    );
+}
+
+#[test]
+fn run_project_imported_and_local_overload_family_dispatches() {
+    let val = run_project_with_files_manifest_ok(
+        &[
+            ("main.ky", "import util\nfn foo() -> Int { 1 }\nfn main() -> Int { foo() + foo(2) }"),
+            ("util.ky", "pub fn foo(x: Int) -> Int { x + 1 }"),
+        ],
+        None,
+    );
+    assert_eq!(val, Value::Int(4));
+}
+
+#[test]
+fn run_project_import_overlap_same_shape_is_compile_error() {
+    let err = run_project_with_files_err(&[
+        ("main.ky", "import util\nfn foo(x: Int) -> Int { x }\nfn main() -> Int { 0 }"),
+        ("util.ky", "pub fn foo(x: Int) -> Int { x + 1 }"),
+    ]);
+    assert!(
+        err.contains("E0102") || err.contains("overlaps an existing definition"),
+        "expected conflicting imported overlap diagnostic, got: {err}"
+    );
+}
+
+#[test]
+fn run_project_imported_overloaded_function_family_as_value_is_compile_error() {
+    let err = run_project_with_files_err(&[
+        ("main.ky", "import util\nfn main() -> Int {\n  let f = foo\n  0\n}"),
+        ("util.ky", "pub fn foo() -> Int { 1 }\npub fn foo(x: Int) -> Int { x }"),
+    ]);
+    assert!(
+        err.contains("E0039") || err.contains("overloaded function family `foo`"),
+        "expected imported overloaded-family-as-value error, got: {err}"
     );
 }
 

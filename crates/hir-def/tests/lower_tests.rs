@@ -174,6 +174,22 @@ fn arity_distinct_functions_do_not_diagnose_overlap() {
 }
 
 #[test]
+fn same_arity_functions_with_different_param_names_still_diagnose_overlap() {
+    let root = parse_source("fn foo(x: Int) -> Int { x }\nfn foo(y: Int) -> Int { y }");
+    let sf = SourceFile::cast(root).unwrap();
+    let mut interner = Interner::new();
+    let result = collect_item_tree(&sf, file_id(), &mut interner);
+
+    assert!(
+        result.diagnostics.iter().any(|d| d
+            .message
+            .contains("invalid overload family for function `foo`: call shapes overlap")),
+        "expected overlap diagnostic, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn duplicate_type_diagnostic() {
     let root = parse_source("type Foo = Int\ntype Foo = Bool");
     let sf = SourceFile::cast(root).unwrap();
