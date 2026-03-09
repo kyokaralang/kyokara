@@ -1,4 +1,4 @@
-# RFC 0014: Package Manifests and External Library Distribution
+# RFC 0015: Package Manifests and External Library Distribution
 
 - Status: Draft
 - Owner: Language Design
