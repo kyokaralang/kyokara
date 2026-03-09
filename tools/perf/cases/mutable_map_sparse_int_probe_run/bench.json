@@ -1,0 +1,11 @@
+{
+  "id": "mutable_map_sparse_int_probe_run",
+  "mode": "run",
+  "entry": "main.ky",
+  "project": false,
+  "expected_stdout": "62555\n",
+  "warmup_runs": 1,
+  "measured_runs": 5,
+  "max_regression_pct": 20.0,
+  "max_regression_ms": 15.0
+}

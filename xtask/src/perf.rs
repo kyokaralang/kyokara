@@ -998,6 +998,7 @@ mod tests {
                 "grid_bfs_deque_set_run",
                 "mutable_bool_dense_relation_run",
                 "mutable_map_set_churn_run",
+                "mutable_map_sparse_int_probe_run",
                 "parse_dense_module_check",
                 "wordfreq_map_set_run",
             ]
@@ -1078,6 +1079,34 @@ mod tests {
                 && source.contains(".contains(")
                 && source.contains(".remove("),
             "comparison case must churn mutable insert/contains/remove operations"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mutable_map_sparse_probe_case_exercises_with_capacity_and_sparse_int_access() -> Result<()> {
+        let root = workspace_root()?;
+        let source = fs::read_to_string(
+            root.join("tools")
+                .join("perf")
+                .join("cases")
+                .join("mutable_map_sparse_int_probe_run")
+                .join("main.ky"),
+        )?;
+        assert!(
+            source.contains("MutableMap<Int, Int>"),
+            "sparse probe case must use MutableMap<Int, Int>"
+        );
+        assert!(
+            source.contains("MutableMap.with_capacity"),
+            "sparse probe case must exercise mutable map capacity hints"
+        );
+        assert!(
+            source.contains(".get(")
+                && source.contains(".contains(")
+                && source.contains(".insert(")
+                && source.contains(".remove("),
+            "sparse probe case must hit the sparse int-key hot path operations"
         );
         Ok(())
     }

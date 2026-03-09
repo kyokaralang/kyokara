@@ -5408,6 +5408,32 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_collections_mutable_map_with_capacity_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+fn main() -> Int {
+    let m: MutableMap<String, Int> = collections.MutableMap.with_capacity(8).insert("x", 1)
+    m.get("x").unwrap_or(0) + m.len()
+}"#,
+        "collections.MutableMap.with_capacity canonical surface",
+    );
+}
+
+#[test]
+fn check_collections_mutable_map_alias_with_capacity_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import collections as c
+
+fn main() -> Int {
+    let m: MutableMap<String, Int> = c.MutableMap.with_capacity(4).insert("x", 1)
+    m.keys().count()
+}"#,
+        "collections.MutableMap.with_capacity alias constructor surface",
+    );
+}
+
+#[test]
 fn check_global_mutable_map_constructor_surface_is_removed_rfc_0008() {
     let output = check("fn main() -> Int { MutableMap.new().len() }", "test.ky");
     assert!(
@@ -5416,6 +5442,40 @@ fn check_global_mutable_map_constructor_surface_is_removed_rfc_0008() {
             .iter()
             .any(|d| d.message.contains("no method") || d.message.contains("unresolved name")),
         "expected removed constructor-surface diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_global_mutable_map_with_capacity_surface_is_removed() {
+    let output = check("fn main() -> Int { MutableMap.with_capacity(4).len() }", "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("no method") || d.message.contains("unresolved name")),
+        "expected removed with_capacity constructor-surface diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_mutable_map_with_capacity_wrong_arity_reports_e0007() {
+    let output = check(
+        r#"import collections
+
+fn main() -> Int {
+    collections.MutableMap.with_capacity()
+    0
+}"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0007" && d.message.contains("expected 1 argument(s), found 0")),
+        "expected E0007 arity mismatch for MutableMap.with_capacity, got: {:?}",
         output.diagnostics
     );
 }
@@ -5529,6 +5589,32 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_collections_mutable_set_with_capacity_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import collections
+
+fn main() -> Int {
+    let s: MutableSet<String> = collections.MutableSet.with_capacity(8).insert("a")
+    if (s.contains("a")) { s.len() } else { 0 }
+}"#,
+        "collections.MutableSet.with_capacity canonical surface",
+    );
+}
+
+#[test]
+fn check_collections_mutable_set_alias_with_capacity_surface_has_no_diagnostics() {
+    assert_check_no_diagnostics(
+        r#"import collections as c
+
+fn main() -> Int {
+    let s: MutableSet<String> = c.MutableSet.with_capacity(4).insert("x")
+    if (s.contains("x")) { 1 } else { 0 }
+}"#,
+        "collections.MutableSet.with_capacity alias constructor surface",
+    );
+}
+
+#[test]
 fn check_global_mutable_set_constructor_surface_is_removed_rfc_0008() {
     let output = check("fn main() -> Int { MutableSet.new().len() }", "test.ky");
     assert!(
@@ -5537,6 +5623,40 @@ fn check_global_mutable_set_constructor_surface_is_removed_rfc_0008() {
             .iter()
             .any(|d| d.message.contains("no method") || d.message.contains("unresolved name")),
         "expected removed constructor-surface diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_global_mutable_set_with_capacity_surface_is_removed() {
+    let output = check("fn main() -> Int { MutableSet.with_capacity(4).len() }", "test.ky");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("no method") || d.message.contains("unresolved name")),
+        "expected removed with_capacity constructor-surface diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn check_mutable_set_with_capacity_wrong_arity_reports_e0007() {
+    let output = check(
+        r#"import collections
+
+fn main() -> Int {
+    collections.MutableSet.with_capacity()
+    0
+}"#,
+        "test.ky",
+    );
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E0007" && d.message.contains("expected 1 argument(s), found 0")),
+        "expected E0007 arity mismatch for MutableSet.with_capacity, got: {:?}",
         output.diagnostics
     );
 }

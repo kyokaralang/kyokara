@@ -25,8 +25,8 @@ use crate::error::RuntimeError;
 use crate::intrinsics::{self, Args, IntrinsicFn};
 use crate::manifest::CapabilityManifest;
 use crate::value::{
-    FnValue, MapValue, MutablePriorityQueueValue, PriorityQueueDirection, PriorityQueueEntry,
-    SeqPlan, SeqSource, SetValue, Value,
+    FnValue, MapKey, MapValue, MutableMapValue, MutablePriorityQueueValue, MutableSetValue,
+    PriorityQueueDirection, PriorityQueueEntry, SeqPlan, SeqSource, SetValue, Value,
 };
 
 /// Tree-walking interpreter state.
@@ -1611,6 +1611,9 @@ impl Interpreter {
     }
 
     fn hash_for_collection_key(&mut self, value: &Value) -> Result<i64, RuntimeError> {
+        if let Ok(key) = MapKey::from_value(value) {
+            return Ok(key.primitive_hash());
+        }
         self.trait_hash_value(value)
     }
 
@@ -1619,6 +1622,9 @@ impl Interpreter {
         entries: &MapValue,
         key: &Value,
     ) -> Result<Option<Value>, RuntimeError> {
+        if let Ok(map_key) = MapKey::from_value(key) {
+            return Ok(entries.get(&map_key).cloned());
+        }
         let hash = self.hash_for_collection_key(key)?;
         entries.get_cloned_with(hash, key, &mut |lhs, rhs| self.trait_eq_values(lhs, rhs))
     }
@@ -1628,6 +1634,33 @@ impl Interpreter {
         entries: &MapValue,
         key: &Value,
     ) -> Result<bool, RuntimeError> {
+        if let Ok(map_key) = MapKey::from_value(key) {
+            return Ok(entries.get(&map_key).is_some());
+        }
+        let hash = self.hash_for_collection_key(key)?;
+        entries.contains_with(hash, key, &mut |lhs, rhs| self.trait_eq_values(lhs, rhs))
+    }
+
+    fn mutable_map_get_value(
+        &mut self,
+        entries: &MutableMapValue,
+        key: &Value,
+    ) -> Result<Option<Value>, RuntimeError> {
+        if let Ok(map_key) = MapKey::from_value(key) {
+            return Ok(entries.get_cloned_primitive(&map_key));
+        }
+        let hash = self.hash_for_collection_key(key)?;
+        entries.get_cloned_with(hash, key, &mut |lhs, rhs| self.trait_eq_values(lhs, rhs))
+    }
+
+    fn mutable_map_contains_value(
+        &mut self,
+        entries: &MutableMapValue,
+        key: &Value,
+    ) -> Result<bool, RuntimeError> {
+        if let Ok(map_key) = MapKey::from_value(key) {
+            return Ok(entries.contains_primitive(&map_key));
+        }
         let hash = self.hash_for_collection_key(key)?;
         entries.contains_with(hash, key, &mut |lhs, rhs| self.trait_eq_values(lhs, rhs))
     }
@@ -1649,6 +1682,21 @@ impl Interpreter {
         entries: &SetValue,
         value: &Value,
     ) -> Result<bool, RuntimeError> {
+        if let Ok(map_key) = MapKey::from_value(value) {
+            return Ok(entries.contains(&map_key));
+        }
+        let hash = self.hash_for_collection_key(value)?;
+        entries.contains_with(hash, value, &mut |lhs, rhs| self.trait_eq_values(lhs, rhs))
+    }
+
+    fn mutable_set_contains_value(
+        &mut self,
+        entries: &MutableSetValue,
+        value: &Value,
+    ) -> Result<bool, RuntimeError> {
+        if let Ok(map_key) = MapKey::from_value(value) {
+            return Ok(entries.contains_primitive(&map_key));
+        }
         let hash = self.hash_for_collection_key(value)?;
         entries.contains_with(hash, value, &mut |lhs, rhs| self.trait_eq_values(lhs, rhs))
     }
@@ -1817,7 +1865,7 @@ impl Interpreter {
         let key = self.eval_terminal_expr(env, body, key_expr)?.into_value();
         if let Some(existing) = {
             let borrowed = entries.borrow();
-            self.map_get_value(&borrowed, &key)?
+            self.mutable_map_get_value(&borrowed, &key)?
         } {
             return Ok(Some(existing.clone()));
         }
@@ -1829,17 +1877,21 @@ impl Interpreter {
         };
         if let Some(existing) = {
             let borrowed = entries.borrow();
-            self.map_get_value(&borrowed, &key)?
+            self.mutable_map_get_value(&borrowed, &key)?
         } {
             return Ok(Some(existing.clone()));
         }
-        let hash = self.hash_for_collection_key(&key)?;
-        entries.borrow_mut().insert_with(
-            hash,
-            key,
-            computed.clone(),
-            &mut |lhs, rhs| self.trait_eq_values(lhs, rhs),
-        )?;
+        if let Ok(primitive_key) = MapKey::from_value(&key) {
+            entries.borrow_mut().insert_primitive(primitive_key, computed.clone());
+        } else {
+            let hash = self.hash_for_collection_key(&key)?;
+            entries.borrow_mut().insert_with(
+                hash,
+                key,
+                computed.clone(),
+                &mut |lhs, rhs| self.trait_eq_values(lhs, rhs),
+            )?;
+        }
         Ok(Some(computed))
     }
 
@@ -1878,7 +1930,7 @@ impl Interpreter {
         let key = eval_expr_value(self, key_expr)?;
         if let Some(existing) = {
             let borrowed = entries.borrow();
-            self.map_get_value(&borrowed, &key)?
+            self.mutable_map_get_value(&borrowed, &key)?
         } {
             return Ok(Some(existing.clone()));
         }
@@ -1886,17 +1938,21 @@ impl Interpreter {
         let computed = self.call_value(thunk, Args::new())?;
         if let Some(existing) = {
             let borrowed = entries.borrow();
-            self.map_get_value(&borrowed, &key)?
+            self.mutable_map_get_value(&borrowed, &key)?
         } {
             return Ok(Some(existing.clone()));
         }
-        let hash = self.hash_for_collection_key(&key)?;
-        entries.borrow_mut().insert_with(
-            hash,
-            key,
-            computed.clone(),
-            &mut |lhs, rhs| self.trait_eq_values(lhs, rhs),
-        )?;
+        if let Ok(primitive_key) = MapKey::from_value(&key) {
+            entries.borrow_mut().insert_primitive(primitive_key, computed.clone());
+        } else {
+            let hash = self.hash_for_collection_key(&key)?;
+            entries.borrow_mut().insert_with(
+                hash,
+                key,
+                computed.clone(),
+                &mut |lhs, rhs| self.trait_eq_values(lhs, rhs),
+            )?;
+        }
         Ok(Some(computed))
     }
 
@@ -4519,12 +4575,16 @@ impl Interpreter {
                 };
                 let key = args[1].clone();
                 let value = args[2].clone();
-                let hash = self.hash_for_collection_key(&key)?;
-                entries
-                    .borrow_mut()
-                    .insert_with(hash, key, value, &mut |lhs, rhs| {
-                        self.trait_eq_values(lhs, rhs)
-                    })?;
+                if let Ok(primitive_key) = MapKey::from_value(&key) {
+                    entries.borrow_mut().insert_primitive(primitive_key, value);
+                } else {
+                    let hash = self.hash_for_collection_key(&key)?;
+                    entries
+                        .borrow_mut()
+                        .insert_with(hash, key, value, &mut |lhs, rhs| {
+                            self.trait_eq_values(lhs, rhs)
+                        })?;
+                }
                 Ok(Value::MutableMap(entries.clone()))
             }
             IntrinsicFn::MutableMapGet => {
@@ -4534,8 +4594,8 @@ impl Interpreter {
                     ));
                 };
                 let borrowed = entries.borrow();
-                if let Some(v) = self.map_get_value(&borrowed, &args[1])? {
-                    self.make_some(v.clone())
+                if let Some(v) = self.mutable_map_get_value(&borrowed, &args[1])? {
+                    self.make_some(v)
                 } else {
                     self.make_none()
                 }
@@ -4548,25 +4608,31 @@ impl Interpreter {
                 };
                 if let Some(v) = {
                     let borrowed = entries.borrow();
-                    self.map_get_value(&borrowed, &args[1])?
+                    self.mutable_map_get_value(&borrowed, &args[1])?
                 } {
-                    return Ok(v.clone());
+                    return Ok(v);
                 }
                 let computed = self.call_value(args[2].clone(), smallvec::smallvec![])?;
                 if let Some(existing) = {
                     let borrowed = entries.borrow();
-                    self.map_get_value(&borrowed, &args[1])?
+                    self.mutable_map_get_value(&borrowed, &args[1])?
                 } {
-                    return Ok(existing.clone());
+                    return Ok(existing);
                 }
                 let key = args[1].clone();
-                let hash = self.hash_for_collection_key(&key)?;
-                entries.borrow_mut().insert_with(
-                    hash,
-                    key,
-                    computed.clone(),
-                    &mut |lhs, rhs| self.trait_eq_values(lhs, rhs),
-                )?;
+                if let Ok(primitive_key) = MapKey::from_value(&key) {
+                    entries
+                        .borrow_mut()
+                        .insert_primitive(primitive_key, computed.clone());
+                } else {
+                    let hash = self.hash_for_collection_key(&key)?;
+                    entries.borrow_mut().insert_with(
+                        hash,
+                        key,
+                        computed.clone(),
+                        &mut |lhs, rhs| self.trait_eq_values(lhs, rhs),
+                    )?;
+                }
                 Ok(computed)
             }
             IntrinsicFn::MutableMapContains => {
@@ -4576,7 +4642,7 @@ impl Interpreter {
                     ));
                 };
                 let borrowed = entries.borrow();
-                Ok(Value::Bool(self.map_contains_value(&borrowed, &args[1])?))
+                Ok(Value::Bool(self.mutable_map_contains_value(&borrowed, &args[1])?))
             }
             IntrinsicFn::MutableMapRemove => {
                 let Value::MutableMap(entries) = &args[0] else {
@@ -4584,12 +4650,16 @@ impl Interpreter {
                         "mutable_map_remove expects a MutableMap".into(),
                     ));
                 };
-                let hash = self.hash_for_collection_key(&args[1])?;
-                entries
-                    .borrow_mut()
-                    .remove_with(hash, &args[1], &mut |lhs, rhs| {
-                        self.trait_eq_values(lhs, rhs)
-                    })?;
+                if let Ok(primitive_key) = MapKey::from_value(&args[1]) {
+                    entries.borrow_mut().remove_primitive(&primitive_key);
+                } else {
+                    let hash = self.hash_for_collection_key(&args[1])?;
+                    entries
+                        .borrow_mut()
+                        .remove_with(hash, &args[1], &mut |lhs, rhs| {
+                            self.trait_eq_values(lhs, rhs)
+                        })?;
+                }
                 Ok(Value::MutableMap(entries.clone()))
             }
             IntrinsicFn::MutableMapLen => {
@@ -4607,7 +4677,7 @@ impl Interpreter {
                     ));
                 };
                 Ok(Value::seq_source(SeqSource::MapKeys(Rc::new(
-                    entries.borrow().clone(),
+                    entries.borrow().snapshot(),
                 ))))
             }
             IntrinsicFn::MutableMapValues => {
@@ -4617,7 +4687,7 @@ impl Interpreter {
                     ));
                 };
                 Ok(Value::seq_source(SeqSource::MapValues(Rc::new(
-                    entries.borrow().clone(),
+                    entries.borrow().snapshot(),
                 ))))
             }
             IntrinsicFn::MutableMapIsEmpty => {
@@ -4697,10 +4767,14 @@ impl Interpreter {
                     ));
                 };
                 let value = args[1].clone();
-                let hash = self.hash_for_collection_key(&value)?;
-                entries
-                    .borrow_mut()
-                    .insert_with(hash, value, &mut |lhs, rhs| self.trait_eq_values(lhs, rhs))?;
+                if let Ok(primitive_key) = MapKey::from_value(&value) {
+                    entries.borrow_mut().insert_primitive(primitive_key);
+                } else {
+                    let hash = self.hash_for_collection_key(&value)?;
+                    entries.borrow_mut().insert_with(hash, value, &mut |lhs, rhs| {
+                        self.trait_eq_values(lhs, rhs)
+                    })?;
+                }
                 Ok(Value::MutableSet(entries.clone()))
             }
             IntrinsicFn::MutableSetContains => {
@@ -4710,7 +4784,7 @@ impl Interpreter {
                     ));
                 };
                 let borrowed = entries.borrow();
-                Ok(Value::Bool(self.set_contains_value(&borrowed, &args[1])?))
+                Ok(Value::Bool(self.mutable_set_contains_value(&borrowed, &args[1])?))
             }
             IntrinsicFn::MutableSetRemove => {
                 let Value::MutableSet(entries) = &args[0] else {
@@ -4718,12 +4792,16 @@ impl Interpreter {
                         "mutable_set_remove expects a MutableSet".into(),
                     ));
                 };
-                let hash = self.hash_for_collection_key(&args[1])?;
-                entries
-                    .borrow_mut()
-                    .remove_with(hash, &args[1], &mut |lhs, rhs| {
-                        self.trait_eq_values(lhs, rhs)
-                    })?;
+                if let Ok(primitive_key) = MapKey::from_value(&args[1]) {
+                    entries.borrow_mut().remove_primitive(&primitive_key);
+                } else {
+                    let hash = self.hash_for_collection_key(&args[1])?;
+                    entries
+                        .borrow_mut()
+                        .remove_with(hash, &args[1], &mut |lhs, rhs| {
+                            self.trait_eq_values(lhs, rhs)
+                        })?;
+                }
                 Ok(Value::MutableSet(entries.clone()))
             }
             IntrinsicFn::MutableSetLen => {
@@ -4749,7 +4827,7 @@ impl Interpreter {
                     ));
                 };
                 Ok(Value::seq_source(SeqSource::SetValues(Rc::new(
-                    entries.borrow().clone(),
+                    entries.borrow().snapshot(),
                 ))))
             }
             IntrinsicFn::SeqMap => {
@@ -5363,7 +5441,7 @@ impl Interpreter {
                 .ok_or(RuntimeError::KeyNotFound),
             (Value::MutableMap(entries), key) => {
                 let borrowed = entries.borrow();
-                self.map_get_value(&borrowed, key)?
+                self.mutable_map_get_value(&borrowed, key)?
                     .ok_or(RuntimeError::KeyNotFound)
             }
             _ => Err(RuntimeError::TypeError(

@@ -68,6 +68,7 @@ pub enum IntrinsicFn {
     MutablePriorityQueueLen,
     MutablePriorityQueueIsEmpty,
     MutableMapNew,
+    MutableMapWithCapacity,
     MutableMapInsert,
     MutableMapGet,
     MutableMapGetOrInsertWith,
@@ -78,6 +79,7 @@ pub enum IntrinsicFn {
     MutableMapValues,
     MutableMapIsEmpty,
     MutableSetNew,
+    MutableSetWithCapacity,
     MutableSetInsert,
     MutableSetContains,
     MutableSetRemove,
@@ -705,6 +707,17 @@ impl IntrinsicFn {
                 Ok(Value::Bool(queue.borrow().entries.is_empty()))
             }
             IntrinsicFn::MutableMapNew => Ok(Value::mutable_map(IndexMap::new())),
+            IntrinsicFn::MutableMapWithCapacity => {
+                let Value::Int(capacity) = args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_with_capacity expects an Int".into(),
+                    ));
+                };
+                let capacity = usize::try_from(capacity).map_err(|_| {
+                    RuntimeError::TypeError("mutable_map_with_capacity: capacity must be >= 0".into())
+                })?;
+                Ok(Value::mutable_map_with_capacity(capacity))
+            }
             IntrinsicFn::MutableMapInsert => {
                 let mut args = args;
                 let value = args.pop().ok_or(RuntimeError::TypeError(
@@ -780,7 +793,7 @@ impl IntrinsicFn {
                     ));
                 };
                 Ok(Value::seq_source(SeqSource::MapKeys(Rc::new(
-                    entries.borrow().clone(),
+                    entries.borrow().snapshot(),
                 ))))
             }
             IntrinsicFn::MutableMapValues => {
@@ -790,7 +803,7 @@ impl IntrinsicFn {
                     ));
                 };
                 Ok(Value::seq_source(SeqSource::MapValues(Rc::new(
-                    entries.borrow().clone(),
+                    entries.borrow().snapshot(),
                 ))))
             }
             IntrinsicFn::MutableMapIsEmpty => {
@@ -802,6 +815,17 @@ impl IntrinsicFn {
                 Ok(Value::Bool(entries.borrow().is_empty()))
             }
             IntrinsicFn::MutableSetNew => Ok(Value::mutable_set(IndexSet::new())),
+            IntrinsicFn::MutableSetWithCapacity => {
+                let Value::Int(capacity) = args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_set_with_capacity expects an Int".into(),
+                    ));
+                };
+                let capacity = usize::try_from(capacity).map_err(|_| {
+                    RuntimeError::TypeError("mutable_set_with_capacity: capacity must be >= 0".into())
+                })?;
+                Ok(Value::mutable_set_with_capacity(capacity))
+            }
             IntrinsicFn::MutableSetInsert => {
                 let mut args = args;
                 let elem_value = args.pop().ok_or(RuntimeError::TypeError(
@@ -882,7 +906,7 @@ impl IntrinsicFn {
                     ));
                 };
                 Ok(Value::seq_source(SeqSource::SetValues(Rc::new(
-                    entries.borrow().clone(),
+                    entries.borrow().snapshot(),
                 ))))
             }
             IntrinsicFn::MutableBitSetNew => {
@@ -2003,6 +2027,10 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
             IntrinsicFn::MutableMapNew,
         ),
         (
+            Name::new(interner, "mutable_map_with_capacity"),
+            IntrinsicFn::MutableMapWithCapacity,
+        ),
+        (
             Name::new(interner, "mutable_map_insert"),
             IntrinsicFn::MutableMapInsert,
         ),
@@ -2041,6 +2069,10 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (
             Name::new(interner, "mutable_set_new"),
             IntrinsicFn::MutableSetNew,
+        ),
+        (
+            Name::new(interner, "mutable_set_with_capacity"),
+            IntrinsicFn::MutableSetWithCapacity,
         ),
         (
             Name::new(interner, "mutable_set_insert"),
