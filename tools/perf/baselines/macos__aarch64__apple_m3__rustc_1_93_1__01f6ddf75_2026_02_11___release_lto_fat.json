@@ -93,6 +93,30 @@
       "median_ms": 33.160375
     },
     {
+      "id": "mutable_map_sparse_int_probe_run",
+      "mode": "run",
+      "samples_ms": [
+        199.111792,
+        166.331583,
+        163.365458,
+        161.120458,
+        177.170125
+      ],
+      "median_ms": 166.331583
+    },
+    {
+      "id": "overload_family_dispatch_run",
+      "mode": "run",
+      "samples_ms": [
+        278.377333,
+        265.54475,
+        292.932583,
+        280.492792,
+        293.1425
+      ],
+      "median_ms": 280.492792
+    },
+    {
       "id": "parse_dense_module_check",
       "mode": "check",
       "samples_ms": [

@@ -999,6 +999,7 @@ mod tests {
                 "mutable_bool_dense_relation_run",
                 "mutable_map_set_churn_run",
                 "mutable_map_sparse_int_probe_run",
+                "overload_family_dispatch_run",
                 "parse_dense_module_check",
                 "wordfreq_map_set_run",
             ]
@@ -1107,6 +1108,35 @@ mod tests {
                 && source.contains(".insert(")
                 && source.contains(".remove("),
             "sparse probe case must hit the sparse int-key hot path operations"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn overload_family_dispatch_case_exercises_constrained_call_families() -> Result<()> {
+        let root = workspace_root()?;
+        let source = fs::read_to_string(
+            root.join("tools")
+                .join("perf")
+                .join("cases")
+                .join("overload_family_dispatch_run")
+                .join("main.ky"),
+        )?;
+        assert!(
+            source.contains("fn score() -> Int")
+                && source.contains("fn score(x: Int) -> Int")
+                && source.contains("fn score(x: Int, y: Int, z: Int) -> Int"),
+            "overload case must define a user function family with arity-distinct members"
+        );
+        assert!(
+            source.contains("fn Counter.bump(self) -> Counter")
+                && source.contains("fn Counter.bump(self, delta: Int) -> Counter"),
+            "overload case must define a user method family with arity-distinct members"
+        );
+        assert!(
+            source.contains(".starts_with(\"kyo\")")
+                && source.contains(".starts_with(\"over\", start: 8)"),
+            "overload case must exercise the builtin named-arg call family path"
         );
         Ok(())
     }
