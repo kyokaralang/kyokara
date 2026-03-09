@@ -126,6 +126,11 @@ impl Env {
         *binding = BindingValue::Live(value);
         Some(())
     }
+
+    #[cfg(test)]
+    pub(crate) fn binding_count(&self) -> usize {
+        self.bindings.len()
+    }
 }
 
 #[cfg(test)]

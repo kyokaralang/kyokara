@@ -302,15 +302,12 @@ impl<'a> InferenceCtx<'a> {
             return Some(elem_ty);
         }
 
-        let Some(into_traversal_name) = self
+        let into_traversal_name = self
             .module_scope
             .traits
             .keys()
             .find(|name| name.resolve(self.interner) == "IntoTraversal")
-            .copied()
-        else {
-            return None;
-        };
+            .copied()?;
         let bindings = self.trait_type_bindings_for_receiver(&ty, into_traversal_name)?;
         bindings.first().map(|(_, elem_ty)| elem_ty.clone())
     }
