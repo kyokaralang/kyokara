@@ -1958,74 +1958,264 @@ impl MutableSetValue {
 ///
 /// Aliases share the outer `RefCell`, so mutation is visible across aliases.
 /// Sequence pipelines snapshot the current inner `Rc<Vec<_>>` cheaply.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct BoolListValue {
+    len: usize,
+    words: Vec<u64>,
+}
+
+impl BoolListValue {
+    fn from_values(items: &[Value]) -> Option<Self> {
+        let mut out = Self::default();
+        for item in items {
+            let Value::Bool(value) = item else {
+                return None;
+            };
+            out.push(*value);
+        }
+        Some(out)
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn get(&self, idx: usize) -> Option<bool> {
+        if idx >= self.len {
+            return None;
+        }
+        let word = self.words[idx / 64];
+        Some(((word >> (idx % 64)) & 1) != 0)
+    }
+
+    fn last(&self) -> Option<bool> {
+        self.len.checked_sub(1).and_then(|idx| self.get(idx))
+    }
+
+    fn push(&mut self, value: bool) {
+        let idx = self.len;
+        if idx.is_multiple_of(64) {
+            self.words.push(0);
+        }
+        if value {
+            self.words[idx / 64] |= 1u64 << (idx % 64);
+        }
+        self.len += 1;
+    }
+
+    fn extend_bools<I>(&mut self, values: I)
+    where
+        I: IntoIterator<Item = bool>,
+    {
+        for value in values {
+            self.push(value);
+        }
+    }
+
+    fn set(&mut self, idx: usize, value: bool) {
+        let mask = 1u64 << (idx % 64);
+        let word = &mut self.words[idx / 64];
+        if value {
+            *word |= mask;
+        } else {
+            *word &= !mask;
+        }
+    }
+
+    fn pop(&mut self) -> Option<bool> {
+        let idx = self.len.checked_sub(1)?;
+        let word_idx = idx / 64;
+        let mask = 1u64 << (idx % 64);
+        let value = (self.words[word_idx] & mask) != 0;
+        self.words[word_idx] &= !mask;
+        self.len -= 1;
+        if self.len.is_multiple_of(64) {
+            let _ = self.words.pop();
+        }
+        Some(value)
+    }
+
+    fn to_values(&self) -> Vec<Value> {
+        let mut out = Vec::with_capacity(self.len);
+        for idx in 0..self.len {
+            out.push(Value::Bool(
+                self.get(idx)
+                    .expect("bool list index should stay in bounds while materializing"),
+            ));
+        }
+        out
+    }
+}
+
+#[derive(Debug, Clone)]
+enum MutableListStorage {
+    Generic(Rc<Vec<Value>>),
+    Bool(BoolListValue),
+}
+
+impl MutableListStorage {
+    fn from_items(items: Vec<Value>) -> Self {
+        if let Some(bools) = BoolListValue::from_values(&items) {
+            Self::Bool(bools)
+        } else {
+            Self::Generic(Rc::new(items))
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct MutableListValue {
-    items: Rc<RefCell<Rc<Vec<Value>>>>,
+    items: Rc<RefCell<MutableListStorage>>,
 }
 
 impl MutableListValue {
     pub fn new(items: Vec<Value>) -> Self {
         Self {
-            items: Rc::new(RefCell::new(Rc::new(items))),
+            items: Rc::new(RefCell::new(MutableListStorage::from_items(items))),
         }
     }
 
     pub fn snapshot(&self) -> Rc<Vec<Value>> {
-        self.items.borrow().clone()
+        match &*self.items.borrow() {
+            MutableListStorage::Generic(items) => items.clone(),
+            MutableListStorage::Bool(items) => Rc::new(items.to_values()),
+        }
     }
 
     pub fn len(&self) -> usize {
-        self.items.borrow().len()
+        match &*self.items.borrow() {
+            MutableListStorage::Generic(items) => items.len(),
+            MutableListStorage::Bool(items) => items.len(),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.items.borrow().is_empty()
+        match &*self.items.borrow() {
+            MutableListStorage::Generic(items) => items.is_empty(),
+            MutableListStorage::Bool(items) => items.is_empty(),
+        }
     }
 
     pub fn get_cloned(&self, idx: usize) -> Option<Value> {
-        self.items.borrow().get(idx).cloned()
+        match &*self.items.borrow() {
+            MutableListStorage::Generic(items) => items.get(idx).cloned(),
+            MutableListStorage::Bool(items) => items.get(idx).map(Value::Bool),
+        }
     }
 
     pub fn last_cloned(&self) -> Option<Value> {
-        self.items.borrow().last().cloned()
+        match &*self.items.borrow() {
+            MutableListStorage::Generic(items) => items.last().cloned(),
+            MutableListStorage::Bool(items) => items.last().map(Value::Bool),
+        }
     }
 
     pub fn push(&self, value: Value) {
-        let mut items = self.items.borrow_mut();
-        Rc::make_mut(&mut *items).push(value);
+        let mut storage = self.items.borrow_mut();
+        match &mut *storage {
+            MutableListStorage::Generic(items) => Rc::make_mut(items).push(value),
+            MutableListStorage::Bool(items) => match value {
+                Value::Bool(value) => items.push(value),
+                other => {
+                    let mut generic = items.to_values();
+                    generic.push(other);
+                    *storage = MutableListStorage::Generic(Rc::new(generic));
+                }
+            },
+        }
     }
 
     pub fn insert(&self, idx: usize, value: Value) {
-        let mut items = self.items.borrow_mut();
-        Rc::make_mut(&mut *items).insert(idx, value);
+        let mut storage = self.items.borrow_mut();
+        match &mut *storage {
+            MutableListStorage::Generic(items) => Rc::make_mut(items).insert(idx, value),
+            MutableListStorage::Bool(items) => {
+                let mut generic = items.to_values();
+                generic.insert(idx, value);
+                *storage = MutableListStorage::Generic(Rc::new(generic));
+            }
+        }
     }
 
     pub fn pop(&self) -> Option<Value> {
         let mut items = self.items.borrow_mut();
-        Rc::make_mut(&mut *items).pop()
+        match &mut *items {
+            MutableListStorage::Generic(items) => Rc::make_mut(items).pop(),
+            MutableListStorage::Bool(items) => items.pop().map(Value::Bool),
+        }
     }
 
     pub fn extend<I>(&self, values: I)
     where
         I: IntoIterator<Item = Value>,
     {
-        let mut items = self.items.borrow_mut();
-        Rc::make_mut(&mut *items).extend(values);
+        let values: Vec<_> = values.into_iter().collect();
+        if values.is_empty() {
+            return;
+        }
+
+        let mut storage = self.items.borrow_mut();
+        match &mut *storage {
+            MutableListStorage::Generic(items) => Rc::make_mut(items).extend(values),
+            MutableListStorage::Bool(items) => {
+                if values.iter().all(|value| matches!(value, Value::Bool(_))) {
+                    items.extend_bools(values.into_iter().map(|value| match value {
+                        Value::Bool(value) => value,
+                        _ => unreachable!("checked all values are bools"),
+                    }));
+                } else {
+                    let mut generic = items.to_values();
+                    generic.extend(values);
+                    *storage = MutableListStorage::Generic(Rc::new(generic));
+                }
+            }
+        }
     }
 
     pub fn set(&self, idx: usize, value: Value) {
-        let mut items = self.items.borrow_mut();
-        Rc::make_mut(&mut *items)[idx] = value;
+        let mut storage = self.items.borrow_mut();
+        match &mut *storage {
+            MutableListStorage::Generic(items) => Rc::make_mut(items)[idx] = value,
+            MutableListStorage::Bool(items) => match value {
+                Value::Bool(value) => items.set(idx, value),
+                other => {
+                    let mut generic = items.to_values();
+                    generic[idx] = other;
+                    *storage = MutableListStorage::Generic(Rc::new(generic));
+                }
+            },
+        }
     }
 
     pub fn delete_at(&self, idx: usize) {
-        let mut items = self.items.borrow_mut();
-        Rc::make_mut(&mut *items).remove(idx);
+        let mut storage = self.items.borrow_mut();
+        match &mut *storage {
+            MutableListStorage::Generic(items) => {
+                Rc::make_mut(items).remove(idx);
+            }
+            MutableListStorage::Bool(items) => {
+                let mut generic = items.to_values();
+                generic.remove(idx);
+                *storage = MutableListStorage::Generic(Rc::new(generic));
+            }
+        }
     }
 
     pub fn remove_at(&self, idx: usize) -> Value {
-        let mut items = self.items.borrow_mut();
-        Rc::make_mut(&mut *items).remove(idx)
+        let mut storage = self.items.borrow_mut();
+        match &mut *storage {
+            MutableListStorage::Generic(items) => Rc::make_mut(items).remove(idx),
+            MutableListStorage::Bool(items) => {
+                let mut generic = items.to_values();
+                let removed = generic.remove(idx);
+                *storage = MutableListStorage::Generic(Rc::new(generic));
+                removed
+            }
+        }
     }
 
     pub fn shares_alias_storage_with(&self, other: &Self) -> bool {
@@ -2035,7 +2225,15 @@ impl MutableListValue {
     #[cfg(test)]
     pub fn current_backing_ptr(&self) -> *const Vec<Value> {
         let items = self.items.borrow();
-        Rc::as_ptr(&*items)
+        match &*items {
+            MutableListStorage::Generic(items) => Rc::as_ptr(items),
+            MutableListStorage::Bool(_) => panic!("current_backing_ptr only applies to generic list storage"),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn uses_bool_storage(&self) -> bool {
+        matches!(&*self.items.borrow(), MutableListStorage::Bool(_))
     }
 }
 
@@ -2472,11 +2670,7 @@ impl PartialEq for Value {
             (Value::Record { fields: f1, .. }, Value::Record { fields: f2, .. }) => f1 == f2,
             (Value::List(a), Value::List(b)) => a == b,
             (Value::BitSet(a), Value::BitSet(b)) => a == b,
-            (Value::MutableList(a), Value::MutableList(b)) => {
-                let a_items = a.items.borrow();
-                let b_items = b.items.borrow();
-                *a_items == *b_items
-            }
+            (Value::MutableList(a), Value::MutableList(b)) => a.snapshot() == b.snapshot(),
             (Value::MutablePriorityQueue(a), Value::MutablePriorityQueue(b)) => {
                 *a.borrow() == *b.borrow()
             }
@@ -2802,6 +2996,47 @@ mod tests {
         assert!(
             a.shares_alias_storage_with(b),
             "mutable list clone should share storage for alias-visible mutation"
+        );
+    }
+
+    #[test]
+    fn mutable_bool_list_uses_specialized_storage_until_promotion() {
+        let value = Value::mutable_list(vec![Value::Bool(false), Value::Bool(true)]);
+        let Value::MutableList(items) = &value else {
+            panic!("expected mutable list value");
+        };
+
+        assert!(
+            items.uses_bool_storage(),
+            "homogeneous bool mutable list should use specialized storage"
+        );
+        assert_eq!(items.get_cloned(0), Some(Value::Bool(false)));
+        assert_eq!(items.get_cloned(1), Some(Value::Bool(true)));
+
+        items.push(Value::Bool(false));
+        items.set(1, Value::Bool(false));
+        assert!(
+            items.uses_bool_storage(),
+            "bool-only mutations should stay on specialized storage"
+        );
+        assert_eq!(
+            items.snapshot().as_ref(),
+            &vec![Value::Bool(false), Value::Bool(false), Value::Bool(false)]
+        );
+
+        items.push(Value::Int(1));
+        assert!(
+            !items.uses_bool_storage(),
+            "first non-bool element should promote to generic storage"
+        );
+        assert_eq!(
+            items.snapshot().as_ref(),
+            &vec![
+                Value::Bool(false),
+                Value::Bool(false),
+                Value::Bool(false),
+                Value::Int(1)
+            ]
         );
     }
 
