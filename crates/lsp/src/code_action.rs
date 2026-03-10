@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use kyokara_hir::CheckResult;
 use kyokara_span::FileId;
 use tower_lsp::lsp_types::{
     self, CodeAction, CodeActionKind, CodeActionOrCommand, NumberOrString, TextEdit, Url,
@@ -54,15 +53,19 @@ fn missing_match_cases_action(
     diag: &lsp_types::Diagnostic,
     uri: &Url,
 ) -> Option<CodeAction> {
-    // Reconstruct a CheckResult from the analysis data.
-    let check_result = reconstruct_check_result(analysis);
     let file_id = FileId(0);
+    let root = analysis.syntax_root();
 
     // Use the diagnostic range start as offset.
     let offset = lsp_range_start_to_offset(&diag.range, source)?;
 
-    let result =
-        kyokara_refactor::quickfix::add_missing_match_cases(&check_result, file_id, offset).ok()?;
+    let result = kyokara_refactor::quickfix::add_missing_match_cases_from_diagnostics(
+        &root,
+        &analysis.type_check.raw_diagnostics,
+        file_id,
+        offset,
+    )
+    .ok()?;
 
     let edits: Vec<TextEdit> = result
         .edits
@@ -94,13 +97,18 @@ fn missing_capability_action(
     diag: &lsp_types::Diagnostic,
     uri: &Url,
 ) -> Option<CodeAction> {
-    let check_result = reconstruct_check_result(analysis);
     let file_id = FileId(0);
+    let root = analysis.syntax_root();
 
     let offset = lsp_range_start_to_offset(&diag.range, source)?;
 
-    let result =
-        kyokara_refactor::quickfix::add_missing_capability(&check_result, file_id, offset).ok()?;
+    let result = kyokara_refactor::quickfix::add_missing_capability_from_diagnostics(
+        &root,
+        &analysis.type_check.raw_diagnostics,
+        file_id,
+        offset,
+    )
+    .ok()?;
 
     let edits: Vec<TextEdit> = result
         .edits
@@ -124,18 +132,6 @@ fn missing_capability_action(
         }),
         ..Default::default()
     })
-}
-
-/// Reconstruct a `CheckResult` from `FileAnalysis` for the refactor crate.
-///
-/// The green node is Arc-backed so cloning is cheap. The interner is
-/// reconstructed by re-running `check_file` — this is acceptable because
-/// code actions are infrequent and the file was just analyzed.
-fn reconstruct_check_result(analysis: &FileAnalysis) -> CheckResult {
-    // Re-run check to get a CheckResult with a valid interner.
-    // This is the simplest approach — the refactor crate needs &CheckResult
-    // with a live Interner, and we can't clone Rodeo.
-    kyokara_hir::check_file(&analysis.source)
 }
 
 fn lsp_range_start_to_offset(range: &lsp_types::Range, source: &str) -> Option<u32> {
