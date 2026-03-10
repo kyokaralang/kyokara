@@ -105,6 +105,18 @@
       "median_ms": 4.609917
     },
     {
+      "id": "scalar_prng_judge_run",
+      "mode": "run",
+      "samples_ms": [
+        612.02,
+        612.284625,
+        612.753083,
+        613.0784580000001,
+        596.74675
+      ],
+      "median_ms": 612.284625
+    },
+    {
       "id": "wordfreq_map_set_run",
       "mode": "run",
       "samples_ms": [

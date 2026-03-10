@@ -59,7 +59,7 @@ pub struct LocalBindingMeta {
 }
 
 /// Resolved local access coordinates for runtime lookup.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LocalSlotRef {
     pub depth: usize,
     pub slot: usize,

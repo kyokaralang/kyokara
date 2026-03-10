@@ -426,6 +426,76 @@ fn eval_var_reassignment_in_loop_accumulates_state() {
 }
 
 #[test]
+fn eval_scalar_prng_style_loop_matches_expected_count() {
+    let val = run_ok(
+        "fn main() -> Int {
+           var a = 883
+           var b = 879
+           var matches = 0
+           var i = 0
+           while (i < 250000) {
+             a = (a * 16807) % 2147483647
+             b = (b * 48271) % 2147483647
+             if ((a & 65535) == (b & 65535)) {
+               matches = matches + 1
+             }
+             i = i + 1
+           }
+           matches
+         }",
+    );
+    assert!(matches!(val, Value::Int(2)));
+}
+
+#[test]
+fn eval_scalar_loop_mod_by_zero_preserves_runtime_error() {
+    let err = run_err(
+        "fn main() -> Int {
+           var acc = 9
+           var i = 0
+           while (i < 2) {
+             acc = acc % (1 - i)
+             i = i + 1
+           }
+           acc
+         }",
+    );
+    assert!(err.contains("division by zero"), "unexpected error: {err}");
+}
+
+#[test]
+fn eval_scalar_loop_invalid_shift_preserves_runtime_error() {
+    let err = run_err(
+        "fn main() -> Int {
+           var x = 1
+           var i = 0
+           while (i < 1) {
+             x = x << 64
+             i = i + 1
+           }
+           x
+         }",
+    );
+    assert!(
+        err.contains("shift amount 64 out of range"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn eval_non_bool_while_condition_is_rejected_before_runtime() {
+    assert!(check_has_compile_errors(
+        "fn main() -> Int {
+           var i = 0
+           while ({ i = i + 1\n i }) {
+             0
+           }
+           i
+         }"
+    ));
+}
+
+#[test]
 fn eval_typed_var_reassignment_works() {
     let val = run_ok(
         "fn main() -> Int {

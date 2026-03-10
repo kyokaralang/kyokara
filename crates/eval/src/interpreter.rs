@@ -29,12 +29,103 @@ use crate::value::{
     PriorityQueueDirection, PriorityQueueEntry, SeqPlan, SeqSource, SetValue, Value,
 };
 
+#[derive(Debug, Clone, Copy)]
+struct UniqueReceiverUse {
+    access: LocalSlotRef,
+    name: Name,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScalarValue {
+    Int(i64),
+    Bool(bool),
+    Unit,
+}
+
+impl ScalarValue {
+    fn from_runtime_value(value: &Value) -> Option<Self> {
+        match value {
+            Value::Int(value) => Some(Self::Int(*value)),
+            Value::Bool(value) => Some(Self::Bool(*value)),
+            Value::Unit => Some(Self::Unit),
+            _ => None,
+        }
+    }
+
+    fn into_runtime_value(self) -> Value {
+        match self {
+            Self::Int(value) => Value::Int(value),
+            Self::Bool(value) => Value::Bool(value),
+            Self::Unit => Value::Unit,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ScalarExprPlan {
+    Int(i64),
+    Bool(bool),
+    Local(usize),
+    Global(usize),
+    Binary {
+        op: BinaryOp,
+        lhs: Box<ScalarExprPlan>,
+        rhs: Box<ScalarExprPlan>,
+    },
+    Unary {
+        op: UnaryOp,
+        operand: Box<ScalarExprPlan>,
+    },
+    If {
+        condition: Box<ScalarExprPlan>,
+        then_branch: Box<ScalarExprPlan>,
+        else_branch: Option<Box<ScalarExprPlan>>,
+    },
+    Block {
+        stmts: Vec<ScalarStmtPlan>,
+        tail: Option<Box<ScalarExprPlan>>,
+    },
+    Return(Option<Box<ScalarExprPlan>>),
+}
+
+#[derive(Debug, Clone)]
+enum ScalarStmtPlan {
+    Assign { slot: usize, value: ScalarExprPlan },
+    Expr(ScalarExprPlan),
+    Break,
+    Continue,
+}
+
+#[derive(Debug, Clone)]
+enum ScalarControlFlow {
+    Value(ScalarValue),
+    Return(ScalarValue),
+    Break,
+    Continue,
+}
+
+#[derive(Debug, Clone)]
+struct ScalarWhilePlan {
+    local_slots: Vec<LocalSlotRef>,
+    top_level_names: Vec<Name>,
+    condition: ScalarExprPlan,
+    loop_body: ScalarExprPlan,
+}
+
+#[derive(Debug, Clone, Default)]
+struct BodyExecMeta {
+    local_accesses: ArenaMap<ExprIdx, LocalSlotRef>,
+    unique_receiver_uses: ArenaMap<ExprIdx, UniqueReceiverUse>,
+    scalar_while_plans: FxHashMap<(ExprIdx, ExprIdx), ScalarWhilePlan>,
+    root_block_scope: Option<ScopeIdx>,
+}
+
 /// Tree-walking interpreter state.
 pub struct Interpreter {
     item_tree: ItemTree,
     module_scope: ModuleScope,
     fn_bodies: FxHashMap<FnItemIdx, Rc<Body>>,
-    body_local_accesses: FxHashMap<usize, ArenaMap<ExprIdx, LocalSlotRef>>,
+    body_exec_meta: FxHashMap<usize, BodyExecMeta>,
     /// Per-function module-level function overrides used for project mode.
     /// Maps `current_fn_idx -> (name -> resolved fn_idx)`.
     fn_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, FnItemIdx>>,
@@ -331,6 +422,600 @@ impl Interpreter {
         accesses
     }
 
+    fn collect_body_exec_meta(body: &Body, module_scope: &ModuleScope) -> BodyExecMeta {
+        let local_accesses = Self::collect_body_local_accesses(body, module_scope);
+        let mut unique_receiver_uses = ArenaMap::default();
+        let mut lambda_memo = ArenaMap::default();
+        for (expr_idx, _) in body.exprs.iter() {
+            if Self::expr_contains_lambda_cached(body, expr_idx, &mut lambda_memo) {
+                continue;
+            }
+            let Some((access, name)) =
+                Self::leftmost_method_chain_receiver_with_accesses(body, &local_accesses, expr_idx)
+            else {
+                continue;
+            };
+            if Self::count_local_access_uses_with_accesses(body, &local_accesses, expr_idx, access)
+                == 1
+            {
+                unique_receiver_uses.insert(expr_idx, UniqueReceiverUse { access, name });
+            }
+        }
+
+        let mut scalar_while_plans = FxHashMap::default();
+        for (_expr_idx, expr) in body.exprs.iter() {
+            let Expr::Block { stmts, .. } = expr else {
+                continue;
+            };
+            for stmt in stmts {
+                let Stmt::While {
+                    condition,
+                    body: loop_body,
+                } = stmt
+                else {
+                    continue;
+                };
+                if let Some(plan) =
+                    Self::analyze_scalar_while_plan(body, &local_accesses, *condition, *loop_body)
+                {
+                    scalar_while_plans.insert((*condition, *loop_body), plan);
+                }
+            }
+        }
+
+        BodyExecMeta {
+            local_accesses,
+            unique_receiver_uses,
+            scalar_while_plans,
+            root_block_scope: Self::root_block_scope(body),
+        }
+    }
+
+    fn expr_contains_lambda_cached(
+        body: &Body,
+        expr_idx: ExprIdx,
+        memo: &mut ArenaMap<ExprIdx, bool>,
+    ) -> bool {
+        if let Some(cached) = memo.get(expr_idx).copied() {
+            return cached;
+        }
+
+        let contains_lambda = match &body.exprs[expr_idx] {
+            Expr::Missing | Expr::Hole | Expr::Literal(_) | Expr::Path(_) => false,
+            Expr::Binary { lhs, rhs, .. } => {
+                Self::expr_contains_lambda_cached(body, *lhs, memo)
+                    || Self::expr_contains_lambda_cached(body, *rhs, memo)
+            }
+            Expr::Unary { operand, .. } | Expr::Old(operand) => {
+                Self::expr_contains_lambda_cached(body, *operand, memo)
+            }
+            Expr::Call { callee, args } => {
+                Self::expr_contains_lambda_cached(body, *callee, memo)
+                    || args.iter().any(|arg| {
+                        let arg_idx = match arg {
+                            CallArg::Positional(idx) => *idx,
+                            CallArg::Named { value, .. } => *value,
+                        };
+                        Self::expr_contains_lambda_cached(body, arg_idx, memo)
+                    })
+            }
+            Expr::Field { base, .. } => Self::expr_contains_lambda_cached(body, *base, memo),
+            Expr::Index { base, index } => {
+                Self::expr_contains_lambda_cached(body, *base, memo)
+                    || Self::expr_contains_lambda_cached(body, *index, memo)
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                Self::expr_contains_lambda_cached(body, *condition, memo)
+                    || Self::expr_contains_lambda_cached(body, *then_branch, memo)
+                    || else_branch.is_some_and(|else_idx| {
+                        Self::expr_contains_lambda_cached(body, else_idx, memo)
+                    })
+            }
+            Expr::Match { scrutinee, arms } => {
+                Self::expr_contains_lambda_cached(body, *scrutinee, memo)
+                    || arms
+                        .iter()
+                        .any(|arm| Self::expr_contains_lambda_cached(body, arm.body, memo))
+            }
+            Expr::Block { stmts, tail } => {
+                stmts.iter().any(|stmt| match stmt {
+                    Stmt::Let { init, .. } => Self::expr_contains_lambda_cached(body, *init, memo),
+                    Stmt::Assign { target, value } => {
+                        Self::expr_contains_lambda_cached(body, *target, memo)
+                            || Self::expr_contains_lambda_cached(body, *value, memo)
+                    }
+                    Stmt::While {
+                        condition,
+                        body: loop_body,
+                    } => {
+                        Self::expr_contains_lambda_cached(body, *condition, memo)
+                            || Self::expr_contains_lambda_cached(body, *loop_body, memo)
+                    }
+                    Stmt::For {
+                        source,
+                        body: loop_body,
+                        ..
+                    } => {
+                        Self::expr_contains_lambda_cached(body, *source, memo)
+                            || Self::expr_contains_lambda_cached(body, *loop_body, memo)
+                    }
+                    Stmt::Expr(idx) => Self::expr_contains_lambda_cached(body, *idx, memo),
+                    Stmt::Break | Stmt::Continue => false,
+                }) || tail
+                    .is_some_and(|tail_idx| Self::expr_contains_lambda_cached(body, tail_idx, memo))
+            }
+            Expr::Return(value) => value.is_some_and(|return_value| {
+                Self::expr_contains_lambda_cached(body, return_value, memo)
+            }),
+            Expr::RecordLit { fields, .. } => fields
+                .iter()
+                .any(|(_, value)| Self::expr_contains_lambda_cached(body, *value, memo)),
+            Expr::Lambda { .. } => true,
+        };
+
+        memo.insert(expr_idx, contains_lambda);
+        contains_lambda
+    }
+
+    fn leftmost_method_chain_receiver_with_accesses(
+        body: &Body,
+        local_accesses: &ArenaMap<ExprIdx, LocalSlotRef>,
+        expr_idx: ExprIdx,
+    ) -> Option<(LocalSlotRef, Name)> {
+        let Expr::Call { callee, .. } = &body.exprs[expr_idx] else {
+            return None;
+        };
+        let Expr::Field { base, .. } = &body.exprs[*callee] else {
+            return None;
+        };
+        Self::leftmost_method_chain_receiver_from_base_with_accesses(body, local_accesses, *base)
+    }
+
+    fn leftmost_method_chain_receiver_from_base_with_accesses(
+        body: &Body,
+        local_accesses: &ArenaMap<ExprIdx, LocalSlotRef>,
+        expr_idx: ExprIdx,
+    ) -> Option<(LocalSlotRef, Name)> {
+        match &body.exprs[expr_idx] {
+            Expr::Path(path) if path.is_single() => local_accesses
+                .get(expr_idx)
+                .copied()
+                .map(|access| (access, path.segments[0])),
+            Expr::Call { .. } => {
+                Self::leftmost_method_chain_receiver_with_accesses(body, local_accesses, expr_idx)
+            }
+            _ => None,
+        }
+    }
+
+    fn count_local_access_uses_with_accesses(
+        body: &Body,
+        local_accesses: &ArenaMap<ExprIdx, LocalSlotRef>,
+        expr_idx: ExprIdx,
+        target: LocalSlotRef,
+    ) -> usize {
+        match &body.exprs[expr_idx] {
+            Expr::Missing | Expr::Hole | Expr::Literal(_) => 0,
+            Expr::Path(_) => usize::from(local_accesses.get(expr_idx).copied() == Some(target)),
+            Expr::Binary { lhs, rhs, .. } => {
+                Self::count_local_access_uses_with_accesses(body, local_accesses, *lhs, target)
+                    + Self::count_local_access_uses_with_accesses(
+                        body,
+                        local_accesses,
+                        *rhs,
+                        target,
+                    )
+            }
+            Expr::Unary { operand, .. } | Expr::Old(operand) => {
+                Self::count_local_access_uses_with_accesses(body, local_accesses, *operand, target)
+            }
+            Expr::Call { callee, args } => {
+                let mut count = Self::count_local_access_uses_with_accesses(
+                    body,
+                    local_accesses,
+                    *callee,
+                    target,
+                );
+                for arg in args {
+                    let arg_idx = match arg {
+                        CallArg::Positional(idx) => *idx,
+                        CallArg::Named { value, .. } => *value,
+                    };
+                    count += Self::count_local_access_uses_with_accesses(
+                        body,
+                        local_accesses,
+                        arg_idx,
+                        target,
+                    );
+                }
+                count
+            }
+            Expr::Field { base, .. } => {
+                Self::count_local_access_uses_with_accesses(body, local_accesses, *base, target)
+            }
+            Expr::Index { base, index } => {
+                Self::count_local_access_uses_with_accesses(body, local_accesses, *base, target)
+                    + Self::count_local_access_uses_with_accesses(
+                        body,
+                        local_accesses,
+                        *index,
+                        target,
+                    )
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let mut count = Self::count_local_access_uses_with_accesses(
+                    body,
+                    local_accesses,
+                    *condition,
+                    target,
+                ) + Self::count_local_access_uses_with_accesses(
+                    body,
+                    local_accesses,
+                    *then_branch,
+                    target,
+                );
+                if let Some(else_idx) = else_branch {
+                    count += Self::count_local_access_uses_with_accesses(
+                        body,
+                        local_accesses,
+                        *else_idx,
+                        target,
+                    );
+                }
+                count
+            }
+            Expr::Match { scrutinee, arms } => {
+                let mut count = Self::count_local_access_uses_with_accesses(
+                    body,
+                    local_accesses,
+                    *scrutinee,
+                    target,
+                );
+                for arm in arms {
+                    count += Self::count_local_access_uses_with_accesses(
+                        body,
+                        local_accesses,
+                        arm.body,
+                        target,
+                    );
+                }
+                count
+            }
+            Expr::Block { stmts, tail } => {
+                let mut count = 0;
+                for stmt in stmts {
+                    count += match stmt {
+                        Stmt::Let { init, .. } => Self::count_local_access_uses_with_accesses(
+                            body,
+                            local_accesses,
+                            *init,
+                            target,
+                        ),
+                        Stmt::Assign { target: lhs, value } => {
+                            Self::count_local_access_uses_with_accesses(
+                                body,
+                                local_accesses,
+                                *lhs,
+                                target,
+                            ) + Self::count_local_access_uses_with_accesses(
+                                body,
+                                local_accesses,
+                                *value,
+                                target,
+                            )
+                        }
+                        Stmt::While {
+                            condition,
+                            body: loop_body,
+                        } => {
+                            Self::count_local_access_uses_with_accesses(
+                                body,
+                                local_accesses,
+                                *condition,
+                                target,
+                            ) + Self::count_local_access_uses_with_accesses(
+                                body,
+                                local_accesses,
+                                *loop_body,
+                                target,
+                            )
+                        }
+                        Stmt::For {
+                            source,
+                            body: loop_body,
+                            ..
+                        } => {
+                            Self::count_local_access_uses_with_accesses(
+                                body,
+                                local_accesses,
+                                *source,
+                                target,
+                            ) + Self::count_local_access_uses_with_accesses(
+                                body,
+                                local_accesses,
+                                *loop_body,
+                                target,
+                            )
+                        }
+                        Stmt::Expr(idx) => Self::count_local_access_uses_with_accesses(
+                            body,
+                            local_accesses,
+                            *idx,
+                            target,
+                        ),
+                        Stmt::Break | Stmt::Continue => 0,
+                    };
+                }
+                if let Some(tail_idx) = tail {
+                    count += Self::count_local_access_uses_with_accesses(
+                        body,
+                        local_accesses,
+                        *tail_idx,
+                        target,
+                    );
+                }
+                count
+            }
+            Expr::Return(value) => value
+                .map(|idx| {
+                    Self::count_local_access_uses_with_accesses(body, local_accesses, idx, target)
+                })
+                .unwrap_or(0),
+            Expr::RecordLit { fields, .. } => fields
+                .iter()
+                .map(|(_, idx)| {
+                    Self::count_local_access_uses_with_accesses(body, local_accesses, *idx, target)
+                })
+                .sum(),
+            Expr::Lambda {
+                body: lambda_body, ..
+            } => Self::count_local_access_uses_with_accesses(
+                body,
+                local_accesses,
+                *lambda_body,
+                target,
+            ),
+        }
+    }
+
+    fn analyze_scalar_while_plan(
+        body: &Body,
+        local_accesses: &ArenaMap<ExprIdx, LocalSlotRef>,
+        condition: ExprIdx,
+        loop_body: ExprIdx,
+    ) -> Option<ScalarWhilePlan> {
+        let mut local_slots = Vec::new();
+        let mut top_level_names = Vec::new();
+        let condition = Self::compile_scalar_expr(
+            body,
+            local_accesses,
+            condition,
+            &mut local_slots,
+            &mut top_level_names,
+        )?;
+        let loop_body = Self::compile_scalar_expr(
+            body,
+            local_accesses,
+            loop_body,
+            &mut local_slots,
+            &mut top_level_names,
+        )?;
+        Some(ScalarWhilePlan {
+            local_slots,
+            top_level_names,
+            condition,
+            loop_body,
+        })
+    }
+
+    fn record_scalar_local_slot(
+        local_slots: &mut Vec<LocalSlotRef>,
+        access: LocalSlotRef,
+    ) -> usize {
+        local_slots
+            .iter()
+            .position(|slot| *slot == access)
+            .unwrap_or_else(|| {
+                let next_idx = local_slots.len();
+                local_slots.push(access);
+                next_idx
+            })
+    }
+
+    fn record_scalar_top_level_name(top_level_names: &mut Vec<Name>, name: Name) -> usize {
+        top_level_names
+            .iter()
+            .position(|candidate| *candidate == name)
+            .unwrap_or_else(|| {
+                let next_idx = top_level_names.len();
+                top_level_names.push(name);
+                next_idx
+            })
+    }
+
+    fn compile_scalar_expr(
+        body: &Body,
+        local_accesses: &ArenaMap<ExprIdx, LocalSlotRef>,
+        expr_idx: ExprIdx,
+        local_slots: &mut Vec<LocalSlotRef>,
+        top_level_names: &mut Vec<Name>,
+    ) -> Option<ScalarExprPlan> {
+        match &body.exprs[expr_idx] {
+            Expr::Literal(Literal::Int(value)) => Some(ScalarExprPlan::Int(*value)),
+            Expr::Literal(Literal::Bool(value)) => Some(ScalarExprPlan::Bool(*value)),
+            Expr::Path(path) if path.is_single() => {
+                if let Some(access) = local_accesses.get(expr_idx).copied() {
+                    Some(ScalarExprPlan::Local(Self::record_scalar_local_slot(
+                        local_slots,
+                        access,
+                    )))
+                } else {
+                    Some(ScalarExprPlan::Global(Self::record_scalar_top_level_name(
+                        top_level_names,
+                        path.segments[0],
+                    )))
+                }
+            }
+            Expr::Binary { op, lhs, rhs } => {
+                matches!(
+                    op,
+                    BinaryOp::Add
+                        | BinaryOp::Sub
+                        | BinaryOp::Mul
+                        | BinaryOp::Div
+                        | BinaryOp::Mod
+                        | BinaryOp::Eq
+                        | BinaryOp::NotEq
+                        | BinaryOp::Lt
+                        | BinaryOp::Gt
+                        | BinaryOp::LtEq
+                        | BinaryOp::GtEq
+                        | BinaryOp::And
+                        | BinaryOp::Or
+                        | BinaryOp::BitAnd
+                        | BinaryOp::BitOr
+                        | BinaryOp::BitXor
+                        | BinaryOp::Shl
+                        | BinaryOp::Shr
+                )
+                .then_some(())?;
+                Some(ScalarExprPlan::Binary {
+                    op: *op,
+                    lhs: Box::new(Self::compile_scalar_expr(
+                        body,
+                        local_accesses,
+                        *lhs,
+                        local_slots,
+                        top_level_names,
+                    )?),
+                    rhs: Box::new(Self::compile_scalar_expr(
+                        body,
+                        local_accesses,
+                        *rhs,
+                        local_slots,
+                        top_level_names,
+                    )?),
+                })
+            }
+            Expr::Unary { op, operand } => {
+                matches!(op, UnaryOp::Neg | UnaryOp::Not | UnaryOp::BitNot).then_some(())?;
+                Some(ScalarExprPlan::Unary {
+                    op: *op,
+                    operand: Box::new(Self::compile_scalar_expr(
+                        body,
+                        local_accesses,
+                        *operand,
+                        local_slots,
+                        top_level_names,
+                    )?),
+                })
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => Some(ScalarExprPlan::If {
+                condition: Box::new(Self::compile_scalar_expr(
+                    body,
+                    local_accesses,
+                    *condition,
+                    local_slots,
+                    top_level_names,
+                )?),
+                then_branch: Box::new(Self::compile_scalar_expr(
+                    body,
+                    local_accesses,
+                    *then_branch,
+                    local_slots,
+                    top_level_names,
+                )?),
+                else_branch: else_branch.and_then(|idx| {
+                    Self::compile_scalar_expr(
+                        body,
+                        local_accesses,
+                        idx,
+                        local_slots,
+                        top_level_names,
+                    )
+                    .map(Box::new)
+                }),
+            }),
+            Expr::Block { stmts, tail } => Some(ScalarExprPlan::Block {
+                stmts: stmts
+                    .iter()
+                    .map(|stmt| {
+                        Self::compile_scalar_stmt(
+                            body,
+                            local_accesses,
+                            stmt,
+                            local_slots,
+                            top_level_names,
+                        )
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+                tail: tail.and_then(|tail_idx| {
+                    Self::compile_scalar_expr(
+                        body,
+                        local_accesses,
+                        tail_idx,
+                        local_slots,
+                        top_level_names,
+                    )
+                    .map(Box::new)
+                }),
+            }),
+            Expr::Return(value) => Some(ScalarExprPlan::Return(value.and_then(|idx| {
+                Self::compile_scalar_expr(body, local_accesses, idx, local_slots, top_level_names)
+                    .map(Box::new)
+            }))),
+            _ => None,
+        }
+    }
+
+    fn compile_scalar_stmt(
+        body: &Body,
+        local_accesses: &ArenaMap<ExprIdx, LocalSlotRef>,
+        stmt: &Stmt,
+        local_slots: &mut Vec<LocalSlotRef>,
+        top_level_names: &mut Vec<Name>,
+    ) -> Option<ScalarStmtPlan> {
+        match stmt {
+            Stmt::Assign { target, value } => {
+                let Some(access) = local_accesses.get(*target).copied() else {
+                    return None;
+                };
+                Some(ScalarStmtPlan::Assign {
+                    slot: Self::record_scalar_local_slot(local_slots, access),
+                    value: Self::compile_scalar_expr(
+                        body,
+                        local_accesses,
+                        *value,
+                        local_slots,
+                        top_level_names,
+                    )?,
+                })
+            }
+            Stmt::Expr(idx) => Some(ScalarStmtPlan::Expr(Self::compile_scalar_expr(
+                body,
+                local_accesses,
+                *idx,
+                local_slots,
+                top_level_names,
+            )?)),
+            Stmt::Break => Some(ScalarStmtPlan::Break),
+            Stmt::Continue => Some(ScalarStmtPlan::Continue),
+            Stmt::Let { .. } | Stmt::While { .. } | Stmt::For { .. } => None,
+        }
+    }
+
     pub fn new(
         item_tree: ItemTree,
         module_scope: ModuleScope,
@@ -389,12 +1074,12 @@ impl Interpreter {
             .into_iter()
             .map(|(fn_idx, body)| (fn_idx, Rc::new(body)))
             .collect::<FxHashMap<_, _>>();
-        let body_local_accesses = fn_bodies
+        let body_exec_meta = fn_bodies
             .values()
             .map(|body| {
                 (
                     Self::body_key(body),
-                    Self::collect_body_local_accesses(body, &module_scope),
+                    Self::collect_body_exec_meta(body, &module_scope),
                 )
             })
             .collect();
@@ -403,7 +1088,7 @@ impl Interpreter {
             item_tree,
             module_scope,
             fn_bodies,
-            body_local_accesses,
+            body_exec_meta,
             fn_scope_overrides,
             interner,
             intrinsics,
@@ -457,15 +1142,41 @@ impl Interpreter {
         &self.fn_bodies
     }
 
-    fn local_accesses_for_body(&mut self, body: &Body) -> &ArenaMap<ExprIdx, LocalSlotRef> {
+    fn body_exec_meta(&mut self, body: &Body) -> &BodyExecMeta {
         let key = Self::body_key(body);
-        self.body_local_accesses
+        self.body_exec_meta
             .entry(key)
-            .or_insert_with(|| Self::collect_body_local_accesses(body, &self.module_scope))
+            .or_insert_with(|| Self::collect_body_exec_meta(body, &self.module_scope))
     }
 
     fn local_access_for_expr(&mut self, body: &Body, expr_idx: ExprIdx) -> Option<LocalSlotRef> {
-        self.local_accesses_for_body(body).get(expr_idx).copied()
+        self.body_exec_meta(body)
+            .local_accesses
+            .get(expr_idx)
+            .copied()
+    }
+
+    fn unique_receiver_use(&mut self, body: &Body, expr_idx: ExprIdx) -> Option<UniqueReceiverUse> {
+        self.body_exec_meta(body)
+            .unique_receiver_uses
+            .get(expr_idx)
+            .copied()
+    }
+
+    fn scalar_while_plan(
+        &mut self,
+        body: &Body,
+        condition: ExprIdx,
+        loop_body: ExprIdx,
+    ) -> Option<ScalarWhilePlan> {
+        self.body_exec_meta(body)
+            .scalar_while_plans
+            .get(&(condition, loop_body))
+            .cloned()
+    }
+
+    fn root_block_scope_for_body(&mut self, body: &Body) -> Option<ScopeIdx> {
+        self.body_exec_meta(body).root_block_scope
     }
 
     fn with_consuming_local<T>(
@@ -477,207 +1188,6 @@ impl Interpreter {
         let result = f(self);
         self.consuming_local = prev;
         result
-    }
-
-    fn count_local_access_uses(
-        &mut self,
-        body: &Body,
-        expr_idx: ExprIdx,
-        target: LocalSlotRef,
-    ) -> usize {
-        match &body.exprs[expr_idx] {
-            Expr::Missing | Expr::Hole | Expr::Literal(_) => 0,
-            Expr::Path(_) => {
-                usize::from(self.local_access_for_expr(body, expr_idx) == Some(target))
-            }
-            Expr::Binary { lhs, rhs, .. } => {
-                self.count_local_access_uses(body, *lhs, target)
-                    + self.count_local_access_uses(body, *rhs, target)
-            }
-            Expr::Unary { operand, .. } | Expr::Old(operand) => {
-                self.count_local_access_uses(body, *operand, target)
-            }
-            Expr::Call { callee, args } => {
-                let mut count = self.count_local_access_uses(body, *callee, target);
-                for arg in args {
-                    let arg_idx = match arg {
-                        CallArg::Positional(idx) => *idx,
-                        CallArg::Named { value, .. } => *value,
-                    };
-                    count += self.count_local_access_uses(body, arg_idx, target);
-                }
-                count
-            }
-            Expr::Field { base, .. } => self.count_local_access_uses(body, *base, target),
-            Expr::Index { base, index } => {
-                self.count_local_access_uses(body, *base, target)
-                    + self.count_local_access_uses(body, *index, target)
-            }
-            Expr::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                let mut count = self.count_local_access_uses(body, *condition, target)
-                    + self.count_local_access_uses(body, *then_branch, target);
-                if let Some(else_idx) = else_branch {
-                    count += self.count_local_access_uses(body, *else_idx, target);
-                }
-                count
-            }
-            Expr::Match { scrutinee, arms } => {
-                let mut count = self.count_local_access_uses(body, *scrutinee, target);
-                for arm in arms {
-                    count += self.count_local_access_uses(body, arm.body, target);
-                }
-                count
-            }
-            Expr::Block { stmts, tail } => {
-                let mut count = 0;
-                for stmt in stmts {
-                    count += match stmt {
-                        Stmt::Let { init, .. } => self.count_local_access_uses(body, *init, target),
-                        Stmt::Assign { target: lhs, value } => {
-                            self.count_local_access_uses(body, *lhs, target)
-                                + self.count_local_access_uses(body, *value, target)
-                        }
-                        Stmt::While {
-                            condition,
-                            body: loop_body,
-                        } => {
-                            self.count_local_access_uses(body, *condition, target)
-                                + self.count_local_access_uses(body, *loop_body, target)
-                        }
-                        Stmt::For {
-                            source,
-                            body: loop_body,
-                            ..
-                        } => {
-                            self.count_local_access_uses(body, *source, target)
-                                + self.count_local_access_uses(body, *loop_body, target)
-                        }
-                        Stmt::Expr(idx) => self.count_local_access_uses(body, *idx, target),
-                        Stmt::Break | Stmt::Continue => 0,
-                    };
-                }
-                if let Some(tail_idx) = tail {
-                    count += self.count_local_access_uses(body, *tail_idx, target);
-                }
-                count
-            }
-            Expr::Return(value) => value
-                .map(|idx| self.count_local_access_uses(body, idx, target))
-                .unwrap_or(0),
-            Expr::RecordLit { fields, .. } => fields
-                .iter()
-                .map(|(_, idx)| self.count_local_access_uses(body, *idx, target))
-                .sum(),
-            Expr::Lambda {
-                body: lambda_body, ..
-            } => self.count_local_access_uses(body, *lambda_body, target),
-        }
-    }
-
-    fn expr_contains_lambda(&self, body: &Body, expr_idx: ExprIdx) -> bool {
-        match &body.exprs[expr_idx] {
-            Expr::Missing | Expr::Hole | Expr::Literal(_) | Expr::Path(_) => false,
-            Expr::Binary { lhs, rhs, .. } => {
-                self.expr_contains_lambda(body, *lhs) || self.expr_contains_lambda(body, *rhs)
-            }
-            Expr::Unary { operand, .. } | Expr::Old(operand) => {
-                self.expr_contains_lambda(body, *operand)
-            }
-            Expr::Call { callee, args } => {
-                self.expr_contains_lambda(body, *callee)
-                    || args.iter().any(|arg| {
-                        let arg_idx = match arg {
-                            CallArg::Positional(idx) => *idx,
-                            CallArg::Named { value, .. } => *value,
-                        };
-                        self.expr_contains_lambda(body, arg_idx)
-                    })
-            }
-            Expr::Field { base, .. } => self.expr_contains_lambda(body, *base),
-            Expr::Index { base, index } => {
-                self.expr_contains_lambda(body, *base) || self.expr_contains_lambda(body, *index)
-            }
-            Expr::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                self.expr_contains_lambda(body, *condition)
-                    || self.expr_contains_lambda(body, *then_branch)
-                    || else_branch.is_some_and(|else_idx| self.expr_contains_lambda(body, else_idx))
-            }
-            Expr::Match { scrutinee, arms } => {
-                self.expr_contains_lambda(body, *scrutinee)
-                    || arms
-                        .iter()
-                        .any(|arm| self.expr_contains_lambda(body, arm.body))
-            }
-            Expr::Block { stmts, tail } => {
-                stmts.iter().any(|stmt| match stmt {
-                    Stmt::Let { init, .. } => self.expr_contains_lambda(body, *init),
-                    Stmt::Assign { target, value } => {
-                        self.expr_contains_lambda(body, *target)
-                            || self.expr_contains_lambda(body, *value)
-                    }
-                    Stmt::While {
-                        condition,
-                        body: loop_body,
-                    } => {
-                        self.expr_contains_lambda(body, *condition)
-                            || self.expr_contains_lambda(body, *loop_body)
-                    }
-                    Stmt::For {
-                        source,
-                        body: loop_body,
-                        ..
-                    } => {
-                        self.expr_contains_lambda(body, *source)
-                            || self.expr_contains_lambda(body, *loop_body)
-                    }
-                    Stmt::Expr(idx) => self.expr_contains_lambda(body, *idx),
-                    Stmt::Break | Stmt::Continue => false,
-                }) || tail.is_some_and(|tail_idx| self.expr_contains_lambda(body, tail_idx))
-            }
-            Expr::Return(value) => {
-                value.is_some_and(|return_value| self.expr_contains_lambda(body, return_value))
-            }
-            Expr::RecordLit { fields, .. } => fields
-                .iter()
-                .any(|(_, value)| self.expr_contains_lambda(body, *value)),
-            Expr::Lambda { .. } => true,
-        }
-    }
-
-    fn leftmost_method_chain_receiver(
-        &mut self,
-        body: &Body,
-        expr_idx: ExprIdx,
-    ) -> Option<(ExprIdx, LocalSlotRef, Name)> {
-        let Expr::Call { callee, .. } = &body.exprs[expr_idx] else {
-            return None;
-        };
-        let Expr::Field { base, .. } = &body.exprs[*callee] else {
-            return None;
-        };
-        self.leftmost_method_chain_receiver_from_base(body, *base)
-    }
-
-    fn leftmost_method_chain_receiver_from_base(
-        &mut self,
-        body: &Body,
-        expr_idx: ExprIdx,
-    ) -> Option<(ExprIdx, LocalSlotRef, Name)> {
-        match &body.exprs[expr_idx] {
-            Expr::Path(path) if path.is_single() => self
-                .local_access_for_expr(body, expr_idx)
-                .map(|access| (expr_idx, access, path.segments[0])),
-            Expr::Call { .. } => self.leftmost_method_chain_receiver(body, expr_idx),
-            _ => None,
-        }
     }
 
     fn stmt_scope(body: &Body, stmt: &Stmt) -> Option<ScopeIdx> {
@@ -705,11 +1215,8 @@ impl Interpreter {
         body: &Body,
         expr_idx: ExprIdx,
     ) -> Option<LocalSlotRef> {
-        if self.expr_contains_lambda(body, expr_idx) {
-            return None;
-        }
-        let (_, access, _) = self.leftmost_method_chain_receiver(body, expr_idx)?;
-        (self.count_local_access_uses(body, expr_idx, access) == 1).then_some(access)
+        self.unique_receiver_use(body, expr_idx)
+            .map(|use_info| use_info.access)
     }
 
     fn consuming_local_for_shadow_rebind_init(
@@ -721,22 +1228,19 @@ impl Interpreter {
         let Pat::Bind { name } = body.pats[pat_idx] else {
             return None;
         };
-        if self.expr_contains_lambda(body, expr_idx) {
-            return None;
-        }
-        let (_, access, receiver_name) = self.leftmost_method_chain_receiver(body, expr_idx)?;
+        let use_info = self.unique_receiver_use(body, expr_idx)?;
         let pat_scope = body.local_binding_meta.get(pat_idx)?.scope;
         if body.local_binding_meta.get(pat_idx)?.mutable {
             return None;
         }
-        let allow_root_block_shadow = Self::root_block_scope(body) == Some(pat_scope);
-        if access.depth != 0 && !allow_root_block_shadow {
+        let allow_root_block_shadow = self.root_block_scope_for_body(body) == Some(pat_scope);
+        if use_info.access.depth != 0 && !allow_root_block_shadow {
             return None;
         }
-        if receiver_name != name {
+        if use_info.name != name {
             return None;
         }
-        (self.count_local_access_uses(body, expr_idx, access) == 1).then_some(access)
+        Some(use_info.access)
     }
 
     fn eval_consuming_expr_shared(
@@ -770,7 +1274,7 @@ impl Interpreter {
         idx: ExprIdx,
     ) -> Result<ControlFlow, RuntimeError> {
         match &body.exprs[idx] {
-            Expr::Block { stmts, tail } => self.eval_block_shared(body, stmts, *tail, true),
+            Expr::Block { .. } => self.eval_block_expr_shared(body, idx, true),
             Expr::If {
                 condition,
                 then_branch,
@@ -1797,7 +2301,8 @@ impl Interpreter {
         arg_values: Vec<Value>,
         param_names: &[Name],
     ) -> Result<Args, RuntimeError> {
-        let items = self.bind_call_items_for_param_names(callee_name, args, arg_values, param_names)?;
+        let items =
+            self.bind_call_items_for_param_names(callee_name, args, arg_values, param_names)?;
         let mut out = Args::with_capacity(items.len());
         for value in items {
             out.push(value);
@@ -1847,12 +2352,14 @@ impl Interpreter {
             return Ok(None);
         };
         let (key_expr, thunk_expr) = match args {
-            [CallArg::Positional(key_expr), CallArg::Positional(thunk_expr)] => {
-                (*key_expr, *thunk_expr)
-            }
+            [
+                CallArg::Positional(key_expr),
+                CallArg::Positional(thunk_expr),
+            ] => (*key_expr, *thunk_expr),
             _ => {
                 let full_param_names = self.param_names_for_fn_idx(fn_idx);
-                let method_param_names: Vec<Name> = full_param_names.iter().skip(1).copied().collect();
+                let method_param_names: Vec<Name> =
+                    full_param_names.iter().skip(1).copied().collect();
                 let arg_exprs = self.bind_call_items_for_param_names(
                     "method `get_or_insert_with`",
                     args,
@@ -1869,12 +2376,13 @@ impl Interpreter {
         } {
             return Ok(Some(existing.clone()));
         }
-        let computed = if let Some(value) = self.eval_immediate_zero_arg_lambda(env, body, thunk_expr)? {
-            value
-        } else {
-            let thunk = self.eval_terminal_expr(env, body, thunk_expr)?.into_value();
-            self.call_value(thunk, Args::new())?
-        };
+        let computed =
+            if let Some(value) = self.eval_immediate_zero_arg_lambda(env, body, thunk_expr)? {
+                value
+            } else {
+                let thunk = self.eval_terminal_expr(env, body, thunk_expr)?.into_value();
+                self.call_value(thunk, Args::new())?
+            };
         if let Some(existing) = {
             let borrowed = entries.borrow();
             self.mutable_map_get_value(&borrowed, &key)?
@@ -1882,15 +2390,16 @@ impl Interpreter {
             return Ok(Some(existing.clone()));
         }
         if let Ok(primitive_key) = MapKey::from_value(&key) {
-            entries.borrow_mut().insert_primitive(primitive_key, computed.clone());
+            entries
+                .borrow_mut()
+                .insert_primitive(primitive_key, computed.clone());
         } else {
             let hash = self.hash_for_collection_key(&key)?;
-            entries.borrow_mut().insert_with(
-                hash,
-                key,
-                computed.clone(),
-                &mut |lhs, rhs| self.trait_eq_values(lhs, rhs),
-            )?;
+            entries
+                .borrow_mut()
+                .insert_with(hash, key, computed.clone(), &mut |lhs, rhs| {
+                    self.trait_eq_values(lhs, rhs)
+                })?;
         }
         Ok(Some(computed))
     }
@@ -1912,12 +2421,14 @@ impl Interpreter {
             return Ok(None);
         };
         let (key_expr, thunk_expr) = match args {
-            [CallArg::Positional(key_expr), CallArg::Positional(thunk_expr)] => {
-                (*key_expr, *thunk_expr)
-            }
+            [
+                CallArg::Positional(key_expr),
+                CallArg::Positional(thunk_expr),
+            ] => (*key_expr, *thunk_expr),
             _ => {
                 let full_param_names = self.param_names_for_fn_idx(fn_idx);
-                let method_param_names: Vec<Name> = full_param_names.iter().skip(1).copied().collect();
+                let method_param_names: Vec<Name> =
+                    full_param_names.iter().skip(1).copied().collect();
                 let arg_exprs = self.bind_call_items_for_param_names(
                     "method `get_or_insert_with`",
                     args,
@@ -1943,15 +2454,16 @@ impl Interpreter {
             return Ok(Some(existing.clone()));
         }
         if let Ok(primitive_key) = MapKey::from_value(&key) {
-            entries.borrow_mut().insert_primitive(primitive_key, computed.clone());
+            entries
+                .borrow_mut()
+                .insert_primitive(primitive_key, computed.clone());
         } else {
             let hash = self.hash_for_collection_key(&key)?;
-            entries.borrow_mut().insert_with(
-                hash,
-                key,
-                computed.clone(),
-                &mut |lhs, rhs| self.trait_eq_values(lhs, rhs),
-            )?;
+            entries
+                .borrow_mut()
+                .insert_with(hash, key, computed.clone(), &mut |lhs, rhs| {
+                    self.trait_eq_values(lhs, rhs)
+                })?;
         }
         Ok(Some(computed))
     }
@@ -2337,9 +2849,11 @@ impl Interpreter {
                     };
 
                     if let Some(fn_idx) = method_fn_idx {
-                        if let Some(value) = self.try_eval_lazy_mutable_map_get_or_insert_with_local(
-                            env, body, &base_val, &args, fn_idx,
-                        )? {
+                        if let Some(value) = self
+                            .try_eval_lazy_mutable_map_get_or_insert_with_local(
+                                env, body, &base_val, &args, fn_idx,
+                            )?
+                        {
                             return Ok(ControlFlow::Value(value));
                         }
                         let source_order = self.args_in_source_order(&args);
@@ -2880,10 +3394,7 @@ impl Interpreter {
                 self.eval_match_shared(body, scrutinee_val, arms)
             }
 
-            Expr::Block { stmts, tail } => {
-                let tail = *tail;
-                self.eval_block_shared(body, stmts, tail, false)
-            }
+            Expr::Block { .. } => self.eval_block_expr_shared(body, idx, false),
 
             Expr::Return(val) => {
                 let val = *val;
@@ -4642,7 +5153,9 @@ impl Interpreter {
                     ));
                 };
                 let borrowed = entries.borrow();
-                Ok(Value::Bool(self.mutable_map_contains_value(&borrowed, &args[1])?))
+                Ok(Value::Bool(
+                    self.mutable_map_contains_value(&borrowed, &args[1])?,
+                ))
             }
             IntrinsicFn::MutableMapRemove => {
                 let Value::MutableMap(entries) = &args[0] else {
@@ -4771,9 +5284,9 @@ impl Interpreter {
                     entries.borrow_mut().insert_primitive(primitive_key);
                 } else {
                     let hash = self.hash_for_collection_key(&value)?;
-                    entries.borrow_mut().insert_with(hash, value, &mut |lhs, rhs| {
-                        self.trait_eq_values(lhs, rhs)
-                    })?;
+                    entries
+                        .borrow_mut()
+                        .insert_with(hash, value, &mut |lhs, rhs| self.trait_eq_values(lhs, rhs))?;
                 }
                 Ok(Value::MutableSet(entries.clone()))
             }
@@ -4784,7 +5297,9 @@ impl Interpreter {
                     ));
                 };
                 let borrowed = entries.borrow();
-                Ok(Value::Bool(self.mutable_set_contains_value(&borrowed, &args[1])?))
+                Ok(Value::Bool(
+                    self.mutable_set_contains_value(&borrowed, &args[1])?,
+                ))
             }
             IntrinsicFn::MutableSetRemove => {
                 let Value::MutableSet(entries) = &args[0] else {
@@ -5905,14 +6420,438 @@ impl Interpreter {
         Err(RuntimeError::PatternMatchFailure)
     }
 
-    fn eval_block_shared(
+    fn resolve_scalar_top_level_values(
+        &self,
+        names: &[Name],
+    ) -> Result<Option<Vec<ScalarValue>>, RuntimeError> {
+        let mut values = Vec::with_capacity(names.len());
+        for &name in names {
+            let value = self.resolve_name(&self.env, name)?;
+            let Some(value) = ScalarValue::from_runtime_value(&value) else {
+                return Ok(None);
+            };
+            values.push(value);
+        }
+        Ok(Some(values))
+    }
+
+    fn load_scalar_local_values(&self, slots: &[LocalSlotRef]) -> Option<Vec<ScalarValue>> {
+        let mut values = Vec::with_capacity(slots.len());
+        for slot in slots {
+            let value = self.env.lookup_slot(slot.depth, slot.slot)?;
+            let value = ScalarValue::from_runtime_value(value)?;
+            values.push(value);
+        }
+        Some(values)
+    }
+
+    fn sync_scalar_local_values(
+        &mut self,
+        slots: &[LocalSlotRef],
+        values: &[ScalarValue],
+    ) -> Result<(), RuntimeError> {
+        for (slot, value) in slots.iter().zip(values.iter()) {
+            if self
+                .env
+                .set_slot(slot.depth, slot.slot, value.into_runtime_value())
+                .is_none()
+            {
+                return Err(RuntimeError::TypeError(
+                    "internal runtime error: scalar fast path local unavailable".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn eval_scalar_unary(
+        &self,
+        op: UnaryOp,
+        value: ScalarValue,
+    ) -> Result<ScalarValue, RuntimeError> {
+        match (op, value) {
+            (UnaryOp::Neg, ScalarValue::Int(value)) => value
+                .checked_neg()
+                .map(ScalarValue::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
+            (UnaryOp::Not, ScalarValue::Bool(value)) => Ok(ScalarValue::Bool(!value)),
+            (UnaryOp::BitNot, ScalarValue::Int(value)) => Ok(ScalarValue::Int(!value)),
+            _ => {
+                let value = self.eval_unary(op, value.into_runtime_value())?;
+                ScalarValue::from_runtime_value(&value).ok_or_else(|| {
+                    RuntimeError::TypeError(
+                        "internal runtime error: scalar unary produced non-scalar".into(),
+                    )
+                })
+            }
+        }
+    }
+
+    fn eval_scalar_binary(
+        &self,
+        op: BinaryOp,
+        lhs: ScalarValue,
+        rhs: ScalarValue,
+    ) -> Result<ScalarValue, RuntimeError> {
+        match (op, lhs, rhs) {
+            (BinaryOp::Add, ScalarValue::Int(lhs), ScalarValue::Int(rhs)) => lhs
+                .checked_add(rhs)
+                .map(ScalarValue::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
+            (BinaryOp::Sub, ScalarValue::Int(lhs), ScalarValue::Int(rhs)) => lhs
+                .checked_sub(rhs)
+                .map(ScalarValue::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
+            (BinaryOp::Mul, ScalarValue::Int(lhs), ScalarValue::Int(rhs)) => lhs
+                .checked_mul(rhs)
+                .map(ScalarValue::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
+            (BinaryOp::Div, ScalarValue::Int(_), ScalarValue::Int(0)) => {
+                Err(RuntimeError::DivisionByZero)
+            }
+            (BinaryOp::Div, ScalarValue::Int(lhs), ScalarValue::Int(rhs)) => lhs
+                .checked_div(rhs)
+                .map(ScalarValue::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
+            (BinaryOp::Mod, ScalarValue::Int(_), ScalarValue::Int(0)) => {
+                Err(RuntimeError::DivisionByZero)
+            }
+            (BinaryOp::Mod, ScalarValue::Int(lhs), ScalarValue::Int(rhs)) => lhs
+                .checked_rem(rhs)
+                .map(ScalarValue::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
+            (BinaryOp::BitAnd, ScalarValue::Int(lhs), ScalarValue::Int(rhs)) => {
+                Ok(ScalarValue::Int(lhs & rhs))
+            }
+            (BinaryOp::BitOr, ScalarValue::Int(lhs), ScalarValue::Int(rhs)) => {
+                Ok(ScalarValue::Int(lhs | rhs))
+            }
+            (BinaryOp::BitXor, ScalarValue::Int(lhs), ScalarValue::Int(rhs)) => {
+                Ok(ScalarValue::Int(lhs ^ rhs))
+            }
+            (BinaryOp::Shl, ScalarValue::Int(lhs), ScalarValue::Int(rhs)) => {
+                if !(0..64).contains(&rhs) {
+                    Err(RuntimeError::TypeError(format!(
+                        "shift amount {rhs} out of range (0..63)"
+                    )))
+                } else {
+                    Ok(ScalarValue::Int(lhs.wrapping_shl(rhs as u32)))
+                }
+            }
+            (BinaryOp::Shr, ScalarValue::Int(lhs), ScalarValue::Int(rhs)) => {
+                if !(0..64).contains(&rhs) {
+                    Err(RuntimeError::TypeError(format!(
+                        "shift amount {rhs} out of range (0..63)"
+                    )))
+                } else {
+                    Ok(ScalarValue::Int(lhs.wrapping_shr(rhs as u32)))
+                }
+            }
+            (BinaryOp::Eq, ScalarValue::Int(lhs), ScalarValue::Int(rhs)) => {
+                Ok(ScalarValue::Bool(lhs == rhs))
+            }
+            (BinaryOp::NotEq, ScalarValue::Int(lhs), ScalarValue::Int(rhs)) => {
+                Ok(ScalarValue::Bool(lhs != rhs))
+            }
+            (BinaryOp::Lt, ScalarValue::Int(lhs), ScalarValue::Int(rhs)) => {
+                Ok(ScalarValue::Bool(lhs < rhs))
+            }
+            (BinaryOp::Gt, ScalarValue::Int(lhs), ScalarValue::Int(rhs)) => {
+                Ok(ScalarValue::Bool(lhs > rhs))
+            }
+            (BinaryOp::LtEq, ScalarValue::Int(lhs), ScalarValue::Int(rhs)) => {
+                Ok(ScalarValue::Bool(lhs <= rhs))
+            }
+            (BinaryOp::GtEq, ScalarValue::Int(lhs), ScalarValue::Int(rhs)) => {
+                Ok(ScalarValue::Bool(lhs >= rhs))
+            }
+            (BinaryOp::Eq, ScalarValue::Bool(lhs), ScalarValue::Bool(rhs)) => {
+                Ok(ScalarValue::Bool(lhs == rhs))
+            }
+            (BinaryOp::NotEq, ScalarValue::Bool(lhs), ScalarValue::Bool(rhs)) => {
+                Ok(ScalarValue::Bool(lhs != rhs))
+            }
+            _ => {
+                let value =
+                    self.eval_binary(op, lhs.into_runtime_value(), rhs.into_runtime_value())?;
+                ScalarValue::from_runtime_value(&value).ok_or_else(|| {
+                    RuntimeError::TypeError(
+                        "internal runtime error: scalar binary produced non-scalar".into(),
+                    )
+                })
+            }
+        }
+    }
+
+    fn eval_scalar_expr_shared(
+        &self,
+        expr: &ScalarExprPlan,
+        locals: &mut [ScalarValue],
+        globals: &[ScalarValue],
+    ) -> Result<ScalarControlFlow, RuntimeError> {
+        match expr {
+            ScalarExprPlan::Int(value) => Ok(ScalarControlFlow::Value(ScalarValue::Int(*value))),
+            ScalarExprPlan::Bool(value) => Ok(ScalarControlFlow::Value(ScalarValue::Bool(*value))),
+            ScalarExprPlan::Local(slot_idx) => Ok(ScalarControlFlow::Value(locals[*slot_idx])),
+            ScalarExprPlan::Global(slot_idx) => Ok(ScalarControlFlow::Value(globals[*slot_idx])),
+            ScalarExprPlan::Binary { op, lhs, rhs } => match op {
+                BinaryOp::And | BinaryOp::Or => {
+                    let lhs = match self.eval_scalar_expr_shared(lhs, locals, globals)? {
+                        ScalarControlFlow::Value(value) => value,
+                        ScalarControlFlow::Return(value) => {
+                            return Ok(ScalarControlFlow::Return(value));
+                        }
+                        ScalarControlFlow::Break => return Ok(ScalarControlFlow::Break),
+                        ScalarControlFlow::Continue => return Ok(ScalarControlFlow::Continue),
+                    };
+                    match (*op, lhs) {
+                        (BinaryOp::And, ScalarValue::Bool(false)) => {
+                            Ok(ScalarControlFlow::Value(ScalarValue::Bool(false)))
+                        }
+                        (BinaryOp::Or, ScalarValue::Bool(true)) => {
+                            Ok(ScalarControlFlow::Value(ScalarValue::Bool(true)))
+                        }
+                        (BinaryOp::And, ScalarValue::Bool(true))
+                        | (BinaryOp::Or, ScalarValue::Bool(false)) => {
+                            self.eval_scalar_expr_shared(rhs, locals, globals)
+                        }
+                        _ => {
+                            let lhs_runtime = lhs.into_runtime_value();
+                            match self.logical_eval_step(*op, &lhs_runtime)? {
+                                LogicalEvalStep::ShortCircuit(value) => {
+                                    let value = ScalarValue::from_runtime_value(&value).expect(
+                                        "logical short circuit should only produce scalar bools",
+                                    );
+                                    Ok(ScalarControlFlow::Value(value))
+                                }
+                                LogicalEvalStep::NeedRhs => {
+                                    self.eval_scalar_expr_shared(rhs, locals, globals)
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    let lhs = match self.eval_scalar_expr_shared(lhs, locals, globals)? {
+                        ScalarControlFlow::Value(value) => value,
+                        ScalarControlFlow::Return(value) => {
+                            return Ok(ScalarControlFlow::Return(value));
+                        }
+                        ScalarControlFlow::Break => return Ok(ScalarControlFlow::Break),
+                        ScalarControlFlow::Continue => return Ok(ScalarControlFlow::Continue),
+                    };
+                    let rhs = match self.eval_scalar_expr_shared(rhs, locals, globals)? {
+                        ScalarControlFlow::Value(value) => value,
+                        ScalarControlFlow::Return(value) => {
+                            return Ok(ScalarControlFlow::Return(value));
+                        }
+                        ScalarControlFlow::Break => return Ok(ScalarControlFlow::Break),
+                        ScalarControlFlow::Continue => return Ok(ScalarControlFlow::Continue),
+                    };
+                    self.eval_scalar_binary(*op, lhs, rhs)
+                        .map(ScalarControlFlow::Value)
+                }
+            },
+            ScalarExprPlan::Unary { op, operand } => {
+                let value = match self.eval_scalar_expr_shared(operand, locals, globals)? {
+                    ScalarControlFlow::Value(value) => value,
+                    ScalarControlFlow::Return(value) => {
+                        return Ok(ScalarControlFlow::Return(value));
+                    }
+                    ScalarControlFlow::Break => return Ok(ScalarControlFlow::Break),
+                    ScalarControlFlow::Continue => return Ok(ScalarControlFlow::Continue),
+                };
+                self.eval_scalar_unary(*op, value)
+                    .map(ScalarControlFlow::Value)
+            }
+            ScalarExprPlan::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let condition = match self.eval_scalar_expr_shared(condition, locals, globals)? {
+                    ScalarControlFlow::Value(value) => value,
+                    ScalarControlFlow::Return(value) => {
+                        return Ok(ScalarControlFlow::Return(value));
+                    }
+                    ScalarControlFlow::Break => return Ok(ScalarControlFlow::Break),
+                    ScalarControlFlow::Continue => return Ok(ScalarControlFlow::Continue),
+                };
+                match condition {
+                    ScalarValue::Bool(true) => {
+                        self.eval_scalar_expr_shared(then_branch, locals, globals)
+                    }
+                    ScalarValue::Bool(false) => {
+                        if let Some(else_branch) = else_branch {
+                            self.eval_scalar_expr_shared(else_branch, locals, globals)
+                        } else {
+                            Ok(ScalarControlFlow::Value(ScalarValue::Unit))
+                        }
+                    }
+                    _ => Err(RuntimeError::TypeError("if condition must be Bool".into())),
+                }
+            }
+            ScalarExprPlan::Block { stmts, tail } => {
+                self.eval_scalar_block_shared(stmts, tail.as_deref(), locals, globals)
+            }
+            ScalarExprPlan::Return(value) => {
+                let value = if let Some(value_expr) = value.as_deref() {
+                    match self.eval_scalar_expr_shared(value_expr, locals, globals)? {
+                        ScalarControlFlow::Value(value) | ScalarControlFlow::Return(value) => value,
+                        ScalarControlFlow::Break => {
+                            return Err(RuntimeError::TypeError(
+                                "`break` used outside loop".into(),
+                            ));
+                        }
+                        ScalarControlFlow::Continue => {
+                            return Err(RuntimeError::TypeError(
+                                "`continue` used outside loop".into(),
+                            ));
+                        }
+                    }
+                } else {
+                    ScalarValue::Unit
+                };
+                Ok(ScalarControlFlow::Return(value))
+            }
+        }
+    }
+
+    fn eval_scalar_stmt_shared(
+        &self,
+        stmt: &ScalarStmtPlan,
+        locals: &mut [ScalarValue],
+        globals: &[ScalarValue],
+    ) -> Result<ScalarControlFlow, RuntimeError> {
+        match stmt {
+            ScalarStmtPlan::Assign { slot, value } => {
+                let value = match self.eval_scalar_expr_shared(value, locals, globals)? {
+                    ScalarControlFlow::Value(value) => value,
+                    ScalarControlFlow::Return(value) => {
+                        return Ok(ScalarControlFlow::Return(value));
+                    }
+                    ScalarControlFlow::Break => return Ok(ScalarControlFlow::Break),
+                    ScalarControlFlow::Continue => return Ok(ScalarControlFlow::Continue),
+                };
+                locals[*slot] = value;
+                Ok(ScalarControlFlow::Value(ScalarValue::Unit))
+            }
+            ScalarStmtPlan::Expr(expr) => self.eval_scalar_expr_shared(expr, locals, globals),
+            ScalarStmtPlan::Break => Ok(ScalarControlFlow::Break),
+            ScalarStmtPlan::Continue => Ok(ScalarControlFlow::Continue),
+        }
+    }
+
+    fn eval_scalar_block_shared(
+        &self,
+        stmts: &[ScalarStmtPlan],
+        tail: Option<&ScalarExprPlan>,
+        locals: &mut [ScalarValue],
+        globals: &[ScalarValue],
+    ) -> Result<ScalarControlFlow, RuntimeError> {
+        for stmt in stmts {
+            match self.eval_scalar_stmt_shared(stmt, locals, globals)? {
+                ScalarControlFlow::Value(_) => {}
+                other => return Ok(other),
+            }
+        }
+        if let Some(tail) = tail {
+            self.eval_scalar_expr_shared(tail, locals, globals)
+        } else {
+            Ok(ScalarControlFlow::Value(ScalarValue::Unit))
+        }
+    }
+
+    fn eval_scalar_while_loop_shared(
+        &self,
+        condition: &ScalarExprPlan,
+        loop_body: &ScalarExprPlan,
+        locals: &mut [ScalarValue],
+        globals: &[ScalarValue],
+    ) -> Result<ScalarControlFlow, RuntimeError> {
+        loop {
+            let condition = self.eval_scalar_expr_shared(condition, locals, globals)?;
+            match condition {
+                ScalarControlFlow::Value(ScalarValue::Bool(true)) => {}
+                ScalarControlFlow::Value(ScalarValue::Bool(false)) => {
+                    return Ok(ScalarControlFlow::Value(ScalarValue::Unit));
+                }
+                ScalarControlFlow::Value(_) => {
+                    return Err(RuntimeError::TypeError(
+                        "while condition must be Bool".into(),
+                    ));
+                }
+                ScalarControlFlow::Return(value) => return Ok(ScalarControlFlow::Return(value)),
+                ScalarControlFlow::Break => return Ok(ScalarControlFlow::Break),
+                ScalarControlFlow::Continue => return Ok(ScalarControlFlow::Continue),
+            }
+
+            match self.eval_scalar_expr_shared(loop_body, locals, globals)? {
+                ScalarControlFlow::Value(_) => {}
+                ScalarControlFlow::Continue => continue,
+                ScalarControlFlow::Break => return Ok(ScalarControlFlow::Value(ScalarValue::Unit)),
+                ScalarControlFlow::Return(value) => return Ok(ScalarControlFlow::Return(value)),
+            }
+        }
+    }
+
+    fn try_eval_scalar_while_shared(
+        &mut self,
+        body: &Body,
+        condition: ExprIdx,
+        loop_body: ExprIdx,
+    ) -> Result<Option<ControlFlow>, RuntimeError> {
+        if std::env::var_os("KYOKARA_EXPERIMENTAL_SCALAR_FASTPATH").is_none() {
+            return Ok(None);
+        }
+        let Some(plan) = self.scalar_while_plan(body, condition, loop_body) else {
+            return Ok(None);
+        };
+        let Some(mut locals) = self.load_scalar_local_values(&plan.local_slots) else {
+            return Ok(None);
+        };
+        let Some(globals) = self.resolve_scalar_top_level_values(&plan.top_level_names)? else {
+            return Ok(None);
+        };
+
+        let result = self.eval_scalar_while_loop_shared(
+            &plan.condition,
+            &plan.loop_body,
+            &mut locals,
+            &globals,
+        )?;
+        self.sync_scalar_local_values(&plan.local_slots, &locals)?;
+
+        Ok(Some(match result {
+            ScalarControlFlow::Value(value) => ControlFlow::Value(value.into_runtime_value()),
+            ScalarControlFlow::Return(value) => ControlFlow::Return(value.into_runtime_value()),
+            ScalarControlFlow::Break => ControlFlow::Break,
+            ScalarControlFlow::Continue => ControlFlow::Continue,
+        }))
+    }
+
+    fn eval_block_expr_shared(
+        &mut self,
+        body: &Body,
+        block_idx: ExprIdx,
+        tail_is_terminal: bool,
+    ) -> Result<ControlFlow, RuntimeError> {
+        let Expr::Block { stmts, tail } = &body.exprs[block_idx] else {
+            unreachable!("eval_block_expr_shared called for non-block expression");
+        };
+        self.env.push_scope();
+        let result = self.eval_block_shared_in_current_scope(body, stmts, *tail, tail_is_terminal);
+        self.env.pop_scope();
+        result
+    }
+
+    fn eval_block_shared_in_current_scope(
         &mut self,
         body: &Body,
         stmts: &[Stmt],
         tail: Option<ExprIdx>,
         tail_is_terminal: bool,
     ) -> Result<ControlFlow, RuntimeError> {
-        self.env.push_scope();
         for stmt in stmts {
             match stmt {
                 Stmt::Let { pat, init, .. } => {
@@ -5925,40 +6864,30 @@ impl Interpreter {
                         None => self.eval_expr_shared(body, *init),
                     } {
                         Ok(result) => result,
-                        Err(err) => {
-                            self.env.pop_scope();
-                            return Err(err);
-                        }
+                        Err(err) => return Err(err),
                     };
                     if matches!(
                         result,
                         ControlFlow::Return(_) | ControlFlow::Break | ControlFlow::Continue
                     ) {
-                        self.env.pop_scope();
                         return Ok(result);
                     }
                     if let Err(err) = self.bind_pat_shared(body, *pat, &result.into_value()) {
-                        self.env.pop_scope();
                         return Err(err);
                     }
                 }
                 Stmt::Assign { target, value } => {
                     let result = match self.eval_expr_shared(body, *value) {
                         Ok(result) => result,
-                        Err(err) => {
-                            self.env.pop_scope();
-                            return Err(err);
-                        }
+                        Err(err) => return Err(err),
                     };
                     if matches!(
                         result,
                         ControlFlow::Return(_) | ControlFlow::Break | ControlFlow::Continue
                     ) {
-                        self.env.pop_scope();
                         return Ok(result);
                     }
                     let Some(access) = self.local_access_for_expr(body, *target) else {
-                        self.env.pop_scope();
                         return Err(RuntimeError::TypeError(
                             "assignment target must be a local variable".into(),
                         ));
@@ -5968,7 +6897,6 @@ impl Interpreter {
                         .set_slot(access.depth, access.slot, result.into_value())
                         .is_none()
                     {
-                        self.env.pop_scope();
                         return Err(RuntimeError::TypeError(
                             "internal runtime error: assignment target unavailable".into(),
                         ));
@@ -5980,13 +6908,9 @@ impl Interpreter {
                 } => {
                     let result = match self.eval_while_shared(body, *condition, *loop_body) {
                         Ok(result) => result,
-                        Err(err) => {
-                            self.env.pop_scope();
-                            return Err(err);
-                        }
+                        Err(err) => return Err(err),
                     };
                     if !matches!(result, ControlFlow::Value(_)) {
-                        self.env.pop_scope();
                         return Ok(result);
                     }
                 }
@@ -5997,37 +6921,23 @@ impl Interpreter {
                 } => {
                     let result = match self.eval_for_shared(body, *pat, *source, *loop_body) {
                         Ok(result) => result,
-                        Err(err) => {
-                            self.env.pop_scope();
-                            return Err(err);
-                        }
+                        Err(err) => return Err(err),
                     };
                     if !matches!(result, ControlFlow::Value(_)) {
-                        self.env.pop_scope();
                         return Ok(result);
                     }
                 }
-                Stmt::Break => {
-                    self.env.pop_scope();
-                    return Ok(ControlFlow::Break);
-                }
-                Stmt::Continue => {
-                    self.env.pop_scope();
-                    return Ok(ControlFlow::Continue);
-                }
+                Stmt::Break => return Ok(ControlFlow::Break),
+                Stmt::Continue => return Ok(ControlFlow::Continue),
                 Stmt::Expr(idx) => {
                     let result = match self.eval_expr_shared(body, *idx) {
                         Ok(result) => result,
-                        Err(err) => {
-                            self.env.pop_scope();
-                            return Err(err);
-                        }
+                        Err(err) => return Err(err),
                     };
                     if matches!(
                         result,
                         ControlFlow::Return(_) | ControlFlow::Break | ControlFlow::Continue
                     ) {
-                        self.env.pop_scope();
                         return Ok(result);
                     }
                 }
@@ -6042,7 +6952,6 @@ impl Interpreter {
         } else {
             Ok(ControlFlow::Value(Value::Unit))
         };
-        self.env.pop_scope();
         result
     }
 
@@ -6052,6 +6961,9 @@ impl Interpreter {
         condition: ExprIdx,
         loop_body: ExprIdx,
     ) -> Result<ControlFlow, RuntimeError> {
+        if let Some(result) = self.try_eval_scalar_while_shared(body, condition, loop_body)? {
+            return Ok(result);
+        }
         loop {
             let cond = match self.eval_expr_shared(body, condition)? {
                 ControlFlow::Value(v) => v,
@@ -6333,6 +7245,34 @@ mod tests {
         )
     }
 
+    fn make_interpreter_allowing_type_errors(source: &str) -> Interpreter {
+        let checked = check_file(source);
+        assert!(
+            checked.parse_errors.is_empty(),
+            "parse errors: {:?}",
+            checked.parse_errors
+        );
+        assert!(
+            checked.lowering_diagnostics.is_empty(),
+            "lowering diagnostics: {:?}",
+            checked.lowering_diagnostics
+        );
+        assert!(
+            checked.type_check.body_lowering_diagnostics.is_empty(),
+            "body lowering diagnostics: {:?}",
+            checked.type_check.body_lowering_diagnostics
+        );
+
+        Interpreter::new(
+            checked.item_tree,
+            checked.module_scope,
+            checked.type_check.fn_bodies,
+            FxHashMap::default(),
+            checked.interner,
+            None,
+        )
+    }
+
     fn fn_idx_by_name(interp: &mut Interpreter, name: &str) -> FnItemIdx {
         let name = Name::new(interp.interner_mut(), name);
         *interp
@@ -6601,6 +7541,26 @@ mod tests {
             .expect_err("requires expression should fail at runtime");
         assert!(matches!(err, RuntimeError::DivisionByZero));
         assert_no_leaked_call_state(&mut interp);
+    }
+
+    #[test]
+    fn scalar_fast_path_preserves_non_bool_while_condition_runtime_error() {
+        let mut interp = make_interpreter_allowing_type_errors(
+            "fn main() -> Int {\n\
+               var i = 0\n\
+               while ({ i = i + 1\n i }) { 0 }\n\
+               i\n\
+             }",
+        );
+
+        let err = interp
+            .run_main()
+            .expect_err("non-bool while conditions should still fail at runtime");
+
+        assert!(
+            matches!(err, RuntimeError::TypeError(ref message) if message.contains("while condition must be Bool")),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
