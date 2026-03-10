@@ -1083,20 +1083,55 @@ impl Interpreter {
             .collect()
     }
 
-    fn param_names_for_fn_idx(&self, fn_idx: FnItemIdx) -> Vec<Name> {
-        self.item_tree.functions[fn_idx]
-            .params
-            .iter()
-            .map(|p| p.name)
-            .collect()
+    fn args_are_all_positional(args: &[CallArg]) -> bool {
+        args.iter().all(|arg| matches!(arg, CallArg::Positional(_)))
     }
 
-    fn param_named_only_for_fn_idx(&self, fn_idx: FnItemIdx) -> Vec<bool> {
-        self.item_tree.functions[fn_idx]
-            .params
-            .iter()
-            .map(|p| p.named_only)
-            .collect()
+    fn params_accept_plain_positional(params: &[FnParam], actual_arg_count: usize) -> bool {
+        params.len() == actual_arg_count && params.iter().all(|param| !param.named_only)
+    }
+
+    fn method_params_accept_plain_positional(params: &[FnParam], actual_arg_count: usize) -> bool {
+        params.len() == actual_arg_count.saturating_add(1)
+            && params[1..].iter().all(|param| !param.named_only)
+    }
+
+    fn try_select_plain_positional_function_candidate(
+        &self,
+        candidates: &[FnItemIdx],
+        actual_arg_count: usize,
+    ) -> Option<FnItemIdx> {
+        let mut selected = None;
+        for &fn_idx in candidates {
+            let params = &self.item_tree.functions[fn_idx].params;
+            if !Self::params_accept_plain_positional(params, actual_arg_count) {
+                continue;
+            }
+            if selected.is_some() {
+                return None;
+            }
+            selected = Some(fn_idx);
+        }
+        selected
+    }
+
+    fn try_select_plain_positional_method_candidate(
+        &self,
+        candidates: &[FnItemIdx],
+        actual_arg_count: usize,
+    ) -> Option<FnItemIdx> {
+        let mut selected = None;
+        for &fn_idx in candidates {
+            let params = &self.item_tree.functions[fn_idx].params;
+            if !Self::method_params_accept_plain_positional(params, actual_arg_count) {
+                continue;
+            }
+            if selected.is_some() {
+                return None;
+            }
+            selected = Some(fn_idx);
+        }
+        selected
     }
 
     fn select_method_candidate_by_call_shape(
@@ -1129,6 +1164,31 @@ impl Interpreter {
                     .map(Vec::as_slice)
             })
             .map(|candidates| self.select_method_candidate_by_call_shape(candidates, args))
+    }
+
+    fn fast_method_candidate_for_value(
+        &self,
+        base_val: &Value,
+        field_name: Name,
+        actual_arg_count: usize,
+    ) -> Option<FnItemIdx> {
+        self.receiver_key_for_value(base_val)
+            .and_then(|receiver_key| {
+                self.module_scope
+                    .methods
+                    .get(&(receiver_key, field_name))
+                    .and_then(|candidates| {
+                        self.try_select_plain_positional_method_candidate(candidates, actual_arg_count)
+                    })
+            })
+            .or_else(|| {
+                self.module_scope
+                    .methods
+                    .get(&(ReceiverKey::Any, field_name))
+                    .and_then(|candidates| {
+                        self.try_select_plain_positional_method_candidate(candidates, actual_arg_count)
+                    })
+            })
     }
 
     fn trait_method_dispatch_fn_idx(
@@ -1213,14 +1273,17 @@ impl Interpreter {
                 method_name.resolve(&self.interner)
             )));
         };
-        let param_names: Vec<Name> = method.params.iter().map(|param| param.name).collect();
         let callee_name = format!(
             "trait method `{}.{}`",
             trait_name.resolve(&self.interner),
             method_name.resolve(&self.interner)
         );
-        let bound_args =
-            self.bind_call_values_for_param_names(&callee_name, args, arg_values, &param_names)?;
+        let bound_args = self.bind_call_values_to_params(
+            &callee_name,
+            args,
+            arg_values,
+            &method.params,
+        )?;
         let Some(receiver) = bound_args.first() else {
             return Err(RuntimeError::ArityMismatch {
                 callee: callee_name,
@@ -1898,7 +1961,6 @@ impl Interpreter {
 
     fn param_names_for_fn_value(&self, fv: &FnValue) -> Option<Vec<Name>> {
         match fv {
-            FnValue::User(fn_idx) => Some(self.param_names_for_fn_idx(*fn_idx)),
             FnValue::Lambda { params, body, .. } => self.lambda_param_names(body, params),
             _ => None,
         }
@@ -1936,27 +1998,20 @@ impl Interpreter {
         }
     }
 
-    fn bind_call_items_for_param_specs<T>(
+    fn bind_call_items_to_params<T>(
         &self,
         callee_name: &str,
         args: &[CallArg],
         arg_items: Vec<T>,
-        param_names: &[Name],
-        param_named_only: Option<&[bool]>,
+        params: &[FnParam],
     ) -> Result<Vec<T>, RuntimeError> {
-        let params: Vec<FnParam> = param_names
-            .iter()
-            .enumerate()
-            .map(|(idx, name)| FnParam {
-                name: *name,
-                ty: TypeRef::Error,
-                named_only: param_named_only
-                    .and_then(|flags| flags.get(idx))
-                    .copied()
-                    .unwrap_or(false),
-            })
-            .collect();
-        let binding = kyokara_hir_def::call_family::bind_call_args_to_params(args, &params);
+        if Self::args_are_all_positional(args)
+            && Self::params_accept_plain_positional(params, arg_items.len())
+        {
+            return Ok(arg_items);
+        }
+
+        let binding = kyokara_hir_def::call_family::bind_call_args_to_params(args, params);
         if !binding.errors.is_empty() {
             if binding.errors.len() == 1
                 && let CallShapeError::ArgCountMismatch { expected, actual } = binding.errors[0]
@@ -1992,7 +2047,15 @@ impl Interpreter {
         arg_items: Vec<T>,
         param_names: &[Name],
     ) -> Result<Vec<T>, RuntimeError> {
-        self.bind_call_items_for_param_specs(callee_name, args, arg_items, param_names, None)
+        let params: Vec<FnParam> = param_names
+            .iter()
+            .map(|name| FnParam {
+                name: *name,
+                ty: TypeRef::Error,
+                named_only: false,
+            })
+            .collect();
+        self.bind_call_items_to_params(callee_name, args, arg_items, &params)
     }
 
     /// Bind evaluated argument values into parameter slots.
@@ -2007,6 +2070,21 @@ impl Interpreter {
     ) -> Result<Args, RuntimeError> {
         let items =
             self.bind_call_items_for_param_names(callee_name, args, arg_values, param_names)?;
+        let mut out = Args::with_capacity(items.len());
+        for value in items {
+            out.push(value);
+        }
+        Ok(out)
+    }
+
+    fn bind_call_values_to_params(
+        &self,
+        callee_name: &str,
+        args: &[CallArg],
+        arg_values: Vec<Value>,
+        params: &[FnParam],
+    ) -> Result<Args, RuntimeError> {
+        let items = self.bind_call_items_to_params(callee_name, args, arg_values, params)?;
         let mut out = Args::with_capacity(items.len());
         for value in items {
             out.push(value);
@@ -2061,14 +2139,12 @@ impl Interpreter {
                 CallArg::Positional(thunk_expr),
             ] => (*key_expr, *thunk_expr),
             _ => {
-                let full_param_names = self.param_names_for_fn_idx(fn_idx);
-                let method_param_names: Vec<Name> =
-                    full_param_names.iter().skip(1).copied().collect();
-                let arg_exprs = self.bind_call_items_for_param_names(
+                let method_params = &self.item_tree.functions[fn_idx].params[1..];
+                let arg_exprs = self.bind_call_items_to_params(
                     "method `get_or_insert_with`",
                     args,
                     self.args_in_source_order(args),
-                    &method_param_names,
+                    method_params,
                 )?;
                 (arg_exprs[0], arg_exprs[1])
             }
@@ -2130,14 +2206,12 @@ impl Interpreter {
                 CallArg::Positional(thunk_expr),
             ] => (*key_expr, *thunk_expr),
             _ => {
-                let full_param_names = self.param_names_for_fn_idx(fn_idx);
-                let method_param_names: Vec<Name> =
-                    full_param_names.iter().skip(1).copied().collect();
-                let arg_exprs = self.bind_call_items_for_param_names(
+                let method_params = &self.item_tree.functions[fn_idx].params[1..];
+                let arg_exprs = self.bind_call_items_to_params(
                     "method `get_or_insert_with`",
                     args,
                     self.args_in_source_order(args),
-                    &method_param_names,
+                    method_params,
                 )?;
                 (arg_exprs[0], arg_exprs[1])
             }
@@ -2172,12 +2246,17 @@ impl Interpreter {
         Ok(Some(computed))
     }
 
-    fn fn_value_for_fn_idx(&self, fn_idx: FnItemIdx) -> Value {
+    fn call_fn_idx_value(&mut self, fn_idx: FnItemIdx, args: Args) -> Result<Value, RuntimeError> {
         let fn_item = &self.item_tree.functions[fn_idx];
         if let Some(intr) = self.intrinsics.get(&fn_item.name) {
-            Value::Fn(Box::new(FnValue::Intrinsic(*intr)))
+            self.check_intrinsic_cap(*intr)?;
+            if intr.needs_interpreter() {
+                self.call_complex_intrinsic(*intr, args)
+            } else {
+                intr.call(args)
+            }
         } else {
-            Value::Fn(Box::new(FnValue::User(fn_idx)))
+            self.call_fn(fn_idx, args)
         }
     }
 
@@ -2395,6 +2474,19 @@ impl Interpreter {
                     let scope_candidates = self.module_scope.functions.get(&name);
                     let candidates = override_candidates.or(scope_candidates);
                     if let Some(candidates) = candidates {
+                        if Self::args_are_all_positional(&args)
+                            && let Some(fn_idx) = self
+                                .try_select_plain_positional_function_candidate(candidates, args.len())
+                        {
+                            let mut out = Args::with_capacity(args.len());
+                            for arg in &args {
+                                let CallArg::Positional(arg_idx) = arg else {
+                                    unreachable!("guard ensures positional args");
+                                };
+                                out.push(eval_propagate!(self, env, body, *arg_idx));
+                            }
+                            return self.call_fn(fn_idx, out).map(ControlFlow::Value);
+                        }
                         let selection = match candidates.as_slice() {
                             [fn_idx] => Some(CallFamilySelection::Selected {
                                 candidate: *fn_idx,
@@ -2414,23 +2506,20 @@ impl Interpreter {
                                 } => {
                                     let source_order = self.args_in_source_order(&args);
                                     let mut arg_values = Vec::with_capacity(source_order.len());
-                                    for idx in &source_order {
-                                        let value = eval_propagate!(self, env, body, *idx);
-                                        arg_values.push(value);
-                                    }
-                                    let param_names = self.param_names_for_fn_idx(fn_idx);
-                                    let param_named_only = self.param_named_only_for_fn_idx(fn_idx);
-                                    let arg_vals = self.bind_call_items_for_param_specs(
-                                        &format!("function `{}`", name.resolve(&self.interner)),
-                                        &args,
-                                        arg_values,
-                                        &param_names,
-                                        Some(&param_named_only),
-                                    )?;
-                                    let mut out = Args::with_capacity(arg_vals.len());
-                                    for value in arg_vals {
-                                        out.push(value);
-                                    }
+                                for idx in &source_order {
+                                    let value = eval_propagate!(self, env, body, *idx);
+                                    arg_values.push(value);
+                                }
+                                let arg_vals = self.bind_call_items_to_params(
+                                    &format!("function `{}`", name.resolve(&self.interner)),
+                                    &args,
+                                    arg_values,
+                                    &self.item_tree.functions[fn_idx].params,
+                                )?;
+                                let mut out = Args::with_capacity(arg_vals.len());
+                                for value in arg_vals {
+                                    out.push(value);
+                                }
                                     return self.call_fn(fn_idx, out).map(ControlFlow::Value);
                                 }
                                 CallFamilySelection::InvalidShape { errors } => {
@@ -2486,21 +2575,20 @@ impl Interpreter {
                                 let v = eval_propagate!(self, env, body, *idx);
                                 arg_values.push(v);
                             }
-                            let param_names = self.param_names_for_fn_idx(fn_idx);
+                            let params = &self.item_tree.functions[fn_idx].params;
                             let callee_name = format!(
                                 "function `{}`",
                                 self.item_tree.functions[fn_idx]
                                     .name
                                     .resolve(&self.interner)
                             );
-                            let arg_vals = self.bind_call_values_for_param_names(
+                            let arg_vals = self.bind_call_values_to_params(
                                 &callee_name,
                                 &args,
                                 arg_values,
-                                &param_names,
+                                params,
                             )?;
-                            let fn_val = self.fn_value_for_fn_idx(fn_idx);
-                            return self.call_value(fn_val, arg_vals).map(ControlFlow::Value);
+                            return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
                         }
                     }
 
@@ -2534,21 +2622,20 @@ impl Interpreter {
                                 let v = eval_propagate!(self, env, body, *idx);
                                 arg_values.push(v);
                             }
-                            let param_names = self.param_names_for_fn_idx(fn_idx);
+                            let params = &self.item_tree.functions[fn_idx].params;
                             let callee_name = format!(
                                 "function `{}`",
                                 self.item_tree.functions[fn_idx]
                                     .name
                                     .resolve(&self.interner)
                             );
-                            let arg_vals = self.bind_call_values_for_param_names(
+                            let arg_vals = self.bind_call_values_to_params(
                                 &callee_name,
                                 &args,
                                 arg_values,
-                                &param_names,
+                                params,
                             )?;
-                            let fn_val = self.fn_value_for_fn_idx(fn_idx);
-                            return self.call_value(fn_val, arg_vals).map(ControlFlow::Value);
+                            return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
                         }
 
                         // Type-owned static call: bare `Type.method()` if registered.
@@ -2564,21 +2651,20 @@ impl Interpreter {
                                 let v = eval_propagate!(self, env, body, *idx);
                                 arg_values.push(v);
                             }
-                            let param_names = self.param_names_for_fn_idx(fn_idx);
+                            let params = &self.item_tree.functions[fn_idx].params;
                             let callee_name = format!(
                                 "function `{}`",
                                 self.item_tree.functions[fn_idx]
                                     .name
                                     .resolve(&self.interner)
                             );
-                            let arg_vals = self.bind_call_values_for_param_names(
+                            let arg_vals = self.bind_call_values_to_params(
                                 &callee_name,
                                 &args,
                                 arg_values,
-                                &param_names,
+                                params,
                             )?;
-                            let fn_val = self.fn_value_for_fn_idx(fn_idx);
-                            return self.call_value(fn_val, arg_vals).map(ControlFlow::Value);
+                            return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
                         }
                     }
 
@@ -2593,7 +2679,20 @@ impl Interpreter {
                     let method_fn_idx = if base_has_field {
                         None
                     } else {
-                        match self.method_candidate_for_value(&base_val, field_name, &args) {
+                        let selection = if Self::args_are_all_positional(&args) {
+                            self.fast_method_candidate_for_value(&base_val, field_name, args.len())
+                                .map(|candidate| CallFamilySelection::Selected {
+                                    candidate,
+                                    binding: kyokara_hir_def::call_family::bind_call_args_to_params(
+                                        &args,
+                                        &self.item_tree.functions[candidate].params[1..],
+                                    ),
+                                })
+                                .or_else(|| self.method_candidate_for_value(&base_val, field_name, &args))
+                        } else {
+                            self.method_candidate_for_value(&base_val, field_name, &args)
+                        };
+                        match selection {
                             None => None,
                             Some(CallFamilySelection::Selected { candidate, .. }) => {
                                 Some(candidate)
@@ -2631,37 +2730,40 @@ impl Interpreter {
                             return Ok(ControlFlow::Value(value));
                         }
                         let source_order = self.args_in_source_order(&args);
-                        let mut arg_values = Vec::with_capacity(source_order.len());
-                        for idx in &source_order {
-                            let v = eval_propagate!(self, env, body, *idx);
-                            arg_values.push(v);
-                        }
-                        let full_param_names = self.param_names_for_fn_idx(fn_idx);
-                        let full_param_named_only = self.param_named_only_for_fn_idx(fn_idx);
-                        let method_param_names: Vec<Name> =
-                            full_param_names.iter().skip(1).copied().collect();
-                        let method_param_named_only: Vec<bool> =
-                            full_param_named_only.iter().skip(1).copied().collect();
+                        let method_param_count =
+                            self.item_tree.functions[fn_idx].params.len().saturating_sub(1);
                         let callee_name = format!(
                             "method `{}`",
                             self.item_tree.functions[fn_idx]
                                 .name
                                 .resolve(&self.interner)
                         );
-                        let mut arg_vals = Args::with_capacity(method_param_names.len() + 1);
+                        let mut arg_vals = Args::with_capacity(method_param_count + 1);
                         arg_vals.push(base_val);
-                        let bound_args = self.bind_call_items_for_param_specs(
-                            &callee_name,
-                            &args,
-                            arg_values,
-                            &method_param_names,
-                            Some(&method_param_named_only),
-                        )?;
-                        for value in bound_args {
-                            arg_vals.push(value);
+                        if Self::args_are_all_positional(&args)
+                            && method_param_count == args.len()
+                        {
+                            for idx in &source_order {
+                                arg_vals.push(eval_propagate!(self, env, body, *idx));
+                            }
+                        } else {
+                            let mut arg_values = Vec::with_capacity(source_order.len());
+                            for idx in &source_order {
+                                let v = eval_propagate!(self, env, body, *idx);
+                                arg_values.push(v);
+                            }
+                            let method_params = &self.item_tree.functions[fn_idx].params[1..];
+                            let bound_args = self.bind_call_items_to_params(
+                                &callee_name,
+                                &args,
+                                arg_values,
+                                method_params,
+                            )?;
+                            for value in bound_args {
+                                arg_vals.push(value);
+                            }
                         }
-                        let method_fn = self.fn_value_for_fn_idx(fn_idx);
-                        return self.call_value(method_fn, arg_vals).map(ControlFlow::Value);
+                        return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
                     }
 
                     // Not a method — fall through to field access + call.
@@ -2685,21 +2787,37 @@ impl Interpreter {
                     let v = eval_propagate!(self, env, body, *idx);
                     evaluated_args.push(v);
                 }
-                let arg_vals = if let Value::Fn(ref fv) = callee_val
-                    && let Some(param_names) = self.param_names_for_fn_value(fv)
-                {
-                    self.bind_call_values_for_param_names(
-                        "callable",
-                        &args,
-                        evaluated_args,
-                        &param_names,
-                    )?
-                } else {
-                    let mut direct = Args::with_capacity(evaluated_args.len());
-                    for value in evaluated_args {
-                        direct.push(value);
+                let arg_vals = match &callee_val {
+                    Value::Fn(fv) => {
+                        if let FnValue::User(fn_idx) = fv.as_ref() {
+                            self.bind_call_values_to_params(
+                                "callable",
+                                &args,
+                                evaluated_args,
+                                &self.item_tree.functions[*fn_idx].params,
+                            )?
+                        } else if let Some(param_names) = self.param_names_for_fn_value(fv) {
+                            self.bind_call_values_for_param_names(
+                                "callable",
+                                &args,
+                                evaluated_args,
+                                &param_names,
+                            )?
+                        } else {
+                            let mut direct = Args::with_capacity(evaluated_args.len());
+                            for value in evaluated_args {
+                                direct.push(value);
+                            }
+                            direct
+                        }
                     }
-                    direct
+                    _ => {
+                        let mut direct = Args::with_capacity(evaluated_args.len());
+                        for value in evaluated_args {
+                            direct.push(value);
+                        }
+                        direct
+                    }
                 };
                 self.call_value(callee_val, arg_vals)
                     .map(ControlFlow::Value)
@@ -2911,6 +3029,19 @@ impl Interpreter {
                     let scope_candidates = self.module_scope.functions.get(&name);
                     let candidates = override_candidates.or(scope_candidates);
                     if let Some(candidates) = candidates {
+                        if Self::args_are_all_positional(args)
+                            && let Some(fn_idx) = self
+                                .try_select_plain_positional_function_candidate(candidates, args.len())
+                        {
+                            let mut out = Args::with_capacity(args.len());
+                            for arg in args {
+                                let CallArg::Positional(arg_idx) = arg else {
+                                    unreachable!("guard ensures positional args");
+                                };
+                                out.push(eval_propagate_shared!(self, body, *arg_idx));
+                            }
+                            return self.call_fn(fn_idx, out).map(ControlFlow::Value);
+                        }
                         let selection = match candidates.as_slice() {
                             [fn_idx] => Some(CallFamilySelection::Selected {
                                 candidate: *fn_idx,
@@ -2934,14 +3065,11 @@ impl Interpreter {
                                         let value = eval_propagate_shared!(self, body, *idx);
                                         arg_values.push(value);
                                     }
-                                    let param_names = self.param_names_for_fn_idx(fn_idx);
-                                    let param_named_only = self.param_named_only_for_fn_idx(fn_idx);
-                                    let arg_vals = self.bind_call_items_for_param_specs(
+                                    let arg_vals = self.bind_call_items_to_params(
                                         &format!("function `{}`", name.resolve(&self.interner)),
                                         args,
                                         arg_values,
-                                        &param_names,
-                                        Some(&param_named_only),
+                                        &self.item_tree.functions[fn_idx].params,
                                     )?;
                                     let mut out = Args::with_capacity(arg_vals.len());
                                     for value in arg_vals {
@@ -3002,21 +3130,20 @@ impl Interpreter {
                                 let v = eval_propagate_shared!(self, body, *idx);
                                 arg_values.push(v);
                             }
-                            let param_names = self.param_names_for_fn_idx(fn_idx);
+                            let params = &self.item_tree.functions[fn_idx].params;
                             let callee_name = format!(
                                 "function `{}`",
                                 self.item_tree.functions[fn_idx]
                                     .name
                                     .resolve(&self.interner)
                             );
-                            let arg_vals = self.bind_call_values_for_param_names(
+                            let arg_vals = self.bind_call_values_to_params(
                                 &callee_name,
                                 args,
                                 arg_values,
-                                &param_names,
+                                params,
                             )?;
-                            let fn_val = self.fn_value_for_fn_idx(fn_idx);
-                            return self.call_value(fn_val, arg_vals).map(ControlFlow::Value);
+                            return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
                         }
                     }
 
@@ -3049,21 +3176,20 @@ impl Interpreter {
                                 let v = eval_propagate_shared!(self, body, *idx);
                                 arg_values.push(v);
                             }
-                            let param_names = self.param_names_for_fn_idx(fn_idx);
+                            let params = &self.item_tree.functions[fn_idx].params;
                             let callee_name = format!(
                                 "function `{}`",
                                 self.item_tree.functions[fn_idx]
                                     .name
                                     .resolve(&self.interner)
                             );
-                            let arg_vals = self.bind_call_values_for_param_names(
+                            let arg_vals = self.bind_call_values_to_params(
                                 &callee_name,
                                 args,
                                 arg_values,
-                                &param_names,
+                                params,
                             )?;
-                            let fn_val = self.fn_value_for_fn_idx(fn_idx);
-                            return self.call_value(fn_val, arg_vals).map(ControlFlow::Value);
+                            return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
                         }
 
                         // Type-owned static call: bare `Type.method()` if registered.
@@ -3079,21 +3205,20 @@ impl Interpreter {
                                 let v = eval_propagate_shared!(self, body, *idx);
                                 arg_values.push(v);
                             }
-                            let param_names = self.param_names_for_fn_idx(fn_idx);
+                            let params = &self.item_tree.functions[fn_idx].params;
                             let callee_name = format!(
                                 "function `{}`",
                                 self.item_tree.functions[fn_idx]
                                     .name
                                     .resolve(&self.interner)
                             );
-                            let arg_vals = self.bind_call_values_for_param_names(
+                            let arg_vals = self.bind_call_values_to_params(
                                 &callee_name,
                                 args,
                                 arg_values,
-                                &param_names,
+                                params,
                             )?;
-                            let fn_val = self.fn_value_for_fn_idx(fn_idx);
-                            return self.call_value(fn_val, arg_vals).map(ControlFlow::Value);
+                            return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
                         }
                     }
 
@@ -3107,7 +3232,20 @@ impl Interpreter {
                     let method_fn_idx = if base_has_field {
                         None
                     } else {
-                        match self.method_candidate_for_value(&base_val, field_name, args) {
+                        let selection = if Self::args_are_all_positional(args) {
+                            self.fast_method_candidate_for_value(&base_val, field_name, args.len())
+                                .map(|candidate| CallFamilySelection::Selected {
+                                    candidate,
+                                    binding: kyokara_hir_def::call_family::bind_call_args_to_params(
+                                        args,
+                                        &self.item_tree.functions[candidate].params[1..],
+                                    ),
+                                })
+                                .or_else(|| self.method_candidate_for_value(&base_val, field_name, args))
+                        } else {
+                            self.method_candidate_for_value(&base_val, field_name, args)
+                        };
+                        match selection {
                             None => None,
                             Some(CallFamilySelection::Selected { candidate, .. }) => {
                                 Some(candidate)
@@ -3149,37 +3287,40 @@ impl Interpreter {
                             return Ok(ControlFlow::Value(value));
                         }
                         let source_order = self.args_in_source_order(args);
-                        let mut arg_values = Vec::with_capacity(source_order.len());
-                        for idx in &source_order {
-                            let v = eval_propagate_shared!(self, body, *idx);
-                            arg_values.push(v);
-                        }
-                        let full_param_names = self.param_names_for_fn_idx(fn_idx);
-                        let full_param_named_only = self.param_named_only_for_fn_idx(fn_idx);
-                        let method_param_names: Vec<Name> =
-                            full_param_names.iter().skip(1).copied().collect();
-                        let method_param_named_only: Vec<bool> =
-                            full_param_named_only.iter().skip(1).copied().collect();
+                        let method_param_count =
+                            self.item_tree.functions[fn_idx].params.len().saturating_sub(1);
                         let callee_name = format!(
                             "method `{}`",
                             self.item_tree.functions[fn_idx]
                                 .name
                                 .resolve(&self.interner)
                         );
-                        let mut arg_vals = Args::with_capacity(method_param_names.len() + 1);
+                        let mut arg_vals = Args::with_capacity(method_param_count + 1);
                         arg_vals.push(base_val);
-                        let bound_args = self.bind_call_items_for_param_specs(
-                            &callee_name,
-                            args,
-                            arg_values,
-                            &method_param_names,
-                            Some(&method_param_named_only),
-                        )?;
-                        for value in bound_args {
-                            arg_vals.push(value);
+                        if Self::args_are_all_positional(args)
+                            && method_param_count == args.len()
+                        {
+                            for idx in &source_order {
+                                arg_vals.push(eval_propagate_shared!(self, body, *idx));
+                            }
+                        } else {
+                            let mut arg_values = Vec::with_capacity(source_order.len());
+                            for idx in &source_order {
+                                let v = eval_propagate_shared!(self, body, *idx);
+                                arg_values.push(v);
+                            }
+                            let method_params = &self.item_tree.functions[fn_idx].params[1..];
+                            let bound_args = self.bind_call_items_to_params(
+                                &callee_name,
+                                args,
+                                arg_values,
+                                method_params,
+                            )?;
+                            for value in bound_args {
+                                arg_vals.push(value);
+                            }
                         }
-                        let method_fn = self.fn_value_for_fn_idx(fn_idx);
-                        return self.call_value(method_fn, arg_vals).map(ControlFlow::Value);
+                        return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
                     }
 
                     // Not a method — fall through to field access + call.
@@ -3203,21 +3344,37 @@ impl Interpreter {
                     let v = eval_propagate_shared!(self, body, *idx);
                     evaluated_args.push(v);
                 }
-                let arg_vals = if let Value::Fn(ref fv) = callee_val
-                    && let Some(param_names) = self.param_names_for_fn_value(fv)
-                {
-                    self.bind_call_values_for_param_names(
-                        "callable",
-                        args,
-                        evaluated_args,
-                        &param_names,
-                    )?
-                } else {
-                    let mut direct = Args::with_capacity(evaluated_args.len());
-                    for value in evaluated_args {
-                        direct.push(value);
+                let arg_vals = match &callee_val {
+                    Value::Fn(fv) => {
+                        if let FnValue::User(fn_idx) = fv.as_ref() {
+                            self.bind_call_values_to_params(
+                                "callable",
+                                args,
+                                evaluated_args,
+                                &self.item_tree.functions[*fn_idx].params,
+                            )?
+                        } else if let Some(param_names) = self.param_names_for_fn_value(fv) {
+                            self.bind_call_values_for_param_names(
+                                "callable",
+                                args,
+                                evaluated_args,
+                                &param_names,
+                            )?
+                        } else {
+                            let mut direct = Args::with_capacity(evaluated_args.len());
+                            for value in evaluated_args {
+                                direct.push(value);
+                            }
+                            direct
+                        }
                     }
-                    direct
+                    _ => {
+                        let mut direct = Args::with_capacity(evaluated_args.len());
+                        for value in evaluated_args {
+                            direct.push(value);
+                        }
+                        direct
+                    }
                 };
                 self.call_value(callee_val, arg_vals)
                     .map(ControlFlow::Value)
@@ -4639,10 +4796,12 @@ impl Interpreter {
                     Ok(())
                 }
             },
-            SeqPlan::Map { input, f } => self.seq_for_each_control(input, &mut |interp, item| {
-                let mapped = interp.call_value_ref(f, smallvec::smallvec![item])?;
-                emit(interp, mapped)
-            }),
+            SeqPlan::Map { input, f } => {
+                self.seq_for_each_control(input, &mut |interp, item| {
+                    let mapped = interp.call_value_ref(f, smallvec::smallvec![item])?;
+                    emit(interp, mapped)
+                })
+            }
             SeqPlan::FlatMap { input, f } => {
                 self.seq_for_each_control(input, &mut |interp, item| {
                     let produced = interp.call_value_ref(f, smallvec::smallvec![item])?;
@@ -5397,8 +5556,7 @@ impl Interpreter {
                 let plan = self.require_traversal_plan(&args[0], "seq_fold")?;
                 let mut acc = args[1].clone();
                 self.seq_for_each(&plan, &mut |interp, item| {
-                    acc =
-                        interp.call_value_ref(&args[2], smallvec::smallvec![acc.clone(), item])?;
+                    acc = interp.call_value_ref(&args[2], smallvec::smallvec![acc.clone(), item])?;
                     Ok(())
                 })?;
                 Ok(acc)
@@ -5553,8 +5711,7 @@ impl Interpreter {
                 let plan = self.require_traversal_plan(&args[0], "seq_find")?;
                 let mut found: Option<Value> = None;
                 self.seq_for_each_control(&plan, &mut |interp, item| {
-                    let keep =
-                        interp.call_value_ref(&args[1], smallvec::smallvec![item.clone()])?;
+                    let keep = interp.call_value_ref(&args[1], smallvec::smallvec![item.clone()])?;
                     match keep {
                         Value::Bool(true) => {
                             found = Some(item);
