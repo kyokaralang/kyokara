@@ -25,15 +25,19 @@ pub struct KyokaraLanguageServer {
     db: Mutex<LspDatabase>,
     /// Map from URI to salsa input handle.
     files: Mutex<HashMap<Url, SourceFile>>,
-    /// Map from URI to latest source text.
-    sources: RwLock<HashMap<Url, String>>,
-    /// Map from URI to cached analysis result.
-    analyses: RwLock<HashMap<Url, Arc<FileAnalysis>>>,
+    /// Map from URI to the latest atomic document snapshot.
+    ///
+    /// `FileAnalysis` already carries the source text used to build the analysis,
+    /// so storing one snapshot avoids reader-visible generation skew.
+    documents: RwLock<HashMap<Url, Arc<FileAnalysis>>>,
     /// Serialize on_change recomputations to avoid stale overwrite races.
     on_change_gate: AsyncMutex<()>,
     #[cfg(test)]
     /// Test-only hook to force deterministic interleaving in concurrent on_change tests.
     test_on_change_delay_yields: Mutex<HashMap<String, u32>>,
+    #[cfg(test)]
+    /// Test-only hook to pause after recompute but before publishing a new snapshot.
+    test_pre_publish_delay_yields: Mutex<HashMap<String, u32>>,
 }
 
 impl KyokaraLanguageServer {
@@ -42,11 +46,12 @@ impl KyokaraLanguageServer {
             client,
             db: Mutex::new(LspDatabase::default()),
             files: Mutex::new(HashMap::new()),
-            sources: RwLock::new(HashMap::new()),
-            analyses: RwLock::new(HashMap::new()),
+            documents: RwLock::new(HashMap::new()),
             on_change_gate: AsyncMutex::new(()),
             #[cfg(test)]
             test_on_change_delay_yields: Mutex::new(HashMap::new()),
+            #[cfg(test)]
+            test_pre_publish_delay_yields: Mutex::new(HashMap::new()),
         }
     }
 
@@ -58,8 +63,29 @@ impl KyokaraLanguageServer {
     }
 
     #[cfg(test)]
+    fn set_test_pre_publish_delay_yields(&self, text: &str, delay_yields: u32) {
+        self.test_pre_publish_delay_yields
+            .lock()
+            .insert(text.to_string(), delay_yields);
+    }
+
+    #[cfg(test)]
     async fn maybe_delay_for_text(&self, text: &str) {
         let delay_yields = self.test_on_change_delay_yields.lock().get(text).copied();
+        if let Some(ticks) = delay_yields {
+            for _ in 0..ticks {
+                tokio::task::yield_now().await;
+            }
+        }
+    }
+
+    #[cfg(test)]
+    async fn maybe_delay_before_publish(&self, text: &str) {
+        let delay_yields = self
+            .test_pre_publish_delay_yields
+            .lock()
+            .get(text)
+            .copied();
         if let Some(ticks) = delay_yields {
             for _ in 0..ticks {
                 tokio::task::yield_now().await;
@@ -103,16 +129,20 @@ impl KyokaraLanguageServer {
                 text.clone(),
             ));
 
-            self.sources.write().await.insert(uri.clone(), text);
-            self.analyses
-                .write()
-                .await
-                .insert(uri.clone(), analysis.clone());
+            #[cfg(test)]
+            self.maybe_delay_before_publish(&text).await;
+
+            self.documents.write().await.insert(uri.clone(), analysis.clone());
 
             // Publish diagnostics.
             let diags = crate::diagnostics::to_lsp_diagnostics(&analysis, &analysis.source);
             self.client.publish_diagnostics(uri, diags, None).await;
         }
+    }
+
+    #[cfg(test)]
+    async fn document_snapshot(&self, uri: &Url) -> Option<Arc<FileAnalysis>> {
+        self.documents.read().await.get(uri).cloned()
     }
 }
 
@@ -173,8 +203,7 @@ impl LanguageServer for KyokaraLanguageServer {
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
         self.files.lock().remove(&uri);
-        self.sources.write().await.remove(&uri);
-        self.analyses.write().await.remove(&uri);
+        self.documents.write().await.remove(&uri);
         // Clear diagnostics for the closed file.
         self.client.publish_diagnostics(uri, Vec::new(), None).await;
     }
@@ -183,15 +212,11 @@ impl LanguageServer for KyokaraLanguageServer {
         let uri = params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
 
-        let sources = self.sources.read().await;
-        let analyses = self.analyses.read().await;
-
-        let Some(source) = sources.get(&uri) else {
+        let documents = self.documents.read().await;
+        let Some(analysis) = documents.get(&uri) else {
             return Ok(None);
         };
-        let Some(analysis) = analyses.get(&uri) else {
-            return Ok(None);
-        };
+        let source = analysis.source.as_str();
         let Some(offset) = position::lsp_position_to_offset(pos, source) else {
             return Ok(None);
         };
@@ -206,15 +231,11 @@ impl LanguageServer for KyokaraLanguageServer {
         let uri = params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
 
-        let sources = self.sources.read().await;
-        let analyses = self.analyses.read().await;
-
-        let Some(source) = sources.get(&uri) else {
+        let documents = self.documents.read().await;
+        let Some(analysis) = documents.get(&uri) else {
             return Ok(None);
         };
-        let Some(analysis) = analyses.get(&uri) else {
-            return Ok(None);
-        };
+        let source = analysis.source.as_str();
         let Some(offset) = position::lsp_position_to_offset(pos, source) else {
             return Ok(None);
         };
@@ -230,15 +251,11 @@ impl LanguageServer for KyokaraLanguageServer {
         let pos = params.text_document_position.position;
         let include_declaration = params.context.include_declaration;
 
-        let sources = self.sources.read().await;
-        let analyses = self.analyses.read().await;
-
-        let Some(source) = sources.get(&uri) else {
+        let documents = self.documents.read().await;
+        let Some(analysis) = documents.get(&uri) else {
             return Ok(None);
         };
-        let Some(analysis) = analyses.get(&uri) else {
-            return Ok(None);
-        };
+        let source = analysis.source.as_str();
         let Some(offset) = position::lsp_position_to_offset(pos, source) else {
             return Ok(None);
         };
@@ -261,15 +278,11 @@ impl LanguageServer for KyokaraLanguageServer {
         let uri = params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
 
-        let sources = self.sources.read().await;
-        let analyses = self.analyses.read().await;
-
-        let Some(source) = sources.get(&uri) else {
+        let documents = self.documents.read().await;
+        let Some(analysis) = documents.get(&uri) else {
             return Ok(None);
         };
-        let Some(analysis) = analyses.get(&uri) else {
-            return Ok(None);
-        };
+        let source = analysis.source.as_str();
         let Some(offset) = position::lsp_position_to_offset(pos, source) else {
             return Ok(None);
         };
@@ -280,15 +293,11 @@ impl LanguageServer for KyokaraLanguageServer {
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         let uri = params.text_document.uri;
 
-        let sources = self.sources.read().await;
-        let analyses = self.analyses.read().await;
-
-        let Some(source) = sources.get(&uri) else {
+        let documents = self.documents.read().await;
+        let Some(analysis) = documents.get(&uri) else {
             return Ok(None);
         };
-        let Some(analysis) = analyses.get(&uri) else {
-            return Ok(None);
-        };
+        let source = analysis.source.as_str();
 
         let actions = crate::code_action::code_actions(
             analysis,
@@ -306,11 +315,11 @@ impl LanguageServer for KyokaraLanguageServer {
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         let uri = params.text_document.uri;
-        let sources = self.sources.read().await;
-
-        let Some(source) = sources.get(&uri) else {
+        let documents = self.documents.read().await;
+        let Some(analysis) = documents.get(&uri) else {
             return Ok(None);
         };
+        let source = analysis.source.as_str();
 
         let edits = crate::format::format_document(source);
         if edits.is_empty() {
@@ -922,21 +931,64 @@ mod tests {
         };
         tokio::join!(slow_fut, fast_fut);
 
-        let sources = service.inner().sources.read().await;
-        assert_eq!(
-            sources.get(&uri).map(String::as_str),
-            Some(fast_source),
-            "latest source should be retained after concurrent on_change"
-        );
-        drop(sources);
-
-        let analyses = service.inner().analyses.read().await;
-        let analysis = analyses
+        let documents = service.inner().documents.read().await;
+        let analysis = documents
             .get(&uri)
             .expect("analysis should exist after on_change");
         assert_eq!(
             analysis.source, fast_source,
             "latest analysis should not be overwritten by stale recompute"
+        );
+
+        drain.abort();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn readers_observe_atomic_document_snapshots_during_on_change() {
+        let (mut service, mut socket) = LspService::new(KyokaraLanguageServer::new);
+        let drain = tokio::spawn(async move { while socket.next().await.is_some() {} });
+
+        initialize(&mut service).await;
+
+        let uri = Url::parse("file:///atomic.ky").expect("valid uri");
+        let source_v1 = "fn foo() -> Int { 1 }\nfn main() -> Int { foo() }\n";
+        let source_v2 = "fn baz() -> Int { 2 }\nfn main() -> Int { baz() }\n";
+
+        service
+            .inner()
+            .on_change(uri.clone(), source_v1.to_string())
+            .await;
+        service
+            .inner()
+            .set_test_pre_publish_delay_yields(source_v2, 256_u32);
+
+        let server = service.inner();
+        let change_fut = server.on_change(uri.clone(), source_v2.to_string());
+        let snapshot_during_fut = async {
+            for _ in 0..4 {
+                tokio::task::yield_now().await;
+            }
+            server
+                .document_snapshot(&uri)
+                .await
+                .expect("expected document snapshot during change")
+        };
+        let (_change_result, snapshot_during) = tokio::join!(change_fut, snapshot_during_fut);
+
+        assert!(
+            snapshot_during.source.contains("fn foo"),
+            "reader should observe old consistent snapshot before publish, got: {}",
+            snapshot_during.source
+        );
+
+        let snapshot_after = server
+            .document_snapshot(&uri)
+            .await
+            .expect("expected document snapshot after publish");
+        assert!(
+            snapshot_after.source.contains("fn baz"),
+            "reader should observe new snapshot after publish, got: {}",
+            snapshot_after.source
         );
 
         drain.abort();
