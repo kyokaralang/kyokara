@@ -270,6 +270,91 @@ fn pick(c: Color) -> Int {
     );
 }
 
+#[test]
+fn add_missing_match_cases_empty_nested_match_uses_context_indent() {
+    let src = r#"type Color = Red | Green | Blue
+fn pick(c: Color) -> Int {
+    if (1 == 1) {
+        match (c) {
+        }
+    } else {
+        0
+    }
+}"#;
+    let result = kyokara_hir::check_file(src);
+
+    let (_, span) = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .find(|(d, _)| matches!(d, kyokara_hir::TyDiagnosticData::MissingMatchArms { .. }))
+        .expect("expected MissingMatchArms diagnostic");
+
+    let offset: u32 = span.range.start().into();
+    let action = RefactorAction::AddMissingMatchCases {
+        offset,
+        target_file: None,
+    };
+    let refactor = kyokara_refactor::refactor(&result, file_id(), action).unwrap();
+    let new_source = apply_edits(src, &refactor.edits);
+
+    assert!(
+        new_source.contains("match (c) {\n            Red => _"),
+        "empty nested match should indent inserted arms relative to the match line: {new_source}"
+    );
+    assert!(
+        new_source.contains("\n            Green => _"),
+        "Green arm should use the derived nested indent: {new_source}"
+    );
+    assert!(
+        new_source.contains("\n            Blue => _"),
+        "Blue arm should use the derived nested indent: {new_source}"
+    );
+    assert!(
+        !new_source.contains("\n        Red => _"),
+        "fallback should not collapse to the old fixed 8-space indent: {new_source}"
+    );
+}
+
+#[test]
+fn add_missing_match_cases_inline_nested_match_uses_context_indent() {
+    let src = r#"type Color = Red | Green | Blue
+fn pick(c: Color) -> Int {
+    {
+        match (c) { Red => 1 }
+    }
+}"#;
+    let result = kyokara_hir::check_file(src);
+
+    let (_, span) = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .find(|(d, _)| matches!(d, kyokara_hir::TyDiagnosticData::MissingMatchArms { .. }))
+        .expect("expected MissingMatchArms diagnostic");
+
+    let offset: u32 = span.range.start().into();
+    let action = RefactorAction::AddMissingMatchCases {
+        offset,
+        target_file: None,
+    };
+    let refactor = kyokara_refactor::refactor(&result, file_id(), action).unwrap();
+    let new_source = apply_edits(src, &refactor.edits);
+
+    assert!(
+        new_source.contains("Red => 1\n            Green => _"),
+        "inline nested match should derive multiline arm indent from the match context: {new_source}"
+    );
+    assert!(
+        new_source.contains("\n            Blue => _\n        }"),
+        "inline nested match should keep the closing brace aligned with the match line: {new_source}"
+    );
+    assert!(
+        !new_source.contains("\n        Green => _"),
+        "inline fallback should not use the old fixed 8-space indent: {new_source}"
+    );
+}
+
 // ── Quickfix: add missing capability ────────────────────────────────
 
 #[test]

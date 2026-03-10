@@ -128,12 +128,13 @@ fn build_match_edit_from_node(
     if let Some(arm_list) = match_expr.arm_list() {
         let last_arm = arm_list.arms().last();
 
-        // Determine indentation from existing arms.
-        let indent = if let Some(ref arm) = last_arm {
-            extract_indent(arm.syntax())
-        } else {
-            "        ".to_string()
-        };
+        // Prefer an existing arm's indentation, but derive the fallback from
+        // the surrounding match context instead of guessing a fixed width.
+        let indent = last_arm
+            .as_ref()
+            .and_then(|arm| extract_indent(arm.syntax()))
+            .unwrap_or_else(|| infer_child_indent(match_expr.syntax()));
+        let closing_indent = line_indent(match_expr.syntax());
 
         // Build new arms text.
         let new_arms: String = missing
@@ -150,14 +151,23 @@ fn build_match_edit_from_node(
             arm_list.syntax().text_range().start() + TextSize::from(1)
         };
 
-        let insert_range = TextRange::new(insert_offset, insert_offset);
+        let (insert_range, trailing_closing_indent) =
+            if needs_closing_brace_newline(arm_list.syntax(), insert_offset) {
+                let close_brace_start = arm_list.syntax().text_range().end() - TextSize::from(1);
+                (
+                    TextRange::new(insert_offset, close_brace_start),
+                    format!("\n{closing_indent}"),
+                )
+            } else {
+                (TextRange::new(insert_offset, insert_offset), String::new())
+            };
 
         return Ok(RefactorResult {
             description: format!("add missing match arms: {}", missing.join(", ")),
             edits: vec![TextEdit {
                 file_id,
                 range: insert_range,
-                new_text: format!("\n{new_arms}"),
+                new_text: format!("\n{new_arms}{trailing_closing_indent}"),
             }],
             verified: false,
         });
@@ -311,19 +321,86 @@ fn build_capability_edit(
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-/// Extract leading whitespace (indentation) for a syntax node.
-fn extract_indent(node: &SyntaxNode) -> String {
-    // Walk backwards from node start to find the line's leading whitespace.
-    let offset = node.text_range().start();
-    if let Some(root) = node.ancestors().last() {
-        let full_text = root.text().to_string();
-        let pos: usize = offset.into();
-        // Find the start of the line.
-        let line_start = full_text[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let indent = &full_text[line_start..pos];
-        if indent.chars().all(|c| c == ' ' || c == '\t') {
-            return indent.to_string();
+/// Extract exact leading whitespace for a node when it already starts a line.
+fn extract_indent(node: &SyntaxNode) -> Option<String> {
+    let root = node.ancestors().last()?;
+    let full_text = root.text().to_string();
+    let pos: usize = node.text_range().start().into();
+    let line_start = full_text[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let indent = &full_text[line_start..pos];
+    indent
+        .chars()
+        .all(is_indent_char)
+        .then(|| indent.to_string())
+}
+
+/// Derive child indentation from the node's line indentation and the nearest
+/// enclosing indentation step found in surrounding source text.
+fn infer_child_indent(node: &SyntaxNode) -> String {
+    let Some(root) = node.ancestors().last() else {
+        return "    ".to_string();
+    };
+
+    let full_text = root.text().to_string();
+    let base_indent = line_indent_at(&full_text, node.text_range().start().into());
+    let indent_unit = infer_indent_unit(node, &full_text, &base_indent)
+        .or_else(|| infer_indent_unit_from_source(&full_text))
+        .unwrap_or_else(|| "    ".to_string());
+
+    format!("{base_indent}{indent_unit}")
+}
+
+fn infer_indent_unit(node: &SyntaxNode, full_text: &str, base_indent: &str) -> Option<String> {
+    node.ancestors().skip(1).find_map(|ancestor| {
+        let ancestor_indent = line_indent_at(full_text, ancestor.text_range().start().into());
+        if ancestor_indent.len() >= base_indent.len() || !base_indent.starts_with(&ancestor_indent)
+        {
+            return None;
         }
-    }
-    "        ".to_string()
+
+        let unit = &base_indent[ancestor_indent.len()..];
+        (!unit.is_empty() && unit.chars().all(is_indent_char)).then(|| unit.to_string())
+    })
+}
+
+fn infer_indent_unit_from_source(full_text: &str) -> Option<String> {
+    full_text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            line.chars()
+                .take_while(|c| is_indent_char(*c))
+                .collect::<String>()
+        })
+        .filter(|indent| !indent.is_empty())
+        .min_by_key(|indent| indent.len())
+}
+
+fn line_indent(node: &SyntaxNode) -> String {
+    let Some(root) = node.ancestors().last() else {
+        return String::new();
+    };
+    line_indent_at(&root.text().to_string(), node.text_range().start().into())
+}
+
+fn line_indent_at(full_text: &str, pos: usize) -> String {
+    let line_start = full_text[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    full_text[line_start..]
+        .chars()
+        .take_while(|c| is_indent_char(*c))
+        .collect()
+}
+
+fn needs_closing_brace_newline(arm_list: &SyntaxNode, insert_offset: TextSize) -> bool {
+    let Some(root) = arm_list.ancestors().last() else {
+        return false;
+    };
+    let full_text = root.text().to_string();
+    let start: usize = insert_offset.into();
+    let end: usize = arm_list.text_range().end().into();
+    !full_text[start..end].contains('\n')
+}
+
+fn is_indent_char(c: char) -> bool {
+    c == ' ' || c == '\t'
 }
