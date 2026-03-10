@@ -2,6 +2,15 @@
 #![allow(clippy::unwrap_used)]
 
 use kyokara_hir::check_file;
+use kyokara_hir::ItemTree;
+use kyokara_hir_def::name::Name;
+use kyokara_hir_ty::effects::EffectSet;
+use kyokara_hir_ty::ty::Ty;
+use kyokara_intern::Interner;
+use kyokara_kir::KirModule;
+use kyokara_kir::build::KirBuilder;
+use kyokara_kir::function::KirContracts;
+use kyokara_kir::inst::Constant;
 use kyokara_kir::lower::lower_module;
 
 fn instantiate_main(source: &str) -> (wasmtime::Store<()>, wasmtime::Instance) {
@@ -29,6 +38,38 @@ fn instantiate_main(source: &str) -> (wasmtime::Store<()>, wasmtime::Instance) {
     let instance =
         wasmtime::Instance::new(&mut store, &wasm_module, &[]).expect("instantiation failed");
     (store, instance)
+}
+
+fn compile_kir_error(module: &KirModule, item_tree: &ItemTree, interner: &Interner) -> String {
+    kyokara_codegen::compile(module, item_tree, interner)
+        .expect_err("codegen should fail")
+        .to_string()
+}
+
+fn compile_invalid_const_kir_error(constant: Constant) -> String {
+    let mut interner = Interner::new();
+    let main_name = Name::new(&mut interner, "main");
+
+    let mut builder = KirBuilder::new();
+    let entry = builder.new_block(None);
+    builder.switch_to(entry);
+    let value = builder.push_const(constant, Ty::Unit);
+    builder.set_return(value);
+
+    let func = builder.build(
+        main_name,
+        Vec::new(),
+        Ty::Unit,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let mut module = KirModule::new();
+    let fn_id = module.functions.alloc(func);
+    module.entry = Some(fn_id);
+
+    compile_kir_error(&module, &ItemTree::default(), &interner)
 }
 
 /// Compile source to WASM, run `main()` via wasmtime, return the i64 result.
@@ -101,6 +142,24 @@ fn test_constants() {
         ("fn main() -> Bool { true }", 1),
         ("fn main() -> Bool { false }", 0),
     ]);
+}
+
+#[test]
+fn test_string_constant_is_compile_time_unsupported_instruction() {
+    let err = compile_invalid_const_kir_error(Constant::String("hi".into()));
+    assert!(
+        err.contains("unsupported instruction: String constant (deferred)"),
+        "unexpected codegen error: {err}"
+    );
+}
+
+#[test]
+fn test_char_constant_is_compile_time_unsupported_instruction() {
+    let err = compile_invalid_const_kir_error(Constant::Char('x'));
+    assert!(
+        err.contains("unsupported instruction: Char constant (deferred)"),
+        "unexpected codegen error: {err}"
+    );
 }
 
 // ── Arithmetic ────────────────────────────────────────────────────
