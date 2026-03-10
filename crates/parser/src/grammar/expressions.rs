@@ -126,7 +126,7 @@ fn primary(p: &mut Parser<'_>) -> Option<CompletedMarker> {
         ReturnKw => return_expr(p),
         OldKw => old_expr(p),
         FnKw => lambda_expr(p),
-        Ident => ident_or_path_or_record(p),
+        _ if p.current().is_identifier_token() => ident_or_path_or_record(p),
         _ if p.current().is_keyword() => {
             p.error_keyword_as_identifier(IdentifierRole::ExpressionName);
             return None;
@@ -149,7 +149,7 @@ fn primary(p: &mut Parser<'_>) -> Option<CompletedMarker> {
 }
 
 fn brace_expr(p: &mut Parser<'_>) -> CompletedMarker {
-    if p.nth(1) == Ident && p.nth(2) == Colon {
+    if p.nth(1).is_identifier_token() && p.nth(2) == Colon {
         let m = p.open();
         record_expr_field_list(p);
         m.complete(p, RecordExpr)
@@ -503,7 +503,6 @@ fn can_start_expr(kind: crate::SyntaxKind) -> bool {
             | CharLiteral
             | TrueKw
             | FalseKw
-            | Ident
             | Underscore
             | LParen
             | LBrace
@@ -513,6 +512,7 @@ fn can_start_expr(kind: crate::SyntaxKind) -> bool {
             | OldKw
             | FnKw
     ) || kind.is_unary_prefix_operator()
+        || kind.is_identifier_token()
 }
 
 fn can_start_expr_or_keyword(kind: crate::SyntaxKind) -> bool {

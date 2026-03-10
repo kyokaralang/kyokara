@@ -77,7 +77,7 @@ fn find_symbol_references(
         let Some(token) = element.into_token() else {
             continue;
         };
-        if token.kind() != SyntaxKind::Ident || token.text() != name {
+        if !token.kind().is_identifier_token() || token.text() != name {
             continue;
         }
 
@@ -206,7 +206,7 @@ fn find_local_references(
         let Some(token) = element.into_token() else {
             continue;
         };
-        if token.kind() != SyntaxKind::Ident || token.text() != name {
+        if !token.kind().is_identifier_token() || token.text() != name {
             continue;
         }
         let tok_offset = token.text_range().start();

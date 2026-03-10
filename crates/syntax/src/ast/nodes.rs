@@ -44,10 +44,6 @@ macro_rules! define_ast_node {
 define_ast_node!(SourceFile, SourceFile);
 
 impl SourceFile {
-    pub fn module_decl(&self) -> Option<ModuleDecl> {
-        support::child(&self.syntax)
-    }
-
     pub fn imports(&self) -> impl Iterator<Item = ImportDecl> + '_ {
         support::children(&self.syntax)
     }
@@ -113,14 +109,6 @@ impl<N: AstNode> Iterator for ChildNodeIter<N> {
     }
 }
 
-define_ast_node!(ModuleDecl, ModuleDecl);
-
-impl ModuleDecl {
-    pub fn path(&self) -> Option<Path> {
-        support::child(&self.syntax)
-    }
-}
-
 define_ast_node!(ImportDecl, ImportDecl);
 
 impl ImportDecl {
@@ -140,12 +128,12 @@ impl HasName for ImportAlias {}
 define_ast_node!(Path, Path);
 
 impl Path {
-    /// All `Ident` tokens forming this path's segments.
+    /// All identifier-like tokens forming this path's segments.
     pub fn segments(&self) -> impl Iterator<Item = SyntaxToken> + '_ {
         self.syntax
             .children_with_tokens()
             .filter_map(|it| it.into_token())
-            .filter(|tok| tok.kind() == SyntaxKind::Ident)
+            .filter(|tok| tok.kind().is_identifier_token())
     }
 }
 
@@ -275,11 +263,11 @@ impl FnDef {
         if !has_dot {
             return None;
         }
-        // The first Ident token is the receiver type name.
+        // The first identifier-like token is the receiver type name.
         self.syntax
             .children_with_tokens()
             .filter_map(|it| it.into_token())
-            .find(|tok| tok.kind() == SyntaxKind::Ident)
+            .find(|tok| tok.kind().is_identifier_token())
     }
 
     /// For method definitions (`fn Type.method(...)`), returns the method
@@ -294,11 +282,11 @@ impl FnDef {
         if !has_dot {
             return None;
         }
-        // The second Ident token (after the dot) is the method name.
+        // The second identifier-like token (after the dot) is the method name.
         self.syntax
             .children_with_tokens()
             .filter_map(|it| it.into_token())
-            .filter(|tok| tok.kind() == SyntaxKind::Ident)
+            .filter(|tok| tok.kind().is_identifier_token())
             .nth(1)
     }
 }
@@ -853,11 +841,11 @@ impl FieldExpr {
     }
 
     pub fn field_token(&self) -> Option<SyntaxToken> {
-        // The field name is the last Ident token (after the dot).
+        // The field name is the last identifier-like token (after the dot).
         self.syntax
             .children_with_tokens()
             .filter_map(|it| it.into_token())
-            .filter(|tok| tok.kind() == SyntaxKind::Ident)
+            .filter(|tok| tok.kind().is_identifier_token())
             .last()
     }
 }
@@ -1240,7 +1228,7 @@ impl RecordPat {
         self.syntax
             .children_with_tokens()
             .filter_map(|it| it.into_token())
-            .filter(|tok| tok.kind() == SyntaxKind::Ident)
+            .filter(|tok| tok.kind().is_identifier_token())
     }
 }
 

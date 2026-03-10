@@ -475,107 +475,45 @@ fn main() -> Int {
 }
 
 #[test]
-fn check_keyword_local_binding_reports_single_targeted_parse_error() {
-    let src = "fn main() -> Int { let module = 1\n1 }";
-    let output = check(src, "test.ky");
-    let parse_diags: Vec<_> = output
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == "E0100")
-        .collect();
-    assert_eq!(
-        parse_diags.len(),
-        1,
-        "expected one targeted parse diagnostic, got: {:?}",
-        output.diagnostics
-    );
-    assert!(
-        parse_diags[0]
-            .message
-            .contains("reserved keyword `module` cannot be used as a local binding name"),
-        "expected targeted local-binding message, got: {:?}",
-        parse_diags[0]
-    );
-    assert!(
-        output
-            .diagnostics
-            .iter()
-            .all(|d| !d.message.contains("expected Eq")
-                && !d.message.contains("expected expression")),
-        "unexpected cascade diagnostics: {:?}",
-        output.diagnostics
-    );
-    assert_eq!(parse_diags[0].span.start, 23);
-    assert_eq!(parse_diags[0].span.end, 29);
+fn check_module_identifier_is_allowed_in_local_name_positions() {
+    let src = r#"
+fn module(module: Int) -> Int {
+  let module = module
+  for (module in 0..<1) { module }
+  let f = fn(module: Int) => module
+  f(module)
 }
-
-#[test]
-fn check_keyword_bare_expression_reports_single_targeted_parse_error() {
-    let src = "fn main() -> Int { module }";
+"#;
     let output = check(src, "test.ky");
-    let parse_diags: Vec<_> = output
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == "E0100")
-        .collect();
-    assert_eq!(
-        parse_diags.len(),
-        1,
-        "expected one targeted parse diagnostic, got: {:?}",
-        output.diagnostics
-    );
     assert!(
-        parse_diags[0]
-            .message
-            .contains("reserved keyword `module` cannot be used as an expression name"),
-        "expected targeted expression-name message, got: {:?}",
-        parse_diags[0]
-    );
-    assert!(
-        output
-            .diagnostics
-            .iter()
-            .all(|d| !d.message.contains("expected expression")),
-        "unexpected cascade diagnostics: {:?}",
+        output.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
         output.diagnostics
     );
 }
 
 #[test]
-fn check_keyword_return_expression_reports_single_targeted_parse_error() {
-    let src = "fn main() -> Int { return module }";
+fn check_module_identifier_is_allowed_in_expression_and_type_positions() {
+    let src = r#"
+type Wrapper<module> = { module: module }
+
+fn main() -> Int {
+  let module = 1
+  let value: Wrapper<Int> = Wrapper { module: module }
+  value.module + module
+}
+"#;
     let output = check(src, "test.ky");
-    let parse_diags: Vec<_> = output
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == "E0100")
-        .collect();
-    assert_eq!(
-        parse_diags.len(),
-        1,
-        "expected one targeted parse diagnostic, got: {:?}",
-        output.diagnostics
-    );
     assert!(
-        parse_diags[0]
-            .message
-            .contains("reserved keyword `module` cannot be used as an expression name"),
-        "expected targeted expression-name message, got: {:?}",
-        parse_diags[0]
-    );
-    assert!(
-        output
-            .diagnostics
-            .iter()
-            .all(|d| !d.message.contains("expected expression")),
-        "unexpected cascade diagnostics: {:?}",
+        output.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
         output.diagnostics
     );
 }
 
 #[test]
-fn check_keyword_for_binder_reports_single_targeted_parse_error() {
-    let src = "fn main() -> Int { for (module in 0..<1) { }\n0 }";
+fn check_top_level_module_decl_reports_single_targeted_parse_error() {
+    let src = "module foo.bar\nimport math\nfn main() -> Int { 0 }";
     let output = check(src, "test.ky");
     let parse_diags: Vec<_> = output
         .diagnostics
@@ -591,42 +529,8 @@ fn check_keyword_for_binder_reports_single_targeted_parse_error() {
     assert!(
         parse_diags[0]
             .message
-            .contains("reserved keyword `module` cannot be used as a local binding name"),
-        "expected targeted loop-binder message, got: {:?}",
-        parse_diags[0]
-    );
-    assert!(
-        output
-            .diagnostics
-            .iter()
-            .all(|d| !d.message.contains("for loop requires 'in'")),
-        "unexpected loop-head cascade: {:?}",
-        output.diagnostics
-    );
-    assert_eq!(parse_diags[0].span.start, 24);
-    assert_eq!(parse_diags[0].span.end, 30);
-}
-
-#[test]
-fn check_keyword_lambda_param_reports_single_targeted_parse_error() {
-    let src = "fn main() -> Int { let f = fn(module: Int) => 0\nf(1) }";
-    let output = check(src, "test.ky");
-    let parse_diags: Vec<_> = output
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == "E0100")
-        .collect();
-    assert_eq!(
-        parse_diags.len(),
-        1,
-        "expected one targeted parse diagnostic, got: {:?}",
-        output.diagnostics
-    );
-    assert!(
-        parse_diags[0]
-            .message
-            .contains("reserved keyword `module` cannot be used as a parameter name"),
-        "expected targeted lambda-parameter message, got: {:?}",
+            .contains("unexpected `module` at top level"),
+        "expected top-level module message, got: {:?}",
         parse_diags[0]
     );
     assert!(
@@ -634,12 +538,10 @@ fn check_keyword_lambda_param_reports_single_targeted_parse_error() {
             .diagnostics
             .iter()
             .all(|d| !d.message.contains("expected item")
-                && !d.message.contains("expected FatArrow")),
-        "unexpected lambda cascade diagnostics: {:?}",
+                && !d.message.contains("expected expression")),
+        "unexpected cascade diagnostics: {:?}",
         output.diagnostics
     );
-    assert_eq!(parse_diags[0].span.start, 30);
-    assert_eq!(parse_diags[0].span.end, 36);
 }
 
 #[test]

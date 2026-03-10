@@ -15,14 +15,13 @@ use crate::parser::{CompletedMarker, IdentifierRole, Parser};
 /// Parse a complete source file.
 ///
 /// ```peg
-/// SourceFile <- ModuleDecl? ImportDecl* Item* EOF
+/// SourceFile <- ImportDecl* Item* EOF
 /// ```
 pub(crate) fn source_file(p: &mut Parser<'_>) {
     let m = p.open();
 
-    // Optional module declaration.
-    if p.at(ModuleKw) {
-        items::module_decl(p);
+    while p.at(ModuleKw) {
+        items::recover_invalid_module_decl(p);
     }
 
     // Import declarations.
@@ -32,6 +31,10 @@ pub(crate) fn source_file(p: &mut Parser<'_>) {
 
     // Items until EOF.
     while !p.at_eof() {
+        if p.at(ModuleKw) {
+            items::recover_invalid_module_decl(p);
+            continue;
+        }
         let start_pos = p.token_pos();
         let _ = items::item(p);
         if p.token_pos() == start_pos && !p.at_eof() {

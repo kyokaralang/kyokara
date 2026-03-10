@@ -67,7 +67,7 @@ API/stdlib surface consistency rules are specified in RFC 0001:
 
 ### 2.2 Modules and imports
 
-**Implemented (v0.2):** Convention-based file layout — the file path determines the module path. No explicit `module` declarations needed.
+**Implemented (v0.2):** Convention-based file layout — the file path determines the module path. There is no source-level `module Path` declaration.
 
 ```
 project/

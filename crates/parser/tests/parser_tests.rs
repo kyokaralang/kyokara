@@ -46,13 +46,15 @@ fn empty_source_file() {
 }
 
 #[test]
-fn module_decl() {
-    // module Foo
-    let (events, errors) = parse_tokens(&[ModuleKw, Ident]);
-    assert!(has_no_errors(&errors));
+fn source_file_rejects_top_level_module_decl_without_cascade() {
+    let (events, errors) = parse_tokens(&[ModuleKw, Ident, Dot, Ident, ImportKw, Ident]);
+    assert_eq!(errors.len(), 1, "expected one parse error, got: {errors:?}");
+    assert!(
+        errors[0].message.contains("unexpected `module` at top level"),
+        "expected targeted top-level module diagnostic, got: {errors:?}"
+    );
     assert!(has_node(&events, SourceFile));
-    assert!(has_node(&events, ModuleDecl));
-    assert!(has_node(&events, Path));
+    assert!(has_node(&events, ImportDecl));
 }
 
 #[test]
@@ -106,20 +108,9 @@ fn let_binding_with_type() {
 }
 
 #[test]
-fn let_binding_keyword_name_reports_single_targeted_error() {
-    // let module = 42
+fn let_binding_named_module_parses() {
     let (events, errors) = parse_tokens(&[LetKw, ModuleKw, Eq, IntLiteral]);
-    assert_eq!(
-        errors.len(),
-        1,
-        "expected one targeted keyword diagnostic, got: {errors:?}"
-    );
-    assert!(
-        errors[0]
-            .message
-            .contains("reserved keyword `module` cannot be used as a local binding name"),
-        "expected targeted local-binding message, got: {errors:?}"
-    );
+    assert!(has_no_errors(&errors), "expected no parse errors: {errors:?}");
     assert!(has_node(&events, LetBinding));
 }
 
@@ -522,9 +513,9 @@ fn keyword_identifier_role_grammar_matrix_reports_targeted_messages() {
     let cases = vec![
         Case {
             name: "path segment",
-            tokens: vec![ModuleKw, WhileKw],
+            tokens: vec![ImportKw, WhileKw],
             message: "reserved keyword `while` cannot be used as a path segment",
-            node: ModuleDecl,
+            node: ImportDecl,
         },
         Case {
             name: "import alias",
@@ -1047,20 +1038,10 @@ fn malformed_range_until_reports_single_targeted_error() {
 }
 
 #[test]
-fn range_until_keyword_rhs_reports_targeted_expression_name_error() {
-    // let x = 0..<module
-    let (_events, errors) = parse_tokens(&[LetKw, Ident, Eq, IntLiteral, DotDotLt, ModuleKw]);
-    assert_eq!(
-        errors.len(),
-        1,
-        "expected one targeted keyword diagnostic, got: {errors:?}"
-    );
-    assert!(
-        errors[0]
-            .message
-            .contains("reserved keyword `module` cannot be used as an expression name"),
-        "expected targeted expression-name message, got: {errors:?}"
-    );
+fn range_until_module_rhs_parses() {
+    let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, IntLiteral, DotDotLt, ModuleKw]);
+    assert!(has_no_errors(&errors), "expected no parse errors: {errors:?}");
+    assert!(has_node(&events, BinaryExpr));
 }
 
 #[test]
@@ -1324,40 +1305,18 @@ fn return_expr() {
 }
 
 #[test]
-fn bare_keyword_expression_reports_targeted_error() {
-    // fn foo() { module }
+fn bare_module_expression_parses() {
     let (events, errors) = parse_tokens(&[FnKw, Ident, LParen, RParen, LBrace, ModuleKw, RBrace]);
-    assert_eq!(
-        errors.len(),
-        1,
-        "expected one targeted keyword diagnostic, got: {errors:?}"
-    );
-    assert!(
-        errors[0]
-            .message
-            .contains("reserved keyword `module` cannot be used as an expression name"),
-        "expected targeted expression-name message, got: {errors:?}"
-    );
-    assert!(has_node(&events, BlockExpr));
+    assert!(has_no_errors(&errors), "expected no parse errors: {errors:?}");
+    assert!(has_node(&events, PathExpr));
 }
 
 #[test]
-fn return_keyword_expression_reports_targeted_error() {
-    // fn foo() { return module }
+fn return_module_expression_parses() {
     let (events, errors) = parse_tokens(&[
         FnKw, Ident, LParen, RParen, LBrace, ReturnKw, ModuleKw, RBrace,
     ]);
-    assert_eq!(
-        errors.len(),
-        1,
-        "expected one targeted keyword diagnostic, got: {errors:?}"
-    );
-    assert!(
-        errors[0]
-            .message
-            .contains("reserved keyword `module` cannot be used as an expression name"),
-        "expected targeted expression-name message, got: {errors:?}"
-    );
+    assert!(has_no_errors(&errors), "expected no parse errors: {errors:?}");
     assert!(has_node(&events, ReturnExpr));
 }
 

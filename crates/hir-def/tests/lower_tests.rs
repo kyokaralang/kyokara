@@ -82,13 +82,12 @@ fn collect_adt_with_constructors() {
 }
 
 #[test]
-fn collect_module_and_imports() {
-    let root = parse_source("module Foo\nimport Bar.Baz\nimport Qux as Q");
+fn collect_imports() {
+    let root = parse_source("import Bar.Baz\nimport Qux as Q");
     let sf = SourceFile::cast(root).unwrap();
     let mut interner = Interner::new();
     let result = collect_item_tree(&sf, file_id(), &mut interner);
 
-    assert!(result.tree.module_name.is_some());
     assert_eq!(result.tree.imports.len(), 2);
     assert!(result.tree.imports[1].alias.is_some());
 }

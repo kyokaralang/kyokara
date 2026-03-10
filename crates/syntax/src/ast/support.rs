@@ -24,7 +24,10 @@ pub fn token(parent: &SyntaxNode, kind: SyntaxKind) -> Option<SyntaxToken> {
         .find(|it| it.kind() == kind)
 }
 
-/// Find the first `Ident` token in the node.
+/// Find the first identifier-like token in the node.
 pub fn name_token(parent: &SyntaxNode) -> Option<SyntaxToken> {
-    token(parent, SyntaxKind::Ident)
+    parent
+        .children_with_tokens()
+        .filter_map(|it| it.into_token())
+        .find(|it| it.kind().is_identifier_token())
 }
