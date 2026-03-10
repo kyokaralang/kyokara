@@ -3,6 +3,7 @@
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::collections::hash_map::DefaultHasher;
+use std::env;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
@@ -33,6 +34,9 @@ use crate::value::{
     FnValue, MapKey, MapValue, MutableMapValue, MutablePriorityQueueValue, MutableSetValue,
     PriorityQueueDirection, PriorityQueueEntry, SeqPlan, SeqSource, SetValue, Value,
 };
+
+const DEFAULT_MAX_CALL_DEPTH: usize = 1024;
+const MAX_CALL_DEPTH_ENV: &str = "KYOKARA_INTERPRETER_MAX_CALL_DEPTH";
 
 /// Tree-walking interpreter state.
 pub struct Interpreter {
@@ -76,6 +80,10 @@ pub struct Interpreter {
     consuming_local: Option<LocalSlotRef>,
     /// Top-level immutable let bindings are materialized before user code runs.
     top_level_lets_initialized: bool,
+    /// Current user-visible function/lambda call depth.
+    call_depth: usize,
+    /// Maximum allowed user-visible function/lambda call depth.
+    max_call_depth: usize,
 }
 
 /// Used to implement early return from functions.
@@ -276,6 +284,14 @@ macro_rules! eval_propagate_shared {
 }
 
 impl Interpreter {
+    fn configured_max_call_depth() -> usize {
+        env::var(MAX_CALL_DEPTH_ENV)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_MAX_CALL_DEPTH)
+    }
+
     fn resolve_core_variant(
         item_tree: &ItemTree,
         module_scope: &ModuleScope,
@@ -448,7 +464,24 @@ impl Interpreter {
             current_body: None,
             consuming_local: None,
             top_level_lets_initialized: false,
+            call_depth: 0,
+            max_call_depth: Self::configured_max_call_depth(),
         }
+    }
+
+    fn with_call_frame<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> Result<T, RuntimeError>,
+    ) -> Result<T, RuntimeError> {
+        if self.call_depth >= self.max_call_depth {
+            return Err(RuntimeError::RecursionLimitExceeded {
+                limit: self.max_call_depth,
+            });
+        }
+        self.call_depth += 1;
+        let result = f(self);
+        self.call_depth -= 1;
+        result
     }
 
     fn expr_uses_outer_local_capture(&mut self, body: &Body, expr_idx: ExprIdx) -> bool {
@@ -2277,10 +2310,12 @@ impl Interpreter {
 
     /// Call a user-defined function by index.
     fn call_fn(&mut self, fn_idx: FnItemIdx, args: Args) -> Result<Value, RuntimeError> {
-        let prev_fn = self.current_fn.replace(fn_idx);
-        let result = self.call_fn_impl(fn_idx, args);
-        self.current_fn = prev_fn;
-        result
+        self.with_call_frame(|this| {
+            let prev_fn = this.current_fn.replace(fn_idx);
+            let result = this.call_fn_impl(fn_idx, args);
+            this.current_fn = prev_fn;
+            result
+        })
     }
 
     fn eval_fn_body_value(&mut self, body: &Body) -> Result<Value, RuntimeError> {
@@ -3787,19 +3822,21 @@ impl Interpreter {
                 body,
                 env: captured_env,
             } => {
-                self.ensure_arity("lambda", params.len(), args.len())?;
-                let mut env = captured_env.clone();
-                env.push_scope();
-                let prev_body = self.current_body.replace(body.clone());
-                let result = (|| -> Result<Value, RuntimeError> {
-                    for (pat_idx, val) in params.iter().zip(args) {
-                        self.bind_pat(body, *pat_idx, &val, &mut env)?;
-                    }
-                    let result = self.eval_terminal_expr(&mut env, body, *body_expr)?;
-                    Ok(result.into_value())
-                })();
-                self.current_body = prev_body;
-                result
+                self.with_call_frame(|this| {
+                    this.ensure_arity("lambda", params.len(), args.len())?;
+                    let mut env = captured_env.clone();
+                    env.push_scope();
+                    let prev_body = this.current_body.replace(body.clone());
+                    let result = (|| -> Result<Value, RuntimeError> {
+                        for (pat_idx, val) in params.iter().zip(args) {
+                            this.bind_pat(body, *pat_idx, &val, &mut env)?;
+                        }
+                        let result = this.eval_terminal_expr(&mut env, body, *body_expr)?;
+                        Ok(result.into_value())
+                    })();
+                    this.current_body = prev_body;
+                    result
+                })
             }
             FnValue::Constructor {
                 type_idx,
@@ -3844,19 +3881,21 @@ impl Interpreter {
                     body,
                     env: captured_env,
                 } => {
-                    self.ensure_arity("lambda", params.len(), args.len())?;
-                    let mut env = captured_env;
-                    env.push_scope();
-                    let prev_body = self.current_body.replace(body.clone());
-                    let result = (|| -> Result<Value, RuntimeError> {
-                        for (pat_idx, val) in params.iter().zip(args) {
-                            self.bind_pat(&body, *pat_idx, &val, &mut env)?;
-                        }
-                        let result = self.eval_terminal_expr(&mut env, &body, body_expr)?;
-                        Ok(result.into_value())
-                    })();
-                    self.current_body = prev_body;
-                    result
+                    self.with_call_frame(|this| {
+                        this.ensure_arity("lambda", params.len(), args.len())?;
+                        let mut env = captured_env;
+                        env.push_scope();
+                        let prev_body = this.current_body.replace(body.clone());
+                        let result = (|| -> Result<Value, RuntimeError> {
+                            for (pat_idx, val) in params.iter().zip(args) {
+                                this.bind_pat(&body, *pat_idx, &val, &mut env)?;
+                            }
+                            let result = this.eval_terminal_expr(&mut env, &body, body_expr)?;
+                            Ok(result.into_value())
+                        })();
+                        this.current_body = prev_body;
+                        result
+                    })
                 }
                 FnValue::Constructor {
                     type_idx,
