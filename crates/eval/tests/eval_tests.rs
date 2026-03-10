@@ -2,6 +2,7 @@
 #![allow(clippy::unwrap_used)]
 
 use std::borrow::Cow;
+use std::sync::{Mutex, OnceLock};
 
 use kyokara_eval::manifest::CapabilityManifest;
 use kyokara_eval::value::Value;
@@ -34,6 +35,42 @@ fn run_err(source: &str) -> String {
         Ok(result) => panic!("expected error, got {:?}", result.value),
         Err(e) => e.to_string(),
     }
+}
+
+fn recursion_limit_env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+struct RecursionLimitEnvGuard {
+    previous: Option<String>,
+}
+
+impl Drop for RecursionLimitEnvGuard {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => unsafe {
+                std::env::set_var("KYOKARA_INTERPRETER_MAX_CALL_DEPTH", value)
+            },
+            None => unsafe { std::env::remove_var("KYOKARA_INTERPRETER_MAX_CALL_DEPTH") },
+        }
+    }
+}
+
+fn run_err_with_call_depth_limit(source: &str, limit: usize) -> String {
+    let _lock = recursion_limit_env_lock().lock().unwrap();
+    let previous = std::env::var("KYOKARA_INTERPRETER_MAX_CALL_DEPTH").ok();
+    let _guard = RecursionLimitEnvGuard { previous };
+    unsafe { std::env::set_var("KYOKARA_INTERPRETER_MAX_CALL_DEPTH", limit.to_string()) };
+    run_err(source)
+}
+
+fn run_ok_with_call_depth_limit(source: &str, limit: usize) -> Value {
+    let _lock = recursion_limit_env_lock().lock().unwrap();
+    let previous = std::env::var("KYOKARA_INTERPRETER_MAX_CALL_DEPTH").ok();
+    let _guard = RecursionLimitEnvGuard { previous };
+    unsafe { std::env::set_var("KYOKARA_INTERPRETER_MAX_CALL_DEPTH", limit.to_string()) };
+    run_ok(source)
 }
 
 fn check_has_compile_errors(source: &str) -> bool {
@@ -1396,6 +1433,51 @@ fn eval_contract_on_recursive_fn() {
          fn main() -> Int { fact(5) }",
     );
     assert!(matches!(val, Value::Int(120)));
+}
+
+#[test]
+fn eval_direct_recursion_hits_interpreter_recursion_limit() {
+    let err = run_err_with_call_depth_limit(
+        "fn dive(n: Int) -> Int {
+           if (n == 0) { 0 } else { dive(n - 1) }
+         }
+         fn main() -> Int { dive(32) }",
+        16,
+    );
+    assert!(
+        err.contains("recursion limit exceeded"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn eval_finite_recursion_below_limit_still_succeeds() {
+    let val = run_ok_with_call_depth_limit(
+        "fn dive(n: Int) -> Int {
+           if (n == 0) { 0 } else { dive(n - 1) }
+         }
+         fn main() -> Int { dive(8) }",
+        16,
+    );
+    assert!(matches!(val, Value::Int(0)));
+}
+
+#[test]
+fn eval_mutual_recursion_hits_interpreter_recursion_limit() {
+    let err = run_err_with_call_depth_limit(
+        "fn ping(n: Int) -> Int {
+           if (n == 0) { 0 } else { pong(n - 1) }
+         }
+         fn pong(n: Int) -> Int {
+           if (n == 0) { 0 } else { ping(n - 1) }
+         }
+         fn main() -> Int { ping(32) }",
+        16,
+    );
+    assert!(
+        err.contains("recursion limit exceeded"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]

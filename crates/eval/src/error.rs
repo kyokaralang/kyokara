@@ -48,6 +48,9 @@ pub enum RuntimeError {
     #[error("integer overflow")]
     IntegerOverflow,
 
+    #[error("recursion limit exceeded (max call depth: {limit})")]
+    RecursionLimitExceeded { limit: usize },
+
     #[error("arity mismatch for {callee}: expected {expected}, found {actual}")]
     ArityMismatch {
         callee: String,
