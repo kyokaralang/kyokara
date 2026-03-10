@@ -1014,7 +1014,9 @@ impl SetValue {
         if let Ok(primitive) = MapKey::from_value(value) {
             return Ok(match &self.storage {
                 PersistentSetStorage::Primitive(entries) => entries.find_index(&primitive),
-                PersistentSetStorage::Generic(entries) => entries.find_index_with(hash, value, eq)?,
+                PersistentSetStorage::Generic(entries) => {
+                    entries.find_index_with(hash, value, eq)?
+                }
             });
         }
         match &self.storage {
@@ -2042,10 +2044,9 @@ impl BoolListValue {
     fn to_values(&self) -> Vec<Value> {
         let mut out = Vec::with_capacity(self.len);
         for idx in 0..self.len {
-            out.push(Value::Bool(
-                self.get(idx)
-                    .expect("bool list index should stay in bounds while materializing"),
-            ));
+            out.push(Value::Bool(self.get(idx).expect(
+                "bool list index should stay in bounds while materializing",
+            )));
         }
         out
     }
@@ -2227,7 +2228,9 @@ impl MutableListValue {
         let items = self.items.borrow();
         match &*items {
             MutableListStorage::Generic(items) => Rc::as_ptr(items),
-            MutableListStorage::Bool(_) => panic!("current_backing_ptr only applies to generic list storage"),
+            MutableListStorage::Bool(_) => {
+                panic!("current_backing_ptr only applies to generic list storage")
+            }
         }
     }
 
@@ -3327,7 +3330,10 @@ mod tests {
     #[test]
     fn primitive_persistent_map_remove_reinsert_appends_to_end() {
         let mut map = PrimitivePersistentMapValue::new();
-        assert!(map.is_empty(), "new primitive persistent map should start empty");
+        assert!(
+            map.is_empty(),
+            "new primitive persistent map should start empty"
+        );
 
         map.insert(MapKey::String("b".into()), Value::Int(1));
         map.insert(MapKey::String("a".into()), Value::Int(2));
@@ -3353,7 +3359,10 @@ mod tests {
     #[test]
     fn primitive_persistent_set_remove_reinsert_appends_to_end() {
         let mut set = PrimitivePersistentSetValue::new();
-        assert!(set.is_empty(), "new primitive persistent set should start empty");
+        assert!(
+            set.is_empty(),
+            "new primitive persistent set should start empty"
+        );
 
         set.insert(MapKey::String("b".into()));
         set.insert(MapKey::String("a".into()));

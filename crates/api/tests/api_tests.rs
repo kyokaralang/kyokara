@@ -129,7 +129,8 @@ fn check_char_code_surface_typechecks() {
 #[test]
 fn check_char_decimal_digit_surface_typechecks() {
     let output = check(
-        &with_option_variants(r#"fn main() -> Int {
+        &with_option_variants(
+            r#"fn main() -> Int {
     let a = if ('7'.is_decimal_digit()) { 1 } else { 0 }
     let b = match ('7'.to_decimal_digit()) {
         Some(n) => n
@@ -140,7 +141,8 @@ fn check_char_decimal_digit_surface_typechecks() {
         None => 0
     }
     a + b + c
-}"#),
+}"#,
+        ),
         "test.ky",
     );
     assert!(
@@ -1934,7 +1936,10 @@ fn check_project_with_options_from_files(
 #[test]
 fn check_project_imported_function_can_read_its_top_level_let() {
     let output = check_project_from_files(&[
-        ("main.ky", "from util import util\nfn main() -> Int { util() }\n"),
+        (
+            "main.ky",
+            "from util import util\nfn main() -> Int { util() }\n",
+        ),
         ("util.ky", "let off = 1\npub fn util() -> Int { off }\n"),
     ]);
     assert!(
@@ -1948,7 +1953,10 @@ fn check_project_imported_function_can_read_its_top_level_let() {
 fn check_project_with_options_emits_typed_ast_for_multiple_files() {
     let output = check_project_with_options_from_files(
         &[
-            ("main.ky", "from math import add\nfn main() -> Int { add(1, 2) }\n"),
+            (
+                "main.ky",
+                "from math import add\nfn main() -> Int { add(1, 2) }\n",
+            ),
             ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
         ],
         &CheckOptions {
@@ -2322,7 +2330,10 @@ fn project_symbol_id_uniqueness() {
 #[test]
 fn project_symbol_graph_duplicate_fn_defs_use_unique_ids() {
     let output = check_project_from_files(&[
-        ("main.ky", "from math import add\nfn main() -> Int { add(1, 2) }\n"),
+        (
+            "main.ky",
+            "from math import add\nfn main() -> Int { add(1, 2) }\n",
+        ),
         (
             "math.ky",
             "pub fn add(x: Int, y: Int) -> Int { x + y }\npub fn add(x: Int, y: Int) -> Int { x - y }\n",
@@ -2345,7 +2356,10 @@ fn project_symbol_graph_duplicate_fn_defs_use_unique_ids() {
 #[test]
 fn project_call_edges_use_qualified_ids() {
     let output = check_project_from_files(&[
-        ("main.ky", "from math import add\nfn caller() -> Int { add(1, 2) }"),
+        (
+            "main.ky",
+            "from math import add\nfn caller() -> Int { add(1, 2) }",
+        ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
     ]);
     let caller = output
@@ -2737,7 +2751,10 @@ fn transaction_verification_failure_has_structured_spans() {
 #[test]
 fn refactor_project_verified_json_structure() {
     let (_dir, main_path) = write_project(&[
-        ("main.ky", "from math import add\nfn caller() -> Int { add(1, 2) }"),
+        (
+            "main.ky",
+            "from math import add\nfn caller() -> Int { add(1, 2) }",
+        ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
     ]);
     let action = kyokara_refactor::RefactorAction::RenameSymbol {
@@ -2883,7 +2900,10 @@ fn api_refactor_project_io_error_surfaces_in_dto() {
     // A valid project refactor should succeed — regression test that
     // filesystem operations work and don't silently fail.
     let (_dir, main_path) = write_project(&[
-        ("main.ky", "from math import add\nfn caller() -> Int { add(1, 2) }"),
+        (
+            "main.ky",
+            "from math import add\nfn caller() -> Int { add(1, 2) }",
+        ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
     ]);
     let action = kyokara_refactor::RefactorAction::RenameSymbol {
@@ -3000,7 +3020,10 @@ fn check_project_aliased_synthetic_collections_import_activates_alias() {
 #[test]
 fn check_project_reports_ambiguous_import_last_segment() {
     let output = check_project_from_files(&[
-        ("main.ky", "import math\nfn main() -> Int { math.value() }\n"),
+        (
+            "main.ky",
+            "import math\nfn main() -> Int { math.value() }\n",
+        ),
         ("a/math.ky", "pub fn value() -> Int { 1 }\n"),
         ("b/math.ky", "pub fn value() -> Int { 2 }\n"),
     ]);
@@ -3020,7 +3043,10 @@ fn check_project_reports_ambiguous_import_last_segment() {
 fn check_project_qualified_import_resolves_duplicate_leaf_modules() {
     // `import a.math` should resolve exactly `a/math.ky` even when `b/math.ky` exists.
     let output = check_project_from_files(&[
-        ("main.ky", "import a.math\nfn main() -> Int { math.value() }\n"),
+        (
+            "main.ky",
+            "import a.math\nfn main() -> Int { math.value() }\n",
+        ),
         ("a/math.ky", "pub fn value() -> Int { 1 }\n"),
         ("b/math.ky", "pub fn value() -> Int { 2 }\n"),
     ]);
@@ -3040,7 +3066,10 @@ fn check_project_qualified_import_resolves_duplicate_leaf_modules() {
 fn check_project_qualified_import_missing_path_does_not_match_by_leaf() {
     // `import c.math` should not fall back to any `*.math` leaf modules.
     let output = check_project_from_files(&[
-        ("main.ky", "import c.math\nfn main() -> Int { math.value() }\n"),
+        (
+            "main.ky",
+            "import c.math\nfn main() -> Int { math.value() }\n",
+        ),
         ("a/math.ky", "pub fn value() -> Int { 1 }\n"),
         ("b/math.ky", "pub fn value() -> Int { 2 }\n"),
     ]);
@@ -3086,7 +3115,8 @@ fn check_project_lowering_diagnostic_has_real_file_path() {
 #[test]
 fn constructor_pattern_binding_is_in_scope() {
     // `Some(x) => x` should not produce "unresolved name x".
-    let src = &with_option_variants("fn main() -> Int { match (Some(1)) { Some(x) => x, None => 0 } }");
+    let src =
+        &with_option_variants("fn main() -> Int { match (Some(1)) { Some(x) => x, None => 0 } }");
     let output = check(src, "test.ky");
     let unresolved: Vec<_> = output
         .diagnostics
@@ -3680,7 +3710,10 @@ fn let_constructor_pattern_bindings_in_scope() {
 fn project_import_collision_produces_diagnostic() {
     // Two modules export `pub fn foo()` — importing both should produce a collision diagnostic.
     let output = check_project_from_files(&[
-        ("main.ky", "from a import foo\nfrom b import foo\nfn main() -> Int { foo() }"),
+        (
+            "main.ky",
+            "from a import foo\nfrom b import foo\nfn main() -> Int { foo() }",
+        ),
         ("a.ky", "pub fn foo() -> Int { 1 }"),
         ("b.ky", "pub fn foo() -> Int { 2 }"),
     ]);
@@ -3708,7 +3741,10 @@ fn project_import_collision_produces_diagnostic() {
 #[test]
 fn project_import_collision_does_not_misattribute_call_edge_to_specific_module() {
     let output = check_project_from_files(&[
-        ("main.ky", "from a import foo\nfrom b import foo\nfn main() -> Int { foo() }"),
+        (
+            "main.ky",
+            "from a import foo\nfrom b import foo\nfn main() -> Int { foo() }",
+        ),
         ("a.ky", "pub fn foo() -> Int { 1 }"),
         ("b.ky", "pub fn foo() -> Int { 2 }"),
     ]);
@@ -4792,7 +4828,10 @@ fn project_metamorphic_local_alpha_rename_preserves_edges_in_entry_and_imported_
 #[test]
 fn project_metamorphic_nested_block_shadow_preserves_outer_import_attribution() {
     let original = [
-        ("main.ky", "from math import add\nfn main() -> Int { add(1, 2) }\n"),
+        (
+            "main.ky",
+            "from math import add\nfn main() -> Int { add(1, 2) }\n",
+        ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
     ];
     let transformed = [
@@ -5094,7 +5133,8 @@ fn check_seq_any_all_find_canonical_surface_has_no_diagnostics() {
 #[test]
 fn check_seq_scan_unfold_int_pow_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
-        &with_option_variants(r#"fn main() -> Int {
+        &with_option_variants(
+            r#"fn main() -> Int {
             let a = (1..<4).scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
             let b = (0).unfold(fn(state: Int) =>
                 if (state < 3) {
@@ -5104,7 +5144,8 @@ fn check_seq_scan_unfold_int_pow_canonical_surface_has_no_diagnostics() {
                 }
             ).to_list()
             a.len() + b.len() + 2.pow(10)
-        }"#),
+        }"#,
+        ),
         "seq scan/unfold + int.pow canonical surface",
     );
 }
@@ -5112,7 +5153,8 @@ fn check_seq_scan_unfold_int_pow_canonical_surface_has_no_diagnostics() {
 #[test]
 fn check_seq_unfold_accepts_named_record_alias_payload() {
     assert_check_no_diagnostics(
-        &with_option_variants(r#"type PickStep = { value: Int, state: Int }
+        &with_option_variants(
+            r#"type PickStep = { value: Int, state: Int }
 
         fn main() -> Int {
             (0).unfold(fn(state: Int) =>
@@ -5122,7 +5164,8 @@ fn check_seq_unfold_accepts_named_record_alias_payload() {
                     None
                 }
             ).count()
-        }"#),
+        }"#,
+        ),
         "seq unfold accepts named record payload alias",
     );
 }
@@ -5335,7 +5378,8 @@ fn main() -> String { h.md5("abc") }"#,
 #[test]
 fn check_option_result_combinator_parity_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
-        &with_core_variants(r#"fn main() -> Int {
+        &with_core_variants(
+            r#"fn main() -> Int {
             let o0 = collections.List.new().head().unwrap_or(1)
             let o1 = collections.List.new().push(41).head().map_or(0, fn(n: Int) => n + 1)
             let o2 = collections.List.new().push(41).head().map(fn(n: Int) => n + 1).unwrap_or(0)
@@ -5347,7 +5391,8 @@ fn check_option_result_combinator_parity_canonical_surface_has_no_diagnostics() 
                 Err(e) => e
             }
             o0 + o1 + o2 + o3 + r1 + r2 + r3
-        }"#),
+        }"#,
+        ),
         "option/result combinator parity canonical surface",
     );
 }
@@ -6029,7 +6074,8 @@ fn check_mutable_set_derived_hash_eq_element_has_no_set_diagnostic() {
 #[test]
 fn check_collections_mutable_priority_queue_constructor_surface_has_no_diagnostics_rfc_0012() {
     assert_check_no_diagnostics(
-        &with_option_variants(r#"import collections
+        &with_option_variants(
+            r#"import collections
 
 fn main() -> Int {
     let pq: MutablePriorityQueue<Int, String> = collections.MutablePriorityQueue.new_min()
@@ -6039,7 +6085,8 @@ fn main() -> Int {
         Some(item) => item.priority + pq.len()
         None => 0
     }
-}"#),
+}"#,
+        ),
         "collections.MutablePriorityQueue constructor canonical surface",
     );
 }
@@ -6048,7 +6095,8 @@ fn main() -> Int {
 fn check_collections_mutable_priority_queue_alias_constructor_surface_has_no_diagnostics_rfc_0012()
 {
     assert_check_no_diagnostics(
-        &with_option_variants(r#"import collections as c
+        &with_option_variants(
+            r#"import collections as c
 
 fn main() -> Int {
     let pq: MutablePriorityQueue<Int, String> = c.MutablePriorityQueue.new_max()
@@ -6058,7 +6106,8 @@ fn main() -> Int {
         Some(item) => item.priority
         None => 0
     }
-}"#),
+}"#,
+        ),
         "collections.MutablePriorityQueue alias constructor canonical surface",
     );
 }
@@ -6240,7 +6289,8 @@ fn main() -> Unit {
 #[test]
 fn check_opaque_traversal_surface_has_no_diagnostics_rfc_0003() {
     assert_check_no_diagnostics(
-        &with_option_variants(r#"type Seed = { x: Int }
+        &with_option_variants(
+            r#"type Seed = { x: Int }
 
 fn main() -> Int {
     let a = (0..<5).count()
@@ -6259,7 +6309,8 @@ fn main() -> Int {
         }
     ).count()
     a + b + c
-}"#),
+}"#,
+        ),
         "opaque traversal canonical surface",
     );
 }
@@ -6334,7 +6385,8 @@ fn main() -> Int {
 #[test]
 fn check_deque_and_list_index_update_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
-        &with_option_variants(r#"import collections
+        &with_option_variants(
+            r#"import collections
 
 fn main() -> Int {
             let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
@@ -6346,7 +6398,8 @@ fn main() -> Int {
             let xs = collections.List.new().push(10).push(20).set(1, 99)
             let ys = xs.update(0, fn(n: Int) => n + 1)
             ys.get(0).unwrap_or(0) + ys.get(1).unwrap_or(0) + q1.len()
-        }"#),
+        }"#,
+        ),
         "deque + list set/update canonical surface",
     );
 }
@@ -6354,7 +6407,8 @@ fn main() -> Int {
 #[test]
 fn check_deque_pop_back_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
-        &with_option_variants(r#"import collections
+        &with_option_variants(
+            r#"import collections
 
 fn main() -> Int {
     let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
@@ -6365,7 +6419,8 @@ fn main() -> Int {
         }
         None => -1
     }
-}"#),
+}"#,
+        ),
         "deque pop_back canonical surface",
     );
 }

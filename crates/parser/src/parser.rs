@@ -3,10 +3,10 @@
 //! Provides [`Parser`], [`Marker`], and [`CompletedMarker`] — the core
 //! API used by grammar modules to build the event stream.
 
+use crate::SyntaxKind;
 use crate::event::Event;
 use crate::input::Input;
 use crate::token_set::TokenSet;
-use crate::SyntaxKind;
 
 /// A parse error message with location info.
 #[derive(Debug, Clone, PartialEq, Eq)]

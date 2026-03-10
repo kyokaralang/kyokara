@@ -27,9 +27,17 @@ impl CallArgBinding {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CallFamilySelection<T> {
-    Selected { candidate: T, binding: CallArgBinding },
-    InvalidShape { errors: Vec<CallShapeError> },
-    ArgCountMismatch { expected: Vec<usize>, actual: usize },
+    Selected {
+        candidate: T,
+        binding: CallArgBinding,
+    },
+    InvalidShape {
+        errors: Vec<CallShapeError>,
+    },
+    ArgCountMismatch {
+        expected: Vec<usize>,
+        actual: usize,
+    },
     Ambiguous,
 }
 
@@ -62,7 +70,8 @@ pub fn bind_call_args_to_params(args: &[CallArg], params: &[FnParam]) -> CallArg
                     suppress_missing_args = true;
                     continue;
                 }
-                while next_pos < binding.param_to_arg.len() && binding.param_to_arg[next_pos].is_some()
+                while next_pos < binding.param_to_arg.len()
+                    && binding.param_to_arg[next_pos].is_some()
                 {
                     next_pos += 1;
                 }
@@ -251,7 +260,10 @@ mod tests {
     #[test]
     fn bind_rejects_positional_for_named_only_param() {
         let mut interner = Interner::default();
-        let params = vec![param(&mut interner, "prefix"), named_only_param(&mut interner, "start")];
+        let params = vec![
+            param(&mut interner, "prefix"),
+            named_only_param(&mut interner, "start"),
+        ];
         let binding = bind_call_args_to_params(&[pos(0), pos(1)], &params);
         assert_eq!(
             binding.errors,
@@ -264,11 +276,12 @@ mod tests {
     #[test]
     fn bind_accepts_named_only_param_when_named() {
         let mut interner = Interner::default();
-        let params = vec![param(&mut interner, "prefix"), named_only_param(&mut interner, "start")];
-        let binding = bind_call_args_to_params(
-            &[pos(0), named(&mut interner, "start", 1)],
-            &params,
-        );
+        let params = vec![
+            param(&mut interner, "prefix"),
+            named_only_param(&mut interner, "start"),
+        ];
+        let binding =
+            bind_call_args_to_params(&[pos(0), named(&mut interner, "start", 1)], &params);
         assert!(binding.errors.is_empty(), "{binding:?}");
         assert_eq!(binding.param_to_arg, vec![Some(0), Some(1)]);
     }
@@ -277,14 +290,18 @@ mod tests {
     fn family_selects_by_named_arg_presence() {
         let mut interner = Interner::default();
         let prefix_only = vec![param(&mut interner, "prefix")];
-        let with_offset = vec![param(&mut interner, "prefix"), named_only_param(&mut interner, "start")];
+        let with_offset = vec![
+            param(&mut interner, "prefix"),
+            named_only_param(&mut interner, "start"),
+        ];
         let families = [0usize, 1usize];
         let args = [pos(0), named(&mut interner, "start", 1)];
-        let selection = select_call_family_candidate(&args, &families, |candidate| match candidate {
-            0 => prefix_only.as_slice(),
-            1 => with_offset.as_slice(),
-            _ => unreachable!(),
-        });
+        let selection =
+            select_call_family_candidate(&args, &families, |candidate| match candidate {
+                0 => prefix_only.as_slice(),
+                1 => with_offset.as_slice(),
+                _ => unreachable!(),
+            });
         assert!(matches!(
             selection,
             CallFamilySelection::Selected { candidate: 1, .. }
@@ -295,14 +312,18 @@ mod tests {
     fn family_reports_shape_error_before_family_arity_error() {
         let mut interner = Interner::default();
         let prefix_only = vec![param(&mut interner, "prefix")];
-        let with_offset = vec![param(&mut interner, "prefix"), named_only_param(&mut interner, "start")];
+        let with_offset = vec![
+            param(&mut interner, "prefix"),
+            named_only_param(&mut interner, "start"),
+        ];
         let families = [0usize, 1usize];
         let args = [pos(0), pos(1)];
-        let selection = select_call_family_candidate(&args, &families, |candidate| match candidate {
-            0 => prefix_only.as_slice(),
-            1 => with_offset.as_slice(),
-            _ => unreachable!(),
-        });
+        let selection =
+            select_call_family_candidate(&args, &families, |candidate| match candidate {
+                0 => prefix_only.as_slice(),
+                1 => with_offset.as_slice(),
+                _ => unreachable!(),
+            });
         assert_eq!(
             selection,
             CallFamilySelection::InvalidShape {
@@ -320,11 +341,12 @@ mod tests {
         let one = vec![param(&mut interner, "predicate")];
         let families = [0usize, 1usize];
         let args = [pos(0), pos(1)];
-        let selection = select_call_family_candidate(&args, &families, |candidate| match candidate {
-            0 => zero.as_slice(),
-            1 => one.as_slice(),
-            _ => unreachable!(),
-        });
+        let selection =
+            select_call_family_candidate(&args, &families, |candidate| match candidate {
+                0 => zero.as_slice(),
+                1 => one.as_slice(),
+                _ => unreachable!(),
+            });
         assert_eq!(
             selection,
             CallFamilySelection::ArgCountMismatch {
@@ -347,13 +369,14 @@ mod tests {
         ];
         let families = [0usize, 1usize, 2usize, 3usize];
         let args = [pos(0), pos(1)];
-        let selection = select_call_family_candidate(&args, &families, |candidate| match candidate {
-            0 => zero.as_slice(),
-            1 => one_a.as_slice(),
-            2 => one_b.as_slice(),
-            3 => three.as_slice(),
-            _ => unreachable!(),
-        });
+        let selection =
+            select_call_family_candidate(&args, &families, |candidate| match candidate {
+                0 => zero.as_slice(),
+                1 => one_a.as_slice(),
+                2 => one_b.as_slice(),
+                3 => three.as_slice(),
+                _ => unreachable!(),
+            });
         assert_eq!(
             selection,
             CallFamilySelection::ArgCountMismatch {
@@ -408,8 +431,14 @@ mod tests {
     #[test]
     fn overlap_allows_distinct_named_suffix_shapes() {
         let mut interner = Interner::default();
-        let lhs = vec![param(&mut interner, "prefix"), named_only_param(&mut interner, "start")];
-        let rhs = vec![param(&mut interner, "prefix"), named_only_param(&mut interner, "offset")];
+        let lhs = vec![
+            param(&mut interner, "prefix"),
+            named_only_param(&mut interner, "start"),
+        ];
+        let rhs = vec![
+            param(&mut interner, "prefix"),
+            named_only_param(&mut interner, "offset"),
+        ];
         assert!(!call_shapes_overlap(&lhs, &rhs));
     }
 
@@ -417,7 +446,10 @@ mod tests {
     fn overlap_blocks_positional_and_named_only_same_arity_family() {
         let mut interner = Interner::default();
         let lhs = vec![param(&mut interner, "x"), param(&mut interner, "y")];
-        let rhs = vec![param(&mut interner, "x"), named_only_param(&mut interner, "y")];
+        let rhs = vec![
+            param(&mut interner, "x"),
+            named_only_param(&mut interner, "y"),
+        ];
         assert!(call_shapes_overlap(&lhs, &rhs));
     }
 }

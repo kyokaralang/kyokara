@@ -3,8 +3,8 @@
 
 use kyokara_hir_def::body::lower::lower_body;
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, Literal, Stmt, UnaryOp};
-use kyokara_hir_def::item_tree::{ImportKind, TypeDefKind};
 use kyokara_hir_def::item_tree::lower::collect_item_tree;
+use kyokara_hir_def::item_tree::{ImportKind, TypeDefKind};
 use kyokara_hir_def::pat::Pat;
 use kyokara_intern::Interner;
 use kyokara_span::FileId;
@@ -81,11 +81,18 @@ fn collect_adt_with_constructors() {
     let type_idx = result.tree.types.iter().next().unwrap().0;
     let just = kyokara_hir_def::name::Name::new(&mut interner, "Just");
     let nothing = kyokara_hir_def::name::Name::new(&mut interner, "Nothing");
-    assert!(result.module_scope.type_variants.contains_key(&(type_idx, just)));
-    assert!(result
-        .module_scope
-        .type_variants
-        .contains_key(&(type_idx, nothing)));
+    assert!(
+        result
+            .module_scope
+            .type_variants
+            .contains_key(&(type_idx, just))
+    );
+    assert!(
+        result
+            .module_scope
+            .type_variants
+            .contains_key(&(type_idx, nothing))
+    );
 }
 
 #[test]
@@ -131,7 +138,11 @@ fn collect_trait_impl_and_derive_items() {
 
     let impl_item = &result.tree.impls[result.tree.impls.iter().next().unwrap().0];
     assert_eq!(impl_item.methods.len(), 1);
-    assert!(result.diagnostics.is_empty(), "unexpected diagnostics: {:?}", result.diagnostics);
+    assert!(
+        result.diagnostics.is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics
+    );
 }
 
 #[test]

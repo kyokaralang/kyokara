@@ -246,12 +246,9 @@ pub fn symbol_at_offset_with_scope(
                     .types
                     .iter()
                     .find(|(name, _)| name.resolve(interner) == type_name)
-                && module_scope
-                    .type_variants
-                    .keys()
-                    .any(|(owner, variant)| {
-                        *owner == type_idx && variant.resolve(interner) == field_name
-                    })
+                && module_scope.type_variants.keys().any(|(owner, variant)| {
+                    *owner == type_idx && variant.resolve(interner) == field_name
+                })
             {
                 return SymbolAtPosition::Variant {
                     name: field_name.clone(),

@@ -15,9 +15,9 @@
 //! - Prefix `!` `-` `~`: right_bp 23
 //! - Postfix `?` `.` `()` `[]` : left_bp 25
 
+use crate::SyntaxKind::*;
 use crate::parser::{CompletedMarker, IdentifierRole, Parser};
 use crate::token_set::TokenSet;
-use crate::SyntaxKind::*;
 
 /// Tokens that signal we should stop parsing an expression (recovery).
 const EXPR_RECOVERY: TokenSet = TokenSet::new(&[
@@ -365,7 +365,7 @@ fn match_arm(p: &mut Parser<'_>) {
 fn return_expr(p: &mut Parser<'_>) -> CompletedMarker {
     let m = p.open();
     p.bump(); // return
-              // Parse expression if the next token can start one.
+    // Parse expression if the next token can start one.
     if can_start_expr_or_keyword(p.current()) {
         expr(p);
     }

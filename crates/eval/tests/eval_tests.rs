@@ -216,7 +216,10 @@ fn eval_function_body_can_read_top_level_let() {
 fn eval_imported_module_function_can_read_its_top_level_let() {
     let val = run_project_with_files_manifest_ok(
         &[
-            ("main.ky", "from util import util\nfn main() -> Int { util() }"),
+            (
+                "main.ky",
+                "from util import util\nfn main() -> Int { util() }",
+            ),
             ("util.ky", "let off = 1\npub fn util() -> Int { off }"),
         ],
         None,

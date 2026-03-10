@@ -638,8 +638,7 @@ impl<'a> InferenceCtx<'a> {
     }
 
     fn infer_call(&mut self, callee: ExprIdx, args: &[CallArg]) -> Ty {
-        if let Expr::Path(path) = &self.body.exprs[callee]
-        {
+        if let Expr::Path(path) = &self.body.exprs[callee] {
             if path.is_single() {
                 let name = path.segments[0];
                 if let Some(resolved) = self.body.resolve_name_at(self.module_scope, callee, name)
@@ -1696,8 +1695,7 @@ impl<'a> InferenceCtx<'a> {
                         });
                         for arg in args {
                             match arg {
-                                CallArg::Positional(expr)
-                                | CallArg::Named { value: expr, .. } => {
+                                CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => {
                                     self.infer_expr(*expr, &Expectation::None);
                                 }
                             }
@@ -1706,8 +1704,7 @@ impl<'a> InferenceCtx<'a> {
                     }
                     for (arg, param_ty) in args.iter().zip(params.iter()) {
                         match arg {
-                            CallArg::Positional(expr)
-                            | CallArg::Named { value: expr, .. } => {
+                            CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => {
                                 self.infer_expr(*expr, &Expectation::Has(param_ty.clone()));
                             }
                         }
@@ -1756,7 +1753,8 @@ impl<'a> InferenceCtx<'a> {
         {
             let name = path.segments[0];
 
-            if let Some(&(module_name, type_name)) = self.module_scope.imported_type_namespaces.get(&name)
+            if let Some(&(module_name, type_name)) =
+                self.module_scope.imported_type_namespaces.get(&name)
                 && let Some(&fn_idx) = self.module_scope.synthetic_module_static_methods.get(&(
                     module_name,
                     type_name,
@@ -1785,8 +1783,7 @@ impl<'a> InferenceCtx<'a> {
                         });
                         for arg in args {
                             match arg {
-                                CallArg::Positional(expr)
-                                | CallArg::Named { value: expr, .. } => {
+                                CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => {
                                     self.infer_expr(*expr, &Expectation::None);
                                 }
                             }
@@ -1795,8 +1792,7 @@ impl<'a> InferenceCtx<'a> {
                     }
                     for (arg, param_ty) in args.iter().zip(params.iter()) {
                         match arg {
-                            CallArg::Positional(expr)
-                            | CallArg::Named { value: expr, .. } => {
+                            CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => {
                                 self.infer_expr(*expr, &Expectation::Has(param_ty.clone()));
                             }
                         }
@@ -2023,11 +2019,13 @@ impl<'a> InferenceCtx<'a> {
                 return Some(self.infer_trait_qualified_call(owner, *field, args));
             }
 
-            if let Some(&(module_name, type_name)) = self.module_scope.imported_type_namespaces.get(&owner)
-                && let Some(&fn_idx) = self
-                    .module_scope
-                    .synthetic_module_static_methods
-                    .get(&(module_name, type_name, *field))
+            if let Some(&(module_name, type_name)) =
+                self.module_scope.imported_type_namespaces.get(&owner)
+                && let Some(&fn_idx) = self.module_scope.synthetic_module_static_methods.get(&(
+                    module_name,
+                    type_name,
+                    *field,
+                ))
             {
                 let ty = self.infer_qualified_fn_call(callee, fn_idx, args);
                 if type_name.resolve(self.interner) == "MutablePriorityQueue"
@@ -2071,10 +2069,11 @@ impl<'a> InferenceCtx<'a> {
             let module_name = base_segments[0];
             let type_name = base_segments[1];
             if self.module_scope.imported_modules.contains(&module_name)
-                && let Some(&fn_idx) = self
-                    .module_scope
-                    .synthetic_module_static_methods
-                    .get(&(module_name, type_name, *field))
+                && let Some(&fn_idx) = self.module_scope.synthetic_module_static_methods.get(&(
+                    module_name,
+                    type_name,
+                    *field,
+                ))
             {
                 let ty = self.infer_qualified_fn_call(callee, fn_idx, args);
                 if type_name.resolve(self.interner) == "MutablePriorityQueue"
@@ -2253,12 +2252,7 @@ impl<'a> InferenceCtx<'a> {
             .params
             .iter()
             .map(|param| {
-                self.resolve_trait_method_type(
-                    &param.ty,
-                    &recv_ty,
-                    &env,
-                    &trait_type_params,
-                )
+                self.resolve_trait_method_type(&param.ty, &recv_ty, &env, &trait_type_params)
             })
             .collect::<Vec<_>>();
         let param_names = method.params.iter().map(|p| p.name).collect::<Vec<_>>();
@@ -2271,9 +2265,7 @@ impl<'a> InferenceCtx<'a> {
         method
             .ret_type
             .as_ref()
-            .map(|ret| {
-                self.resolve_trait_method_type(ret, &recv_ty, &env, &trait_type_params)
-            })
+            .map(|ret| self.resolve_trait_method_type(ret, &recv_ty, &env, &trait_type_params))
             .unwrap_or(Ty::Unit)
     }
 
