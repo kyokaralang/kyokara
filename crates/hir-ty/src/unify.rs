@@ -12,6 +12,19 @@ pub struct UnificationTable {
     vars: Vec<Option<Ty>>,
 }
 
+#[derive(Clone, Debug)]
+pub struct BindingSnapshot {
+    entries: Vec<(TyVarId, Option<Ty>)>,
+}
+
+impl BindingSnapshot {
+    pub fn restore(self, table: &mut UnificationTable) {
+        for (id, binding) in self.entries {
+            table.vars[id.0 as usize] = binding;
+        }
+    }
+}
+
 impl Default for UnificationTable {
     fn default() -> Self {
         Self::new()
@@ -28,6 +41,72 @@ impl UnificationTable {
         let id = TyVarId(self.vars.len() as u32);
         self.vars.push(None);
         Ty::Var(id)
+    }
+
+    pub fn snapshot_reachable_bindings<'a>(
+        &self,
+        tys: impl IntoIterator<Item = &'a Ty>,
+    ) -> BindingSnapshot {
+        let mut seen = vec![false; self.vars.len()];
+        let mut ids = Vec::new();
+        for ty in tys {
+            self.collect_reachable_var_ids(ty, &mut seen, &mut ids);
+        }
+        BindingSnapshot {
+            entries: ids
+                .into_iter()
+                .map(|id| (id, self.vars[id.0 as usize].clone()))
+                .collect(),
+        }
+    }
+
+    fn collect_reachable_var_ids(&self, ty: &Ty, seen: &mut [bool], out: &mut Vec<TyVarId>) {
+        match ty {
+            Ty::Var(id) => {
+                let (resolved, path) = self.resolve_var_chain(*id);
+                for step in path {
+                    let idx = step.0 as usize;
+                    if !seen[idx] {
+                        seen[idx] = true;
+                        out.push(step);
+                    }
+                }
+                match resolved {
+                    Ty::Var(final_id) => {
+                        let idx = final_id.0 as usize;
+                        if !seen[idx] {
+                            seen[idx] = true;
+                            out.push(final_id);
+                        }
+                    }
+                    other => self.collect_reachable_var_ids(&other, seen, out),
+                }
+            }
+            Ty::Adt { args, .. } => {
+                for arg in args {
+                    self.collect_reachable_var_ids(arg, seen, out);
+                }
+            }
+            Ty::Record { fields } => {
+                for (_, field_ty) in fields {
+                    self.collect_reachable_var_ids(field_ty, seen, out);
+                }
+            }
+            Ty::Fn { params, ret } => {
+                for param in params {
+                    self.collect_reachable_var_ids(param, seen, out);
+                }
+                self.collect_reachable_var_ids(ret, seen, out);
+            }
+            Ty::Int
+            | Ty::Float
+            | Ty::String
+            | Ty::Char
+            | Ty::Bool
+            | Ty::Unit
+            | Ty::Error
+            | Ty::Never => {}
+        }
     }
 
     fn resolve_var_chain(&self, id: TyVarId) -> (Ty, Vec<TyVarId>) {
@@ -347,5 +426,25 @@ mod tests {
         table.vars[last.0 as usize] = Some(Ty::Bool);
 
         assert_eq!(table.resolve_deep(&vars[0]), Ty::Bool);
+    }
+
+    #[test]
+    fn reachable_binding_snapshot_restores_failed_unify_mutations() {
+        let mut table = UnificationTable::new();
+        let v = table.fresh_var();
+        let expected = Ty::Fn {
+            params: vec![v.clone()],
+            ret: Box::new(Ty::Int),
+        };
+        let actual = Ty::Fn {
+            params: vec![Ty::String],
+            ret: Box::new(Ty::Bool),
+        };
+
+        let snapshot = table.snapshot_reachable_bindings([&expected, &actual]);
+        assert!(!table.unify(&expected, &actual));
+        snapshot.restore(&mut table);
+
+        assert_eq!(table.resolve(&v), v);
     }
 }
