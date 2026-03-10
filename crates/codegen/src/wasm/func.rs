@@ -635,7 +635,7 @@ impl<'a> FuncCodegen<'a> {
             }
 
             Inst::Const(c) => {
-                self.emit_const(func, c);
+                self.emit_const(func, c)?;
                 func.instruction(&Instruction::LocalSet(local_idx));
             }
 
@@ -708,7 +708,7 @@ impl<'a> FuncCodegen<'a> {
 
     // ── Constants ─────────────────────────────────────────────────
 
-    fn emit_const(&self, func: &mut Function, c: &Constant) {
+    fn emit_const(&self, func: &mut Function, c: &Constant) -> Result<(), CodegenError> {
         match c {
             Constant::Int(v) => {
                 func.instruction(&Instruction::I64Const(*v));
@@ -722,11 +722,18 @@ impl<'a> FuncCodegen<'a> {
             Constant::Unit => {
                 func.instruction(&Instruction::I32Const(0));
             }
-            Constant::String(_) | Constant::Char(_) => {
-                // Deferred: emit unreachable for now.
-                func.instruction(&Instruction::Unreachable);
+            Constant::String(_) => {
+                return Err(CodegenError::UnsupportedInstruction(
+                    "String constant (deferred)".into(),
+                ));
+            }
+            Constant::Char(_) => {
+                return Err(CodegenError::UnsupportedInstruction(
+                    "Char constant (deferred)".into(),
+                ));
             }
         }
+        Ok(())
     }
 
     fn emit_trap_if_true(&self, func: &mut Function) {
