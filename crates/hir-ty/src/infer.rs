@@ -593,14 +593,19 @@ impl<'a> InferenceCtx<'a> {
     /// Unify two types, emitting a type mismatch diagnostic on failure.
     /// Returns the unified type (or Error on failure).
     pub(crate) fn unify_or_err(&mut self, expected: &Ty, actual: &Ty) -> Ty {
-        let mut exact_table = self.table.clone();
-        if exact_table.unify(expected, actual)
+        let exact_snapshot = self.table.snapshot_reachable_bindings([expected, actual]);
+        if self.table.unify(expected, actual)
             || (self.traversal_seq_compat_enabled()
-                && self.unify_seq_traversal_compat_with_table(&mut exact_table, expected, actual))
+                && Self::unify_seq_traversal_compat_with_table(
+                    self.module_scope,
+                    &mut self.table,
+                    expected,
+                    actual,
+                ))
         {
-            self.table = exact_table;
             return self.table.resolve_deep(expected);
         }
+        exact_snapshot.restore(&mut self.table);
 
         let expected_norm = self.normalize_record_aliases_for_unify(expected);
         let actual_norm = self.normalize_record_aliases_for_unify(actual);
@@ -608,7 +613,8 @@ impl<'a> InferenceCtx<'a> {
         let mut normalized_table = self.table.clone();
         if normalized_table.unify(&expected_norm, &actual_norm)
             || (self.traversal_seq_compat_enabled()
-                && self.unify_seq_traversal_compat_with_table(
+                && Self::unify_seq_traversal_compat_with_table(
+                    self.module_scope,
                     &mut normalized_table,
                     &expected_norm,
                     &actual_norm,
@@ -630,7 +636,7 @@ impl<'a> InferenceCtx<'a> {
     }
 
     fn unify_seq_traversal_compat_with_table(
-        &self,
+        module_scope: &ModuleScope,
         table: &mut UnificationTable,
         expected: &Ty,
         actual: &Ty,
@@ -651,8 +657,8 @@ impl<'a> InferenceCtx<'a> {
             return false;
         };
 
-        let expected_core = self.module_scope.core_types.kind_for_idx(*expected_def);
-        let actual_core = self.module_scope.core_types.kind_for_idx(*actual_def);
+        let expected_core = module_scope.core_types.kind_for_idx(*expected_def);
+        let actual_core = module_scope.core_types.kind_for_idx(*actual_def);
 
         if expected_core != Some(CoreType::Seq)
             || !matches!(
