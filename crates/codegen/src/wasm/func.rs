@@ -7,7 +7,7 @@ use kyokara_kir::block::{BlockId, Terminator};
 use kyokara_kir::function::KirFunction;
 use kyokara_kir::inst::{CallTarget, Constant, Inst};
 use kyokara_kir::value::ValueId;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use wasm_encoder::{BlockType, Function, Instruction, MemArg, ValType};
 
 use crate::error::CodegenError;
@@ -342,8 +342,11 @@ impl<'a> FuncCodegen<'a> {
     fn follow_chain(&self, start: BlockId) -> Vec<BlockId> {
         let mut chain = Vec::new();
         let mut current = start;
-        for _ in 0..50 {
-            // guard against pathological input
+        let mut visited = FxHashSet::default();
+        loop {
+            if !visited.insert(current) {
+                break;
+            }
             let block = &self.kir_func.blocks[current];
             match &block.terminator {
                 Some(Terminator::Jump(target)) => {

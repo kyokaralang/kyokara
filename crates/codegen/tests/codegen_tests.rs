@@ -552,6 +552,21 @@ fn test_deeply_nested_if_else() {
 }
 
 #[test]
+fn test_very_deeply_nested_if_else_exceeds_old_follow_chain_cap() {
+    let mut expr = String::from("0");
+    for i in (0..80).rev() {
+        expr = format!("if (x == {i}) {{ {i} }} else {{ {expr} }}");
+    }
+    let source = format!(
+        "fn main() -> Int {{\n\
+           let x = 79\n\
+           {expr}\n\
+         }}"
+    );
+    assert_eq!(run_main_i64(&source), 79);
+}
+
+#[test]
 fn test_if_else_both_return() {
     assert_eq!(
         run_main_i64(
