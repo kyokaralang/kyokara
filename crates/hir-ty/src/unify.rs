@@ -30,13 +30,53 @@ impl UnificationTable {
         Ty::Var(id)
     }
 
-    /// Shallow resolve: follow the binding chain one level.
+    fn resolve_var_chain(&self, id: TyVarId) -> (Ty, Vec<TyVarId>) {
+        let mut current = id;
+        let mut path = Vec::new();
+        let mut steps = 0usize;
+
+        loop {
+            steps += 1;
+            if steps > self.vars.len().saturating_add(1) {
+                debug_assert!(false, "type variable cycle detected during resolve");
+                return (Ty::Var(current), path);
+            }
+
+            match &self.vars[current.0 as usize] {
+                Some(Ty::Var(next)) => {
+                    path.push(current);
+                    current = *next;
+                }
+                Some(bound) => {
+                    path.push(current);
+                    return (bound.clone(), path);
+                }
+                None => return (Ty::Var(current), path),
+            }
+        }
+    }
+
+    fn compress_path(&mut self, path: &[TyVarId], resolved: &Ty) {
+        for id in path {
+            self.vars[id.0 as usize] = Some(resolved.clone());
+        }
+    }
+
+    fn resolve_with_compression(&mut self, ty: &Ty) -> Ty {
+        match ty {
+            Ty::Var(id) => {
+                let (resolved, path) = self.resolve_var_chain(*id);
+                self.compress_path(&path, &resolved);
+                resolved
+            }
+            _ => ty.clone(),
+        }
+    }
+
+    /// Shallow resolve: follow the binding chain iteratively.
     pub fn resolve(&self, ty: &Ty) -> Ty {
         match ty {
-            Ty::Var(id) => match &self.vars[id.0 as usize] {
-                Some(bound) => self.resolve(bound),
-                None => ty.clone(),
-            },
+            Ty::Var(id) => self.resolve_var_chain(*id).0,
             _ => ty.clone(),
         }
     }
@@ -67,8 +107,8 @@ impl UnificationTable {
 
     /// Unify two types, returning `true` on success and `false` on failure.
     pub fn unify(&mut self, a: &Ty, b: &Ty) -> bool {
-        let a = self.resolve(a);
-        let b = self.resolve(b);
+        let a = self.resolve_with_compression(a);
+        let b = self.resolve_with_compression(b);
 
         // Poison types unify with everything.
         if a.is_poison() || b.is_poison() {
@@ -166,8 +206,8 @@ impl UnificationTable {
     }
 
     /// Occurs check: does variable `v` appear anywhere in `ty`?
-    fn occurs(&self, v: TyVarId, ty: &Ty) -> bool {
-        let ty = self.resolve(ty);
+    fn occurs(&mut self, v: TyVarId, ty: &Ty) -> bool {
+        let ty = self.resolve_with_compression(ty);
         match &ty {
             Ty::Var(id) => *id == v,
             Ty::Int | Ty::Float | Ty::String | Ty::Char | Ty::Bool | Ty::Unit => false,
@@ -264,5 +304,48 @@ mod tests {
             ret: Box::new(Ty::Int),
         };
         assert!(!table.unify(&v, &circular));
+    }
+
+    fn var_id(ty: &Ty) -> TyVarId {
+        match ty {
+            Ty::Var(id) => *id,
+            _ => panic!("expected type variable"),
+        }
+    }
+
+    #[test]
+    fn resolve_with_compression_shortens_var_chains() {
+        let mut table = UnificationTable::new();
+        let vars: Vec<_> = (0..64).map(|_| table.fresh_var()).collect();
+
+        for pair in vars.windows(2) {
+            let from = var_id(&pair[0]);
+            table.vars[from.0 as usize] = Some(pair[1].clone());
+        }
+        let last = var_id(vars.last().unwrap());
+        table.vars[last.0 as usize] = Some(Ty::Int);
+
+        let resolved = table.resolve_with_compression(&vars[0]);
+        assert_eq!(resolved, Ty::Int);
+
+        for var in &vars {
+            let id = var_id(var);
+            assert_eq!(table.vars[id.0 as usize], Some(Ty::Int));
+        }
+    }
+
+    #[test]
+    fn resolve_deep_handles_long_var_chains_iteratively() {
+        let mut table = UnificationTable::new();
+        let vars: Vec<_> = (0..4096).map(|_| table.fresh_var()).collect();
+
+        for pair in vars.windows(2) {
+            let from = var_id(&pair[0]);
+            table.vars[from.0 as usize] = Some(pair[1].clone());
+        }
+        let last = var_id(vars.last().unwrap());
+        table.vars[last.0 as usize] = Some(Ty::Bool);
+
+        assert_eq!(table.resolve_deep(&vars[0]), Ty::Bool);
     }
 }
