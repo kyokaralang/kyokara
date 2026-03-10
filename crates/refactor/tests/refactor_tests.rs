@@ -271,6 +271,47 @@ fn pick(c: Color) -> Int {
 }
 
 #[test]
+fn add_missing_match_cases_from_diagnostics() {
+    let src = r#"type Color = Red | Green | Blue
+fn pick(c: Color) -> Int {
+    match (c) {
+        Red => 1
+    }
+}"#;
+    let result = kyokara_hir::check_file(src);
+    let root = kyokara_syntax::SyntaxNode::new_root(result.green.clone());
+
+    let (_, span) = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .find(|(d, _)| matches!(d, kyokara_hir::TyDiagnosticData::MissingMatchArms { .. }))
+        .expect("expected MissingMatchArms diagnostic");
+
+    let offset: u32 = span.range.start().into();
+    let refactor = kyokara_refactor::quickfix::add_missing_match_cases_from_diagnostics(
+        &root,
+        &result.type_check.raw_diagnostics,
+        file_id(),
+        offset,
+    )
+    .unwrap();
+
+    assert!(!refactor.edits.is_empty(), "expected edits");
+    let edit = &refactor.edits[0];
+    assert!(
+        edit.new_text.contains("Green"),
+        "should contain Green: {}",
+        edit.new_text
+    );
+    assert!(
+        edit.new_text.contains("Blue"),
+        "should contain Blue: {}",
+        edit.new_text
+    );
+}
+
+#[test]
 fn add_missing_match_cases_empty_nested_match_uses_context_indent() {
     let src = r#"type Color = Red | Green | Blue
 fn pick(c: Color) -> Int {
@@ -378,6 +419,40 @@ fn pure_caller() -> Unit { effectful() }"#;
         target_file: None,
     };
     let refactor = kyokara_refactor::refactor(&result, file_id(), action).unwrap();
+
+    assert!(!refactor.edits.is_empty(), "expected edits");
+    let edit = &refactor.edits[0];
+    assert!(
+        edit.new_text.contains("Console"),
+        "should contain Console: {}",
+        edit.new_text
+    );
+}
+
+#[test]
+fn add_missing_capability_from_diagnostics() {
+    let src = r#"effect Console
+fn emit(s: String) -> Unit { }
+fn effectful() -> Unit with Console { emit("hi") }
+fn pure_caller() -> Unit { effectful() }"#;
+    let result = kyokara_hir::check_file(src);
+    let root = kyokara_syntax::SyntaxNode::new_root(result.green.clone());
+
+    let (_, span) = result
+        .type_check
+        .raw_diagnostics
+        .iter()
+        .find(|(d, _)| matches!(d, kyokara_hir::TyDiagnosticData::EffectViolation { .. }))
+        .expect("expected EffectViolation diagnostic");
+
+    let offset: u32 = span.range.start().into();
+    let refactor = kyokara_refactor::quickfix::add_missing_capability_from_diagnostics(
+        &root,
+        &result.type_check.raw_diagnostics,
+        file_id(),
+        offset,
+    )
+    .unwrap();
 
     assert!(!refactor.edits.is_empty(), "expected edits");
     let edit = &refactor.edits[0];

@@ -2,7 +2,7 @@
 
 use kyokara_hir::{CheckResult, ProjectCheckResult};
 use kyokara_hir_ty::diagnostics::TyDiagnosticData;
-use kyokara_span::{FileId, TextRange};
+use kyokara_span::{FileId, Span, TextRange};
 use kyokara_syntax::SyntaxNode;
 use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::{FnDef, MatchExpr};
@@ -19,12 +19,30 @@ pub fn add_missing_match_cases(
     offset: u32,
 ) -> Result<RefactorResult, RefactorError> {
     let root = SyntaxNode::new_root(result.green.clone());
-    for (data, span) in &result.type_check.raw_diagnostics {
+    add_missing_match_cases_from_diagnostics(
+        &root,
+        &result.type_check.raw_diagnostics,
+        file_id,
+        offset,
+    )
+}
+
+/// Add missing match cases from an existing syntax root and raw diagnostics.
+///
+/// This avoids reconstructing a full `CheckResult` when a caller already has
+/// cached syntax and diagnostics, such as the LSP server.
+pub fn add_missing_match_cases_from_diagnostics(
+    root: &SyntaxNode,
+    raw_diagnostics: &[(TyDiagnosticData, Span)],
+    file_id: FileId,
+    offset: u32,
+) -> Result<RefactorResult, RefactorError> {
+    for (data, span) in raw_diagnostics {
         if let TyDiagnosticData::MissingMatchArms { missing } = data {
             let start: u32 = span.range.start().into();
             let end: u32 = span.range.end().into();
             if offset >= start && offset <= end {
-                return build_match_cases_edit(file_id, &root, span.range, missing);
+                return build_match_cases_edit(file_id, root, span.range, missing);
             }
         }
     }
@@ -187,12 +205,30 @@ pub fn add_missing_capability(
     offset: u32,
 ) -> Result<RefactorResult, RefactorError> {
     let root = SyntaxNode::new_root(result.green.clone());
-    for (data, span) in &result.type_check.raw_diagnostics {
+    add_missing_capability_from_diagnostics(
+        &root,
+        &result.type_check.raw_diagnostics,
+        file_id,
+        offset,
+    )
+}
+
+/// Add missing capability from an existing syntax root and raw diagnostics.
+///
+/// This avoids reconstructing a full `CheckResult` when a caller already has
+/// cached syntax and diagnostics, such as the LSP server.
+pub fn add_missing_capability_from_diagnostics(
+    root: &SyntaxNode,
+    raw_diagnostics: &[(TyDiagnosticData, Span)],
+    file_id: FileId,
+    offset: u32,
+) -> Result<RefactorResult, RefactorError> {
+    for (data, span) in raw_diagnostics {
         if let TyDiagnosticData::EffectViolation { missing } = data {
             let start: u32 = span.range.start().into();
             let end: u32 = span.range.end().into();
             if offset >= start && offset <= end {
-                return build_capability_edit(file_id, &root, span.range, missing);
+                return build_capability_edit(file_id, root, span.range, missing);
             }
         }
     }
