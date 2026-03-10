@@ -2540,7 +2540,7 @@ impl Interpreter {
                                 };
                                 out.push(eval_propagate!(self, env, body, *arg_idx));
                             }
-                            return self.call_fn(fn_idx, out).map(ControlFlow::Value);
+                            return self.call_fn_idx_value(fn_idx, out).map(ControlFlow::Value);
                         }
                         let selection = match candidates.as_slice() {
                             [fn_idx] => Some(CallFamilySelection::Selected {
@@ -2575,7 +2575,9 @@ impl Interpreter {
                                     for value in arg_vals {
                                         out.push(value);
                                     }
-                                    return self.call_fn(fn_idx, out).map(ControlFlow::Value);
+                                    return self
+                                        .call_fn_idx_value(fn_idx, out)
+                                        .map(ControlFlow::Value);
                                 }
                                 CallFamilySelection::InvalidShape { errors } => {
                                     return Err(RuntimeError::TypeError(
@@ -3474,7 +3476,7 @@ impl Interpreter {
                                 };
                                 out.push(eval_propagate_shared!(self, body, *arg_idx));
                             }
-                            return self.call_fn(fn_idx, out).map(ControlFlow::Value);
+                            return self.call_fn_idx_value(fn_idx, out).map(ControlFlow::Value);
                         }
                         let selection = match candidates.as_slice() {
                             [fn_idx] => Some(CallFamilySelection::Selected {
@@ -3509,7 +3511,9 @@ impl Interpreter {
                                     for value in arg_vals {
                                         out.push(value);
                                     }
-                                    return self.call_fn(fn_idx, out).map(ControlFlow::Value);
+                                    return self
+                                        .call_fn_idx_value(fn_idx, out)
+                                        .map(ControlFlow::Value);
                                 }
                                 CallFamilySelection::InvalidShape { errors } => {
                                     return Err(RuntimeError::TypeError(

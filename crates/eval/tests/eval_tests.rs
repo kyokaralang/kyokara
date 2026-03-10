@@ -3310,6 +3310,12 @@ fn eval_math_with_import_works() {
 }
 
 #[test]
+fn eval_math_member_import_works() {
+    let val = run_ok("from math import gcd\nfn main() -> Int { gcd(8, 12) }");
+    assert!(matches!(val, Value::Int(4)));
+}
+
+#[test]
 fn eval_int_to_float() {
     let val = run_ok("fn main() -> Float { 42.to_float() }");
     match val {
@@ -6531,6 +6537,19 @@ fn eval_read_file_basic() {
     std::fs::write(&file_path, "hello world").unwrap();
     let path_str = file_path.to_str().unwrap();
     let source = format!("import fs\nfn main() -> String {{ fs.read_file(\"{path_str}\") }}");
+    let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
+    let val = run_with_manifest_ok(&source, Some(manifest));
+    assert_eq!(val, Value::String("hello world".to_string()));
+}
+
+#[test]
+fn eval_read_file_member_import_basic() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.txt");
+    std::fs::write(&file_path, "hello world").unwrap();
+    let path_str = file_path.to_str().unwrap();
+    let source =
+        format!("from fs import read_file\nfn main() -> String {{ read_file(\"{path_str}\") }}");
     let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
     let val = run_with_manifest_ok(&source, Some(manifest));
     assert_eq!(val, Value::String("hello world".to_string()));
