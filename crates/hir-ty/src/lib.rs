@@ -24,6 +24,7 @@ use kyokara_hir_def::body::lower::{
     lower_body, lower_impl_method_body, lower_property_body, lower_top_level_let_body,
 };
 use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree, LetItemIdx};
+use kyokara_hir_def::name::Name;
 use kyokara_hir_def::resolver::ModuleScope;
 use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_intern::Interner;
@@ -32,7 +33,6 @@ use kyokara_stdx::FxHashMap;
 use kyokara_syntax::SyntaxNode;
 use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::{FnDef, ImplMethodDef, LetBinding, PropertyDef};
-use kyokara_hir_def::name::Name;
 
 use crate::diagnostics::TyDiagnosticData;
 use crate::infer::InferenceResult;
@@ -443,8 +443,8 @@ mod tests {
 
         let beta = &fn_defs[1];
         let beta_range = beta.syntax().text_range();
-        let by_range = lookup_fn_def(&index, Some(beta_range))
-            .expect("range lookup should prefer exact node");
+        let by_range =
+            lookup_fn_def(&index, Some(beta_range)).expect("range lookup should prefer exact node");
         assert_eq!(by_range.syntax().text_range(), beta_range);
     }
 

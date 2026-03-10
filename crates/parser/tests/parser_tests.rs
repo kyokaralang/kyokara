@@ -1,8 +1,8 @@
 //! Parser unit tests — verify event structure for various constructs.
 #![allow(clippy::unwrap_used)]
 
-use kyokara_parser::{parse, Event, Input, ParseError, SyntaxKind};
 use SyntaxKind::*;
+use kyokara_parser::{Event, Input, ParseError, SyntaxKind, parse};
 
 /// Helper: lex token kinds from a list (simulating a lexer), build Input, parse.
 fn parse_tokens(kinds: &[SyntaxKind]) -> (Vec<Event>, Vec<ParseError>) {
@@ -50,7 +50,9 @@ fn source_file_rejects_top_level_module_decl_without_cascade() {
     let (events, errors) = parse_tokens(&[ModuleKw, Ident, Dot, Ident, ImportKw, Ident]);
     assert_eq!(errors.len(), 1, "expected one parse error, got: {errors:?}");
     assert!(
-        errors[0].message.contains("unexpected `module` at top level"),
+        errors[0]
+            .message
+            .contains("unexpected `module` at top level"),
         "expected targeted top-level module diagnostic, got: {errors:?}"
     );
     assert!(has_node(&events, SourceFile));
@@ -68,9 +70,8 @@ fn import_decl() {
 
 #[test]
 fn from_import_decl() {
-    let (events, errors) = parse_tokens(&[
-        FromKw, Ident, ImportKw, Ident, Comma, Ident, AsKw, Ident,
-    ]);
+    let (events, errors) =
+        parse_tokens(&[FromKw, Ident, ImportKw, Ident, Comma, Ident, AsKw, Ident]);
     assert!(has_no_errors(&errors));
     assert!(has_node(&events, ImportDecl));
     assert!(has_node(&events, ImportMemberList));
@@ -155,7 +156,10 @@ fn let_binding_with_type() {
 #[test]
 fn let_binding_named_module_parses() {
     let (events, errors) = parse_tokens(&[LetKw, ModuleKw, Eq, IntLiteral]);
-    assert!(has_no_errors(&errors), "expected no parse errors: {errors:?}");
+    assert!(
+        has_no_errors(&errors),
+        "expected no parse errors: {errors:?}"
+    );
     assert!(has_node(&events, LetBinding));
 }
 
@@ -1085,7 +1089,10 @@ fn malformed_range_until_reports_single_targeted_error() {
 #[test]
 fn range_until_module_rhs_parses() {
     let (events, errors) = parse_tokens(&[LetKw, Ident, Eq, IntLiteral, DotDotLt, ModuleKw]);
-    assert!(has_no_errors(&errors), "expected no parse errors: {errors:?}");
+    assert!(
+        has_no_errors(&errors),
+        "expected no parse errors: {errors:?}"
+    );
     assert!(has_node(&events, BinaryExpr));
 }
 
@@ -1352,7 +1359,10 @@ fn return_expr() {
 #[test]
 fn bare_module_expression_parses() {
     let (events, errors) = parse_tokens(&[FnKw, Ident, LParen, RParen, LBrace, ModuleKw, RBrace]);
-    assert!(has_no_errors(&errors), "expected no parse errors: {errors:?}");
+    assert!(
+        has_no_errors(&errors),
+        "expected no parse errors: {errors:?}"
+    );
     assert!(has_node(&events, PathExpr));
 }
 
@@ -1361,7 +1371,10 @@ fn return_module_expression_parses() {
     let (events, errors) = parse_tokens(&[
         FnKw, Ident, LParen, RParen, LBrace, ReturnKw, ModuleKw, RBrace,
     ]);
-    assert!(has_no_errors(&errors), "expected no parse errors: {errors:?}");
+    assert!(
+        has_no_errors(&errors),
+        "expected no parse errors: {errors:?}"
+    );
     assert!(has_node(&events, ReturnExpr));
 }
 

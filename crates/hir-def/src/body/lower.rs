@@ -1279,14 +1279,9 @@ impl BodyLowerCtx<'_> {
                     .resolve(self.interner)
                     .starts_with(|c: char| c.is_uppercase());
 
-                if is_constructor
-                    && self.module_scope.resolve_constructor_path(&path).is_some()
-                {
+                if is_constructor && self.module_scope.resolve_constructor_path(&path).is_some() {
                     // Nullary constructor pattern
-                    let pat_idx = self.alloc_pat(pat::Pat::Constructor {
-                        path,
-                        args: vec![],
-                    });
+                    let pat_idx = self.alloc_pat(pat::Pat::Constructor { path, args: vec![] });
                     self.pat_source_map
                         .insert(pat_idx, ip.syntax().text_range());
                     pat_idx

@@ -533,13 +533,12 @@ fn resolve_project_imports(
                 importing_info.scope.imported_modules.remove(&visible_name);
                 let mut namespace = kyokara_hir_def::resolver::NamespaceScope::default();
                 for item in pub_data {
-                    import_pub_item_into_namespace(
-                        importing_info,
-                        &mut namespace,
-                        item,
-                    );
+                    import_pub_item_into_namespace(importing_info, &mut namespace, item);
                 }
-                importing_info.scope.namespaces.insert(visible_name, namespace);
+                importing_info
+                    .scope
+                    .namespaces
+                    .insert(visible_name, namespace);
             }
             ImportKind::Members { members } => {
                 for member in members {

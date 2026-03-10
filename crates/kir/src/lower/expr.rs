@@ -2,7 +2,9 @@
 
 use rustc_hash::FxHashSet;
 
-use kyokara_hir_def::call_family::{CallFamilySelection, bind_call_args_to_params, select_call_family_candidate};
+use kyokara_hir_def::call_family::{
+    CallFamilySelection, bind_call_args_to_params, select_call_family_candidate,
+};
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, MatchArm, Stmt};
 use kyokara_hir_def::item_tree::TypeDefKind;
 use kyokara_hir_def::name::Name;
@@ -50,8 +52,7 @@ impl<'a> LoweringCtx<'a> {
             }
             Expr::Call { callee, args } => self.lower_call(callee, args, ty),
             Expr::Field { base, field } => {
-                if let Some(value) =
-                    self.try_lower_constructor_field_value(base, field, ty.clone())
+                if let Some(value) = self.try_lower_constructor_field_value(base, field, ty.clone())
                 {
                     return value;
                 }
@@ -164,7 +165,10 @@ impl<'a> LoweringCtx<'a> {
                 if !is_nullary {
                     return None;
                 }
-                Some(this.builder.push_adt_construct(type_idx, field, vec![], ty.clone()))
+                Some(
+                    this.builder
+                        .push_adt_construct(type_idx, field, vec![], ty.clone()),
+                )
             };
 
         if let Expr::Path(path) = &self.body.exprs[base_idx]
@@ -419,7 +423,9 @@ impl<'a> LoweringCtx<'a> {
             if let Some((type_idx, _)) = self.module_scope.resolve_constructor_path(path) {
                 let arg_vals = self.lower_call_args_source_order(&args);
                 let ctor_name = *path.segments.last().unwrap_or(&name);
-                return self.builder.push_adt_construct(type_idx, ctor_name, arg_vals, ty);
+                return self
+                    .builder
+                    .push_adt_construct(type_idx, ctor_name, arg_vals, ty);
             }
 
             // 3. Module-level function (direct call — user-defined takes precedence).
@@ -477,10 +483,15 @@ impl<'a> LoweringCtx<'a> {
                 let module_name = module_path.segments[0];
                 if let Some(namespace) = self.module_scope.visible_namespace(module_name)
                     && let Some(&type_idx) = namespace.types.get(&type_name)
-                    && self.module_scope.type_variants.contains_key(&(type_idx, field))
+                    && self
+                        .module_scope
+                        .type_variants
+                        .contains_key(&(type_idx, field))
                 {
                     let arg_vals = self.lower_call_args_source_order(&args);
-                    return self.builder.push_adt_construct(type_idx, field, arg_vals, ty);
+                    return self
+                        .builder
+                        .push_adt_construct(type_idx, field, arg_vals, ty);
                 }
                 if self.module_scope.imported_modules.contains(&module_name)
                     && let Some(&fn_idx) = self.module_scope.synthetic_module_static_methods.get(&(
@@ -507,10 +518,15 @@ impl<'a> LoweringCtx<'a> {
                 let seg = path.segments[0];
 
                 if let Some(&type_idx) = self.module_scope.types.get(&seg)
-                    && self.module_scope.type_variants.contains_key(&(type_idx, field))
+                    && self
+                        .module_scope
+                        .type_variants
+                        .contains_key(&(type_idx, field))
                 {
                     let arg_vals = self.lower_call_args_source_order(&args);
-                    return self.builder.push_adt_construct(type_idx, field, arg_vals, ty);
+                    return self
+                        .builder
+                        .push_adt_construct(type_idx, field, arg_vals, ty);
                 }
 
                 // Module-qualified call: io.println(s), math.min(a, b)
@@ -598,7 +614,9 @@ impl<'a> LoweringCtx<'a> {
                             .get(&(ReceiverKey::Any, field))
                             .map(Vec::as_slice)
                     })
-                    .map(|candidates| self.select_method_candidate_by_call_shape(candidates, &args));
+                    .map(|candidates| {
+                        self.select_method_candidate_by_call_shape(candidates, &args)
+                    });
                 match selection {
                     Some(CallFamilySelection::Selected { candidate, .. }) => Some(candidate),
                     _ => None,

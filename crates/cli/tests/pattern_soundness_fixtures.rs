@@ -141,7 +141,12 @@ fn pattern_exhaustiveness_matrix() {
             prelude: "type ABC = A | B | C\ntype Wrap3 = Wrap(ABC) | Empty",
             match_ty: "Wrap3",
             arms: "    Wrap3.Wrap(ABC.A) => 1\n    Wrap3.Empty => 0",
-            scrutinees: &["Wrap3.Wrap(ABC.A)", "Wrap3.Wrap(ABC.B)", "Wrap3.Wrap(ABC.C)", "Wrap3.Empty"],
+            scrutinees: &[
+                "Wrap3.Wrap(ABC.A)",
+                "Wrap3.Wrap(ABC.B)",
+                "Wrap3.Wrap(ABC.C)",
+                "Wrap3.Empty",
+            ],
             expected_runtime_exhaustive: false,
             mode: SoundnessMode::Strict,
             issue: Some(137),

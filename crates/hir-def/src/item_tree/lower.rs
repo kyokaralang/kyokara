@@ -337,7 +337,9 @@ impl ItemTreeCtx<'_> {
         // Register constructors for ADTs
         if let TypeDefKind::Adt { ref variants } = kind {
             for (vi, variant) in variants.iter().enumerate() {
-                self.module_scope.type_variants.insert((idx, variant.name), vi);
+                self.module_scope
+                    .type_variants
+                    .insert((idx, variant.name), vi);
             }
         }
     }

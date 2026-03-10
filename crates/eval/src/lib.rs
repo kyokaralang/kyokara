@@ -327,8 +327,10 @@ pub fn run_project_with_manifest(
         kyokara_hir_def::item_tree::FnItemIdx,
         FxHashMap<kyokara_hir_def::name::Name, Vec<kyokara_hir_def::item_tree::FnItemIdx>>,
     > = FxHashMap::default();
-    let mut module_scope_overrides: FxHashMap<kyokara_hir_def::item_tree::FnItemIdx, kyokara_hir_def::resolver::ModuleScope> =
-        FxHashMap::default();
+    let mut module_scope_overrides: FxHashMap<
+        kyokara_hir_def::item_tree::FnItemIdx,
+        kyokara_hir_def::resolver::ModuleScope,
+    > = FxHashMap::default();
     let mut let_scope_overrides: FxHashMap<
         kyokara_hir_def::item_tree::FnItemIdx,
         FxHashMap<kyokara_hir_def::name::Name, Value>,
@@ -389,7 +391,8 @@ pub fn run_project_with_manifest(
 
                 if let Some(namespace_names) = imported_namespace_names.get(mod_path) {
                     for namespace_name in namespace_names {
-                        let Some(namespace) = entry_info.scope.namespaces.get(namespace_name) else {
+                        let Some(namespace) = entry_info.scope.namespaces.get(namespace_name)
+                        else {
                             continue;
                         };
                         let Some(namespace_candidates) = namespace.functions.get(&src_fn_item.name)
@@ -434,7 +437,10 @@ pub fn run_project_with_manifest(
         }
 
         // Attach the same module-local map to every function from this module.
-        for fn_idx in module_fn_map.values().flat_map(|candidates| candidates.iter().copied()) {
+        for fn_idx in module_fn_map
+            .values()
+            .flat_map(|candidates| candidates.iter().copied())
+        {
             fn_scope_overrides.insert(fn_idx, module_fn_map.clone());
             module_scope_overrides.insert(fn_idx, mod_scope.clone());
         }
@@ -455,7 +461,10 @@ pub fn run_project_with_manifest(
             );
             let module_let_values = let_interp.materialize_top_level_let_values()?;
             project.interner = let_interp.into_interner();
-            for fn_idx in module_fn_map.values().flat_map(|candidates| candidates.iter().copied()) {
+            for fn_idx in module_fn_map
+                .values()
+                .flat_map(|candidates| candidates.iter().copied())
+            {
                 let_scope_overrides.insert(fn_idx, module_let_values.clone());
             }
         }

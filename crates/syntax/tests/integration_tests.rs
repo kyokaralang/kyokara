@@ -2,7 +2,9 @@
 #![allow(clippy::unwrap_used)]
 
 use kyokara_syntax::ast::AstNode;
-use kyokara_syntax::ast::nodes::{ElseBranch, FnDef, ForStmt, IfExpr, ImplDef, SourceFile, TraitDef, TypeDef};
+use kyokara_syntax::ast::nodes::{
+    ElseBranch, FnDef, ForStmt, IfExpr, ImplDef, SourceFile, TraitDef, TypeDef,
+};
 use kyokara_syntax::ast::traits::{HasName, HasTypeParams};
 use kyokara_syntax::{SyntaxKind, parse};
 
@@ -129,7 +131,18 @@ fn parse_trait_impl_and_derive_roundtrip_and_ast_access() {
         .descendants()
         .find_map(ImplDef::cast)
         .expect("impl def");
-    assert_eq!(impl_def.trait_ref().unwrap().path().unwrap().segments().next().unwrap().text(), "Show");
+    assert_eq!(
+        impl_def
+            .trait_ref()
+            .unwrap()
+            .path()
+            .unwrap()
+            .segments()
+            .next()
+            .unwrap()
+            .text(),
+        "Show"
+    );
     assert_eq!(impl_def.methods().count(), 1);
 }
 

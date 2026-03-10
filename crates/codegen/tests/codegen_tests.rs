@@ -1,8 +1,8 @@
 //! End-to-end tests: source → parse → check → KIR → WASM → wasmtime → assert.
 #![allow(clippy::unwrap_used)]
 
-use kyokara_hir::check_file;
 use kyokara_hir::ItemTree;
+use kyokara_hir::check_file;
 use kyokara_hir_def::name::Name;
 use kyokara_hir_ty::effects::EffectSet;
 use kyokara_hir_ty::ty::Ty;

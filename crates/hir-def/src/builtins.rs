@@ -1434,7 +1434,9 @@ pub fn activate_type_member_imports(tree: &ItemTree, scope: &mut ModuleScope) {
             scope
                 .imported_variants
                 .insert(visible_name, (type_idx, variant_idx));
-            scope.constructors.insert(visible_name, (type_idx, variant_idx));
+            scope
+                .constructors
+                .insert(visible_name, (type_idx, variant_idx));
         }
     }
 }

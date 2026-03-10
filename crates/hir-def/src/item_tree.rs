@@ -50,12 +50,8 @@ pub struct Import {
 
 #[derive(Debug, Clone)]
 pub enum ImportKind {
-    Namespace {
-        alias: Option<Name>,
-    },
-    Members {
-        members: Vec<ImportMemberItem>,
-    },
+    Namespace { alias: Option<Name> },
+    Members { members: Vec<ImportMemberItem> },
 }
 
 #[derive(Debug, Clone)]

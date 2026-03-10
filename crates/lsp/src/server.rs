@@ -81,11 +81,7 @@ impl KyokaraLanguageServer {
 
     #[cfg(test)]
     async fn maybe_delay_before_publish(&self, text: &str) {
-        let delay_yields = self
-            .test_pre_publish_delay_yields
-            .lock()
-            .get(text)
-            .copied();
+        let delay_yields = self.test_pre_publish_delay_yields.lock().get(text).copied();
         if let Some(ticks) = delay_yields {
             for _ in 0..ticks {
                 tokio::task::yield_now().await;
@@ -132,7 +128,10 @@ impl KyokaraLanguageServer {
             #[cfg(test)]
             self.maybe_delay_before_publish(&text).await;
 
-            self.documents.write().await.insert(uri.clone(), analysis.clone());
+            self.documents
+                .write()
+                .await
+                .insert(uri.clone(), analysis.clone());
 
             // Publish diagnostics.
             let diags = crate::diagnostics::to_lsp_diagnostics(&analysis, &analysis.source);

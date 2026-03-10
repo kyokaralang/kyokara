@@ -335,7 +335,10 @@ fn trait_def(p: &mut Parser<'_>, is_pub: bool) -> CompletedMarker {
         if p.at(FnKw) {
             trait_method_sig(p);
         } else {
-            p.error_recover("expected trait method signature", TokenSet::new(&[FnKw, RBrace]));
+            p.error_recover(
+                "expected trait method signature",
+                TokenSet::new(&[FnKw, RBrace]),
+            );
         }
     }
     p.expect(RBrace);
@@ -388,7 +391,10 @@ fn impl_def(p: &mut Parser<'_>) -> CompletedMarker {
         if p.at(FnKw) {
             impl_method_def(p);
         } else {
-            p.error_recover("expected impl method definition", TokenSet::new(&[FnKw, RBrace]));
+            p.error_recover(
+                "expected impl method definition",
+                TokenSet::new(&[FnKw, RBrace]),
+            );
         }
     }
     p.expect(RBrace);

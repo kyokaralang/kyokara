@@ -1226,7 +1226,10 @@ impl Interpreter {
                     .methods
                     .get(&(receiver_key, field_name))
                     .and_then(|candidates| {
-                        self.try_select_plain_positional_method_candidate(candidates, actual_arg_count)
+                        self.try_select_plain_positional_method_candidate(
+                            candidates,
+                            actual_arg_count,
+                        )
                     })
             })
             .or_else(|| {
@@ -1234,7 +1237,10 @@ impl Interpreter {
                     .methods
                     .get(&(ReceiverKey::Any, field_name))
                     .and_then(|candidates| {
-                        self.try_select_plain_positional_method_candidate(candidates, actual_arg_count)
+                        self.try_select_plain_positional_method_candidate(
+                            candidates,
+                            actual_arg_count,
+                        )
                     })
             })
     }
@@ -1326,12 +1332,8 @@ impl Interpreter {
             trait_name.resolve(&self.interner),
             method_name.resolve(&self.interner)
         );
-        let bound_args = self.bind_call_values_to_params(
-            &callee_name,
-            args,
-            arg_values,
-            &method.params,
-        )?;
+        let bound_args =
+            self.bind_call_values_to_params(&callee_name, args, arg_values, &method.params)?;
         let Some(receiver) = bound_args.first() else {
             return Err(RuntimeError::ArityMismatch {
                 callee: callee_name,
@@ -2526,7 +2528,10 @@ impl Interpreter {
                     if let Some(candidates) = candidates {
                         if Self::args_are_all_positional(&args)
                             && let Some(fn_idx) = self
-                                .try_select_plain_positional_function_candidate(candidates, args.len())
+                                .try_select_plain_positional_function_candidate(
+                                    candidates,
+                                    args.len(),
+                                )
                         {
                             let mut out = Args::with_capacity(args.len());
                             for arg in &args {
@@ -2556,20 +2561,20 @@ impl Interpreter {
                                 } => {
                                     let source_order = self.args_in_source_order(&args);
                                     let mut arg_values = Vec::with_capacity(source_order.len());
-                                for idx in &source_order {
-                                    let value = eval_propagate!(self, env, body, *idx);
-                                    arg_values.push(value);
-                                }
-                                let arg_vals = self.bind_call_items_to_params(
-                                    &format!("function `{}`", name.resolve(&self.interner)),
-                                    &args,
-                                    arg_values,
-                                    &self.item_tree.functions[fn_idx].params,
-                                )?;
-                                let mut out = Args::with_capacity(arg_vals.len());
-                                for value in arg_vals {
-                                    out.push(value);
-                                }
+                                    for idx in &source_order {
+                                        let value = eval_propagate!(self, env, body, *idx);
+                                        arg_values.push(value);
+                                    }
+                                    let arg_vals = self.bind_call_items_to_params(
+                                        &format!("function `{}`", name.resolve(&self.interner)),
+                                        &args,
+                                        arg_values,
+                                        &self.item_tree.functions[fn_idx].params,
+                                    )?;
+                                    let mut out = Args::with_capacity(arg_vals.len());
+                                    for value in arg_vals {
+                                        out.push(value);
+                                    }
                                     return self.call_fn(fn_idx, out).map(ControlFlow::Value);
                                 }
                                 CallFamilySelection::InvalidShape { errors } => {
@@ -2633,8 +2638,10 @@ impl Interpreter {
                                     .map(ControlFlow::Value);
                             }
 
-                            if let Some(&(module_name, type_name)) =
-                                self.active_module_scope().imported_type_namespaces.get(&owner)
+                            if let Some(&(module_name, type_name)) = self
+                                .active_module_scope()
+                                .imported_type_namespaces
+                                .get(&owner)
                                 && let Some(&fn_idx) = self
                                     .module_scope
                                     .synthetic_module_static_methods
@@ -2658,23 +2665,29 @@ impl Interpreter {
                                     arg_values,
                                     params,
                                 )?;
-                                return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                                return self
+                                    .call_fn_idx_value(fn_idx, arg_vals)
+                                    .map(ControlFlow::Value);
                             }
 
-                            if let Some(namespace) = self.active_module_scope().visible_namespace(owner)
+                            if let Some(namespace) =
+                                self.active_module_scope().visible_namespace(owner)
                                 && let Some(candidates) = namespace.functions.get(field_name)
                             {
                                 let selection = match candidates.as_slice() {
                                     [fn_idx] => CallFamilySelection::Selected {
                                         candidate: *fn_idx,
-                                        binding: kyokara_hir_def::call_family::bind_call_args_to_params(
-                                            &args,
-                                            &self.item_tree.functions[*fn_idx].params,
-                                        ),
+                                        binding:
+                                            kyokara_hir_def::call_family::bind_call_args_to_params(
+                                                &args,
+                                                &self.item_tree.functions[*fn_idx].params,
+                                            ),
                                     },
-                                    _ => select_call_family_candidate(&args, candidates, |fn_idx| {
-                                        &self.item_tree.functions[fn_idx].params
-                                    }),
+                                    _ => {
+                                        select_call_family_candidate(&args, candidates, |fn_idx| {
+                                            &self.item_tree.functions[fn_idx].params
+                                        })
+                                    }
                                 };
                                 match selection {
                                     CallFamilySelection::Selected { candidate, .. } => {
@@ -2725,10 +2738,14 @@ impl Interpreter {
                             }
                         }
 
-                        if let Some(type_idx) = self.active_module_scope().resolve_type_path(&base_path) {
+                        if let Some(type_idx) =
+                            self.active_module_scope().resolve_type_path(&base_path)
+                        {
                             let owner_key = self.static_owner_key_for_type_idx(type_idx);
-                            if let Some(&fn_idx) =
-                                self.module_scope.static_methods.get(&(owner_key, *field_name))
+                            if let Some(&fn_idx) = self
+                                .module_scope
+                                .static_methods
+                                .get(&(owner_key, *field_name))
                             {
                                 let source_order = self.args_in_source_order(&args);
                                 let mut arg_values = Vec::with_capacity(source_order.len());
@@ -2748,14 +2765,19 @@ impl Interpreter {
                                     arg_values,
                                     params,
                                 )?;
-                                return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                                return self
+                                    .call_fn_idx_value(fn_idx, arg_vals)
+                                    .map(ControlFlow::Value);
                             }
                         }
 
                         if base_segments.len() == 2 {
                             let module_name = base_segments[0];
                             let type_name = base_segments[1];
-                            if self.active_module_scope().imported_modules.contains(&module_name)
+                            if self
+                                .active_module_scope()
+                                .imported_modules
+                                .contains(&module_name)
                                 && let Some(&fn_idx) = self
                                     .module_scope
                                     .synthetic_module_static_methods
@@ -2779,7 +2801,9 @@ impl Interpreter {
                                     arg_values,
                                     params,
                                 )?;
-                                return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                                return self
+                                    .call_fn_idx_value(fn_idx, arg_vals)
+                                    .map(ControlFlow::Value);
                             }
                         }
                     }
@@ -2800,12 +2824,15 @@ impl Interpreter {
                         && module_path.is_single()
                     {
                         let module_name = module_path.segments[0];
-                        if let Some(namespace) = self.active_module_scope().visible_namespace(module_name)
+                        if let Some(namespace) =
+                            self.active_module_scope().visible_namespace(module_name)
                             && let Some(&type_idx) = namespace.types.get(type_name)
                         {
                             let owner_key = self.static_owner_key_for_type_idx(type_idx);
-                            if let Some(&fn_idx) =
-                                self.module_scope.static_methods.get(&(owner_key, field_name))
+                            if let Some(&fn_idx) = self
+                                .module_scope
+                                .static_methods
+                                .get(&(owner_key, field_name))
                             {
                                 let source_order = self.args_in_source_order(&args);
                                 let mut arg_values = Vec::with_capacity(source_order.len());
@@ -2826,11 +2853,16 @@ impl Interpreter {
                                     arg_values,
                                     params,
                                 )?;
-                                return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                                return self
+                                    .call_fn_idx_value(fn_idx, arg_vals)
+                                    .map(ControlFlow::Value);
                             }
                         }
 
-                        if self.active_module_scope().imported_modules.contains(&module_name)
+                        if self
+                            .active_module_scope()
+                            .imported_modules
+                            .contains(&module_name)
                             && let Some(&fn_idx) = self
                                 .module_scope
                                 .synthetic_module_static_methods
@@ -2855,7 +2887,9 @@ impl Interpreter {
                                 arg_values,
                                 params,
                             )?;
-                            return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                            return self
+                                .call_fn_idx_value(fn_idx, arg_vals)
+                                .map(ControlFlow::Value);
                         }
                     }
 
@@ -2878,8 +2912,10 @@ impl Interpreter {
                                 .map(ControlFlow::Value);
                         }
 
-                        if let Some(&(module_name, type_name)) =
-                            self.active_module_scope().imported_type_namespaces.get(&seg)
+                        if let Some(&(module_name, type_name)) = self
+                            .active_module_scope()
+                            .imported_type_namespaces
+                            .get(&seg)
                             && let Some(&fn_idx) = self
                                 .module_scope
                                 .synthetic_module_static_methods
@@ -2904,12 +2940,16 @@ impl Interpreter {
                                 arg_values,
                                 params,
                             )?;
-                            return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                            return self
+                                .call_fn_idx_value(fn_idx, arg_vals)
+                                .map(ControlFlow::Value);
                         }
 
                         if let Some(&type_idx) = self.active_module_scope().types.get(&seg)
-                            && let Some(&variant_idx) =
-                                self.active_module_scope().type_variants.get(&(type_idx, field_name))
+                            && let Some(&variant_idx) = self
+                                .active_module_scope()
+                                .type_variants
+                                .get(&(type_idx, field_name))
                         {
                             let source_order = self.args_in_source_order(&args);
                             let mut out = Args::with_capacity(source_order.len());
@@ -2922,7 +2962,8 @@ impl Interpreter {
 
                         // Module-qualified call: io.println(s), math.min(a, b)
                         if self.active_module_scope().imported_modules.contains(&seg)
-                            && let Some(mod_fns) = self.active_module_scope().synthetic_modules.get(&seg)
+                            && let Some(mod_fns) =
+                                self.active_module_scope().synthetic_modules.get(&seg)
                             && let Some(&fn_idx) = mod_fns.get(&field_name)
                         {
                             let source_order = self.args_in_source_order(&args);
@@ -2944,7 +2985,9 @@ impl Interpreter {
                                 arg_values,
                                 params,
                             )?;
-                            return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                            return self
+                                .call_fn_idx_value(fn_idx, arg_vals)
+                                .map(ControlFlow::Value);
                         }
 
                         if let Some(namespace) = self.active_module_scope().visible_namespace(seg)
@@ -3037,7 +3080,9 @@ impl Interpreter {
                                 arg_values,
                                 params,
                             )?;
-                            return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                            return self
+                                .call_fn_idx_value(fn_idx, arg_vals)
+                                .map(ControlFlow::Value);
                         }
                     }
 
@@ -3061,7 +3106,9 @@ impl Interpreter {
                                         &self.item_tree.functions[candidate].params[1..],
                                     ),
                                 })
-                                .or_else(|| self.method_candidate_for_value(&base_val, field_name, &args))
+                                .or_else(|| {
+                                    self.method_candidate_for_value(&base_val, field_name, &args)
+                                })
                         } else {
                             self.method_candidate_for_value(&base_val, field_name, &args)
                         };
@@ -3103,8 +3150,10 @@ impl Interpreter {
                             return Ok(ControlFlow::Value(value));
                         }
                         let source_order = self.args_in_source_order(&args);
-                        let method_param_count =
-                            self.item_tree.functions[fn_idx].params.len().saturating_sub(1);
+                        let method_param_count = self.item_tree.functions[fn_idx]
+                            .params
+                            .len()
+                            .saturating_sub(1);
                         let callee_name = format!(
                             "method `{}`",
                             self.item_tree.functions[fn_idx]
@@ -3113,8 +3162,7 @@ impl Interpreter {
                         );
                         let mut arg_vals = Args::with_capacity(method_param_count + 1);
                         arg_vals.push(base_val);
-                        if Self::args_are_all_positional(&args)
-                            && method_param_count == args.len()
+                        if Self::args_are_all_positional(&args) && method_param_count == args.len()
                         {
                             for idx in &source_order {
                                 arg_vals.push(eval_propagate!(self, env, body, *idx));
@@ -3136,7 +3184,9 @@ impl Interpreter {
                                 arg_vals.push(value);
                             }
                         }
-                        return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                        return self
+                            .call_fn_idx_value(fn_idx, arg_vals)
+                            .map(ControlFlow::Value);
                     }
 
                     // Not a method — fall through to field access + call.
@@ -3412,7 +3462,10 @@ impl Interpreter {
                     if let Some(candidates) = candidates {
                         if Self::args_are_all_positional(args)
                             && let Some(fn_idx) = self
-                                .try_select_plain_positional_function_candidate(candidates, args.len())
+                                .try_select_plain_positional_function_candidate(
+                                    candidates,
+                                    args.len(),
+                                )
                         {
                             let mut out = Args::with_capacity(args.len());
                             for arg in args {
@@ -3499,12 +3552,15 @@ impl Interpreter {
                         && module_path.is_single()
                     {
                         let module_name = module_path.segments[0];
-                        if let Some(namespace) = self.active_module_scope().visible_namespace(module_name)
+                        if let Some(namespace) =
+                            self.active_module_scope().visible_namespace(module_name)
                             && let Some(&type_idx) = namespace.types.get(type_name)
                         {
                             let owner_key = self.static_owner_key_for_type_idx(type_idx);
-                            if let Some(&fn_idx) =
-                                self.module_scope.static_methods.get(&(owner_key, field_name))
+                            if let Some(&fn_idx) = self
+                                .module_scope
+                                .static_methods
+                                .get(&(owner_key, field_name))
                             {
                                 let source_order = self.args_in_source_order(args);
                                 let mut arg_values = Vec::with_capacity(source_order.len());
@@ -3525,11 +3581,16 @@ impl Interpreter {
                                     arg_values,
                                     params,
                                 )?;
-                                return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                                return self
+                                    .call_fn_idx_value(fn_idx, arg_vals)
+                                    .map(ControlFlow::Value);
                             }
                         }
 
-                        if self.active_module_scope().imported_modules.contains(&module_name)
+                        if self
+                            .active_module_scope()
+                            .imported_modules
+                            .contains(&module_name)
                             && let Some(&fn_idx) = self
                                 .module_scope
                                 .synthetic_module_static_methods
@@ -3554,7 +3615,9 @@ impl Interpreter {
                                 arg_values,
                                 params,
                             )?;
-                            return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                            return self
+                                .call_fn_idx_value(fn_idx, arg_vals)
+                                .map(ControlFlow::Value);
                         }
                     }
 
@@ -3576,8 +3639,10 @@ impl Interpreter {
                                 .map(ControlFlow::Value);
                         }
 
-                        if let Some(&(module_name, type_name)) =
-                            self.active_module_scope().imported_type_namespaces.get(&seg)
+                        if let Some(&(module_name, type_name)) = self
+                            .active_module_scope()
+                            .imported_type_namespaces
+                            .get(&seg)
                             && let Some(&fn_idx) = self
                                 .module_scope
                                 .synthetic_module_static_methods
@@ -3602,12 +3667,16 @@ impl Interpreter {
                                 arg_values,
                                 params,
                             )?;
-                            return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                            return self
+                                .call_fn_idx_value(fn_idx, arg_vals)
+                                .map(ControlFlow::Value);
                         }
 
                         if let Some(&type_idx) = self.active_module_scope().types.get(&seg)
-                            && let Some(&variant_idx) =
-                                self.active_module_scope().type_variants.get(&(type_idx, field_name))
+                            && let Some(&variant_idx) = self
+                                .active_module_scope()
+                                .type_variants
+                                .get(&(type_idx, field_name))
                         {
                             let source_order = self.args_in_source_order(args);
                             let mut out = Args::with_capacity(source_order.len());
@@ -3620,7 +3689,8 @@ impl Interpreter {
 
                         // Module-qualified call: io.println(s)
                         if self.active_module_scope().imported_modules.contains(&seg)
-                            && let Some(mod_fns) = self.active_module_scope().synthetic_modules.get(&seg)
+                            && let Some(mod_fns) =
+                                self.active_module_scope().synthetic_modules.get(&seg)
                             && let Some(&fn_idx) = mod_fns.get(&field_name)
                         {
                             let source_order = self.args_in_source_order(args);
@@ -3642,7 +3712,9 @@ impl Interpreter {
                                 arg_values,
                                 params,
                             )?;
-                            return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                            return self
+                                .call_fn_idx_value(fn_idx, arg_vals)
+                                .map(ControlFlow::Value);
                         }
 
                         if let Some(namespace) = self.active_module_scope().visible_namespace(seg)
@@ -3735,7 +3807,9 @@ impl Interpreter {
                                 arg_values,
                                 params,
                             )?;
-                            return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                            return self
+                                .call_fn_idx_value(fn_idx, arg_vals)
+                                .map(ControlFlow::Value);
                         }
                     }
 
@@ -3758,7 +3832,9 @@ impl Interpreter {
                                         &self.item_tree.functions[candidate].params[1..],
                                     ),
                                 })
-                                .or_else(|| self.method_candidate_for_value(&base_val, field_name, args))
+                                .or_else(|| {
+                                    self.method_candidate_for_value(&base_val, field_name, args)
+                                })
                         } else {
                             self.method_candidate_for_value(&base_val, field_name, args)
                         };
@@ -3804,8 +3880,10 @@ impl Interpreter {
                             return Ok(ControlFlow::Value(value));
                         }
                         let source_order = self.args_in_source_order(args);
-                        let method_param_count =
-                            self.item_tree.functions[fn_idx].params.len().saturating_sub(1);
+                        let method_param_count = self.item_tree.functions[fn_idx]
+                            .params
+                            .len()
+                            .saturating_sub(1);
                         let callee_name = format!(
                             "method `{}`",
                             self.item_tree.functions[fn_idx]
@@ -3814,9 +3892,7 @@ impl Interpreter {
                         );
                         let mut arg_vals = Args::with_capacity(method_param_count + 1);
                         arg_vals.push(base_val);
-                        if Self::args_are_all_positional(args)
-                            && method_param_count == args.len()
-                        {
+                        if Self::args_are_all_positional(args) && method_param_count == args.len() {
                             for idx in &source_order {
                                 arg_vals.push(eval_propagate_shared!(self, body, *idx));
                             }
@@ -3837,7 +3913,9 @@ impl Interpreter {
                                 arg_vals.push(value);
                             }
                         }
-                        return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                        return self
+                            .call_fn_idx_value(fn_idx, arg_vals)
+                            .map(ControlFlow::Value);
                     }
 
                     // Not a method — fall through to field access + call.
@@ -4050,7 +4128,8 @@ impl Interpreter {
                 });
         }
         if path.segments.len() > 1
-            && let Some((type_idx, variant_idx)) = self.active_module_scope().resolve_constructor_path(path)
+            && let Some((type_idx, variant_idx)) =
+                self.active_module_scope().resolve_constructor_path(path)
         {
             return self.constructor_value(type_idx, variant_idx);
         }
@@ -4322,23 +4401,21 @@ impl Interpreter {
                 body_expr,
                 body,
                 env: captured_env,
-            } => {
-                self.with_call_frame(|this| {
-                    this.ensure_arity("lambda", params.len(), args.len())?;
-                    let mut env = captured_env.clone();
-                    env.push_scope();
-                    let prev_body = this.current_body.replace(body.clone());
-                    let result = (|| -> Result<Value, RuntimeError> {
-                        for (pat_idx, val) in params.iter().zip(args) {
-                            this.bind_pat(body, *pat_idx, &val, &mut env)?;
-                        }
-                        let result = this.eval_terminal_expr(&mut env, body, *body_expr)?;
-                        Ok(result.into_value())
-                    })();
-                    this.current_body = prev_body;
-                    result
-                })
-            }
+            } => self.with_call_frame(|this| {
+                this.ensure_arity("lambda", params.len(), args.len())?;
+                let mut env = captured_env.clone();
+                env.push_scope();
+                let prev_body = this.current_body.replace(body.clone());
+                let result = (|| -> Result<Value, RuntimeError> {
+                    for (pat_idx, val) in params.iter().zip(args) {
+                        this.bind_pat(body, *pat_idx, &val, &mut env)?;
+                    }
+                    let result = this.eval_terminal_expr(&mut env, body, *body_expr)?;
+                    Ok(result.into_value())
+                })();
+                this.current_body = prev_body;
+                result
+            }),
             FnValue::Constructor {
                 type_idx,
                 variant_idx,
@@ -4381,23 +4458,21 @@ impl Interpreter {
                     body_expr,
                     body,
                     env: captured_env,
-                } => {
-                    self.with_call_frame(|this| {
-                        this.ensure_arity("lambda", params.len(), args.len())?;
-                        let mut env = captured_env;
-                        env.push_scope();
-                        let prev_body = this.current_body.replace(body.clone());
-                        let result = (|| -> Result<Value, RuntimeError> {
-                            for (pat_idx, val) in params.iter().zip(args) {
-                                this.bind_pat(&body, *pat_idx, &val, &mut env)?;
-                            }
-                            let result = this.eval_terminal_expr(&mut env, &body, body_expr)?;
-                            Ok(result.into_value())
-                        })();
-                        this.current_body = prev_body;
-                        result
-                    })
-                }
+                } => self.with_call_frame(|this| {
+                    this.ensure_arity("lambda", params.len(), args.len())?;
+                    let mut env = captured_env;
+                    env.push_scope();
+                    let prev_body = this.current_body.replace(body.clone());
+                    let result = (|| -> Result<Value, RuntimeError> {
+                        for (pat_idx, val) in params.iter().zip(args) {
+                            this.bind_pat(&body, *pat_idx, &val, &mut env)?;
+                        }
+                        let result = this.eval_terminal_expr(&mut env, &body, body_expr)?;
+                        Ok(result.into_value())
+                    })();
+                    this.current_body = prev_body;
+                    result
+                }),
                 FnValue::Constructor {
                     type_idx,
                     variant_idx,
@@ -5336,12 +5411,10 @@ impl Interpreter {
                     Ok(())
                 }
             },
-            SeqPlan::Map { input, f } => {
-                self.seq_for_each_control(input, &mut |interp, item| {
-                    let mapped = interp.call_value_ref(f, smallvec::smallvec![item])?;
-                    emit(interp, mapped)
-                })
-            }
+            SeqPlan::Map { input, f } => self.seq_for_each_control(input, &mut |interp, item| {
+                let mapped = interp.call_value_ref(f, smallvec::smallvec![item])?;
+                emit(interp, mapped)
+            }),
             SeqPlan::FlatMap { input, f } => {
                 self.seq_for_each_control(input, &mut |interp, item| {
                     let produced = interp.call_value_ref(f, smallvec::smallvec![item])?;
@@ -6102,7 +6175,8 @@ impl Interpreter {
                 let plan = self.require_traversal_plan(&args[0], "seq_fold")?;
                 let mut acc = args[1].clone();
                 self.seq_for_each(&plan, &mut |interp, item| {
-                    acc = interp.call_value_ref(&args[2], smallvec::smallvec![acc.clone(), item])?;
+                    acc =
+                        interp.call_value_ref(&args[2], smallvec::smallvec![acc.clone(), item])?;
                     Ok(())
                 })?;
                 Ok(acc)
@@ -6257,7 +6331,8 @@ impl Interpreter {
                 let plan = self.require_traversal_plan(&args[0], "seq_find")?;
                 let mut found: Option<Value> = None;
                 self.seq_for_each_control(&plan, &mut |interp, item| {
-                    let keep = interp.call_value_ref(&args[1], smallvec::smallvec![item.clone()])?;
+                    let keep =
+                        interp.call_value_ref(&args[1], smallvec::smallvec![item.clone()])?;
                     match keep {
                         Value::Bool(true) => {
                             found = Some(item);
@@ -6556,7 +6631,10 @@ impl Interpreter {
         if let Expr::Path(path) = &body.exprs[base_idx]
             && path.is_single()
             && let Some(&type_idx) = self.active_module_scope().types.get(&path.segments[0])
-            && let Some(&variant_idx) = self.active_module_scope().type_variants.get(&(type_idx, field))
+            && let Some(&variant_idx) = self
+                .active_module_scope()
+                .type_variants
+                .get(&(type_idx, field))
         {
             return Some(self.constructor_value(type_idx, variant_idx));
         }
@@ -6571,7 +6649,10 @@ impl Interpreter {
             let module_name = module_path.segments[0];
             if let Some(namespace) = self.active_module_scope().visible_namespace(module_name)
                 && let Some(&type_idx) = namespace.types.get(type_name)
-                && let Some(&variant_idx) = self.active_module_scope().type_variants.get(&(type_idx, field))
+                && let Some(&variant_idx) = self
+                    .active_module_scope()
+                    .type_variants
+                    .get(&(type_idx, field))
             {
                 return Some(self.constructor_value(type_idx, variant_idx));
             }

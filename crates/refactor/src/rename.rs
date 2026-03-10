@@ -9,9 +9,9 @@ use kyokara_hir::{CheckResult, ProjectCheckResult};
 use kyokara_intern::Interner;
 use kyokara_parser::SyntaxKind;
 use kyokara_span::FileId;
-use kyokara_syntax::{SyntaxNode, SyntaxToken};
 use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::ImportMember;
+use kyokara_syntax::{SyntaxNode, SyntaxToken};
 
 use crate::{RefactorError, RefactorResult, SymbolKind, TextEdit};
 
@@ -250,7 +250,10 @@ fn name_exists_in_scope(
         SymbolKind::Type => scope.types.keys().any(|n| n.resolve(interner) == name),
         SymbolKind::Capability => scope.effects.keys().any(|n| n.resolve(interner) == name),
         SymbolKind::Variant => {
-            scope.constructors.keys().any(|n| n.resolve(interner) == name)
+            scope
+                .constructors
+                .keys()
+                .any(|n| n.resolve(interner) == name)
                 || scope
                     .type_variants
                     .keys()
@@ -340,8 +343,7 @@ fn collect_rename_edits(
             continue;
         };
 
-        if parent.kind() == SyntaxKind::ImportMember
-            && is_import_member_name_token(&token, &parent)
+        if parent.kind() == SyntaxKind::ImportMember && is_import_member_name_token(&token, &parent)
         {
             edits.push(TextEdit {
                 file_id,
