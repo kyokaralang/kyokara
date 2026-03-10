@@ -52,6 +52,9 @@ pub struct Interpreter {
     /// Per-function module-level function overrides used for project mode.
     /// Maps `current_fn_idx -> (name -> resolved function family)`.
     fn_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, Vec<FnItemIdx>>>,
+    /// Per-function module-scope overrides used for project mode so imported
+    /// functions retain their source module namespaces and type imports.
+    module_scope_overrides: FxHashMap<FnItemIdx, ModuleScope>,
     interner: Interner,
     intrinsics: FxHashMap<Name, IntrinsicFn>,
     /// Snapshot of the environment at function entry, used by `old()` in ensures clauses.
@@ -372,6 +375,7 @@ impl Interpreter {
         let_bodies: FxHashMap<LetItemIdx, Body>,
         let_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, Value>>,
         fn_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, Vec<FnItemIdx>>>,
+        module_scope_overrides: FxHashMap<FnItemIdx, ModuleScope>,
         mut interner: Interner,
         manifest: Option<CapabilityManifest>,
     ) -> Self {
@@ -449,6 +453,7 @@ impl Interpreter {
             lambda_capture_uses_outer_locals: FxHashMap::default(),
             let_scope_overrides,
             fn_scope_overrides,
+            module_scope_overrides,
             interner,
             intrinsics,
             old_env: None,
@@ -467,6 +472,16 @@ impl Interpreter {
             call_depth: 0,
             max_call_depth: Self::configured_max_call_depth(),
         }
+    }
+
+    #[inline(always)]
+    fn active_module_scope(&self) -> &ModuleScope {
+        if let Some(cur_fn) = self.current_fn
+            && let Some(scope) = self.module_scope_overrides.get(&cur_fn)
+        {
+            return scope;
+        }
+        &self.module_scope
     }
 
     fn with_call_frame<T>(
@@ -1289,7 +1304,7 @@ impl Interpreter {
         args: &[CallArg],
         arg_values: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
-        let Some(&trait_idx) = self.module_scope.traits.get(&trait_name) else {
+        let Some(&trait_idx) = self.active_module_scope().traits.get(&trait_name) else {
             return Err(RuntimeError::UnresolvedName(
                 trait_name.resolve(&self.interner).to_string(),
             ));
@@ -2583,13 +2598,200 @@ impl Interpreter {
                     }
                 }
 
+                if let Expr::Path(path) = &body.exprs[callee_idx]
+                    && !path.is_single()
+                {
+                    if let Some((type_idx, variant_idx)) =
+                        self.active_module_scope().resolve_constructor_path(path)
+                    {
+                        let source_order = self.args_in_source_order(&args);
+                        let mut out = Args::with_capacity(source_order.len());
+                        for idx in &source_order {
+                            out.push(eval_propagate!(self, env, body, *idx));
+                        }
+                        let ctor = self.constructor_value(type_idx, variant_idx)?;
+                        return self.call_value(ctor, out).map(ControlFlow::Value);
+                    }
+
+                    if let Some((field_name, base_segments)) = path.segments.split_last() {
+                        let base_path = kyokara_hir_def::path::Path {
+                            segments: base_segments.to_vec(),
+                        };
+
+                        if base_segments.len() == 1 {
+                            let owner = base_segments[0];
+
+                            if self.active_module_scope().traits.contains_key(&owner) {
+                                let source_order = self.args_in_source_order(&args);
+                                let mut arg_values = Vec::with_capacity(source_order.len());
+                                for idx in &source_order {
+                                    let v = eval_propagate!(self, env, body, *idx);
+                                    arg_values.push(v);
+                                }
+                                return self
+                                    .call_trait_qualified(owner, *field_name, &args, arg_values)
+                                    .map(ControlFlow::Value);
+                            }
+
+                            if let Some(&(module_name, type_name)) =
+                                self.active_module_scope().imported_type_namespaces.get(&owner)
+                                && let Some(&fn_idx) = self
+                                    .module_scope
+                                    .synthetic_module_static_methods
+                                    .get(&(module_name, type_name, *field_name))
+                            {
+                                let source_order = self.args_in_source_order(&args);
+                                let mut arg_values = Vec::with_capacity(source_order.len());
+                                for idx in &source_order {
+                                    arg_values.push(eval_propagate!(self, env, body, *idx));
+                                }
+                                let params = &self.item_tree.functions[fn_idx].params;
+                                let callee_name = format!(
+                                    "function `{}`",
+                                    self.item_tree.functions[fn_idx]
+                                        .name
+                                        .resolve(&self.interner)
+                                );
+                                let arg_vals = self.bind_call_values_to_params(
+                                    &callee_name,
+                                    &args,
+                                    arg_values,
+                                    params,
+                                )?;
+                                return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                            }
+
+                            if let Some(namespace) = self.active_module_scope().visible_namespace(owner)
+                                && let Some(candidates) = namespace.functions.get(field_name)
+                            {
+                                let selection = match candidates.as_slice() {
+                                    [fn_idx] => CallFamilySelection::Selected {
+                                        candidate: *fn_idx,
+                                        binding: kyokara_hir_def::call_family::bind_call_args_to_params(
+                                            &args,
+                                            &self.item_tree.functions[*fn_idx].params,
+                                        ),
+                                    },
+                                    _ => select_call_family_candidate(&args, candidates, |fn_idx| {
+                                        &self.item_tree.functions[fn_idx].params
+                                    }),
+                                };
+                                match selection {
+                                    CallFamilySelection::Selected { candidate, .. } => {
+                                        let source_order = self.args_in_source_order(&args);
+                                        let mut arg_values = Vec::with_capacity(source_order.len());
+                                        for idx in &source_order {
+                                            arg_values.push(eval_propagate!(self, env, body, *idx));
+                                        }
+                                        let params = &self.item_tree.functions[candidate].params;
+                                        let callee_name = format!(
+                                            "function `{}`",
+                                            self.item_tree.functions[candidate]
+                                                .name
+                                                .resolve(&self.interner)
+                                        );
+                                        let arg_vals = self.bind_call_values_to_params(
+                                            &callee_name,
+                                            &args,
+                                            arg_values,
+                                            params,
+                                        )?;
+                                        return self
+                                            .call_fn_idx_value(candidate, arg_vals)
+                                            .map(ControlFlow::Value);
+                                    }
+                                    CallFamilySelection::InvalidShape { errors } => {
+                                        return Err(RuntimeError::TypeError(
+                                            self.runtime_call_shape_error_message(&errors[0]),
+                                        ));
+                                    }
+                                    CallFamilySelection::ArgCountMismatch { expected, actual } => {
+                                        return Err(RuntimeError::ArityMismatch {
+                                            callee: format!(
+                                                "function `{}`",
+                                                field_name.resolve(&self.interner)
+                                            ),
+                                            expected: expected.first().copied().unwrap_or(0),
+                                            actual,
+                                        });
+                                    }
+                                    CallFamilySelection::Ambiguous => {
+                                        return Err(RuntimeError::TypeError(format!(
+                                            "overloaded function family `{}` is ambiguous for this call shape",
+                                            field_name.resolve(&self.interner)
+                                        )));
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(type_idx) = self.active_module_scope().resolve_type_path(&base_path) {
+                            let owner_key = self.static_owner_key_for_type_idx(type_idx);
+                            if let Some(&fn_idx) =
+                                self.module_scope.static_methods.get(&(owner_key, *field_name))
+                            {
+                                let source_order = self.args_in_source_order(&args);
+                                let mut arg_values = Vec::with_capacity(source_order.len());
+                                for idx in &source_order {
+                                    arg_values.push(eval_propagate!(self, env, body, *idx));
+                                }
+                                let params = &self.item_tree.functions[fn_idx].params;
+                                let callee_name = format!(
+                                    "function `{}`",
+                                    self.item_tree.functions[fn_idx]
+                                        .name
+                                        .resolve(&self.interner)
+                                );
+                                let arg_vals = self.bind_call_values_to_params(
+                                    &callee_name,
+                                    &args,
+                                    arg_values,
+                                    params,
+                                )?;
+                                return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                            }
+                        }
+
+                        if base_segments.len() == 2 {
+                            let module_name = base_segments[0];
+                            let type_name = base_segments[1];
+                            if self.active_module_scope().imported_modules.contains(&module_name)
+                                && let Some(&fn_idx) = self
+                                    .module_scope
+                                    .synthetic_module_static_methods
+                                    .get(&(module_name, type_name, *field_name))
+                            {
+                                let source_order = self.args_in_source_order(&args);
+                                let mut arg_values = Vec::with_capacity(source_order.len());
+                                for idx in &source_order {
+                                    arg_values.push(eval_propagate!(self, env, body, *idx));
+                                }
+                                let params = &self.item_tree.functions[fn_idx].params;
+                                let callee_name = format!(
+                                    "function `{}`",
+                                    self.item_tree.functions[fn_idx]
+                                        .name
+                                        .resolve(&self.interner)
+                                );
+                                let arg_vals = self.bind_call_values_to_params(
+                                    &callee_name,
+                                    &args,
+                                    arg_values,
+                                    params,
+                                )?;
+                                return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                            }
+                        }
+                    }
+                }
+
                 // ── Module-qualified / static method / method call resolution ──
                 if let Expr::Field { base, field } = &body.exprs[callee_idx] {
                     let base_idx = *base;
                     let field_name = *field;
 
                     // Nested module-qualified static method:
-                    // collections.Deque.new()
+                    // collections.Deque.new(), foo.Type.origin()
                     if let Expr::Field {
                         base: module_base_idx,
                         field: type_name,
@@ -2598,7 +2800,37 @@ impl Interpreter {
                         && module_path.is_single()
                     {
                         let module_name = module_path.segments[0];
-                        if self.module_scope.imported_modules.contains(&module_name)
+                        if let Some(namespace) = self.active_module_scope().visible_namespace(module_name)
+                            && let Some(&type_idx) = namespace.types.get(type_name)
+                        {
+                            let owner_key = self.static_owner_key_for_type_idx(type_idx);
+                            if let Some(&fn_idx) =
+                                self.module_scope.static_methods.get(&(owner_key, field_name))
+                            {
+                                let source_order = self.args_in_source_order(&args);
+                                let mut arg_values = Vec::with_capacity(source_order.len());
+                                for idx in &source_order {
+                                    let v = eval_propagate!(self, env, body, *idx);
+                                    arg_values.push(v);
+                                }
+                                let params = &self.item_tree.functions[fn_idx].params;
+                                let callee_name = format!(
+                                    "function `{}`",
+                                    self.item_tree.functions[fn_idx]
+                                        .name
+                                        .resolve(&self.interner)
+                                );
+                                let arg_vals = self.bind_call_values_to_params(
+                                    &callee_name,
+                                    &args,
+                                    arg_values,
+                                    params,
+                                )?;
+                                return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                            }
+                        }
+
+                        if self.active_module_scope().imported_modules.contains(&module_name)
                             && let Some(&fn_idx) = self
                                 .module_scope
                                 .synthetic_module_static_methods
@@ -2634,7 +2866,7 @@ impl Interpreter {
                     {
                         let seg = path.segments[0];
 
-                        if self.module_scope.traits.contains_key(&seg) {
+                        if self.active_module_scope().traits.contains_key(&seg) {
                             let source_order = self.args_in_source_order(&args);
                             let mut arg_values = Vec::with_capacity(source_order.len());
                             for idx in &source_order {
@@ -2646,9 +2878,51 @@ impl Interpreter {
                                 .map(ControlFlow::Value);
                         }
 
+                        if let Some(&(module_name, type_name)) =
+                            self.active_module_scope().imported_type_namespaces.get(&seg)
+                            && let Some(&fn_idx) = self
+                                .module_scope
+                                .synthetic_module_static_methods
+                                .get(&(module_name, type_name, field_name))
+                        {
+                            let source_order = self.args_in_source_order(&args);
+                            let mut arg_values = Vec::with_capacity(source_order.len());
+                            for idx in &source_order {
+                                let v = eval_propagate!(self, env, body, *idx);
+                                arg_values.push(v);
+                            }
+                            let params = &self.item_tree.functions[fn_idx].params;
+                            let callee_name = format!(
+                                "function `{}`",
+                                self.item_tree.functions[fn_idx]
+                                    .name
+                                    .resolve(&self.interner)
+                            );
+                            let arg_vals = self.bind_call_values_to_params(
+                                &callee_name,
+                                &args,
+                                arg_values,
+                                params,
+                            )?;
+                            return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                        }
+
+                        if let Some(&type_idx) = self.active_module_scope().types.get(&seg)
+                            && let Some(&variant_idx) =
+                                self.active_module_scope().type_variants.get(&(type_idx, field_name))
+                        {
+                            let source_order = self.args_in_source_order(&args);
+                            let mut out = Args::with_capacity(source_order.len());
+                            for idx in &source_order {
+                                out.push(eval_propagate!(self, env, body, *idx));
+                            }
+                            let ctor = self.constructor_value(type_idx, variant_idx)?;
+                            return self.call_value(ctor, out).map(ControlFlow::Value);
+                        }
+
                         // Module-qualified call: io.println(s), math.min(a, b)
-                        if self.module_scope.imported_modules.contains(&seg)
-                            && let Some(mod_fns) = self.module_scope.synthetic_modules.get(&seg)
+                        if self.active_module_scope().imported_modules.contains(&seg)
+                            && let Some(mod_fns) = self.active_module_scope().synthetic_modules.get(&seg)
                             && let Some(&fn_idx) = mod_fns.get(&field_name)
                         {
                             let source_order = self.args_in_source_order(&args);
@@ -2671,6 +2945,70 @@ impl Interpreter {
                                 params,
                             )?;
                             return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                        }
+
+                        if let Some(namespace) = self.active_module_scope().visible_namespace(seg)
+                            && let Some(candidates) = namespace.functions.get(&field_name)
+                        {
+                            let selection = match candidates.as_slice() {
+                                [fn_idx] => CallFamilySelection::Selected {
+                                    candidate: *fn_idx,
+                                    binding: kyokara_hir_def::call_family::bind_call_args_to_params(
+                                        &args,
+                                        &self.item_tree.functions[*fn_idx].params,
+                                    ),
+                                },
+                                _ => select_call_family_candidate(&args, candidates, |fn_idx| {
+                                    &self.item_tree.functions[fn_idx].params
+                                }),
+                            };
+                            match selection {
+                                CallFamilySelection::Selected { candidate, .. } => {
+                                    let source_order = self.args_in_source_order(&args);
+                                    let mut arg_values = Vec::with_capacity(source_order.len());
+                                    for idx in &source_order {
+                                        let v = eval_propagate!(self, env, body, *idx);
+                                        arg_values.push(v);
+                                    }
+                                    let params = &self.item_tree.functions[candidate].params;
+                                    let callee_name = format!(
+                                        "function `{}`",
+                                        self.item_tree.functions[candidate]
+                                            .name
+                                            .resolve(&self.interner)
+                                    );
+                                    let arg_vals = self.bind_call_values_to_params(
+                                        &callee_name,
+                                        &args,
+                                        arg_values,
+                                        params,
+                                    )?;
+                                    return self
+                                        .call_fn_idx_value(candidate, arg_vals)
+                                        .map(ControlFlow::Value);
+                                }
+                                CallFamilySelection::InvalidShape { errors } => {
+                                    return Err(RuntimeError::TypeError(
+                                        self.runtime_call_shape_error_message(&errors[0]),
+                                    ));
+                                }
+                                CallFamilySelection::ArgCountMismatch { expected, actual } => {
+                                    return Err(RuntimeError::ArityMismatch {
+                                        callee: format!(
+                                            "function `{}`",
+                                            field_name.resolve(&self.interner)
+                                        ),
+                                        expected: expected.first().copied().unwrap_or(0),
+                                        actual,
+                                    });
+                                }
+                                CallFamilySelection::Ambiguous => {
+                                    return Err(RuntimeError::TypeError(format!(
+                                        "overloaded function family `{}` is ambiguous for this call shape",
+                                        field_name.resolve(&self.interner)
+                                    )));
+                                }
+                            }
                         }
 
                         // Type-owned static call: bare `Type.method()` if registered.
@@ -2861,6 +3199,9 @@ impl Interpreter {
             Expr::Field { base, field } => {
                 let base_idx = *base;
                 let field = *field;
+                if let Some(value) = self.try_eval_constructor_field_value(body, base_idx, field) {
+                    return value.map(ControlFlow::Value);
+                }
                 let base_val = eval_propagate!(self, env, body, base_idx);
                 self.eval_field(base_val, field).map(ControlFlow::Value)
             }
@@ -3010,6 +3351,11 @@ impl Interpreter {
                                 )
                             })?
                     }
+                } else if path.segments.len() > 1
+                    && let Some((type_idx, variant_idx)) =
+                        self.active_module_scope().resolve_constructor_path(path)
+                {
+                    self.constructor_value(type_idx, variant_idx)?
                 } else {
                     self.resolve_name(&self.env, name)?
                 };
@@ -3144,7 +3490,7 @@ impl Interpreter {
                     let field_name = *field;
 
                     // Nested module-qualified static method:
-                    // collections.Deque.new()
+                    // collections.Deque.new(), foo.Type.origin()
                     if let Expr::Field {
                         base: module_base_idx,
                         field: type_name,
@@ -3153,7 +3499,37 @@ impl Interpreter {
                         && module_path.is_single()
                     {
                         let module_name = module_path.segments[0];
-                        if self.module_scope.imported_modules.contains(&module_name)
+                        if let Some(namespace) = self.active_module_scope().visible_namespace(module_name)
+                            && let Some(&type_idx) = namespace.types.get(type_name)
+                        {
+                            let owner_key = self.static_owner_key_for_type_idx(type_idx);
+                            if let Some(&fn_idx) =
+                                self.module_scope.static_methods.get(&(owner_key, field_name))
+                            {
+                                let source_order = self.args_in_source_order(args);
+                                let mut arg_values = Vec::with_capacity(source_order.len());
+                                for idx in &source_order {
+                                    let v = eval_propagate_shared!(self, body, *idx);
+                                    arg_values.push(v);
+                                }
+                                let params = &self.item_tree.functions[fn_idx].params;
+                                let callee_name = format!(
+                                    "function `{}`",
+                                    self.item_tree.functions[fn_idx]
+                                        .name
+                                        .resolve(&self.interner)
+                                );
+                                let arg_vals = self.bind_call_values_to_params(
+                                    &callee_name,
+                                    args,
+                                    arg_values,
+                                    params,
+                                )?;
+                                return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                            }
+                        }
+
+                        if self.active_module_scope().imported_modules.contains(&module_name)
                             && let Some(&fn_idx) = self
                                 .module_scope
                                 .synthetic_module_static_methods
@@ -3188,7 +3564,7 @@ impl Interpreter {
                     {
                         let seg = path.segments[0];
 
-                        if self.module_scope.traits.contains_key(&seg) {
+                        if self.active_module_scope().traits.contains_key(&seg) {
                             let source_order = self.args_in_source_order(args);
                             let mut arg_values = Vec::with_capacity(source_order.len());
                             for idx in &source_order {
@@ -3200,9 +3576,51 @@ impl Interpreter {
                                 .map(ControlFlow::Value);
                         }
 
+                        if let Some(&(module_name, type_name)) =
+                            self.active_module_scope().imported_type_namespaces.get(&seg)
+                            && let Some(&fn_idx) = self
+                                .module_scope
+                                .synthetic_module_static_methods
+                                .get(&(module_name, type_name, field_name))
+                        {
+                            let source_order = self.args_in_source_order(args);
+                            let mut arg_values = Vec::with_capacity(source_order.len());
+                            for idx in &source_order {
+                                let v = eval_propagate_shared!(self, body, *idx);
+                                arg_values.push(v);
+                            }
+                            let params = &self.item_tree.functions[fn_idx].params;
+                            let callee_name = format!(
+                                "function `{}`",
+                                self.item_tree.functions[fn_idx]
+                                    .name
+                                    .resolve(&self.interner)
+                            );
+                            let arg_vals = self.bind_call_values_to_params(
+                                &callee_name,
+                                args,
+                                arg_values,
+                                params,
+                            )?;
+                            return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                        }
+
+                        if let Some(&type_idx) = self.active_module_scope().types.get(&seg)
+                            && let Some(&variant_idx) =
+                                self.active_module_scope().type_variants.get(&(type_idx, field_name))
+                        {
+                            let source_order = self.args_in_source_order(args);
+                            let mut out = Args::with_capacity(source_order.len());
+                            for idx in &source_order {
+                                out.push(eval_propagate_shared!(self, body, *idx));
+                            }
+                            let ctor = self.constructor_value(type_idx, variant_idx)?;
+                            return self.call_value(ctor, out).map(ControlFlow::Value);
+                        }
+
                         // Module-qualified call: io.println(s)
-                        if self.module_scope.imported_modules.contains(&seg)
-                            && let Some(mod_fns) = self.module_scope.synthetic_modules.get(&seg)
+                        if self.active_module_scope().imported_modules.contains(&seg)
+                            && let Some(mod_fns) = self.active_module_scope().synthetic_modules.get(&seg)
                             && let Some(&fn_idx) = mod_fns.get(&field_name)
                         {
                             let source_order = self.args_in_source_order(args);
@@ -3225,6 +3643,70 @@ impl Interpreter {
                                 params,
                             )?;
                             return self.call_fn_idx_value(fn_idx, arg_vals).map(ControlFlow::Value);
+                        }
+
+                        if let Some(namespace) = self.active_module_scope().visible_namespace(seg)
+                            && let Some(candidates) = namespace.functions.get(&field_name)
+                        {
+                            let selection = match candidates.as_slice() {
+                                [fn_idx] => CallFamilySelection::Selected {
+                                    candidate: *fn_idx,
+                                    binding: kyokara_hir_def::call_family::bind_call_args_to_params(
+                                        args,
+                                        &self.item_tree.functions[*fn_idx].params,
+                                    ),
+                                },
+                                _ => select_call_family_candidate(args, candidates, |fn_idx| {
+                                    &self.item_tree.functions[fn_idx].params
+                                }),
+                            };
+                            match selection {
+                                CallFamilySelection::Selected { candidate, .. } => {
+                                    let source_order = self.args_in_source_order(args);
+                                    let mut arg_values = Vec::with_capacity(source_order.len());
+                                    for idx in &source_order {
+                                        let v = eval_propagate_shared!(self, body, *idx);
+                                        arg_values.push(v);
+                                    }
+                                    let params = &self.item_tree.functions[candidate].params;
+                                    let callee_name = format!(
+                                        "function `{}`",
+                                        self.item_tree.functions[candidate]
+                                            .name
+                                            .resolve(&self.interner)
+                                    );
+                                    let arg_vals = self.bind_call_values_to_params(
+                                        &callee_name,
+                                        args,
+                                        arg_values,
+                                        params,
+                                    )?;
+                                    return self
+                                        .call_fn_idx_value(candidate, arg_vals)
+                                        .map(ControlFlow::Value);
+                                }
+                                CallFamilySelection::InvalidShape { errors } => {
+                                    return Err(RuntimeError::TypeError(
+                                        self.runtime_call_shape_error_message(&errors[0]),
+                                    ));
+                                }
+                                CallFamilySelection::ArgCountMismatch { expected, actual } => {
+                                    return Err(RuntimeError::ArityMismatch {
+                                        callee: format!(
+                                            "function `{}`",
+                                            field_name.resolve(&self.interner)
+                                        ),
+                                        expected: expected.first().copied().unwrap_or(0),
+                                        actual,
+                                    });
+                                }
+                                CallFamilySelection::Ambiguous => {
+                                    return Err(RuntimeError::TypeError(format!(
+                                        "overloaded function family `{}` is ambiguous for this call shape",
+                                        field_name.resolve(&self.interner)
+                                    )));
+                                }
+                            }
                         }
 
                         // Type-owned static call: bare `Type.method()` if registered.
@@ -3418,6 +3900,9 @@ impl Interpreter {
             Expr::Field { base, field } => {
                 let base_idx = *base;
                 let field = *field;
+                if let Some(value) = self.try_eval_constructor_field_value(body, base_idx, field) {
+                    return value.map(ControlFlow::Value);
+                }
                 let base_val = eval_propagate_shared!(self, body, base_idx);
                 self.eval_field(base_val, field).map(ControlFlow::Value)
             }
@@ -3564,6 +4049,11 @@ impl Interpreter {
                     )
                 });
         }
+        if path.segments.len() > 1
+            && let Some((type_idx, variant_idx)) = self.active_module_scope().resolve_constructor_path(path)
+        {
+            return self.constructor_value(type_idx, variant_idx);
+        }
         self.resolve_name(env, name)
     }
 
@@ -3618,26 +4108,37 @@ impl Interpreter {
 
         // 5. ADT constructors.
         if let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&name) {
-            let type_item = &self.item_tree.types[type_idx];
-            if let TypeDefKind::Adt { variants } = &type_item.kind {
-                let variant = &variants[variant_idx];
-                if variant.fields.is_empty() {
-                    return Ok(Value::Adt {
-                        type_idx,
-                        variant: variant_idx,
-                        fields: Vec::new(),
-                    });
-                }
-                return Ok(Value::Fn(Box::new(FnValue::Constructor {
-                    type_idx,
-                    variant_idx,
-                    arity: variant.fields.len(),
-                })));
-            }
+            return self.constructor_value(type_idx, variant_idx);
         }
 
         let name_str = name.resolve(&self.interner);
         Err(RuntimeError::UnresolvedName(name_str.to_string()))
+    }
+
+    fn constructor_value(
+        &self,
+        type_idx: TypeItemIdx,
+        variant_idx: usize,
+    ) -> Result<Value, RuntimeError> {
+        let type_item = &self.item_tree.types[type_idx];
+        if let TypeDefKind::Adt { variants } = &type_item.kind {
+            let variant = &variants[variant_idx];
+            if variant.fields.is_empty() {
+                return Ok(Value::Adt {
+                    type_idx,
+                    variant: variant_idx,
+                    fields: Vec::new(),
+                });
+            }
+            return Ok(Value::Fn(Box::new(FnValue::Constructor {
+                type_idx,
+                variant_idx,
+                arity: variant.fields.len(),
+            })));
+        }
+        Err(RuntimeError::TypeError(
+            "internal runtime error: constructor owner is not an ADT".into(),
+        ))
     }
 
     #[inline(always)]
@@ -5050,6 +5551,9 @@ impl Interpreter {
                         "list_get expects an Int index".into(),
                     ));
                 };
+                if *i < 0 {
+                    return self.make_none();
+                }
                 let idx = *i as usize;
                 if let Some(val) = xs.get(idx) {
                     self.make_some(val.clone())
@@ -5068,6 +5572,9 @@ impl Interpreter {
                         "mutable_list_get expects an Int index".into(),
                     ));
                 };
+                if *i < 0 {
+                    return self.make_none();
+                }
                 let idx = *i as usize;
                 if let Some(val) = xs.get_cloned(idx) {
                     self.make_some(val)
@@ -6040,15 +6547,50 @@ impl Interpreter {
         }
     }
 
+    fn try_eval_constructor_field_value(
+        &self,
+        body: &Body,
+        base_idx: ExprIdx,
+        field: Name,
+    ) -> Option<Result<Value, RuntimeError>> {
+        if let Expr::Path(path) = &body.exprs[base_idx]
+            && path.is_single()
+            && let Some(&type_idx) = self.active_module_scope().types.get(&path.segments[0])
+            && let Some(&variant_idx) = self.active_module_scope().type_variants.get(&(type_idx, field))
+        {
+            return Some(self.constructor_value(type_idx, variant_idx));
+        }
+
+        if let Expr::Field {
+            base: module_base_idx,
+            field: type_name,
+        } = &body.exprs[base_idx]
+            && let Expr::Path(module_path) = &body.exprs[*module_base_idx]
+            && module_path.is_single()
+        {
+            let module_name = module_path.segments[0];
+            if let Some(namespace) = self.active_module_scope().visible_namespace(module_name)
+                && let Some(&type_idx) = namespace.types.get(type_name)
+                && let Some(&variant_idx) = self.active_module_scope().type_variants.get(&(type_idx, field))
+            {
+                return Some(self.constructor_value(type_idx, variant_idx));
+            }
+        }
+
+        None
+    }
+
     fn static_owner_key_for_name(&self, name: Name) -> Option<StaticOwnerKey> {
-        let type_idx = *self.module_scope.types.get(&name)?;
-        Some(
-            self.module_scope
-                .core_types
-                .kind_for_idx(type_idx)
-                .map(StaticOwnerKey::Core)
-                .unwrap_or(StaticOwnerKey::User(type_idx)),
-        )
+        let type_idx = *self.active_module_scope().types.get(&name)?;
+        Some(self.static_owner_key_for_type_idx(type_idx))
+    }
+
+    fn static_owner_key_for_type_idx(&self, type_idx: TypeItemIdx) -> StaticOwnerKey {
+        self.module_scope
+            .core_types
+            .kind_for_idx(type_idx)
+            .map(StaticOwnerKey::Core)
+            .unwrap_or(StaticOwnerKey::User(type_idx))
     }
 
     /// Map a runtime value to its dispatch identity for method lookup.
@@ -6271,12 +6813,6 @@ impl Interpreter {
                 _ => false,
             },
             Pat::Constructor { path, args } => {
-                if !path.is_single() {
-                    // Multi-segment constructor patterns are not resolved at runtime.
-                    // Avoid leaf-name matching (e.g. `A.Some(_)` matching `Some(_)`).
-                    return false;
-                }
-
                 let Value::Adt {
                     type_idx,
                     variant,
@@ -6286,13 +6822,8 @@ impl Interpreter {
                     return false;
                 };
 
-                // Resolve the constructor name.
-                let ctor_name = match path.last() {
-                    Some(n) => n,
-                    None => return false,
-                };
-                let Some(&(expected_type, expected_variant)) =
-                    self.module_scope.constructors.get(&ctor_name)
+                let Some((expected_type, expected_variant)) =
+                    self.active_module_scope().resolve_constructor_path(path)
                 else {
                     return false;
                 };
@@ -6603,7 +7134,7 @@ impl Interpreter {
         // Resolve type index from path for method resolution.
         let type_idx = path
             .and_then(|p| p.segments.first())
-            .and_then(|name| self.module_scope.types.get(name).copied());
+            .and_then(|name| self.active_module_scope().types.get(name).copied());
 
         // Record literals (`Name { field: value }`) always produce record
         // values. ADT constructors are handled separately through the call
@@ -6920,7 +7451,7 @@ impl Interpreter {
 
         let type_idx = path
             .and_then(|p| p.segments.first())
-            .and_then(|name| self.module_scope.types.get(name).copied());
+            .and_then(|name| self.active_module_scope().types.get(name).copied());
 
         // Record literals always produce record values (see eval_record_lit).
         Ok(ControlFlow::Value(Value::Record {
@@ -6978,6 +7509,7 @@ mod tests {
         let interpreter = Interpreter::new(
             item_tree,
             module_scope,
+            FxHashMap::default(),
             FxHashMap::default(),
             FxHashMap::default(),
             FxHashMap::default(),
@@ -7084,6 +7616,7 @@ mod tests {
             checked.module_scope,
             checked.type_check.fn_bodies,
             checked.type_check.let_bodies,
+            FxHashMap::default(),
             FxHashMap::default(),
             FxHashMap::default(),
             checked.interner,

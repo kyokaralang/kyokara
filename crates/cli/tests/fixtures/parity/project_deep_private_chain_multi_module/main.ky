@@ -1,4 +1,4 @@
-import util_a
-import util_b
+from util_a import foo
+from util_b import bar
 
 fn main() -> Int { foo() + bar() }

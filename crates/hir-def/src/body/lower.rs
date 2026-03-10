@@ -900,6 +900,7 @@ impl BodyLowerCtx<'_> {
             .map(|e| self.lower_expr(&e))
             .unwrap_or_else(|| self.alloc_expr(Expr::Missing));
 
+        let result_name = Name::new(self.interner, "Result");
         let ok_name = Name::new(self.interner, "Ok");
         let err_name = Name::new(self.interner, "Err");
         let v_name = Name::new(self.interner, "__v");
@@ -908,7 +909,9 @@ impl BodyLowerCtx<'_> {
         // Ok arm: Constructor("Ok", [Bind("__v")]) => Path("__v")
         let v_pat = self.alloc_pat(pat::Pat::Bind { name: v_name });
         let ok_pat = self.alloc_pat(pat::Pat::Constructor {
-            path: path::Path::single(ok_name),
+            path: path::Path {
+                segments: vec![result_name, ok_name],
+            },
             args: vec![v_pat],
         });
         let ok_body = self.alloc_expr(Expr::Path(path::Path::single(v_name)));
@@ -916,11 +919,17 @@ impl BodyLowerCtx<'_> {
         // Err arm: Constructor("Err", [Bind("__e")]) => Return(Call(Err, [Path("__e")]))
         let e_pat = self.alloc_pat(pat::Pat::Bind { name: e_name });
         let err_pat = self.alloc_pat(pat::Pat::Constructor {
-            path: path::Path::single(err_name),
+            path: path::Path {
+                segments: vec![result_name, err_name],
+            },
             args: vec![e_pat],
         });
         let e_path = self.alloc_expr(Expr::Path(path::Path::single(e_name)));
-        let err_ctor = self.alloc_expr(Expr::Path(path::Path::single(err_name)));
+        let result_path = self.alloc_expr(Expr::Path(path::Path::single(result_name)));
+        let err_ctor = self.alloc_expr(Expr::Field {
+            base: result_path,
+            field: err_name,
+        });
         let err_call = self.alloc_expr(Expr::Call {
             callee: err_ctor,
             args: vec![CallArg::Positional(e_path)],
@@ -1249,21 +1258,33 @@ impl BodyLowerCtx<'_> {
     ) -> PatIdx {
         match pat_cst {
             PatCst::Ident(ip) => {
-                let name = ip
+                let path = ip
                     .path()
-                    .and_then(|p| p.segments().next())
-                    .map(|tok| Name::new(self.interner, tok.text()))
+                    .map(|p| self.lower_path(&p))
+                    .unwrap_or_else(|| path::Path { segments: vec![] });
+                let name = path
+                    .segments
+                    .first()
+                    .copied()
                     .unwrap_or_else(|| Name::new(self.interner, "_"));
+                let path_text = path
+                    .segments
+                    .iter()
+                    .map(|seg| seg.resolve(self.interner).to_owned())
+                    .collect::<Vec<_>>()
+                    .join(".");
 
                 // Check if this is a known constructor (capitalized) or a binding
                 let is_constructor = name
                     .resolve(self.interner)
                     .starts_with(|c: char| c.is_uppercase());
 
-                if is_constructor && self.module_scope.constructors.contains_key(&name) {
+                if is_constructor
+                    && self.module_scope.resolve_constructor_path(&path).is_some()
+                {
                     // Nullary constructor pattern
                     let pat_idx = self.alloc_pat(pat::Pat::Constructor {
-                        path: path::Path::single(name),
+                        path,
                         args: vec![],
                     });
                     self.pat_source_map
@@ -1275,7 +1296,7 @@ impl BodyLowerCtx<'_> {
                         self.diagnostics.push(Diagnostic::error(
                             format!(
                                 "unknown constructor `{}` used as pattern (treating as binding)",
-                                name.resolve(self.interner)
+                                path_text
                             ),
                             span,
                         ));

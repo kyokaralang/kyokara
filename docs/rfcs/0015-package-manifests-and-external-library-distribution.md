@@ -26,7 +26,7 @@ Kyokara already has a workable local module story:
 1. file path determines module path,
 2. there is no source-level `module Path` declaration,
 3. `pub` controls visibility,
-4. `import` brings public names into scope.
+4. `import path` binds a module namespace and `from path import Name` binds public members directly.
 
 That is enough for one project, but not enough for a language ecosystem.
 
@@ -54,7 +54,7 @@ The package system should solve those gaps without discarding the module rules t
 1. Binary artifact distribution in v1.
 2. Native extension or FFI packaging.
 3. Workspace or multi-package monorepo features.
-4. Selective imports or user-module qualified member access.
+4. Star imports, relative imports, or dynamic import behavior.
 5. Solving documentation hosting, discovery ranking, or package scoring.
 
 ## Proposal
@@ -171,8 +171,9 @@ Rules:
 1. `deps` is not a user-defined module path.
 2. The segment after `deps` is a dependency alias from `[dependencies]`.
 3. Remaining path segments are module paths inside that dependency's `src/` tree.
-4. `import foo.bar` continues to mean the current package's own module path.
-5. External dependencies never share the same top-level import namespace as local modules or stdlib modules.
+4. `import foo.bar` continues to mean the current package's own module namespace path.
+5. `from foo.bar import Name` continues to use the same local-package path rules, but binds public members directly.
+6. External dependencies never share the same top-level import namespace as local modules or stdlib modules.
 
 Examples:
 
@@ -185,12 +186,14 @@ json = { package = "core/json", version = "^1.4.0" }
 // current package
 import parse
 import deps.json.encode
+from deps.json.encode import Encoder
 ```
 
 That keeps this distinction obvious:
 
 1. `parse` is ours,
-2. `deps.json.encode` is third-party.
+2. `deps.json.encode` is third-party,
+3. `Encoder` is a direct member import from that third-party module.
 
 ### P4. Imported surface and root modules
 
@@ -198,9 +201,10 @@ The dependency root import maps to `src/lib.ky`.
 
 Examples:
 
-1. `import deps.json` loads the public items of the dependency root module from `src/lib.ky`.
-2. `import deps.json.encode` loads the public items from `src/encode.ky`.
-3. `import deps.json.http.client` loads the public items from `src/http/client.ky`.
+1. `import deps.json` binds the dependency root module namespace from `src/lib.ky`.
+2. `import deps.json.encode` binds the dependency module namespace from `src/encode.ky`.
+3. `from deps.json.encode import Encoder` binds a public member from `src/encode.ky`.
+4. `import deps.json.http.client` binds the namespace from `src/http/client.ky`.
 
 This preserves the existing module rule inside each package:
 
@@ -415,8 +419,9 @@ Because aliases solve three real problems:
 
 This RFC follows the API surface law:
 
-1. modules remain the unit of imported API visibility,
-2. external package qualification happens in the module path, not by inventing a second import system.
+1. modules remain the unit of path-based visibility,
+2. external package qualification still happens in the path prefix (`deps.<alias>`),
+3. `from ... import ...` is the same member-import mechanism used for local modules and type-owned variants.
 
 ### RFC 0004
 

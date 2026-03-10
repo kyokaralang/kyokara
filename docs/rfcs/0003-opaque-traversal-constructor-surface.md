@@ -62,8 +62,8 @@ seed.unfold(fn(state: S) => Option<{ value: T, state: S }>)
 
 Semantics are unchanged:
 
-1. `None` stops.
-2. `Some({ value, state: next })` emits `value` and continues with `next`.
+1. `Option.None` stops.
+2. `Option.Some({ value, state: next })` emits `value` and continues with `next`.
 
 ### P3. Remove public `Seq` surface
 

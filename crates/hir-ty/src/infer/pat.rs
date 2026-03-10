@@ -37,25 +37,6 @@ impl<'a> InferenceCtx<'a> {
             }
 
             Pat::Constructor { path, args } => {
-                if !path.is_single() {
-                    self.push_pat_diag(
-                        pat_idx,
-                        TyDiagnosticData::UnresolvedConstructor {
-                            name: path
-                                .segments
-                                .iter()
-                                .map(|s| s.resolve(self.interner).to_owned())
-                                .collect::<Vec<_>>()
-                                .join("."),
-                        },
-                    );
-                    for sub in args {
-                        self.infer_pat(*sub, &Ty::Error);
-                    }
-                    self.pat_types.insert(pat_idx, Ty::Error);
-                    return;
-                }
-                let name = path.segments[0];
                 let args = args.clone();
 
                 // Prefer owner-type resolution when expected type is known.
@@ -64,8 +45,9 @@ impl<'a> InferenceCtx<'a> {
                 if let Ty::Adt {
                     def: expected_def, ..
                 } = resolved_expected
+                    && let Some(variant_name) = path.last()
                     && let TypeDefKind::Adt { variants } = &self.item_tree.types[expected_def].kind
-                    && let Some(variant_idx) = variants.iter().position(|v| v.name == name)
+                    && let Some(variant_idx) = variants.iter().position(|v| v.name == variant_name)
                 {
                     let env = Self::make_env(
                         self.item_tree,
@@ -95,8 +77,8 @@ impl<'a> InferenceCtx<'a> {
                         }
                     }
                     adt_ty
-                } else if let Some(&(type_idx, variant_idx)) =
-                    self.module_scope.constructors.get(&name)
+                } else if let Some((type_idx, variant_idx)) =
+                    self.module_scope.resolve_constructor_path(path)
                 {
                     let env = Self::make_env(
                         self.item_tree,
@@ -130,7 +112,12 @@ impl<'a> InferenceCtx<'a> {
                     self.push_pat_diag(
                         pat_idx,
                         TyDiagnosticData::UnresolvedConstructor {
-                            name: name.resolve(self.interner).to_owned(),
+                            name: path
+                                .segments
+                                .iter()
+                                .map(|s| s.resolve(self.interner).to_owned())
+                                .collect::<Vec<_>>()
+                                .join("."),
                         },
                     );
                     for sub in args {

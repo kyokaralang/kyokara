@@ -123,6 +123,25 @@ fn run_project_with_files_err(files: &[(&str, &str)]) -> String {
     }
 }
 
+fn with_imports(header: &str, src: &str) -> String {
+    format!("{header}\n{src}")
+}
+
+fn with_option_variants(src: &str) -> String {
+    with_imports("from Option import Some, None", src)
+}
+
+fn with_result_variants(src: &str) -> String {
+    with_imports("from Result import Ok, Err", src)
+}
+
+fn with_core_variants(src: &str) -> String {
+    with_imports(
+        "from Option import Some, None\nfrom Result import Ok, Err\nfrom ParseError import InvalidInt, InvalidFloat",
+        src,
+    )
+}
+
 fn run_project_with_files_manifest_ok(
     files: &[(&str, &str)],
     manifest: Option<CapabilityManifest>,
@@ -197,7 +216,7 @@ fn eval_function_body_can_read_top_level_let() {
 fn eval_imported_module_function_can_read_its_top_level_let() {
     let val = run_project_with_files_manifest_ok(
         &[
-            ("main.ky", "import util\nfn main() -> Int { util() }"),
+            ("main.ky", "from util import util\nfn main() -> Int { util() }"),
             ("util.ky", "let off = 1\npub fn util() -> Int { off }"),
         ],
         None,
@@ -675,7 +694,7 @@ fn eval_negate_int() {
 fn eval_adt_nullary_constructor() {
     let val = run_ok(
         "type Color = Red | Green | Blue
-         fn main() -> Color { Red }",
+         fn main() -> Color { Color.Red }",
     );
     assert!(matches!(val, Value::Adt { variant: 0, .. }));
 }
@@ -684,7 +703,7 @@ fn eval_adt_nullary_constructor() {
 fn eval_adt_constructor_call() {
     let val = run_ok(
         "type Maybe<T> = Just(T) | Nothing
-         fn main() -> Maybe<Int> { Just(42) }",
+         fn main() -> Maybe<Int> { Maybe.Just(42) }",
     );
     match val {
         Value::Adt {
@@ -706,11 +725,11 @@ fn eval_pattern_match_nullary() {
         "type Bool2 = True | False
          fn to_int(x: Bool2) -> Int {
            match (x) {
-             True => 1
-             False => 0
+             Bool2.True => 1
+             Bool2.False => 0
            }
          }
-         fn main() -> Int { to_int(True) }",
+         fn main() -> Int { to_int(Bool2.True) }",
     );
     assert!(matches!(val, Value::Int(1)));
 }
@@ -721,11 +740,11 @@ fn eval_pattern_match_with_bind() {
         "type Maybe<T> = Just(T) | Nothing
          fn unwrap(x: Maybe<Int>) -> Int {
            match (x) {
-             Just(v) => v
-             Nothing => 0
+             Maybe.Just(v) => v
+             Maybe.Nothing => 0
            }
          }
-         fn main() -> Int { unwrap(Just(42)) }",
+         fn main() -> Int { unwrap(Maybe.Just(42)) }",
     );
     assert!(matches!(val, Value::Int(42)));
 }
@@ -736,11 +755,11 @@ fn eval_pattern_match_wildcard() {
         "type Color = Red | Green | Blue
          fn is_red(c: Color) -> Int {
            match (c) {
-             Red => 1
+             Color.Red => 1
              _ => 0
            }
          }
-         fn main() -> Int { is_red(Blue) }",
+         fn main() -> Int { is_red(Color.Blue) }",
     );
     assert!(matches!(val, Value::Int(0)));
 }
@@ -897,14 +916,14 @@ fn eval_adt_option_program() {
 
          fn unwrap_or(opt: Maybe<Int>, default: Int) -> Int {
            match (opt) {
-             Just(x) => x
-             Nothing => default
+             Maybe.Just(x) => x
+             Maybe.Nothing => default
            }
          }
 
          fn main() -> Int {
-           let x = Just(42)
-           let y = Nothing
+           let x = Maybe.Just(42)
+           let y = Maybe.Nothing
            unwrap_or(x, 0) + unwrap_or(y, 7)
          }",
     );
@@ -925,27 +944,27 @@ fn eval_higher_order_function() {
 
 #[test]
 fn eval_builtin_option_some() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
            match (Some(42)) {
              Some(x) => x
              None => 0
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(42)));
 }
 
 #[test]
 fn eval_builtin_option_none() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
            match (None) {
              Some(x) => x
              None => 0
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(0)));
 }
 
@@ -953,27 +972,27 @@ fn eval_builtin_option_none() {
 
 #[test]
 fn eval_builtin_result_ok() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         "fn main() -> Int {
            match (Ok(1)) {
              Ok(x) => x
              Err(e) => 0
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(1)));
 }
 
 #[test]
 fn eval_builtin_result_err() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         "fn main() -> Int {
            match (Err(99)) {
              Ok(x) => x
              Err(e) => e
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(99)));
 }
 
@@ -981,13 +1000,13 @@ fn eval_builtin_result_err() {
 
 #[test]
 fn eval_propagate_ok() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         "fn get() -> Result<Int, Int> { Ok(42) }
          fn main() -> Result<Int, Int> {
            let x = get()?
            Ok(x)
          }",
-    );
+    ));
     match val {
         Value::Adt {
             variant: 0,
@@ -1000,13 +1019,13 @@ fn eval_propagate_ok() {
 
 #[test]
 fn eval_propagate_err() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         "fn get() -> Result<Int, Int> { Err(1) }
          fn main() -> Result<Int, Int> {
            let x = get()?
            Ok(x)
          }",
-    );
+    ));
     match val {
         Value::Adt {
             variant: 1,
@@ -1022,13 +1041,13 @@ fn eval_propagate_err() {
 #[test]
 fn eval_propagate_in_call_arg() {
     // `?` inside a function argument should propagate early return.
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         "fn get() -> Result<Int, Int> { Err(5) }
          fn identity(x: Int) -> Int { x }
          fn main() -> Result<Int, Int> {
            Ok(identity(get()?))
          }",
-    );
+    ));
     match val {
         Value::Adt {
             variant: 1,
@@ -1042,12 +1061,12 @@ fn eval_propagate_in_call_arg() {
 #[test]
 fn eval_propagate_in_binary_expr() {
     // `?` inside a binary expression should propagate early return.
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         "fn get() -> Result<Int, Int> { Err(3) }
          fn main() -> Result<Int, Int> {
            Ok(get()? + 1)
          }",
-    );
+    ));
     match val {
         Value::Adt {
             variant: 1,
@@ -1651,23 +1670,20 @@ fn eval_invariant_error_message_is_stable() {
     assert_eq!(err, "invariant violated: inv_fn");
 }
 
-// ── Reserved core constructor names ──────────────────────────────────
+// ── Constructor ownership/imports ───────────────────────────────────
 
 #[test]
-fn eval_user_option_with_reserved_constructors_is_compile_error() {
-    let err = run_err(
+fn eval_user_option_with_formerly_reserved_constructors_is_allowed() {
+    let val = run_ok(
         "type Option<T> = Some(T) | None
          fn main() -> Int {
-           match (Some(7)) {
-             Some(x) => x
-             None => 0
+           match (Option.Some(7)) {
+             Option.Some(x) => x
+             Option.None => 0
            }
          }",
     );
-    assert!(
-        err.contains("constructor `Some` is reserved for core stdlib"),
-        "unexpected error: {err}"
-    );
+    assert_eq!(val, Value::Int(7));
 }
 
 // ── List tests ──────────────────────────────────────────────────────
@@ -1697,7 +1713,7 @@ fn eval_list_len_empty() {
 
 #[test]
 fn eval_list_get_some() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
            let xs = collections.List.new().push(10).push(20)
            match (xs.get(1)) {
@@ -1705,13 +1721,13 @@ fn eval_list_get_some() {
              None => 0
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(20)));
 }
 
 #[test]
 fn eval_list_get_none() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
            let xs = collections.List.new().push(10)
            match (xs.get(5)) {
@@ -1719,13 +1735,13 @@ fn eval_list_get_none() {
              None => -1
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(-1)));
 }
 
 #[test]
 fn eval_list_head_some() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
            let xs = collections.List.new().push(10).push(20)
            match (xs.head()) {
@@ -1733,20 +1749,20 @@ fn eval_list_head_some() {
              None => 0
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(10)));
 }
 
 #[test]
 fn eval_list_head_none() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
            match (collections.List.new().head()) {
              Some(x) => x
              None => -1
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(-1)));
 }
 
@@ -1793,7 +1809,7 @@ fn eval_list_is_empty_false() {
 
 #[test]
 fn eval_list_reverse() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
            let xs = collections.List.new().push(1).push(2).push(3)
            let rev = xs.reverse()
@@ -1802,7 +1818,7 @@ fn eval_list_reverse() {
              None => 0
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(3)));
 }
 
@@ -1820,7 +1836,7 @@ fn eval_list_concat() {
 
 #[test]
 fn eval_list_map_lambda() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
            let xs = collections.List.new().push(1).push(2).push(3)
            let ys = xs.map(fn(x: Int) => x * 2).to_list()
@@ -1829,13 +1845,13 @@ fn eval_list_map_lambda() {
              None => 0
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(6)));
 }
 
 #[test]
 fn eval_list_map_named_fn() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn double(x: Int) -> Int { x * 2 }
          fn main() -> Int {
            let xs = collections.List.new().push(5).push(10)
@@ -1845,7 +1861,7 @@ fn eval_list_map_named_fn() {
              None => 0
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(10)));
 }
 
@@ -1928,7 +1944,7 @@ fn eval_list_set_negative_index_runtime_error() {
 
 #[test]
 fn eval_deque_push_front_back_and_pop_front_fifo() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
            let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
@@ -1940,13 +1956,13 @@ fn eval_deque_push_front_back_and_pop_front_fifo() {
              None => -1
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(11)));
 }
 
 #[test]
 fn eval_deque_pop_front_non_empty_returns_value_and_rest() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
            let q0 = collections.Deque.new().push_back(10).push_back(20)
@@ -1963,13 +1979,13 @@ fn eval_deque_pop_front_non_empty_returns_value_and_rest() {
              None => -1
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(20)));
 }
 
 #[test]
 fn eval_deque_pop_front_empty_returns_none() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
            match (collections.Deque.new().pop_front()) {
@@ -1977,13 +1993,13 @@ fn eval_deque_pop_front_empty_returns_none() {
              None => 1
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(1)));
 }
 
 #[test]
 fn eval_deque_push_front_back_and_pop_back_lifo() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
            let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
@@ -1995,13 +2011,13 @@ fn eval_deque_push_front_back_and_pop_back_lifo() {
              None => -1
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(211)));
 }
 
 #[test]
 fn eval_deque_pop_back_non_empty_returns_value_and_rest() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
            let q0 = collections.Deque.new().push_back(10).push_back(20)
@@ -2018,13 +2034,13 @@ fn eval_deque_pop_back_non_empty_returns_value_and_rest() {
              None => -1
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(10)));
 }
 
 #[test]
 fn eval_deque_pop_back_empty_returns_none() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
            match (collections.Deque.new().pop_back()) {
@@ -2032,13 +2048,13 @@ fn eval_deque_pop_back_empty_returns_none() {
              None => 1
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(1)));
 }
 
 #[test]
 fn eval_deque_empty_pop_operations_are_stable() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
            let q0 = collections.Deque.new()
@@ -2052,13 +2068,13 @@ fn eval_deque_empty_pop_operations_are_stable() {
            }
            if (q2.is_empty() && q2.len() == 0) { 1 } else { 0 }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(1)));
 }
 
 #[test]
 fn eval_deque_pop_back_singleton_rest_is_empty() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
            let q0 = collections.Deque.new().push_back(7)
@@ -2072,7 +2088,7 @@ fn eval_deque_pop_back_singleton_rest_is_empty() {
              None => 0
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(1)));
 }
 
@@ -2091,7 +2107,7 @@ fn eval_deque_is_empty_and_len() {
 
 #[test]
 fn eval_collections_deque_constructor_surface_rfc_0004() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
            let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
@@ -2103,7 +2119,7 @@ fn eval_collections_deque_constructor_surface_rfc_0004() {
              None => -1
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(11)));
 }
 
@@ -2237,7 +2253,7 @@ fn eval_collections_mutable_map_constructor_surface_rfc_0008() {
 
 #[test]
 fn eval_collections_mutable_map_alias_constructor_surface_rfc_0008() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "import collections as c
          fn main() -> Int {
            let m: MutableMap<String, Int> = c.MutableMap.new().insert(\"x\", 5)
@@ -2246,7 +2262,7 @@ fn eval_collections_mutable_map_alias_constructor_surface_rfc_0008() {
              None => 0
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(5)));
 }
 
@@ -2264,7 +2280,7 @@ fn eval_collections_mutable_map_with_capacity_surface() {
 
 #[test]
 fn eval_collections_mutable_map_alias_with_capacity_surface() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "import collections as c
          fn main() -> Int {
            let m: MutableMap<String, Int> = c.MutableMap.with_capacity(4).insert(\"x\", 5)
@@ -2273,7 +2289,7 @@ fn eval_collections_mutable_map_alias_with_capacity_surface() {
              None => 0
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(5)));
 }
 
@@ -2491,23 +2507,31 @@ fn eval_mutable_map_get_or_insert_with_evaluates_thunk_expression_once_per_miss(
 
 #[test]
 fn eval_mutable_map_get_or_insert_with_supports_recursive_memo_use() {
-    let val = run_ok(
-        "import collections
-         fn fib(n: Int, memo: MutableMap<Int, Int>) -> Int {
-           memo.get_or_insert_with(n, fn() =>
-             if (n < 2) {
-               n
-             } else {
-               fib(n - 1, memo) + fib(n - 2, memo)
-             }
-           )
-         }
-         fn main() -> Int {
-           let memo = collections.MutableMap.new()
-           fib(10, memo) * 100 + memo.len()
-         }",
-    );
-    assert!(matches!(val, Value::Int(5511)));
+    std::thread::Builder::new()
+        .name("kyokara-eval-large-stack".into())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let val = run_ok(
+                "import collections
+                 fn fib(n: Int, memo: MutableMap<Int, Int>) -> Int {
+                   memo.get_or_insert_with(n, fn() =>
+                     if (n < 2) {
+                       n
+                     } else {
+                       fib(n - 1, memo) + fib(n - 2, memo)
+                     }
+                   )
+                 }
+                 fn main() -> Int {
+                   let memo = collections.MutableMap.new()
+                   fib(10, memo) * 100 + memo.len()
+                 }",
+            );
+            assert!(matches!(val, Value::Int(5511)));
+        })
+        .expect("failed to spawn large-stack eval thread")
+        .join()
+        .expect("large-stack eval thread panicked");
 }
 
 #[test]
@@ -2764,7 +2788,7 @@ fn main() -> Int {
 
 #[test]
 fn eval_mutable_list_last_and_pop_return_none_on_empty() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"import collections
 
 fn main() -> Int {
@@ -2779,7 +2803,7 @@ fn main() -> Int {
     }
     if (last_missing == 1 && pop_missing == 1 && xs.is_empty()) { 1 } else { 0 }
 }"#,
-    );
+    ));
     assert_eq!(val, Value::Int(1));
 }
 
@@ -2794,7 +2818,7 @@ fn eval_mutable_list_indexing_and_bounds_behavior() {
     );
     assert!(matches!(val, Value::Int(4)));
 
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
            let xs = collections.MutableList.from_list(collections.List.new().push(3).push(4))
@@ -2803,7 +2827,7 @@ fn eval_mutable_list_indexing_and_bounds_behavior() {
              None => 1
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(1)));
 
     let err = run_err(
@@ -2991,7 +3015,7 @@ fn main() -> Int {
 
 #[test]
 fn eval_map_insert_and_get() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"fn main() -> Int {
            let m = collections.Map.new().insert("a", 1)
            match (m.get("a")) {
@@ -2999,13 +3023,13 @@ fn eval_map_insert_and_get() {
              None => 0
            }
          }"#,
-    );
+    ));
     assert!(matches!(val, Value::Int(1)));
 }
 
 #[test]
 fn eval_map_get_missing() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"fn main() -> Int {
            let m = collections.Map.new().insert("a", 1)
            match (m.get("b")) {
@@ -3013,7 +3037,7 @@ fn eval_map_get_missing() {
              None => -1
            }
          }"#,
-    );
+    ));
     assert!(matches!(val, Value::Int(-1)));
 }
 
@@ -3086,7 +3110,7 @@ fn eval_map_is_empty() {
 
 #[test]
 fn eval_map_insert_overwrite() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"fn main() -> Int {
            let m0 = collections.Map.new().insert("a", 1)
            let m1 = m0.insert("a", 99)
@@ -3095,7 +3119,7 @@ fn eval_map_insert_overwrite() {
              None => 0
            }
          }"#,
-    );
+    ));
     assert!(matches!(val, Value::Int(99)));
 }
 
@@ -3774,7 +3798,7 @@ fn run_accepts_distinct_bindings_in_pattern() {
     let src = r#"
 type Pair = Pair(Int, Int)
 fn main() -> Int {
-  let Pair(a, b) = Pair(1, 2)
+  let Pair.Pair(a, b) = Pair.Pair(1, 2)
   a + b
 }
 "#;
@@ -3791,27 +3815,27 @@ type Packet = Num(Int) | Lst(List<Packet>)
 
 fn cmp(a: Packet, b: Packet) -> Int {
   match (a) {
-    Num(av) => match (b) {
-      Num(bv) => av - bv,
-      Lst(_bs) => -1,
+    Packet.Num(av) => match (b) {
+      Packet.Num(bv) => av - bv,
+      Packet.Lst(_bs) => -1,
     },
-    Lst(items) => if (items.len() == 0) {
+    Packet.Lst(items) => if (items.len() == 0) {
       match (b) {
-        Num(_bv) => 1,
-        Lst(other_items) => if (other_items.len() == 0) { 0 } else { -1 },
+        Packet.Num(_bv) => 1,
+        Packet.Lst(other_items) => if (other_items.len() == 0) { 0 } else { -1 },
       }
     } else {
       match (items[0]) {
-        Num(head) => head,
-        Lst(inner) => inner.len(),
+        Packet.Num(head) => head,
+        Packet.Lst(inner) => inner.len(),
       }
     },
   }
 }
 
 fn main() -> Int {
-  let nested = Lst(collections.List.new().push(Lst(collections.List.new().push(Num(7)))))
-  cmp(nested, Num(0))
+  let nested = Packet.Lst(collections.List.new().push(Packet.Lst(collections.List.new().push(Packet.Num(7)))))
+  cmp(nested, Packet.Num(0))
 }
 "#;
     let result = run_ok(src);
@@ -4634,7 +4658,7 @@ fn run_project_uses_imported_module_body_not_sibling() {
 
     let main_path = dir.path().join("main.ky");
     let mut main_file = std::fs::File::create(&main_path).unwrap();
-    writeln!(main_file, "import util").unwrap();
+    writeln!(main_file, "from util import foo").unwrap();
     writeln!(main_file, "fn main() -> Int {{ foo() }}").unwrap();
 
     let result = kyokara_eval::run_project(&main_path).expect("should succeed");
@@ -4658,7 +4682,7 @@ fn run_project_imported_overload_family_by_arity_dispatches() {
 
     let main_path = dir.path().join("main.ky");
     let mut main_file = std::fs::File::create(&main_path).unwrap();
-    writeln!(main_file, "import util").unwrap();
+    writeln!(main_file, "from util import foo").unwrap();
     writeln!(main_file, "fn main() -> Int {{ foo() + foo(2) }}").unwrap();
 
     let result = kyokara_eval::run_project(&main_path).expect("should succeed");
@@ -4687,8 +4711,8 @@ fn run_project_dual_import_same_name_is_conflict() {
 
     let main_path = dir.path().join("main.ky");
     let mut main_file = std::fs::File::create(&main_path).unwrap();
-    writeln!(main_file, "import util").unwrap();
-    writeln!(main_file, "import other").unwrap();
+    writeln!(main_file, "from util import foo").unwrap();
+    writeln!(main_file, "from other import foo").unwrap();
     writeln!(main_file, "fn main() -> Int {{ foo() }}").unwrap();
 
     let result = kyokara_eval::run_project(&main_path);
@@ -4724,7 +4748,7 @@ fn run_project_rejects_ambiguous_import_last_segment() {
     let main_path = dir.path().join("main.ky");
     let mut main_file = std::fs::File::create(&main_path).unwrap();
     writeln!(main_file, "import math").unwrap();
-    writeln!(main_file, "fn main() -> Int {{ value() }}").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ math.value() }}").unwrap();
 
     let result = kyokara_eval::run_project(&main_path);
     match result {
@@ -4764,8 +4788,10 @@ fn run_project_import_math_module_does_not_activate_synthetic_math() {
         Err(e) => {
             let err = e.to_string();
             assert!(
-                err.contains("import name `math` used as value") || err.contains("unresolved name"),
-                "expected import-value or unresolved-name diagnostic, got: {err}"
+                err.contains("import name `math` used as value")
+                    || err.contains("unresolved name")
+                    || err.contains("no method `min`"),
+                "expected missing-member-style diagnostic, got: {err}"
             );
         }
     }
@@ -4828,7 +4854,7 @@ fn run_project_qualified_import_resolves_duplicate_leaf_modules() {
     let main_path = dir.path().join("main.ky");
     let mut main_file = std::fs::File::create(&main_path).unwrap();
     writeln!(main_file, "import a.math").unwrap();
-    writeln!(main_file, "fn main() -> Int {{ value() }}").unwrap();
+    writeln!(main_file, "fn main() -> Int {{ math.value() }}").unwrap();
 
     let result = kyokara_eval::run_project(&main_path).expect("should succeed");
     assert_eq!(result.value, Value::Int(1));
@@ -4886,7 +4912,7 @@ fn run_project_imported_pub_fn_calls_private_helper() {
 
     let main_path = dir.path().join("main.ky");
     let mut main_file = std::fs::File::create(&main_path).unwrap();
-    writeln!(main_file, "import util").unwrap();
+    writeln!(main_file, "from util import foo").unwrap();
     writeln!(main_file, "fn main() -> Int {{ foo() }}").unwrap();
 
     let result = kyokara_eval::run_project(&main_path).expect("should succeed");
@@ -4912,7 +4938,7 @@ fn run_project_imported_private_helper_name_does_not_capture_entry_fn() {
 
     let main_path = dir.path().join("main.ky");
     let mut main_file = std::fs::File::create(&main_path).unwrap();
-    writeln!(main_file, "import util").unwrap();
+    writeln!(main_file, "from util import foo").unwrap();
     writeln!(main_file, "fn helper() -> Int {{ 100 }}").unwrap();
     writeln!(main_file, "fn main() -> Int {{ foo() }}").unwrap();
 
@@ -4946,8 +4972,8 @@ fn run_project_imported_deep_private_call_chains_across_modules() {
 
     let main_path = dir.path().join("main.ky");
     let mut main_file = std::fs::File::create(&main_path).unwrap();
-    writeln!(main_file, "import util_a").unwrap();
-    writeln!(main_file, "import util_b").unwrap();
+    writeln!(main_file, "from util_a import foo").unwrap();
+    writeln!(main_file, "from util_b import bar").unwrap();
     writeln!(main_file, "fn main() -> Int {{ foo() + bar() }}").unwrap();
 
     let result = kyokara_eval::run_project(&main_path).expect("should succeed");
@@ -5716,144 +5742,144 @@ fn eval_tilde_and_logical_not_distinct() {
 
 #[test]
 fn eval_parse_int_basic() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Int {
             match ("42".parse_int()) {
                 Ok(n) => n
                 Err(_) => -1
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Int(42));
 }
 
 #[test]
 fn eval_parse_int_negative() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Int {
             match ("-7".parse_int()) {
                 Ok(n) => n
                 Err(_) => 0
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Int(-7));
 }
 
 #[test]
 fn eval_parse_int_zero() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Int {
             match ("0".parse_int()) {
                 Ok(n) => n
                 Err(_) => -1
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Int(0));
 }
 
 #[test]
 fn eval_parse_int_with_plus() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Int {
             match ("+42".parse_int()) {
                 Ok(n) => n
                 Err(_) => -1
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Int(42));
 }
 
 #[test]
 fn eval_parse_int_max() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Int {
             match ("9223372036854775807".parse_int()) {
                 Ok(n) => n
                 Err(_) => 0
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Int(i64::MAX));
 }
 
 #[test]
 fn eval_parse_int_min() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Int {
             match ("-9223372036854775808".parse_int()) {
                 Ok(n) => n
                 Err(_) => 0
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Int(i64::MIN));
 }
 
 #[test]
 fn eval_parse_int_empty_fails() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Bool {
             match ("".parse_int()) {
                 Ok(_) => false
                 Err(_) => true
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_parse_int_non_numeric_fails() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Bool {
             match ("abc".parse_int()) {
                 Ok(_) => false
                 Err(_) => true
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_parse_int_float_string_fails() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Bool {
             match ("3.14".parse_int()) {
                 Ok(_) => false
                 Err(_) => true
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_parse_int_whitespace_fails() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Bool {
             match (" 42".parse_int()) {
                 Ok(_) => false
                 Err(_) => true
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_parse_int_overflow_fails() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Bool {
             match ("9223372036854775808".parse_int()) {
                 Ok(_) => false
                 Err(_) => true
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Bool(true));
 }
 
@@ -5923,21 +5949,21 @@ fn eval_option_map_or_none_returns_default() {
 
 #[test]
 fn eval_option_and_then_some_chains() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"fn main() -> Int {
             collections.List.new().push(41).head().and_then(fn(n: Int) => Some(n + 1)).unwrap_or(0)
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Int(42));
 }
 
 #[test]
 fn eval_option_and_then_none_short_circuits() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"fn main() -> Int {
             collections.List.new().head().and_then(fn(n: Int) => Some(n + 1)).unwrap_or(9)
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Int(9));
 }
 
@@ -5953,63 +5979,63 @@ fn eval_result_map_ok_applies_mapper() {
 
 #[test]
 fn eval_result_map_err_preserves_error_branch() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Int {
             match ("oops".parse_int().map(fn(n: Int) => n + 1)) {
                 Ok(n) => n
                 Err(_) => 9
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Int(9));
 }
 
 #[test]
 fn eval_result_and_then_ok_applies_mapper() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Int {
             "41".parse_int().and_then(fn(n: Int) => Ok(n + 1)).unwrap_or(0)
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Int(42));
 }
 
 #[test]
 fn eval_result_and_then_err_short_circuits() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Int {
             match ("oops".parse_int().and_then(fn(n: Int) => Ok(n + 1))) {
                 Ok(n) => n
                 Err(_) => 9
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Int(9));
 }
 
 #[test]
 fn eval_result_map_err_err_applies_mapper() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Int {
             match ("oops".parse_int().map_err(fn(_e: ParseError) => 7)) {
                 Ok(n) => n
                 Err(e) => e
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Int(7));
 }
 
 #[test]
 fn eval_result_map_err_ok_preserves_ok_branch() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Int {
             match ("41".parse_int().map_err(fn(_e: ParseError) => 7)) {
                 Ok(n) => n
                 Err(e) => e
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Int(41));
 }
 
@@ -6018,105 +6044,105 @@ fn eval_result_map_err_ok_preserves_ok_branch() {
 
 #[test]
 fn eval_parse_float_basic() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Float {
             match ("3.14".parse_float()) {
                 Ok(f) => f
                 Err(_) => 0.0
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Float(314.0 / 100.0));
 }
 
 #[test]
 fn eval_parse_float_integer_string() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Float {
             match ("42".parse_float()) {
                 Ok(f) => f
                 Err(_) => 0.0
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Float(42.0));
 }
 
 #[test]
 fn eval_parse_float_negative() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Float {
             match ("-2.5".parse_float()) {
                 Ok(f) => f
                 Err(_) => 0.0
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Float(-2.5));
 }
 
 #[test]
 fn eval_parse_float_zero() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Float {
             match ("0.0".parse_float()) {
                 Ok(f) => f
                 Err(_) => 1.0
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Float(0.0));
 }
 
 #[test]
 fn eval_parse_float_scientific() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Float {
             match ("1.5e10".parse_float()) {
                 Ok(f) => f
                 Err(_) => 0.0
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Float(1.5e10));
 }
 
 #[test]
 fn eval_parse_float_infinity() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Float {
             match ("inf".parse_float()) {
                 Ok(f) => f
                 Err(_) => 0.0
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Float(f64::INFINITY));
 }
 
 #[test]
 fn eval_parse_float_neg_infinity() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Float {
             match ("-inf".parse_float()) {
                 Ok(f) => f
                 Err(_) => 0.0
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Float(f64::NEG_INFINITY));
 }
 
 #[test]
 fn eval_parse_float_nan() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Float {
             match ("NaN".parse_float()) {
                 Ok(f) => f
                 Err(_) => 0.0
             }
         }"#,
-    );
+    ));
     match val {
         Value::Float(f) => assert!(f.is_nan(), "expected NaN, got {f}"),
         other => panic!("expected Float, got {other:?}"),
@@ -6125,27 +6151,27 @@ fn eval_parse_float_nan() {
 
 #[test]
 fn eval_parse_float_empty_fails() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Bool {
             match ("".parse_float()) {
                 Ok(_) => false
                 Err(_) => true
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_parse_float_non_numeric_fails() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"fn main() -> Bool {
             match ("abc".parse_float()) {
                 Ok(_) => false
                 Err(_) => true
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Bool(true));
 }
 
@@ -6153,7 +6179,7 @@ fn eval_parse_float_non_numeric_fails() {
 
 #[test]
 fn eval_parse_int_error_is_invalid_int() {
-    let val = run_ok(
+    let val = run_ok(&with_core_variants(
         r#"fn main() -> Bool {
             match ("abc".parse_int()) {
                 Ok(_) => false
@@ -6163,13 +6189,13 @@ fn eval_parse_int_error_is_invalid_int() {
                 }
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_parse_float_error_is_invalid_float() {
-    let val = run_ok(
+    let val = run_ok(&with_core_variants(
         r#"fn main() -> Bool {
             match ("xyz".parse_float()) {
                 Ok(_) => false
@@ -6179,13 +6205,13 @@ fn eval_parse_float_error_is_invalid_float() {
                 }
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_parse_int_error_carries_message() {
-    let val = run_ok(
+    let val = run_ok(&with_core_variants(
         r#"fn main() -> Bool {
             match ("not_a_number".parse_int()) {
                 Ok(_) => false
@@ -6195,13 +6221,13 @@ fn eval_parse_int_error_carries_message() {
                 }
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_parse_float_error_carries_message() {
-    let val = run_ok(
+    let val = run_ok(&with_core_variants(
         r#"fn main() -> Bool {
             match ("not_a_float".parse_float()) {
                 Ok(_) => false
@@ -6211,13 +6237,13 @@ fn eval_parse_float_error_carries_message() {
                 }
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_parse_int_user_defined_parse_error_does_not_override_core_behavior() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"type ParseError = Oops
            fn main() -> Bool {
              match ("abc".parse_int()) {
@@ -6225,13 +6251,13 @@ fn eval_parse_int_user_defined_parse_error_does_not_override_core_behavior() {
                Err(_) => true
              }
            }"#,
-    );
+    ));
     assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_parse_float_user_defined_parse_error_does_not_override_core_behavior() {
-    let val = run_ok(
+    let val = run_ok(&with_result_variants(
         r#"type ParseError = Oops
            fn main() -> Bool {
              match ("abc".parse_float()) {
@@ -6239,13 +6265,13 @@ fn eval_parse_float_user_defined_parse_error_does_not_override_core_behavior() {
                Err(_) => true
              }
            }"#,
-    );
+    ));
     assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_parse_int_user_defined_parse_error_reserved_variants_are_compile_error() {
-    let err = run_err(
+    let val = run_ok(&with_result_variants(
         r#"type ParseError = InvalidInt(Int) | InvalidFloat(Int)
            fn main() -> Bool {
              match ("abc".parse_int()) {
@@ -6253,16 +6279,13 @@ fn eval_parse_int_user_defined_parse_error_reserved_variants_are_compile_error()
                Err(_) => true
              }
            }"#,
-    );
-    assert!(
-        err.contains("constructor `InvalidInt` is reserved for core stdlib"),
-        "unexpected error: {err}"
-    );
+    ));
+    assert_eq!(val, Value::Bool(true));
 }
 
 #[test]
 fn eval_collections_mutable_priority_queue_constructor_surface_rfc_0012() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
            let pq: MutablePriorityQueue<Int, String> = collections.MutablePriorityQueue.new_min()
@@ -6273,13 +6296,13 @@ fn eval_collections_mutable_priority_queue_constructor_surface_rfc_0012() {
              None => 0
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(3)));
 }
 
 #[test]
 fn eval_collections_mutable_priority_queue_alias_constructor_surface_rfc_0012() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "import collections as c
          fn main() -> Int {
            let pq: MutablePriorityQueue<Int, String> = c.MutablePriorityQueue.new_max()
@@ -6290,7 +6313,7 @@ fn eval_collections_mutable_priority_queue_alias_constructor_surface_rfc_0012() 
              None => 0
            }
          }",
-    );
+    ));
     assert!(matches!(val, Value::Int(9)));
 }
 
@@ -6309,7 +6332,7 @@ fn eval_global_mutable_priority_queue_constructor_surface_is_removed_rfc_0012() 
 
 #[test]
 fn eval_mutable_priority_queue_min_max_and_stable_ties() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"import collections
          fn main() -> Int {
            let minq: MutablePriorityQueue<Int, Int> = collections.MutablePriorityQueue.new_min()
@@ -6327,13 +6350,13 @@ fn eval_mutable_priority_queue_min_max_and_stable_ties() {
            let d = match (maxq.pop()) { Some(item) => item.value None => 0 }
            a * 1000 + b * 100 + c * 10 + d
          }"#,
-    );
+    ));
     assert!(matches!(val, Value::Int(11651)));
 }
 
 #[test]
 fn eval_mutable_priority_queue_aliases_observe_in_place_mutation() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"import collections
          fn main() -> Int {
            let pq: MutablePriorityQueue<Int, Int> = collections.MutablePriorityQueue.new_min()
@@ -6342,13 +6365,13 @@ fn eval_mutable_priority_queue_aliases_observe_in_place_mutation() {
            let top = match (alias.peek()) { Some(item) => item.value None => 0 }
            top * 10 + alias.len()
          }"#,
-    );
+    ));
     assert!(matches!(val, Value::Int(102)));
 }
 
 #[test]
 fn eval_mutable_priority_queue_empty_peek_and_pop_return_none() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"import collections
          fn main() -> Int {
            let pq: MutablePriorityQueue<Int, Int> = collections.MutablePriorityQueue.new_min()
@@ -6356,7 +6379,7 @@ fn eval_mutable_priority_queue_empty_peek_and_pop_return_none() {
            let b = match (pq.pop()) { Some(_) => 1 None => 0 }
            a * 10 + b
          }"#,
-    );
+    ));
     assert!(matches!(val, Value::Int(0)));
 }
 
@@ -6377,7 +6400,7 @@ fn eval_mutable_priority_queue_non_ord_priority_is_compile_error() {
 
 #[test]
 fn eval_parse_float_user_defined_parse_error_reserved_variants_are_compile_error() {
-    let err = run_err(
+    let val = run_ok(&with_result_variants(
         r#"type ParseError = InvalidInt(Int) | InvalidFloat(Int)
            fn main() -> Bool {
              match ("abc".parse_float()) {
@@ -6385,11 +6408,8 @@ fn eval_parse_float_user_defined_parse_error_reserved_variants_are_compile_error
                Err(_) => true
              }
            }"#,
-    );
-    assert!(
-        err.contains("constructor `InvalidInt` is reserved for core stdlib"),
-        "unexpected error: {err}"
-    );
+    ));
+    assert_eq!(val, Value::Bool(true));
 }
 
 // ── string_lines tests ─────────────────────────────────────────────
@@ -6414,14 +6434,14 @@ fn eval_string_lines_empty() {
 
 #[test]
 fn eval_string_lines_single() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"fn main() -> String {
             match ("hello".lines().to_list().head()) {
                 Some(s) => s
                 None => "fail"
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::String("hello".to_string()));
 }
 
@@ -6440,7 +6460,7 @@ fn eval_string_lines_blank_lines() {
 
 #[test]
 fn eval_string_lines_content_check() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"fn main() -> String {
             let lines = "first\nsecond\nthird".lines().to_list()
             match (lines.get(1)) {
@@ -6448,7 +6468,7 @@ fn eval_string_lines_content_check() {
                 None => "fail"
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::String("second".to_string()));
 }
 
@@ -6599,7 +6619,7 @@ fn eval_read_file_with_both_caps() {
 
 #[test]
 fn eval_list_sort_ints() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
             let xs = collections.List.new().push(3).push(1).push(2)
             let sorted = xs.sort()
@@ -6608,13 +6628,13 @@ fn eval_list_sort_ints() {
                 None => -1
             }
         }",
-    );
+    ));
     assert_eq!(val, Value::Int(1));
 }
 
 #[test]
 fn eval_list_sort_ints_reverse() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
             let xs = collections.List.new().push(5).push(4).push(3).push(2).push(1)
             let sorted = xs.sort()
@@ -6623,13 +6643,13 @@ fn eval_list_sort_ints_reverse() {
                 None => -1
             }
         }",
-    );
+    ));
     assert_eq!(val, Value::Int(5));
 }
 
 #[test]
 fn eval_list_sort_ints_already_sorted() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
             let xs = collections.List.new().push(1).push(2).push(3)
             let sorted = xs.sort()
@@ -6638,13 +6658,13 @@ fn eval_list_sort_ints_already_sorted() {
                 None => -1
             }
         }",
-    );
+    ));
     assert_eq!(val, Value::Int(3));
 }
 
 #[test]
 fn eval_list_sort_ints_duplicates() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
             let xs = collections.List.new().push(3).push(1).push(3).push(2)
             let sorted = xs.sort()
@@ -6654,13 +6674,13 @@ fn eval_list_sort_ints_duplicates() {
                 None => -1
             }
         }",
-    );
+    ));
     assert_eq!(val, Value::Int(3));
 }
 
 #[test]
 fn eval_list_sort_ints_negative() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
             let xs = collections.List.new().push(3).push(-1).push(0).push(-5)
             let sorted = xs.sort()
@@ -6669,13 +6689,13 @@ fn eval_list_sort_ints_negative() {
                 None => 0
             }
         }",
-    );
+    ));
     assert_eq!(val, Value::Int(-5));
 }
 
 #[test]
 fn eval_list_sort_ints_single() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
             let xs = collections.List.new().push(42)
             let sorted = xs.sort()
@@ -6684,7 +6704,7 @@ fn eval_list_sort_ints_single() {
                 None => -1
             }
         }",
-    );
+    ));
     assert_eq!(val, Value::Int(42));
 }
 
@@ -6702,7 +6722,7 @@ fn eval_list_sort_empty() {
 
 #[test]
 fn eval_list_sort_strings() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"fn main() -> String {
             let xs = collections.List.new().push("banana").push("apple").push("cherry")
             let sorted = xs.sort()
@@ -6711,13 +6731,13 @@ fn eval_list_sort_strings() {
                 None => "fail"
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::String("apple".to_string()));
 }
 
 #[test]
 fn eval_list_sort_bools() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Bool {
             let xs = collections.List.new().push(true).push(false).push(true)
             let sorted = xs.sort()
@@ -6726,7 +6746,7 @@ fn eval_list_sort_bools() {
                 None => true
             }
         }",
-    );
+    ));
     assert_eq!(val, Value::Bool(false));
 }
 
@@ -6766,7 +6786,7 @@ fn eval_list_sort_floats_with_nan_rejected() {
 
 #[test]
 fn eval_list_sort_chars() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Char {
             let xs = collections.List.new().push('c').push('a').push('b')
             let sorted = xs.sort()
@@ -6775,13 +6795,13 @@ fn eval_list_sort_chars() {
                 None => 'z'
             }
         }",
-    );
+    ));
     assert_eq!(val, Value::Char('a'));
 }
 
 #[test]
 fn eval_list_sort_lists_lexicographically() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
             let a = collections.List.new().push(1)
             let b = collections.List.new().push(1).push(2)
@@ -6792,7 +6812,7 @@ fn eval_list_sort_lists_lexicographically() {
                 None => -1
             }
         }",
-    );
+    ));
     assert_eq!(val, Value::Int(1));
 }
 
@@ -6838,7 +6858,7 @@ fn eval_list_binary_search_lists() {
 
 #[test]
 fn eval_list_sort_by_ascending() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
             let xs = collections.List.new().push(3).push(1).push(2)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
@@ -6847,13 +6867,13 @@ fn eval_list_sort_by_ascending() {
                 None => -1
             }
         }",
-    );
+    ));
     assert_eq!(val, Value::Int(1));
 }
 
 #[test]
 fn eval_list_sort_by_descending() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
             let xs = collections.List.new().push(3).push(1).push(2)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => b - a)
@@ -6862,13 +6882,13 @@ fn eval_list_sort_by_descending() {
                 None => -1
             }
         }",
-    );
+    ));
     assert_eq!(val, Value::Int(3));
 }
 
 #[test]
 fn eval_list_sort_by_named_fn() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn cmp(a: Int, b: Int) -> Int { a - b }
         fn main() -> Int {
             let xs = collections.List.new().push(3).push(1).push(2)
@@ -6878,7 +6898,7 @@ fn eval_list_sort_by_named_fn() {
                 None => -1
             }
         }",
-    );
+    ));
     assert_eq!(val, Value::Int(1));
 }
 
@@ -6896,7 +6916,7 @@ fn eval_list_sort_by_empty() {
 
 #[test]
 fn eval_list_sort_by_single() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
             let xs = collections.List.new().push(42)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
@@ -6905,13 +6925,13 @@ fn eval_list_sort_by_single() {
                 None => -1
             }
         }",
-    );
+    ));
     assert_eq!(val, Value::Int(42));
 }
 
 #[test]
 fn eval_list_sort_by_strings_by_len() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"fn main() -> String {
             let xs = collections.List.new().push("bb").push("a").push("ccc")
             let sorted = xs.sort_by(fn(a: String, b: String) => a.len() - b.len())
@@ -6920,7 +6940,7 @@ fn eval_list_sort_by_strings_by_len() {
                 None => "fail"
             }
         }"#,
-    );
+    ));
     assert_eq!(val, Value::String("a".to_string()));
 }
 
@@ -6929,7 +6949,7 @@ fn eval_list_sort_by_stable() {
     // Sort by tens digit only — elements with same tens digit should keep original order.
     // Input: [21, 12, 11, 22] — sort by (x / 10): [12, 11, 21, 22]
     // 12 before 11 (both have tens=1, original order: 12 at index 1, 11 at index 2)
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
             let xs = collections.List.new().push(21).push(12).push(11).push(22)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a / 10 - b / 10)
@@ -6938,14 +6958,14 @@ fn eval_list_sort_by_stable() {
                 None => -1
             }
         }",
-    );
+    ));
     // First element with tens digit 1 should be 12 (appeared before 11 in original)
     assert_eq!(val, Value::Int(12));
 }
 
 #[test]
 fn eval_list_sort_by_already_sorted() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
             let xs = collections.List.new().push(1).push(2).push(3)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
@@ -6954,7 +6974,7 @@ fn eval_list_sort_by_already_sorted() {
                 None => -1
             }
         }",
-    );
+    ));
     assert_eq!(val, Value::Int(2));
 }
 
@@ -7472,7 +7492,7 @@ fn eval_count_predicate_does_not_short_circuit() {
 
 #[test]
 fn eval_opaque_traversal_surface_semantics_rfc_0003() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"type Seed = { x: Int }
 
 fn main() -> Int {
@@ -7495,7 +7515,7 @@ fn main() -> Int {
     ).count()
     a * 100 + b * 10 + c + d + e
 }"#,
-    );
+    ));
     assert_eq!(val, Value::Int(505));
 }
 
@@ -7688,7 +7708,8 @@ fn eval_seq_unfold_semantics_matrix() {
     let cases = [
         Case {
             name: "unfold bounded emits values",
-            src: r#"fn main() -> Int {
+            src: r#"from Option import Some, None
+            fn main() -> Int {
                 let xs = (0).unfold(fn(state: Int) =>
                     if (state < 4) {
                         Some({ value: state * 2, state: state + 1 })
@@ -7702,7 +7723,8 @@ fn eval_seq_unfold_semantics_matrix() {
         },
         Case {
             name: "unfold immediate none is empty",
-            src: r#"fn main() -> Int {
+            src: r#"from Option import None
+            fn main() -> Int {
                 (0).unfold(fn(_state: Int) => None).count()
             }"#,
             expected: Value::Int(0),
@@ -7717,7 +7739,7 @@ fn eval_seq_unfold_semantics_matrix() {
 
 #[test]
 fn eval_seq_unfold_accepts_named_record_alias_payload() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"type PickStep = { value: Int, state: Int }
 
         fn main() -> Int {
@@ -7730,7 +7752,7 @@ fn eval_seq_unfold_accepts_named_record_alias_payload() {
             ).to_list()
             xs.len() * 100 + xs[0] * 10 + xs[3]
         }"#,
-    );
+    ));
     assert_eq!(val, Value::Int(406));
 }
 
@@ -8173,7 +8195,7 @@ fn run_project_imported_and_local_overload_family_dispatches() {
         &[
             (
                 "main.ky",
-                "import util\nfn foo() -> Int { 1 }\nfn main() -> Int { foo() + foo(2) }",
+                "from util import foo\nfn foo() -> Int { 1 }\nfn main() -> Int { foo() + foo(2) }",
             ),
             ("util.ky", "pub fn foo(x: Int) -> Int { x + 1 }"),
         ],
@@ -8187,7 +8209,7 @@ fn run_project_import_overlap_same_shape_is_compile_error() {
     let err = run_project_with_files_err(&[
         (
             "main.ky",
-            "import util\nfn foo(x: Int) -> Int { x }\nfn main() -> Int { 0 }",
+            "from util import foo\nfn foo(x: Int) -> Int { x }\nfn main() -> Int { 0 }",
         ),
         ("util.ky", "pub fn foo(x: Int) -> Int { x + 1 }"),
     ]);
@@ -8202,7 +8224,7 @@ fn run_project_imported_overloaded_function_family_as_value_is_compile_error() {
     let err = run_project_with_files_err(&[
         (
             "main.ky",
-            "import util\nfn main() -> Int {\n  let f = foo\n  0\n}",
+            "from util import foo\nfn main() -> Int {\n  let f = foo\n  0\n}",
         ),
         (
             "util.ky",
@@ -8280,7 +8302,7 @@ fn eval_method_list_push() {
 
 #[test]
 fn eval_method_list_get() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
             let xs = collections.List.new().push(10).push(20)
             match (xs.get(1)) {
@@ -8288,7 +8310,7 @@ fn eval_method_list_get() {
                 None => 0
             }
         }",
-    );
+    ));
     assert!(matches!(val, Value::Int(20)));
 }
 
@@ -8376,7 +8398,7 @@ fn eval_method_list_sort_by() {
 // Map methods
 #[test]
 fn eval_method_map_insert_and_get() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"fn main() -> Int {
             let m = collections.Map.new()
             let m2 = m.insert("a", 42)
@@ -8385,7 +8407,7 @@ fn eval_method_map_insert_and_get() {
                 None => 0
             }
         }"#,
-    );
+    ));
     assert!(matches!(val, Value::Int(42)));
 }
 
@@ -8477,63 +8499,65 @@ fn eval_method_char_is_decimal_digit() {
 
 #[test]
 fn eval_method_char_to_decimal_digit() {
-    let digit = run_ok(
+    let digit = run_ok(&with_option_variants(
         r#"fn main() -> Int {
     match ('7'.to_decimal_digit()) {
         Some(n) => n
         None => 0 - 1
     }
 }"#,
-    );
+    ));
     assert_eq!(digit, Value::Int(7));
 
-    let nondigit = run_ok(
+    let nondigit = run_ok(&with_option_variants(
         r#"fn main() -> Int {
     match ('x'.to_decimal_digit()) {
         Some(n) => n
         None => 0 - 1
     }
 }"#,
-    );
+    ));
     assert_eq!(nondigit, Value::Int(-1));
 }
 
 #[test]
 fn eval_method_char_to_digit_with_radix() {
-    let hex_upper = run_ok(
+    let hex_upper = run_ok(&with_option_variants(
         r#"fn main() -> Int {
     match ('F'.to_digit(16)) {
         Some(n) => n
         None => 0 - 1
     }
 }"#,
-    );
+    ));
     assert_eq!(hex_upper, Value::Int(15));
 
-    let hex_lower = run_ok(
+    let hex_lower = run_ok(&with_option_variants(
         r#"fn main() -> Int {
     match ('f'.to_digit(16)) {
         Some(n) => n
         None => 0 - 1
     }
 }"#,
-    );
+    ));
     assert_eq!(hex_lower, Value::Int(15));
 
-    let missing = run_ok(
+    let missing = run_ok(&with_option_variants(
         r#"fn main() -> Int {
     match ('g'.to_digit(16)) {
         Some(n) => n
         None => 0 - 1
     }
 }"#,
-    );
+    ));
     assert_eq!(missing, Value::Int(-1));
 }
 
 #[test]
 fn eval_method_char_to_digit_rejects_invalid_radix() {
-    let err = run_err("fn main() -> Int { match ('7'.to_digit(1)) { Some(n) => n None => 0 } }");
+    let err = run_err(&with_option_variants(
+        "fn main() -> Int { match ('7'.to_digit(1)) { Some(n) => n None => 0 } }",
+    ));
     assert!(err.contains("radix"), "got: {err}");
 }
 
@@ -8658,13 +8682,13 @@ fn eval_user_method_on_adt() {
 
         fn Shape.area(self) -> Int {
             match (self) {
-                Circle(r) => r * r * 3
-                Rect(w, h) => w * h
+                Shape.Circle(r) => r * r * 3
+                Shape.Rect(w, h) => w * h
             }
         }
 
         fn main() -> Int {
-            let s = Rect(4, 5)
+            let s = Shape.Rect(4, 5)
             s.area()
         }
         "#,
@@ -8807,13 +8831,13 @@ fn eval_user_method_on_adt_circle() {
 
         fn Shape.describe(self) -> String {
             match (self) {
-                Circle(_) => "circle"
-                Rect(_, _) => "rect"
+                Shape.Circle(_) => "circle"
+                Shape.Rect(_, _) => "rect"
             }
         }
 
         fn main() -> String {
-            let s = Circle(5)
+            let s = Shape.Circle(5)
             s.describe()
         }
         "#,
@@ -9006,7 +9030,7 @@ fn eval_map_mixed_operations() {
 #[test]
 fn eval_map_insertion_order_preserved() {
     // Keys should come back in insertion order (IndexMap guarantee)
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"fn main() -> String {
             let m = collections.Map.new()
                 .insert("c", 3)
@@ -9018,7 +9042,7 @@ fn eval_map_insertion_order_preserved() {
                 None => "fail"
             }
         }"#,
-    );
+    ));
     match val {
         Value::String(s) => assert_eq!(s, "c", "first key should be 'c' (insertion order)"),
         other => panic!("expected String, got {other:?}"),
@@ -9028,7 +9052,7 @@ fn eval_map_insertion_order_preserved() {
 #[test]
 fn eval_map_overwrite_preserves_position() {
     // Overwriting a key should keep its original insertion position
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"fn main() -> Int {
             let m = collections.Map.new()
                 .insert("a", 1)
@@ -9039,7 +9063,7 @@ fn eval_map_overwrite_preserves_position() {
                 None => 0
             }
         }"#,
-    );
+    ));
     assert!(matches!(val, Value::Int(99)));
 }
 
@@ -9073,7 +9097,7 @@ fn eval_map_remove_nonexistent_key() {
 
 #[test]
 fn eval_map_get_after_remove() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"fn main() -> Bool {
             let m = collections.Map.new().insert("a", 1).insert("b", 2)
             let m2 = m.remove("a")
@@ -9082,7 +9106,7 @@ fn eval_map_get_after_remove() {
                 None => true
             }
         }"#,
-    );
+    ));
     assert!(matches!(val, Value::Bool(true)));
 }
 
@@ -9272,7 +9296,7 @@ fn eval_set_immutable_semantics() {
 
 #[test]
 fn eval_set_values_preserve_insertion_order() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"fn main() -> String {
             let s = collections.Set.new().insert("c").insert("a").insert("b")
             let vals = s.values().to_list()
@@ -9281,7 +9305,7 @@ fn eval_set_values_preserve_insertion_order() {
                 None => "fail"
             }
         }"#,
-    );
+    ));
     match val {
         Value::String(s) => assert_eq!(s, "c"),
         other => panic!("expected String, got {other:?}"),
@@ -9290,7 +9314,7 @@ fn eval_set_values_preserve_insertion_order() {
 
 #[test]
 fn eval_set_values_remove_and_reinsert_goes_to_end() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         r#"fn main() -> Bool {
             let s = collections.Set.new().insert("a").insert("b").remove("a").insert("a")
             let vals = s.values().to_list()
@@ -9303,7 +9327,7 @@ fn eval_set_values_remove_and_reinsert_goes_to_end() {
                 None => false
             }
         }"#,
-    );
+    ));
     assert!(matches!(val, Value::Bool(true)));
 }
 
@@ -9579,7 +9603,7 @@ fn main() -> Int {
 
 #[test]
 fn eval_list_sort_list_of_lists_is_allowed() {
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
             let a: List<Int> = collections.List.new()
             let b = collections.List.new().push(1)
@@ -9590,7 +9614,7 @@ fn eval_list_sort_list_of_lists_is_allowed() {
                 None => -1
             }
         }",
-    );
+    ));
     assert_eq!(val, Value::Int(0));
 }
 
@@ -9645,7 +9669,7 @@ fn eval_list_sort_valid_types_no_rejection() {
 #[test]
 fn eval_list_get_negative_index_returns_none() {
     // Negative index should return None, not silently wrap to huge usize.
-    let val = run_ok(
+    let val = run_ok(&with_option_variants(
         "fn main() -> Int {
            let xs = collections.List.new().push(10).push(20)
            match (xs.get(0 - 1)) {
@@ -9653,7 +9677,7 @@ fn eval_list_get_negative_index_returns_none() {
              None => 0
            }
          }",
-    );
+    ));
     assert!(
         matches!(val, Value::Int(0)),
         "negative index should yield None, got: {val:?}"

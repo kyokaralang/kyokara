@@ -9,7 +9,6 @@ use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::ast::nodes::*;
 use kyokara_syntax::ast::traits::{HasName, HasTypeParams, HasVisibility};
 
-use crate::builtins::is_reserved_core_constructor_name;
 use crate::call_family::call_shapes_overlap;
 use crate::item_tree::*;
 use crate::name::Name;
@@ -73,35 +72,53 @@ impl ItemTreeCtx<'_> {
             .map(|p| self.lower_path(&p))
             .unwrap_or_else(|| Path { segments: vec![] });
 
-        let alias = import
-            .alias()
-            .and_then(|a| a.name_token())
-            .map(|tok| Name::new(self.interner, tok.text()));
-
         let import_idx = self.tree.imports.len();
+        let kind = if import.is_from_import() {
+            let members = import
+                .members()
+                .into_iter()
+                .filter_map(|member| {
+                    let name = member
+                        .name_token()
+                        .map(|tok| Name::new(self.interner, tok.text()))?;
+                    let alias = member
+                        .alias()
+                        .and_then(|a| a.name_token())
+                        .map(|tok| Name::new(self.interner, tok.text()));
+                    Some(ImportMemberItem { name, alias })
+                })
+                .collect::<Vec<_>>();
+            ImportKind::Members { members }
+        } else {
+            let alias = import
+                .alias()
+                .and_then(|a| a.name_token())
+                .map(|tok| Name::new(self.interner, tok.text()));
 
-        // The local name is the alias or the last path segment.
-        let local_name = alias.or_else(|| path.last());
-        if let Some(name) = local_name {
-            if let std::collections::hash_map::Entry::Vacant(e) =
-                self.module_scope.imports.entry(name)
-            {
-                e.insert(import_idx);
-            } else {
-                let span = self.node_span(import.syntax());
-                self.diagnostics.push(
-                    Diagnostic::error(
-                        format!("duplicate import `{}`", name.resolve(self.interner)),
-                        span,
-                    )
-                    .with_kind(DiagnosticKind::DuplicateDefinition),
-                );
+            let local_name = alias.or_else(|| path.last());
+            if let Some(name) = local_name {
+                if let std::collections::hash_map::Entry::Vacant(e) =
+                    self.module_scope.imports.entry(name)
+                {
+                    e.insert(import_idx);
+                } else {
+                    let span = self.node_span(import.syntax());
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            format!("duplicate import `{}`", name.resolve(self.interner)),
+                            span,
+                        )
+                        .with_kind(DiagnosticKind::DuplicateDefinition),
+                    );
+                }
             }
-        }
+
+            ImportKind::Namespace { alias }
+        };
 
         self.tree.imports.push(Import {
             path,
-            alias,
+            kind,
             source_range: Some(import.syntax().text_range()),
         });
     }
@@ -320,34 +337,7 @@ impl ItemTreeCtx<'_> {
         // Register constructors for ADTs
         if let TypeDefKind::Adt { ref variants } = kind {
             for (vi, variant) in variants.iter().enumerate() {
-                if is_reserved_core_constructor_name(variant.name, self.interner) {
-                    let span = self.node_span(t.syntax());
-                    self.diagnostics.push(Diagnostic::error(
-                        format!(
-                            "constructor `{}` is reserved for core stdlib",
-                            variant.name.resolve(self.interner)
-                        ),
-                        span,
-                    ));
-                    continue;
-                }
-                if let std::collections::hash_map::Entry::Vacant(e) =
-                    self.module_scope.constructors.entry(variant.name)
-                {
-                    e.insert((idx, vi));
-                } else {
-                    let span = self.node_span(t.syntax());
-                    self.diagnostics.push(
-                        Diagnostic::error(
-                            format!(
-                                "duplicate constructor `{}`",
-                                variant.name.resolve(self.interner)
-                            ),
-                            span,
-                        )
-                        .with_kind(DiagnosticKind::DuplicateDefinition),
-                    );
-                }
+                self.module_scope.type_variants.insert((idx, variant.name), vi);
             }
         }
     }

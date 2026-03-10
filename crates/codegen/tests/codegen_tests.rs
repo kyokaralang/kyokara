@@ -316,9 +316,9 @@ fn test_adt_construct_and_match() {
         run_main_i64(
             "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               match (Just(42)) {\n\
-                 Just(x) => x\n\
-                 Nothing => 0\n\
+               match (Opt.Just(42)) {\n\
+                 Opt.Just(x) => x\n\
+                 Opt.Nothing => 0\n\
                }\n\
              }"
         ),
@@ -332,9 +332,9 @@ fn test_adt_match_none() {
         run_main_i64(
             "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               match (Nothing) {\n\
-                 Just(x) => x\n\
-                 Nothing => -1\n\
+               match (Opt.Nothing) {\n\
+                 Opt.Just(x) => x\n\
+                 Opt.Nothing => -1\n\
                }\n\
              }"
         ),
@@ -349,12 +349,12 @@ fn test_adt_three_variants() {
             "type Color = Red | Green | Blue\n\
              fn to_int(c: Color) -> Int {\n\
                match (c) {\n\
-                 Red => 1\n\
-                 Green => 2\n\
-                 Blue => 3\n\
+                 Color.Red => 1\n\
+                 Color.Green => 2\n\
+                 Color.Blue => 3\n\
                }\n\
              }\n\
-             fn main() -> Int { to_int(Green) }"
+             fn main() -> Int { to_int(Color.Green) }"
         ),
         2
     );
@@ -657,9 +657,9 @@ fn test_match_with_complex_arm_body() {
         run_main_i64(
             "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               match (Just(10)) {\n\
-                 Just(x) => x * 2 + 1\n\
-                 Nothing => 0\n\
+               match (Opt.Just(10)) {\n\
+                 Opt.Just(x) => x * 2 + 1\n\
+                 Opt.Nothing => 0\n\
                }\n\
              }"
         ),
@@ -673,9 +673,9 @@ fn test_if_inside_match_arm() {
         run_main_i64(
             "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               match (Just(5)) {\n\
-                 Just(x) => if (x > 3) { x * 10 } else { x }\n\
-                 Nothing => 0\n\
+               match (Opt.Just(5)) {\n\
+                 Opt.Just(x) => if (x > 3) { x * 10 } else { x }\n\
+                 Opt.Nothing => 0\n\
                }\n\
              }"
         ),
@@ -690,13 +690,13 @@ fn test_match_four_variants() {
             "type Dir = North | South | East | West\n\
              fn to_int(d: Dir) -> Int {\n\
                match (d) {\n\
-                 North => 1\n\
-                 South => 2\n\
-                 East => 3\n\
-                 West => 4\n\
+                 Dir.North => 1\n\
+                 Dir.South => 2\n\
+                 Dir.East => 3\n\
+                 Dir.West => 4\n\
                }\n\
              }\n\
-             fn main() -> Int { to_int(West) }"
+             fn main() -> Int { to_int(Dir.West) }"
         ),
         4
     );
@@ -708,9 +708,9 @@ fn test_match_then_computation() {
         run_main_i64(
             "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               let v = match (Just(6)) {\n\
-                 Just(x) => x\n\
-                 Nothing => 0\n\
+               let v = match (Opt.Just(6)) {\n\
+                 Opt.Just(x) => x\n\
+                 Opt.Nothing => 0\n\
                }\n\
                v * 3 + 1\n\
              }"
@@ -727,8 +727,8 @@ fn test_adt_two_fields() {
         run_main_i64(
             "type Pair = Pair(Int, Int)\n\
              fn main() -> Int {\n\
-               match (Pair(10, 20)) {\n\
-                 Pair(a, b) => a + b\n\
+               match (Pair.Pair(10, 20)) {\n\
+                 Pair.Pair(a, b) => a + b\n\
                }\n\
              }"
         ),
@@ -742,8 +742,8 @@ fn test_adt_three_fields() {
         run_main_i64(
             "type Triple = Triple(Int, Int, Int)\n\
              fn main() -> Int {\n\
-               match (Triple(1, 2, 3)) {\n\
-                 Triple(a, b, c) => a + b + c\n\
+               match (Triple.Triple(1, 2, 3)) {\n\
+                 Triple.Triple(a, b, c) => a + b + c\n\
                }\n\
              }"
         ),
@@ -787,15 +787,15 @@ fn test_multiple_adt_allocations() {
         run_main_i64(
             "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               let a = Just(10)\n\
-               let b = Just(20)\n\
+               let a = Opt.Just(10)\n\
+               let b = Opt.Just(20)\n\
                let x = match (a) {\n\
-                 Just(v) => v\n\
-                 Nothing => 0\n\
+                 Opt.Just(v) => v\n\
+                 Opt.Nothing => 0\n\
                }\n\
                let y = match (b) {\n\
-                 Just(v) => v\n\
-                 Nothing => 0\n\
+                 Opt.Just(v) => v\n\
+                 Opt.Nothing => 0\n\
                }\n\
                x + y\n\
              }"
@@ -810,9 +810,9 @@ fn test_adt_field_in_computation() {
         run_main_i64(
             "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               let v = match (Just(5)) {\n\
-                 Just(x) => x\n\
-                 Nothing => 0\n\
+               let v = match (Opt.Just(5)) {\n\
+                 Opt.Just(x) => x\n\
+                 Opt.Nothing => 0\n\
                }\n\
                v * 3 + 2\n\
              }"
@@ -961,10 +961,10 @@ fn test_let_adt_then_match() {
         run_main_i64(
             "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               let x = Just(7)\n\
+               let x = Opt.Just(7)\n\
                match (x) {\n\
-                 Just(v) => v\n\
-                 Nothing => 0\n\
+                 Opt.Just(v) => v\n\
+                 Opt.Nothing => 0\n\
                }\n\
              }"
         ),
@@ -1009,10 +1009,10 @@ fn test_adt_construction_in_if_arms() {
             "type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
                let x = 5\n\
-               let opt = if (x > 3) { Just(x) } else { Nothing }\n\
+               let opt = if (x > 3) { Opt.Just(x) } else { Opt.Nothing }\n\
                match (opt) {\n\
-                 Just(v) => v\n\
-                 Nothing => 0\n\
+                 Opt.Just(v) => v\n\
+                 Opt.Nothing => 0\n\
                }\n\
              }"
         ),
@@ -1027,9 +1027,9 @@ fn test_record_creation_in_match_arm() {
             "type Opt = Just(Int) | Nothing\n\
              type Pair = { x: Int, y: Int }\n\
              fn main() -> Int {\n\
-               let r = match (Just(10)) {\n\
-                 Just(v) => Pair { x: v, y: v * 2 }\n\
-                 Nothing => Pair { x: 0, y: 0 }\n\
+               let r = match (Opt.Just(10)) {\n\
+                 Opt.Just(v) => Pair { x: v, y: v * 2 }\n\
+                 Opt.Nothing => Pair { x: 0, y: 0 }\n\
                }\n\
                r.x + r.y\n\
              }"
@@ -1045,11 +1045,11 @@ fn test_function_call_with_adt_arg() {
             "type Opt = Just(Int) | Nothing\n\
              fn unwrap_or(o: Opt, default: Int) -> Int {\n\
                match (o) {\n\
-                 Just(v) => v\n\
-                 Nothing => default\n\
+                 Opt.Just(v) => v\n\
+                 Opt.Nothing => default\n\
                }\n\
              }\n\
-             fn main() -> Int { unwrap_or(Just(42), 0) }"
+             fn main() -> Int { unwrap_or(Opt.Just(42), 0) }"
         ),
         42
     );
@@ -1062,11 +1062,11 @@ fn test_function_call_with_adt_arg_none() {
             "type Opt = Just(Int) | Nothing\n\
              fn unwrap_or(o: Opt, default: Int) -> Int {\n\
                match (o) {\n\
-                 Just(v) => v\n\
-                 Nothing => default\n\
+                 Opt.Just(v) => v\n\
+                 Opt.Nothing => default\n\
                }\n\
              }\n\
-             fn main() -> Int { unwrap_or(Nothing, 99) }"
+             fn main() -> Int { unwrap_or(Opt.Nothing, 99) }"
         ),
         99
     );
@@ -1089,11 +1089,11 @@ fn test_function_returning_adt() {
     assert_eq!(
         run_main_i64(
             "type Opt = Just(Int) | Nothing\n\
-             fn make_some(x: Int) -> Opt { Just(x) }\n\
+             fn make_some(x: Int) -> Opt { Opt.Just(x) }\n\
              fn main() -> Int {\n\
                match (make_some(42)) {\n\
-                 Just(v) => v\n\
-                 Nothing => 0\n\
+                 Opt.Just(v) => v\n\
+                 Opt.Nothing => 0\n\
                }\n\
              }"
         ),
@@ -1123,13 +1123,13 @@ fn test_nested_match_in_match() {
             "type Outer = A(Int) | B\n\
              type Inner = X(Int) | Y\n\
              fn main() -> Int {\n\
-               let o = A(1)\n\
+               let o = Outer.A(1)\n\
                match (o) {\n\
-                 A(v) => match (X(v * 10)) {\n\
-                   X(w) => w + 1\n\
-                   Y => 0\n\
+                 Outer.A(v) => match (Inner.X(v * 10)) {\n\
+                   Inner.X(w) => w + 1\n\
+                   Inner.Y => 0\n\
                  }\n\
-                 B => -1\n\
+                 Outer.B => -1\n\
                }\n\
              }"
         ),
@@ -1267,10 +1267,10 @@ fn test_multiple_adt_in_same_if_arm() {
              fn main() -> Int {\n\
                let x = 5\n\
                let pair = if (x > 0) {\n\
-                 let a = Just(x)\n\
-                 let b = Just(x * 2)\n\
-                 let va = match (a) { Just(v) => v\n Nothing => 0 }\n\
-                 let vb = match (b) { Just(v) => v\n Nothing => 0 }\n\
+                 let a = Opt.Just(x)\n\
+                 let b = Opt.Just(x * 2)\n\
+                 let va = match (a) { Opt.Just(v) => v\n Opt.Nothing => 0 }\n\
+                 let vb = match (b) { Opt.Just(v) => v\n Opt.Nothing => 0 }\n\
                  va + vb\n\
                } else { 0 }\n\
                pair\n\
@@ -1290,10 +1290,10 @@ fn test_adt_in_deeply_nested_if() {
                let x = 5\n\
                let opt = if (x > 0) {\n\
                  if (x > 3) {\n\
-                   if (x > 4) { Just(x) } else { Nothing }\n\
-                 } else { Nothing }\n\
-               } else { Nothing }\n\
-               match (opt) { Just(v) => v\n Nothing => -1 }\n\
+                   if (x > 4) { Opt.Just(x) } else { Opt.Nothing }\n\
+                 } else { Opt.Nothing }\n\
+               } else { Opt.Nothing }\n\
+               match (opt) { Opt.Just(v) => v\n Opt.Nothing => -1 }\n\
              }"
         ),
         5
@@ -1308,15 +1308,15 @@ fn test_adt_in_nested_match_arms() {
             "type AB = A | B\n\
              type Opt = Just(Int) | Nothing\n\
              fn main() -> Int {\n\
-               let x = A\n\
+               let x = AB.A\n\
                let opt = match (x) {\n\
-                 A => match (B) {\n\
-                   A => Just(1)\n\
-                   B => Just(2)\n\
+                 AB.A => match (AB.B) {\n\
+                   AB.A => Opt.Just(1)\n\
+                   AB.B => Opt.Just(2)\n\
                  }\n\
-                 B => Nothing\n\
+                 AB.B => Opt.Nothing\n\
                }\n\
-               match (opt) { Just(v) => v\n Nothing => 0 }\n\
+               match (opt) { Opt.Just(v) => v\n Opt.Nothing => 0 }\n\
              }"
         ),
         2
@@ -1347,11 +1347,11 @@ fn test_mixed_adt_and_record_in_scope() {
             "type Opt = Just(Int) | Nothing\n\
              type Pair = { x: Int, y: Int }\n\
              fn main() -> Int {\n\
-               let a = Just(10)\n\
+               let a = Opt.Just(10)\n\
                let r = Pair { x: 20, y: 30 }\n\
-               let b = Just(40)\n\
-               let va = match (a) { Just(v) => v\n Nothing => 0 }\n\
-               let vb = match (b) { Just(v) => v\n Nothing => 0 }\n\
+               let b = Opt.Just(40)\n\
+               let va = match (a) { Opt.Just(v) => v\n Opt.Nothing => 0 }\n\
+               let vb = match (b) { Opt.Just(v) => v\n Opt.Nothing => 0 }\n\
                va + r.x + r.y + vb\n\
              }"
         ),
@@ -1367,13 +1367,13 @@ fn test_record_in_match_arm_with_if() {
             "type Opt = Just(Int) | Nothing\n\
              type Pair = { x: Int, y: Int }\n\
              fn main() -> Int {\n\
-               let r = match (Just(5)) {\n\
-                 Just(v) => if (v > 3) {\n\
+               let r = match (Opt.Just(5)) {\n\
+                 Opt.Just(v) => if (v > 3) {\n\
                    Pair { x: v, y: v * 10 }\n\
                  } else {\n\
                    Pair { x: 0, y: 0 }\n\
                  }\n\
-                 Nothing => Pair { x: -1, y: -1 }\n\
+                 Opt.Nothing => Pair { x: -1, y: -1 }\n\
                }\n\
                r.x + r.y\n\
              }"
@@ -1392,11 +1392,11 @@ fn test_match_all_arms_return() {
             "type Opt = Just(Int) | Nothing\n\
              fn extract(o: Opt) -> Int {\n\
                match (o) {\n\
-                 Just(x) => return x\n\
-                 Nothing => return -1\n\
+                 Opt.Just(x) => return x\n\
+                 Opt.Nothing => return -1\n\
                }\n\
              }\n\
-             fn main() -> Int { extract(Just(42)) }"
+             fn main() -> Int { extract(Opt.Just(42)) }"
         ),
         42
     );
@@ -1410,11 +1410,11 @@ fn test_match_all_arms_return_default() {
             "type Opt = Just(Int) | Nothing\n\
              fn extract(o: Opt) -> Int {\n\
                match (o) {\n\
-                 Just(x) => return x\n\
-                 Nothing => return -1\n\
+                 Opt.Just(x) => return x\n\
+                 Opt.Nothing => return -1\n\
                }\n\
              }\n\
-             fn main() -> Int { extract(Nothing) }"
+             fn main() -> Int { extract(Opt.Nothing) }"
         ),
         -1
     );
@@ -1442,12 +1442,12 @@ fn test_match_mixed_branch_and_switch_arms() {
             "type Outer = A(Int) | B(Int)\n\
              type Inner = X(Int) | Y\n\
              fn main() -> Int {\n\
-               let o = A(5)\n\
+               let o = Outer.A(5)\n\
                match (o) {\n\
-                 A(v) => if (v > 3) { v * 10 } else { v }\n\
-                 B(v) => match (X(v)) {\n\
-                   X(w) => w + 100\n\
-                   Y => 0\n\
+                 Outer.A(v) => if (v > 3) { v * 10 } else { v }\n\
+                 Outer.B(v) => match (Inner.X(v)) {\n\
+                   Inner.X(w) => w + 100\n\
+                   Inner.Y => 0\n\
                  }\n\
                }\n\
              }"
@@ -1464,12 +1464,12 @@ fn test_match_mixed_branch_and_switch_arms_other() {
             "type Outer = A(Int) | B(Int)\n\
              type Inner = X(Int) | Y\n\
              fn main() -> Int {\n\
-               let o = B(7)\n\
+               let o = Outer.B(7)\n\
                match (o) {\n\
-                 A(v) => if (v > 3) { v * 10 } else { v }\n\
-                 B(v) => match (X(v)) {\n\
-                   X(w) => w + 100\n\
-                   Y => 0\n\
+                 Outer.A(v) => if (v > 3) { v * 10 } else { v }\n\
+                 Outer.B(v) => match (Inner.X(v)) {\n\
+                   Inner.X(w) => w + 100\n\
+                   Inner.Y => 0\n\
                  }\n\
                }\n\
              }"
@@ -1485,8 +1485,8 @@ fn test_single_variant_match() {
         run_main_i64(
             "type Wrap = Wrap(Int)\n\
              fn main() -> Int {\n\
-               match (Wrap(42)) {\n\
-                 Wrap(x) => x\n\
+               match (Wrap.Wrap(42)) {\n\
+                 Wrap.Wrap(x) => x\n\
                }\n\
              }"
         ),
@@ -1803,8 +1803,8 @@ fn test_adt_float_field_roundtrip() {
     let val = run_main_f64(
         "type Wrap = Wrap(Float)\n\
          fn main() -> Float {\n\
-           match (Wrap(3.14)) {\n\
-             Wrap(x) => x\n\
+           match (Wrap.Wrap(3.14)) {\n\
+             Wrap.Wrap(x) => x\n\
            }\n\
          }",
     );
@@ -1821,8 +1821,8 @@ fn test_adt_float_field_arithmetic() {
     let val = run_main_f64(
         "type Wrap = Wrap(Float)\n\
          fn main() -> Float {\n\
-           match (Wrap(2.5)) {\n\
-             Wrap(x) => x * 2.0\n\
+           match (Wrap.Wrap(2.5)) {\n\
+             Wrap.Wrap(x) => x * 2.0\n\
            }\n\
          }",
     );
@@ -1836,8 +1836,8 @@ fn test_adt_mixed_int_float_fields() {
         run_main_i64(
             "type Pair = Pair(Int, Float)\n\
              fn main() -> Int {\n\
-               match (Pair(42, 3.14)) {\n\
-                 Pair(n, _) => n\n\
+               match (Pair.Pair(42, 3.14)) {\n\
+                 Pair.Pair(n, _) => n\n\
                }\n\
              }"
         ),
@@ -1851,8 +1851,8 @@ fn test_adt_mixed_int_float_fields_get_float() {
     let val = run_main_f64(
         "type Pair = Pair(Int, Float)\n\
          fn main() -> Float {\n\
-           match (Pair(42, 3.14)) {\n\
-             Pair(_, f) => f\n\
+           match (Pair.Pair(42, 3.14)) {\n\
+             Pair.Pair(_, f) => f\n\
            }\n\
          }",
     );

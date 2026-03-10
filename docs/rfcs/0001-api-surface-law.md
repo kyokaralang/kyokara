@@ -116,13 +116,13 @@ Canonical parsing forms for numeric text:
   - `s.parse_int().unwrap_or(0)`
   - `s.parse_int().map_or(0, fn(n: Int) => n + 1)`
   - `s.parse_int().map(fn(n: Int) => n + 1).unwrap_or(0)`
-  - `s.parse_int().and_then(fn(n: Int) => Ok(n + 1)).unwrap_or(0)`
+  - `s.parse_int().and_then(fn(n: Int) => Result.Ok(n + 1)).unwrap_or(0)`
   - `s.parse_int().map_err(fn(e: ParseError) => e)`
 - canonical fallback/composition on `Option`:
   - `parts.get(0).unwrap_or("0")`
   - `parts.get(0).map_or("0", fn(s: String) => s)`
   - `parts.get(0).map(fn(s: String) => s.trim())`
-  - `parts.get(0).and_then(fn(s: String) => Some(s))`
+  - `parts.get(0).and_then(fn(s: String) => Option.Some(s))`
 
 Non-canonical aliases must not be introduced as parallel public APIs:
 
@@ -232,13 +232,16 @@ Implications:
 - runtime must not rely on `expect("... not registered")` for core constructor lookup paths reachable from user code
 - inference/eval/KIR must agree on the same identity-based owner key model
 
-### L17. Temporary unqualified core constructor reservation (`MUST`, temporary)
+### L17. Constructors are type-owned and imported explicitly (`MUST`)
 
-Until qualified constructors are available, unqualified user ADT variants with names
-`Some`, `None`, `Ok`, `Err`, `InvalidInt`, `InvalidFloat` are reserved and rejected.
+Constructors and variants belong to their owning ADT type.
 
-This is a temporary safety gate and must be removed once qualified constructor usage
-(`Type.Variant`) is implemented ([#293](https://github.com/kyokaralang/kyokara/issues/293)).
+Implications:
+
+- `Type.Variant` must always be valid in expression and pattern positions
+- bare `Variant` is valid only when explicitly imported, for example `from Result import Ok, Err`
+- `import path` binds a namespace only; `from path import Name` binds members directly
+- no global reserved constructor-name carveout is permitted
 
 ### L18. Traversal model is collection-first and canonical (`MUST`)
 
@@ -305,7 +308,7 @@ Use this checklist in PRs that add or change stdlib/intrinsic/public APIs.
 - [ ] Any sugar is lossless and desugars to canonical form (`L14`).
 - [ ] Parsing APIs follow source-owner placement and return `Result` (`L6`).
 - [ ] Core dispatch path is identity-based (no string-name dispatch for core behavior) (`L16`).
-- [ ] Constructor names pass temporary reservation gate or use qualified form once available (`L17`).
+- [ ] Constructor ownership/import rules are respected: `Type.Variant` or explicit `from Type import Variant` (`L17`).
 
 ### B. API change checklist
 
@@ -329,7 +332,7 @@ Mark one:
 2. align stdlib/intrinsic docs to canonical forms
 3. add conformance checks incrementally (lint + tests)
 4. enforce evolution/deprecation policy in release process
-5. ship qualified constructors and remove temporary reservation rule ([#293](https://github.com/kyokaralang/kyokara/issues/293))
+5. keep constructor/import docs and tooling aligned with type-owned variants and `from ... import ...` member imports
 
 ## Open questions
 

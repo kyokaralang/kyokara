@@ -50,6 +50,11 @@ impl<'a> LoweringCtx<'a> {
             }
             Expr::Call { callee, args } => self.lower_call(callee, args, ty),
             Expr::Field { base, field } => {
+                if let Some(value) =
+                    self.try_lower_constructor_field_value(base, field, ty.clone())
+                {
+                    return value;
+                }
                 let bv = self.lower_expr(base);
                 self.builder.push_field_get(bv, field, ty)
             }
@@ -111,16 +116,16 @@ impl<'a> LoweringCtx<'a> {
         }
 
         // ADT constructor (zero-arg produces a value directly).
-        if let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&first) {
+        if let Some((type_idx, variant_idx)) = self.module_scope.resolve_constructor_path(&path) {
             let is_nullary = matches!(
                 &self.item_tree.types[type_idx].kind,
                 TypeDefKind::Adt { variants } if variants[variant_idx].fields.is_empty()
             );
             if is_nullary {
-                let ctor_val = self
+                let variant_name = *path.segments.last().unwrap_or(&first);
+                return self
                     .builder
-                    .push_adt_construct(type_idx, first, vec![], ty.clone());
-                return self.chain_field_gets(ctor_val, &path.segments[1..], ty);
+                    .push_adt_construct(type_idx, variant_name, vec![], ty);
             }
             // Multi-field constructor as value — placeholder.
             let id = self.next_hole_id();
@@ -141,6 +146,50 @@ impl<'a> LoweringCtx<'a> {
         // Unknown — emit hole.
         let id = self.next_hole_id();
         self.builder.push_hole(id, vec![], ty)
+    }
+
+    fn try_lower_constructor_field_value(
+        &mut self,
+        base_idx: ExprIdx,
+        field: Name,
+        ty: Ty,
+    ) -> Option<ValueId> {
+        let resolve_nullary_variant =
+            |this: &mut Self, type_idx: kyokara_hir_def::item_tree::TypeItemIdx| {
+                let &variant_idx = this.module_scope.type_variants.get(&(type_idx, field))?;
+                let is_nullary = matches!(
+                    &this.item_tree.types[type_idx].kind,
+                    TypeDefKind::Adt { variants } if variants[variant_idx].fields.is_empty()
+                );
+                if !is_nullary {
+                    return None;
+                }
+                Some(this.builder.push_adt_construct(type_idx, field, vec![], ty.clone()))
+            };
+
+        if let Expr::Path(path) = &self.body.exprs[base_idx]
+            && path.is_single()
+            && let Some(&type_idx) = self.module_scope.types.get(&path.segments[0])
+        {
+            return resolve_nullary_variant(self, type_idx);
+        }
+
+        if let Expr::Field {
+            base: module_base_idx,
+            field: type_name,
+        } = &self.body.exprs[base_idx]
+            && let Expr::Path(module_path) = &self.body.exprs[*module_base_idx]
+            && module_path.is_single()
+        {
+            let module_name = module_path.segments[0];
+            if let Some(namespace) = self.module_scope.visible_namespace(module_name)
+                && let Some(&type_idx) = namespace.types.get(type_name)
+            {
+                return resolve_nullary_variant(self, type_idx);
+            }
+        }
+
+        None
     }
 
     fn chain_field_gets(
@@ -367,11 +416,10 @@ impl<'a> LoweringCtx<'a> {
             }
 
             // 2. Constructor call → AdtConstruct.
-            if let Some(&(type_idx, _)) = self.module_scope.constructors.get(&name) {
+            if let Some((type_idx, _)) = self.module_scope.resolve_constructor_path(path) {
                 let arg_vals = self.lower_call_args_source_order(&args);
-                return self
-                    .builder
-                    .push_adt_construct(type_idx, name, arg_vals, ty);
+                let ctor_name = *path.segments.last().unwrap_or(&name);
+                return self.builder.push_adt_construct(type_idx, ctor_name, arg_vals, ty);
             }
 
             // 3. Module-level function (direct call — user-defined takes precedence).
@@ -427,6 +475,13 @@ impl<'a> LoweringCtx<'a> {
                 && module_path.is_single()
             {
                 let module_name = module_path.segments[0];
+                if let Some(namespace) = self.module_scope.visible_namespace(module_name)
+                    && let Some(&type_idx) = namespace.types.get(&type_name)
+                    && self.module_scope.type_variants.contains_key(&(type_idx, field))
+                {
+                    let arg_vals = self.lower_call_args_source_order(&args);
+                    return self.builder.push_adt_construct(type_idx, field, arg_vals, ty);
+                }
                 if self.module_scope.imported_modules.contains(&module_name)
                     && let Some(&fn_idx) = self.module_scope.synthetic_module_static_methods.get(&(
                         module_name,
@@ -451,6 +506,13 @@ impl<'a> LoweringCtx<'a> {
             {
                 let seg = path.segments[0];
 
+                if let Some(&type_idx) = self.module_scope.types.get(&seg)
+                    && self.module_scope.type_variants.contains_key(&(type_idx, field))
+                {
+                    let arg_vals = self.lower_call_args_source_order(&args);
+                    return self.builder.push_adt_construct(type_idx, field, arg_vals, ty);
+                }
+
                 // Module-qualified call: io.println(s), math.min(a, b)
                 if self.module_scope.imported_modules.contains(&seg)
                     && let Some(mod_fns) = self.module_scope.synthetic_modules.get(&seg)
@@ -465,6 +527,36 @@ impl<'a> LoweringCtx<'a> {
                         CallTarget::Direct(fn_item.name)
                     };
                     return self.builder.push_call(target, arg_vals, ty);
+                }
+
+                if let Some(namespace) = self.module_scope.visible_namespace(seg)
+                    && let Some(candidates) = namespace.functions.get(&field)
+                {
+                    let fn_idx = match candidates.as_slice() {
+                        [fn_idx] => Some(*fn_idx),
+                        _ => match select_call_family_candidate(&args, candidates, |fn_idx| {
+                            &self.item_tree.functions[fn_idx].params
+                        }) {
+                            CallFamilySelection::Selected { candidate, .. } => Some(candidate),
+                            _ => None,
+                        },
+                    };
+                    if let Some(fn_idx) = fn_idx {
+                        let param_names = self.param_names_for_fn_idx(fn_idx);
+                        let param_named_only = self.param_named_only_for_fn_idx(fn_idx);
+                        let arg_vals = self.lower_call_args_for_param_specs(
+                            &args,
+                            &param_names,
+                            Some(&param_named_only),
+                        );
+                        let fn_item = &self.item_tree.functions[fn_idx];
+                        let target = if self.intrinsics.contains(&fn_item.name) {
+                            CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
+                        } else {
+                            CallTarget::Direct(fn_item.name)
+                        };
+                        return self.builder.push_call(target, arg_vals, ty);
+                    }
                 }
 
                 // Type-owned static call: bare `Type.method()` if registered.
@@ -1118,9 +1210,9 @@ impl<'a> LoweringCtx<'a> {
 
         // Named constructor → AdtConstruct.
         if let Some(path) = &path
-            && let Some(ctor_name) = path.last()
-            && let Some(&(type_idx, _)) = self.module_scope.constructors.get(&ctor_name)
+            && let Some((type_idx, _)) = self.module_scope.resolve_constructor_path(path)
         {
+            let ctor_name = path.last().expect("constructor path must have a variant");
             let vals: Vec<_> = field_vals.into_iter().map(|(_, v)| v).collect();
             return self
                 .builder

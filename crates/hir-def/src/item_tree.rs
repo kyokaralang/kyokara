@@ -44,8 +44,24 @@ pub struct ItemTree {
 #[derive(Debug, Clone)]
 pub struct Import {
     pub path: Path,
-    pub alias: Option<Name>,
+    pub kind: ImportKind,
     pub source_range: Option<TextRange>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ImportKind {
+    Namespace {
+        alias: Option<Name>,
+    },
+    Members {
+        members: Vec<ImportMemberItem>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct ImportMemberItem {
+    pub name: Name,
+    pub alias: Option<Name>,
 }
 
 /// A function item (signature only — body lowered in Pass 2).

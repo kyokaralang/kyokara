@@ -1,4 +1,4 @@
-import math
+from math import add
 fn caller() -> Int {
   add(1, 2)
   let add = fn(x, y) => x

@@ -1,1 +1,3 @@
+from Option import Some
+
 fn main() -> Option<Int> { Some(1) }

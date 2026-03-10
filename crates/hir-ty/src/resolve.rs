@@ -48,8 +48,9 @@ impl<'a> TyResolutionEnv<'a> {
 
                     // Unresolved — return error.
                     Ty::Error
+                } else if let Some(type_idx) = self.module_scope.resolve_type_path(path) {
+                    self.resolve_type_item(type_idx, args, table)
                 } else {
-                    // Multi-segment paths not yet supported in v0.0.
                     Ty::Error
                 }
             }

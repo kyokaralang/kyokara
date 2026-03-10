@@ -6,12 +6,10 @@
     "issue": 129
   },
   "check": {
-    "ok": false,
-    "codes_all": ["E0013"],
-    "messages_all": ["unresolved constructor"]
+    "ok": true
   },
   "run": {
-    "ok": false,
-    "stderr_contains": ["runtime error:", "unresolved constructor"]
+    "ok": true,
+    "stdout_contains": ["1"]
   }
 }

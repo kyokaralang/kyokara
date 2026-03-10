@@ -1,5 +1,4 @@
-import collections
-import math
+from math import size
 
 fn main() -> Int {
   size()

@@ -62,6 +62,24 @@ impl<'a> InferenceCtx<'a> {
 
             Expr::Path(path) => {
                 if !path.is_single() {
+                    if let Some((type_idx, variant_idx)) =
+                        self.module_scope.resolve_constructor_path(path)
+                    {
+                        return self.constructor_as_fn(type_idx, variant_idx);
+                    }
+                    if self.module_scope.resolve_type_path(path).is_some() {
+                        let path_str = path
+                            .segments
+                            .iter()
+                            .map(|s| s.resolve(self.interner).to_owned())
+                            .collect::<Vec<_>>()
+                            .join(".");
+                        self.push_diag(TyDiagnosticData::NonValueNameInExpr {
+                            kind: "type".to_string(),
+                            name: path_str,
+                        });
+                        return Ty::Error;
+                    }
                     self.push_diag(TyDiagnosticData::MultiSegmentValuePath {
                         path: path
                             .segments
@@ -203,15 +221,7 @@ impl<'a> InferenceCtx<'a> {
                     }
                     Ty::Error
                 }
-                ScopeDef::Type(_) => {
-                    if let Some(&(type_idx, variant_idx)) =
-                        self.module_scope.constructors.get(&name)
-                    {
-                        self.constructor_as_fn(type_idx, variant_idx)
-                    } else {
-                        self.non_value_name_in_expr("type", name)
-                    }
-                }
+                ScopeDef::Type(_) => self.non_value_name_in_expr("type", name),
                 ScopeDef::Effect(_) => self.non_value_name_in_expr("capability", name),
                 ScopeDef::Import(_) => self.non_value_name_in_expr("import", name),
             },
@@ -247,13 +257,7 @@ impl<'a> InferenceCtx<'a> {
                 variant_idx,
             }) => self.constructor_as_fn(type_idx, variant_idx),
 
-            Some(ResolvedName::Type(_)) => {
-                if let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&name) {
-                    self.constructor_as_fn(type_idx, variant_idx)
-                } else {
-                    self.non_value_name_in_expr("type", name)
-                }
-            }
+            Some(ResolvedName::Type(_)) => self.non_value_name_in_expr("type", name),
             Some(ResolvedName::Effect(_)) => self.non_value_name_in_expr("capability", name),
             Some(ResolvedName::Trait(_)) => Ty::Error,
             Some(ResolvedName::Import(_)) => self.non_value_name_in_expr("import", name),
@@ -635,13 +639,16 @@ impl<'a> InferenceCtx<'a> {
 
     fn infer_call(&mut self, callee: ExprIdx, args: &[CallArg]) -> Ty {
         if let Expr::Path(path) = &self.body.exprs[callee]
-            && path.is_single()
         {
-            let name = path.segments[0];
-            if let Some(resolved) = self.body.resolve_name_at(self.module_scope, callee, name)
-                && let ResolvedName::FnFamily(candidates) = resolved.resolved
-            {
-                return self.infer_constrained_fn_family_call(callee, name, &candidates, args);
+            if path.is_single() {
+                let name = path.segments[0];
+                if let Some(resolved) = self.body.resolve_name_at(self.module_scope, callee, name)
+                    && let ResolvedName::FnFamily(candidates) = resolved.resolved
+                {
+                    return self.infer_constrained_fn_family_call(callee, name, &candidates, args);
+                }
+            } else if let Some(result) = self.try_infer_qualified_path_call(callee, path, args) {
+                return result;
             }
         }
 
@@ -882,6 +889,33 @@ impl<'a> InferenceCtx<'a> {
     }
 
     fn infer_field(&mut self, base: ExprIdx, field: kyokara_hir_def::name::Name) -> Ty {
+        if let Expr::Path(path) = &self.body.exprs[base]
+            && path.is_single()
+        {
+            let name = path.segments[0];
+            if let Some(&type_idx) = self.module_scope.types.get(&name)
+                && let Some(&variant_idx) = self.module_scope.type_variants.get(&(type_idx, field))
+            {
+                return self.constructor_as_fn(type_idx, variant_idx);
+            }
+        }
+
+        if let Expr::Field {
+            base: module_base,
+            field: type_name,
+        } = &self.body.exprs[base]
+            && let Expr::Path(module_path) = &self.body.exprs[*module_base]
+            && module_path.is_single()
+        {
+            let module_name = module_path.segments[0];
+            if let Some(namespace) = self.module_scope.visible_namespace(module_name)
+                && let Some(&type_idx) = namespace.types.get(type_name)
+                && let Some(&variant_idx) = self.module_scope.type_variants.get(&(type_idx, field))
+            {
+                return self.constructor_as_fn(type_idx, variant_idx);
+            }
+        }
+
         let base_ty = self.infer_expr(base, &Expectation::None);
         let base_ty = self.table.resolve_deep(&base_ty);
 
@@ -1169,11 +1203,8 @@ impl<'a> InferenceCtx<'a> {
                 _ => false,
             },
             Pat::Constructor { path, args } => {
-                if !path.is_single() {
-                    return false;
-                }
-                let ctor = path.segments[0];
-                let Some(&(type_idx, variant_idx)) = self.module_scope.constructors.get(&ctor)
+                let Some((type_idx, variant_idx)) =
+                    self.module_scope.resolve_constructor_path(path)
                 else {
                     return false;
                 };
@@ -1651,6 +1682,41 @@ impl<'a> InferenceCtx<'a> {
             && module_path.is_single()
         {
             let module_name = module_path.segments[0];
+            if let Some(namespace) = self.module_scope.visible_namespace(module_name)
+                && let Some(&type_idx) = namespace.types.get(type_name)
+                && let Some(&variant_idx) = self.module_scope.type_variants.get(&(type_idx, field))
+            {
+                let ctor_ty = self.constructor_as_fn(type_idx, variant_idx);
+                let ctor_ty = self.table.resolve_deep(&ctor_ty);
+                if let Ty::Fn { params, ret } = ctor_ty {
+                    if args.len() != params.len() {
+                        self.push_diag(TyDiagnosticData::ArgCountMismatch {
+                            expected: params.len(),
+                            actual: args.len(),
+                        });
+                        for arg in args {
+                            match arg {
+                                CallArg::Positional(expr)
+                                | CallArg::Named { value: expr, .. } => {
+                                    self.infer_expr(*expr, &Expectation::None);
+                                }
+                            }
+                        }
+                        return Some(Ty::Error);
+                    }
+                    for (arg, param_ty) in args.iter().zip(params.iter()) {
+                        match arg {
+                            CallArg::Positional(expr)
+                            | CallArg::Named { value: expr, .. } => {
+                                self.infer_expr(*expr, &Expectation::Has(param_ty.clone()));
+                            }
+                        }
+                    }
+                    return Some(*ret);
+                }
+                return Some(Ty::Error);
+            }
+
             if self.module_scope.imported_modules.contains(&module_name) {
                 if let Some(&fn_idx) = self.module_scope.synthetic_module_static_methods.get(&(
                     module_name,
@@ -1685,6 +1751,62 @@ impl<'a> InferenceCtx<'a> {
             return None;
         }
 
+        if let Expr::Path(ref path) = self.body.exprs[base]
+            && path.is_single()
+        {
+            let name = path.segments[0];
+
+            if let Some(&(module_name, type_name)) = self.module_scope.imported_type_namespaces.get(&name)
+                && let Some(&fn_idx) = self.module_scope.synthetic_module_static_methods.get(&(
+                    module_name,
+                    type_name,
+                    field,
+                ))
+            {
+                let ty = self.infer_qualified_fn_call(callee, fn_idx, args);
+                if type_name.resolve(self.interner) == "MutablePriorityQueue"
+                    && matches!(field.resolve(self.interner), "new_min" | "new_max")
+                {
+                    self.check_mutable_priority_queue_ord_bound(&ty);
+                }
+                return Some(ty);
+            }
+
+            if let Some(&type_idx) = self.module_scope.types.get(&name)
+                && let Some(&variant_idx) = self.module_scope.type_variants.get(&(type_idx, field))
+            {
+                let ctor_ty = self.constructor_as_fn(type_idx, variant_idx);
+                let ctor_ty = self.table.resolve_deep(&ctor_ty);
+                if let Ty::Fn { params, ret } = ctor_ty {
+                    if args.len() != params.len() {
+                        self.push_diag(TyDiagnosticData::ArgCountMismatch {
+                            expected: params.len(),
+                            actual: args.len(),
+                        });
+                        for arg in args {
+                            match arg {
+                                CallArg::Positional(expr)
+                                | CallArg::Named { value: expr, .. } => {
+                                    self.infer_expr(*expr, &Expectation::None);
+                                }
+                            }
+                        }
+                        return Some(Ty::Error);
+                    }
+                    for (arg, param_ty) in args.iter().zip(params.iter()) {
+                        match arg {
+                            CallArg::Positional(expr)
+                            | CallArg::Named { value: expr, .. } => {
+                                self.infer_expr(*expr, &Expectation::Has(param_ty.clone()));
+                            }
+                        }
+                    }
+                    return Some(*ret);
+                }
+                return Some(Ty::Error);
+            }
+        }
+
         let Expr::Path(ref path) = self.body.exprs[base] else {
             return None;
         };
@@ -1716,6 +1838,18 @@ impl<'a> InferenceCtx<'a> {
                 }
             }
             return Some(Ty::Error);
+        }
+
+        if let Some(namespace) = self.module_scope.visible_namespace(name) {
+            if let Some(candidates) = namespace.functions.get(&field) {
+                return Some(match candidates.as_slice() {
+                    [fn_idx] => self.infer_qualified_fn_call(callee, *fn_idx, args),
+                    many => self.infer_constrained_fn_family_call(callee, field, many, args),
+                });
+            }
+            if namespace.types.contains_key(&field) {
+                return Some(Ty::Error);
+            }
         }
 
         // Trait-qualified call: Ord.compare(a, b), Show.show(x)
@@ -1841,6 +1975,120 @@ impl<'a> InferenceCtx<'a> {
         None
     }
 
+    fn try_infer_qualified_path_call(
+        &mut self,
+        callee: ExprIdx,
+        path: &kyokara_hir_def::path::Path,
+        args: &[CallArg],
+    ) -> Option<Ty> {
+        let (field, base_segments) = path.segments.split_last()?;
+        let base_path = kyokara_hir_def::path::Path {
+            segments: base_segments.to_vec(),
+        };
+
+        if let Some((type_idx, variant_idx)) = self.module_scope.resolve_constructor_path(path) {
+            let ctor_ty = self.constructor_as_fn(type_idx, variant_idx);
+            let ctor_ty = self.table.resolve_deep(&ctor_ty);
+            if let Ty::Fn { params, ret } = ctor_ty {
+                if args.len() != params.len() {
+                    self.push_diag(TyDiagnosticData::ArgCountMismatch {
+                        expected: params.len(),
+                        actual: args.len(),
+                    });
+                    for arg in args {
+                        match arg {
+                            CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => {
+                                self.infer_expr(*expr, &Expectation::None);
+                            }
+                        }
+                    }
+                    return Some(Ty::Error);
+                }
+                for (arg, param_ty) in args.iter().zip(params.iter()) {
+                    match arg {
+                        CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => {
+                            self.infer_expr(*expr, &Expectation::Has(param_ty.clone()));
+                        }
+                    }
+                }
+                return Some(*ret);
+            }
+            return Some(Ty::Error);
+        }
+
+        if base_segments.len() == 1 {
+            let owner = base_segments[0];
+
+            if self.module_scope.traits.contains_key(&owner) {
+                return Some(self.infer_trait_qualified_call(owner, *field, args));
+            }
+
+            if let Some(&(module_name, type_name)) = self.module_scope.imported_type_namespaces.get(&owner)
+                && let Some(&fn_idx) = self
+                    .module_scope
+                    .synthetic_module_static_methods
+                    .get(&(module_name, type_name, *field))
+            {
+                let ty = self.infer_qualified_fn_call(callee, fn_idx, args);
+                if type_name.resolve(self.interner) == "MutablePriorityQueue"
+                    && matches!(field.resolve(self.interner), "new_min" | "new_max")
+                {
+                    self.check_mutable_priority_queue_ord_bound(&ty);
+                }
+                return Some(ty);
+            }
+
+            if let Some(namespace) = self.module_scope.visible_namespace(owner)
+                && let Some(candidates) = namespace.functions.get(field)
+            {
+                return Some(match candidates.as_slice() {
+                    [fn_idx] => self.infer_qualified_fn_call(callee, *fn_idx, args),
+                    many => self.infer_constrained_fn_family_call(callee, *field, many, args),
+                });
+            }
+        }
+
+        if let Some(type_idx) = self.module_scope.resolve_type_path(&base_path) {
+            let owner_key = self
+                .module_scope
+                .core_types
+                .kind_for_idx(type_idx)
+                .map(StaticOwnerKey::Core)
+                .unwrap_or(StaticOwnerKey::User(type_idx));
+            if let Some(&fn_idx) = self.module_scope.static_methods.get(&(owner_key, *field)) {
+                let ty = self.infer_qualified_fn_call(callee, fn_idx, args);
+                let type_item = &self.item_tree.types[type_idx];
+                if type_item.name.resolve(self.interner) == "MutablePriorityQueue"
+                    && matches!(field.resolve(self.interner), "new_min" | "new_max")
+                {
+                    self.check_mutable_priority_queue_ord_bound(&ty);
+                }
+                return Some(ty);
+            }
+        }
+
+        if base_segments.len() == 2 {
+            let module_name = base_segments[0];
+            let type_name = base_segments[1];
+            if self.module_scope.imported_modules.contains(&module_name)
+                && let Some(&fn_idx) = self
+                    .module_scope
+                    .synthetic_module_static_methods
+                    .get(&(module_name, type_name, *field))
+            {
+                let ty = self.infer_qualified_fn_call(callee, fn_idx, args);
+                if type_name.resolve(self.interner) == "MutablePriorityQueue"
+                    && matches!(field.resolve(self.interner), "new_min" | "new_max")
+                {
+                    self.check_mutable_priority_queue_ord_bound(&ty);
+                }
+                return Some(ty);
+            }
+        }
+
+        None
+    }
+
     fn resolve_trait_method_type(
         &mut self,
         ty_ref: &kyokara_hir_def::type_ref::TypeRef,
@@ -1937,6 +2185,96 @@ impl<'a> InferenceCtx<'a> {
         self.check_call_effects_if_function(Some(method_name));
 
         ret
+    }
+
+    fn infer_trait_qualified_call(
+        &mut self,
+        trait_name: kyokara_hir_def::name::Name,
+        method_name: kyokara_hir_def::name::Name,
+        args: &[CallArg],
+    ) -> Ty {
+        let Some(&trait_idx) = self.module_scope.traits.get(&trait_name) else {
+            return Ty::Error;
+        };
+        let trait_item = &self.item_tree.traits[trait_idx];
+        let Some(method) = trait_item
+            .methods
+            .iter()
+            .find(|method| method.name == method_name)
+        else {
+            for arg in args {
+                match arg {
+                    CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => {
+                        self.infer_expr(*expr, &Expectation::None);
+                    }
+                }
+            }
+            return Ty::Error;
+        };
+
+        let Some(first_arg) = args.first() else {
+            self.push_diag(TyDiagnosticData::ArgCountMismatch {
+                expected: method.params.len(),
+                actual: 0,
+            });
+            return Ty::Error;
+        };
+
+        let first_expr = match first_arg {
+            CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => *expr,
+        };
+        let recv_ty = self.infer_expr(first_expr, &Expectation::None);
+        let recv_ty = self.table.resolve_deep(&recv_ty);
+        if !self.ty_satisfies_trait_name(&recv_ty, trait_name) {
+            self.push_diag(TyDiagnosticData::MissingTraitImpl {
+                trait_name: trait_name.resolve(self.interner).to_owned(),
+                ty: recv_ty,
+            });
+            for arg in &args[1..] {
+                match arg {
+                    CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => {
+                        self.infer_expr(*expr, &Expectation::None);
+                    }
+                }
+            }
+            return Ty::Error;
+        }
+
+        let env = Self::make_env(
+            self.item_tree,
+            self.module_scope,
+            self.interner,
+            &self.type_params,
+        );
+        let trait_type_params = self
+            .trait_type_bindings_for_receiver(&recv_ty, trait_name)
+            .unwrap_or_default();
+        let param_tys = method
+            .params
+            .iter()
+            .map(|param| {
+                self.resolve_trait_method_type(
+                    &param.ty,
+                    &recv_ty,
+                    &env,
+                    &trait_type_params,
+                )
+            })
+            .collect::<Vec<_>>();
+        let param_names = method.params.iter().map(|p| p.name).collect::<Vec<_>>();
+        let has_arg_errors =
+            self.infer_call_args_with_binding(args, &param_tys, Some(&param_names), None);
+        if has_arg_errors {
+            return Ty::Error;
+        }
+
+        method
+            .ret_type
+            .as_ref()
+            .map(|ret| {
+                self.resolve_trait_method_type(ret, &recv_ty, &env, &trait_type_params)
+            })
+            .unwrap_or(Ty::Unit)
     }
 
     fn is_traversal_intrinsic_name(name: &str) -> bool {

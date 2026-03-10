@@ -10,7 +10,8 @@ use crate::token_set::TokenSet;
 
 /// Tokens that can start an item — used for error recovery.
 pub(super) const ITEM_RECOVERY: TokenSet = TokenSet::new(&[
-    ImportKw, TypeKw, TraitKw, ImplKw, FnKw, CapKw, EffectKw, PropertyKw, LetKw, VarKw, PubKw,
+    FromKw, ImportKw, TypeKw, TraitKw, ImplKw, FnKw, CapKw, EffectKw, PropertyKw, LetKw, VarKw,
+    PubKw,
 ]);
 const CLAUSE_EXPR_RECOVERY: TokenSet = TokenSet::new(&[
     LBrace,
@@ -105,12 +106,33 @@ pub(super) fn recover_invalid_module_decl(p: &mut Parser<'_>) {
 }
 
 /// `import Path ImportAlias?`
+/// or `from Path import Name (as Alias)? (',' ...)*`
 pub(super) fn import_decl(p: &mut Parser<'_>) -> CompletedMarker {
     let m = p.open();
-    p.bump(); // import
-    super::parse_path(p);
-    if p.at(AsKw) {
-        import_alias(p);
+    if p.at(ImportKw) {
+        p.bump(); // import
+        super::parse_path(p);
+        if p.at(AsKw) {
+            import_alias(p);
+        }
+    } else {
+        p.bump(); // from
+        if p.at(Dot) {
+            let err = p.open();
+            p.error("relative imports are not supported");
+            while p.eat(Dot) {
+                if p.at_ident_like() {
+                    p.expect_identifier(IdentifierRole::PathSegment);
+                } else {
+                    break;
+                }
+            }
+            err.complete(p, ErrorNode);
+        } else {
+            super::parse_path(p);
+        }
+        p.expect(ImportKw);
+        import_member_list(p);
     }
     m.complete(p, ImportDecl)
 }
@@ -120,6 +142,33 @@ fn import_alias(p: &mut Parser<'_>) {
     p.bump(); // as
     p.expect_identifier(IdentifierRole::ImportAlias);
     m.complete(p, ImportAlias);
+}
+
+fn import_member_list(p: &mut Parser<'_>) {
+    let m = p.open();
+    import_member(p);
+    while p.eat(Comma) {
+        if p.at_eof() || p.at(ImportKw) || p.at(FromKw) || ITEM_RECOVERY.contains(p.current()) {
+            break;
+        }
+        import_member(p);
+    }
+    m.complete(p, ImportMemberList);
+}
+
+fn import_member(p: &mut Parser<'_>) {
+    let m = p.open();
+    if p.at(Star) {
+        p.error("star imports are not supported");
+        p.bump();
+        m.complete(p, ImportMember);
+        return;
+    }
+    p.expect_identifier(IdentifierRole::PathSegment);
+    if p.at(AsKw) {
+        import_alias(p);
+    }
+    m.complete(p, ImportMember);
 }
 
 // ── Type Definition ─────────────────────────────────────────────────

@@ -267,13 +267,13 @@ fn test_direct_call() {
 
 #[test]
 fn test_constructor_call() {
-    let out = lower_and_display("type Foo = Bar(Int)\nfn main() -> Foo { Bar(42) }");
+    let out = lower_and_display("type Foo = Bar(Int)\nfn main() -> Foo { Foo.Bar(42) }");
     assert!(out.contains("adt_construct Bar("), "output:\n{out}");
 }
 
 #[test]
 fn test_nullary_constructor() {
-    let out = lower_and_display("type Opt = Yes | No\nfn main() -> Opt { No }");
+    let out = lower_and_display("type Opt = Yes | No\nfn main() -> Opt { Opt.No }");
     assert!(out.contains("adt_construct No()"), "output:\n{out}");
 }
 
@@ -400,8 +400,8 @@ fn test_adt_match_switch() {
         "type Wrap<T> = Val(T) | Empty
          fn f(x: Wrap<Int>) -> Int {
            match (x) {
-             Val(n) => n
-             Empty => 0
+             Wrap.Val(n) => n
+             Wrap.Empty => 0
            }
          }",
     );
@@ -432,7 +432,7 @@ fn test_wildcard_match() {
         "type Wrap<T> = Val(T) | Empty
          fn f(x: Wrap<Int>) -> Int {
            match (x) {
-             Val(n) => n
+             Wrap.Val(n) => n
              _ => 0
            }
          }",
@@ -447,7 +447,7 @@ fn test_bind_pattern_match() {
         "type Wrap<T> = Val(T) | Empty
          fn f(x: Wrap<Int>) -> Int {
            match (x) {
-             Val(n) => n
+             Wrap.Val(n) => n
              other => 0
            }
          }",
@@ -461,8 +461,8 @@ fn test_nested_constructor() {
         "type Wrap<T> = Val(T) | Empty
          fn f(x: Wrap<Int>) -> Int {
            match (x) {
-             Val(n) => n + 1
-             Empty => 0
+             Wrap.Val(n) => n + 1
+             Wrap.Empty => 0
            }
          }",
     );
@@ -476,9 +476,9 @@ fn test_multiple_arms() {
         "type Color = Red | Green | Blue
          fn f(c: Color) -> Int {
            match (c) {
-             Red => 1
-             Green => 2
-             Blue => 3
+             Color.Red => 1
+             Color.Green => 2
+             Color.Blue => 3
            }
          }",
     );
@@ -547,8 +547,8 @@ fn test_return_in_match_arm() {
         "type Wrap<T> = Val(T) | Empty
          fn f(x: Wrap<Int>) -> Int {
            match (x) {
-             Val(n) => return n
-             Empty => 0
+             Wrap.Val(n) => return n
+             Wrap.Empty => 0
            }
          }",
     );
@@ -692,8 +692,8 @@ fn test_nested_control_flow() {
         type Wrap<T> = Val(T) | Empty
         fn f(x: Wrap<Int>) -> Int {
             match (x) {
-                Val(n) => if (n > 0) { n } else { 0 }
-                Empty => -1
+                Wrap.Val(n) => if (n > 0) { n } else { 0 }
+                Wrap.Empty => -1
             }
         }
     ";
@@ -863,9 +863,9 @@ fn test_constructor_in_if_branches() {
         type Wrap<T> = Val(T) | Empty
         fn f(x: Int) -> Wrap<Int> {
             if (x > 0) {
-                Val(x)
+                Wrap.Val(x)
             } else {
-                Empty
+                Wrap.Empty
             }
         }
     ";
@@ -947,7 +947,7 @@ fn test_adt_switch_default_uses_first_catchall() {
         "type W = A | B
          fn f(x: W) -> Int {
            match (x) {
-             A => 1
+             W.A => 1
              _ => 2
              _ => 3
            }
@@ -1004,7 +1004,7 @@ fn test_adt_switch_single_catchall_still_works() {
         "type W = A | B
          fn f(x: W) -> Int {
            match (x) {
-             A => 1
+             W.A => 1
              _ => 99
            }
          }",
@@ -1024,7 +1024,7 @@ fn test_adt_switch_no_cases_after_catchall() {
          fn f(x: W) -> Int {
            match (x) {
              other => 1
-             A => 2
+             W.A => 2
            }
          }",
     );
@@ -1071,7 +1071,7 @@ fn test_adt_switch_constructor_before_catchall_still_works() {
         "type W = A | B
          fn f(x: W) -> Int {
            match (x) {
-             A => 1
+             W.A => 1
              other => 2
            }
          }",
@@ -1090,9 +1090,9 @@ fn test_adt_switch_no_duplicate_cases() {
         "type W = A | B
          fn f(x: W) -> Int {
            match (x) {
-             A => 1
-             A => 2
-             B => 3
+             W.A => 1
+             W.A => 2
+             W.B => 3
            }
          }",
     );
@@ -1140,9 +1140,9 @@ fn test_adt_switch_first_dup_case_wins() {
         "type W = A | B
          fn f(x: W) -> Int {
            match (x) {
-             A => 10
-             A => 20
-             B => 30
+             W.A => 10
+             W.A => 20
+             W.B => 30
            }
          }",
     );
@@ -1264,8 +1264,8 @@ fn test_validator_accepts_unique_switch_cases() {
         "type W = A | B
          fn f(x: W) -> Int {
            match (x) {
-             A => 1
-             B => 2
+             W.A => 1
+             W.B => 2
            }
          }",
     );
@@ -1475,7 +1475,7 @@ fn test_adt_match_nested_literal_check() {
         "type O = Some(Int) | None
          fn f(x: O) -> Int {
            match (x) {
-             Some(1) => 10
+             O.Some(1) => 10
              _ => 0
            }
          }",
@@ -1494,8 +1494,8 @@ fn test_adt_match_nested_bind_still_works() {
         "type O = Some(Int) | None
          fn f(x: O) -> Int {
            match (x) {
-             Some(n) => n
-             None => 0
+             O.Some(n) => n
+             O.None => 0
            }
          }",
     );
@@ -1627,7 +1627,7 @@ fn test_adt_match_unsupported_pattern_falls_back_to_sequential() {
          fn f(x: O) -> Int {
            match (x) {
              1 => 1
-             Some(n) => n
+             O.Some(n) => n
              _ => 0
            }
          }";
@@ -1660,8 +1660,8 @@ fn test_adt_match_all_supported_still_uses_switch() {
         "type O = Some(Int) | None
          fn f(x: O) -> Int {
            match (x) {
-             Some(n) => n
-             None => 0
+             O.Some(n) => n
+             O.None => 0
            }
          }",
     );

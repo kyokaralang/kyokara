@@ -85,26 +85,30 @@ pub fn double(x: Int) -> Int { x * 2 }
 fn internal_helper(x: Int) -> Int { x + 1 }  // not visible to importers
 ```
 
-Import a module to bring its public names into scope:
+Import a module to bind its namespace, or import members directly:
 
 ```kyokara
 // main.ky
 import math
+from math import double
 
 fn main() -> Int {
-    let x = add(10, 20)   // pub fn from math.ky
-    let y = double(x)     // pub fn from math.ky
+    let x = math.add(10, 20)  // namespace import
+    let y = double(x)         // direct member import
     y
 }
 ```
 
 Rules:
-* `import math` brings all `pub` items from `math.ky` into the importing module's scope as flat names (no `math.add()` qualified paths yet).
+* `import math` binds only the namespace `math`, so public members are accessed as `math.add(...)`.
+* `import math as m` binds a namespace alias.
+* `from math import add, double` binds public members directly into local scope.
+* `from math import add as plus` binds a renamed local alias.
+* `from Result import Ok, Err` and `from Option import Some, None` bind variants directly from a type path.
 * Private items (without `pub`) are not visible across module boundaries.
 * Local definitions shadow imports.
 * Importing a module does **not** grant its capability. Capabilities are separate from libraries.
-
-**Planned:** Qualified access (`math.add()`), aliased imports (`import math as M`), selective imports (`import math { add, double }`).
+* No star imports and no relative imports exist in v1.
 
 ### 2.3 Types
 
@@ -237,8 +241,8 @@ contract
   requires (amt.amount > 0)
   requires (amt.currency == acct.balance.currency)
   ensures (match (result) {
-    Ok(a2) => a2.balance.amount == old(acct.balance.amount) - amt.amount
-    Err(_) => true
+    Result.Ok(a2) => a2.balance.amount == old(acct.balance.amount) - amt.amount
+    Result.Err(_) => true
   })
 {
   ...
@@ -611,9 +615,8 @@ Zero intrinsic free functions exist in user scope.
 Runtime soundness invariants for core APIs:
 * Core method/static dispatch is identity-based, not string-name-based. Core behavior binds to internal core type identity even when user types shadow names like `Result` or `List`.
 * User type-name shadowing remains allowed (`type Result<...> = ...`, `type List<T> = ...`), but core APIs do not silently retarget.
-* Constructor/pattern resolution prefers the expected owner ADT when type context is available, then falls back to global constructor lookup.
-* Temporary safety rule: unqualified user ADT variants named `Some`, `None`, `Ok`, `Err`, `InvalidInt`, and `InvalidFloat` are rejected until qualified constructors are implemented.
-* Follow-up: add qualified constructors/patterns (`Type.Variant`) and remove the temporary reservation ([#293](https://github.com/kyokaralang/kyokara/issues/293)).
+* Constructor/pattern resolution is owner-based: `Type.Variant` is always valid, and bare `Variant` resolves only through explicit `from Type import Variant`.
+* Core builtin constructor names are not globally reserved; user ADTs may define variants named `Some`, `None`, `Ok`, `Err`, `InvalidInt`, or `InvalidFloat` without colliding with builtin behavior.
 
 Mental model: `List`/`MutableList`/`MutableMap`/`MutableSet`/`MutablePriorityQueue`/`Deque`/`Map`/`Set`/`BitSet`/`MutableBitSet` are prelude value types (type/value namespace),
 `collections` is the pure module namespace for collection constructors (`List`/`Map`/`Set` plus specialized collections like `MutableList`, `MutableMap`, `MutableSet`, `MutablePriorityQueue`, `Deque`, `BitSet`, and `MutableBitSet`),
@@ -719,7 +722,7 @@ while `io`/`fs` are module namespaces for effectful operations.
 * Core stdlib (List, MutableList, MutableMap, MutableSet, MutablePriorityQueue, Deque, Map, Set, BitSet, MutableBitSet, String, Int/Float, io, math, hash, fs — intrinsic functions exposed via canonical method/module API) ✓
 
 **v0.2 — Refactoring + LSP + Capabilities**
-* Module system: convention-based file layout, `pub` visibility, flat imports ✓
+* Module system: convention-based file layout, `pub` visibility, namespace imports + `from ... import ...` member imports ✓
 * Refactor engine: rename symbol (single-file + multi-file), add missing match cases, add missing capability annotation ✓ — CST-based, post-refactor verification, structured TextEdit patches
 * Refactor transactions: atomic refactor operations with in-memory re-check ✓ — `transact()` / `transact_project()` apply edits, re-run the type checker, and return `VerificationStatus` (Verified / Failed / Skipped). CLI gates `--apply` on verification passing; `--force` bypasses. API returns `"typechecked"` / `"failed"` / `"skipped"` status with structured verification diagnostics (message, code, span). Quickfix actions accept `--target-file` to disambiguate which module an offset refers to in project mode. CLI auto-detects project mode for `main.ky` with sibling `.ky` files; `--project` flag forces project mode for other entry files.
 * LSP server: salsa incrementality, diagnostics, hover, go-to-definition, find references, completion, code actions (quickfixes), formatting ✓
@@ -806,7 +809,7 @@ Rust is recommended for:
 8. ~~Emit patch suggestions + symbol graph.~~ ✓
 9. ~~Implement tree-walking interpreter for rapid iteration.~~ ✓
 10. ~~Add contracts as runtime checks.~~ ✓
-11. ~~Implement module system (convention-based layout, pub visibility, flat imports).~~ ✓
+11. ~~Implement module system (convention-based layout, pub visibility, namespace imports + `from ... import ...` member imports).~~ ✓
 12. ~~Implement LSP server with salsa incrementality (diagnostics, hover, goto-def, references, completion, code actions, formatting).~~ ✓
 13. Implement WASM runtime host functions for capabilities + replay log.
 14. ~~Add property test runner and basic generators.~~ ✓

@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn hover_on_variant_usage() {
-        let source = "type Color = Red | Blue\nfn pick() -> Color { Red }";
+        let source = "type Color = Red | Blue\nfn pick() -> Color { Color.Red }";
         let result = kyokara_hir::check_file(source);
         let analysis = Arc::new(FileAnalysis::from_check_result(result, source.to_string()));
         let variant_offset = source.rfind("Red").expect("variant usage offset");

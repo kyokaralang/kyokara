@@ -8,6 +8,7 @@
 
 pub use kyokara_hir_def::body::Body;
 pub use kyokara_hir_def::builtins::activate_synthetic_imports;
+pub use kyokara_hir_def::builtins::activate_type_member_imports;
 pub use kyokara_hir_def::builtins::register_builtin_intrinsics;
 pub use kyokara_hir_def::builtins::register_builtin_methods;
 pub use kyokara_hir_def::builtins::register_builtin_traits;
@@ -17,8 +18,8 @@ pub use kyokara_hir_def::builtins::register_synthetic_modules;
 pub use kyokara_hir_def::call_family::call_shapes_overlap;
 pub use kyokara_hir_def::item_tree::lower::collect_item_tree;
 pub use kyokara_hir_def::item_tree::{
-    EffectItem, FnItem, FnParam, ItemTree, PropertyItem, PropertyItemIdx, TypeDefKind, TypeItem,
-    VariantDef,
+    EffectItem, FnItem, FnParam, ImportKind, ImportMemberItem, ItemTree, PropertyItem,
+    PropertyItemIdx, TraitItem, TypeDefKind, TypeItem, VariantDef,
 };
 pub use kyokara_hir_def::module_graph::{ModuleGraph, ModuleInfo, ModulePath, discover_modules};
 pub use kyokara_hir_def::name::Name;
@@ -167,6 +168,7 @@ pub fn check_file(source: &str) -> CheckResult {
         &mut item_result.module_scope,
         &mut interner,
     );
+    activate_type_member_imports(&item_result.tree, &mut item_result.module_scope);
 
     // 5. Type-check all functions (Pass 2 + 3).
     let type_check = check_module(
@@ -269,6 +271,12 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
             &mut interner,
         );
         register_static_methods(&mut item_result.module_scope, &mut interner);
+        activate_synthetic_imports(
+            &item_result.tree,
+            &mut item_result.module_scope,
+            &mut interner,
+        );
+        activate_type_member_imports(&item_result.tree, &mut item_result.module_scope);
 
         all_lowering_diagnostics.extend(item_result.diagnostics);
 
@@ -292,6 +300,10 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
     // 3. Resolve cross-module imports.
     let import_diags = resolve_project_imports(&mut module_graph, &interner);
     all_lowering_diagnostics.extend(import_diags);
+
+    for (_, info) in module_graph.iter_mut() {
+        activate_type_member_imports(&info.item_tree, &mut info.scope);
+    }
 
     // 4. Type-check each module.
     let mut type_checks = Vec::new();
@@ -367,7 +379,7 @@ fn resolve_project_imports(
     struct PendingImport {
         importing_mod: ModulePath,
         import_path: Path,
-        import_alias: Option<Name>,
+        import_kind: ImportKind,
         file_id: FileId,
         import_range: TextRange,
     }
@@ -393,7 +405,7 @@ fn resolve_project_imports(
             to_resolve.push(PendingImport {
                 importing_mod: mod_path.clone(),
                 import_path: imp.path.clone(),
-                import_alias: imp.alias,
+                import_kind: imp.kind.clone(),
                 file_id: info.file_id,
                 import_range: imp.source_range.unwrap_or_default(),
             });
@@ -405,7 +417,7 @@ fn resolve_project_imports(
         let PendingImport {
             importing_mod,
             import_path,
-            import_alias,
+            import_kind,
             file_id,
             import_range,
         } = pending;
@@ -434,48 +446,15 @@ fn resolve_project_imports(
             };
 
             if candidates.is_empty() {
-                // Check if it's a synthetic module import (io, math, hash, fs).
-                // If so, the modules are already registered — this import just
-                // makes the name available in scope. Nothing else to do.
+                // Synthetic module imports are activated before project import
+                // resolution. Do not double-diagnose them here.
                 if import_path.segments.len() == 1 {
                     let seg_name = import_path.segments[0];
-                    let is_synthetic = graph
-                        .get(&importing_mod)
-                        .is_some_and(|info| info.scope.synthetic_modules.contains_key(&seg_name));
-                    if is_synthetic {
-                        if let Some(info) = graph.get_mut(&importing_mod) {
-                            let visible_name = import_alias.unwrap_or(seg_name);
-                            if visible_name != seg_name
-                                && let Some(mod_fns) =
-                                    info.scope.synthetic_modules.get(&seg_name).cloned()
-                            {
-                                info.scope
-                                    .synthetic_modules
-                                    .entry(visible_name)
-                                    .or_insert(mod_fns);
-
-                                let aliased_static_entries: Vec<_> = info
-                                    .scope
-                                    .synthetic_module_static_methods
-                                    .iter()
-                                    .filter_map(
-                                        |((module_name, type_name, method_name), &fn_idx)| {
-                                            if *module_name == seg_name {
-                                                Some((*type_name, *method_name, fn_idx))
-                                            } else {
-                                                None
-                                            }
-                                        },
-                                    )
-                                    .collect();
-                                for (type_name, method_name, fn_idx) in aliased_static_entries {
-                                    info.scope
-                                        .synthetic_module_static_methods
-                                        .insert((visible_name, type_name, method_name), fn_idx);
-                                }
-                            }
-                            info.scope.imported_modules.insert(visible_name);
-                        }
+                    let already_activated = graph.get(&importing_mod).is_some_and(|info| {
+                        info.scope.synthetic_modules.contains_key(&seg_name)
+                            || info.scope.namespaces.contains_key(&seg_name)
+                    });
+                    if already_activated {
                         continue;
                     }
                 }
@@ -521,103 +500,74 @@ fn resolve_project_imports(
         };
 
         let import_file_id = importing_info.file_id;
-        for item in pub_data {
-            match item {
-                PubData::Fn(mut fn_item) => {
-                    let name = fn_item.name;
-                    let overlaps_existing = importing_info
-                        .scope
-                        .functions
-                        .get(&name)
-                        .map(|existing| {
-                            existing.iter().any(|existing_idx| {
-                                call_shapes_overlap(
-                                    &importing_info.item_tree.functions[*existing_idx].params,
-                                    &fn_item.params,
-                                )
-                            })
-                        })
-                        .unwrap_or(false);
-                    if overlaps_existing {
-                        let name_str = name.resolve(interner);
+        match import_kind {
+            ImportKind::Namespace { alias } => {
+                let visible_name = alias.unwrap_or_else(|| {
+                    import_path
+                        .last()
+                        .expect("namespace import path should not be empty")
+                });
+                let conflicts_with_existing_namespace =
+                    importing_info.scope.namespaces.contains_key(&visible_name)
+                        && !importing_info
+                            .scope
+                            .synthetic_modules
+                            .contains_key(&visible_name);
+                if conflicts_with_existing_namespace {
+                    diagnostics.push(kyokara_diagnostics::Diagnostic::error(
+                        format!(
+                            "conflicting import: namespace `{}` is already defined",
+                            visible_name.resolve(interner)
+                        ),
+                        kyokara_span::Span {
+                            file: import_file_id,
+                            range: import_range,
+                        },
+                    ));
+                    continue;
+                }
+                // A real project/module import takes precedence over any
+                // synthetic module that may have been pre-activated for the
+                // same visible name (for example `import math` when `math.ky`
+                // exists in the project).
+                importing_info.scope.imported_modules.remove(&visible_name);
+                let mut namespace = kyokara_hir_def::resolver::NamespaceScope::default();
+                for item in pub_data {
+                    import_pub_item_into_namespace(
+                        importing_info,
+                        &mut namespace,
+                        item,
+                    );
+                }
+                importing_info.scope.namespaces.insert(visible_name, namespace);
+            }
+            ImportKind::Members { members } => {
+                for member in members {
+                    if !import_named_pub_item(
+                        importing_info,
+                        &pub_data,
+                        &member,
+                        interner,
+                        import_file_id,
+                        import_range,
+                        &mut diagnostics,
+                    ) {
                         diagnostics.push(kyokara_diagnostics::Diagnostic::error(
                             format!(
-                                "conflicting import: overload family for `{name_str}` overlaps an existing definition"
+                                "unresolved import member `{}` from `{}`",
+                                member.name.resolve(interner),
+                                import_path
+                                    .segments
+                                    .iter()
+                                    .map(|seg| seg.resolve(interner).to_owned())
+                                    .collect::<Vec<_>>()
+                                    .join(".")
                             ),
                             kyokara_span::Span {
                                 file: import_file_id,
                                 range: import_range,
                             },
                         ));
-                    } else {
-                        // Imported functions are not source-owned by this module.
-                        // Keep them resolvable in scope but prevent duplicate
-                        // symbol-graph function nodes in the importing module.
-                        fn_item.source_range = None;
-                        let idx = importing_info.item_tree.functions.alloc(fn_item);
-                        importing_info.scope.functions.entry(name).or_default().push(idx);
-                    }
-                }
-                PubData::Type(type_item) => {
-                    let name = type_item.name;
-                    if importing_info.scope.types.contains_key(&name) {
-                        let name_str = name.resolve(interner);
-                        diagnostics.push(kyokara_diagnostics::Diagnostic::error(
-                            format!("conflicting import: `{name_str}` is already defined"),
-                            kyokara_span::Span {
-                                file: import_file_id,
-                                range: import_range,
-                            },
-                        ));
-                    } else {
-                        let variants_info: Vec<(Name, usize)> =
-                            if let TypeDefKind::Adt { ref variants } = type_item.kind {
-                                variants
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(vi, v)| (v.name, vi))
-                                    .collect()
-                            } else {
-                                Vec::new()
-                            };
-                        let idx = importing_info.item_tree.types.alloc(type_item);
-                        importing_info.scope.types.insert(name, idx);
-                        // Register constructors.
-                        for (vname, vi) in variants_info {
-                            match importing_info.scope.constructors.entry(vname) {
-                                std::collections::hash_map::Entry::Vacant(entry) => {
-                                    entry.insert((idx, vi));
-                                }
-                                std::collections::hash_map::Entry::Occupied(_) => {
-                                    let ctor_name = vname.resolve(interner);
-                                    diagnostics.push(kyokara_diagnostics::Diagnostic::error(
-                                        format!(
-                                            "conflicting import: constructor `{ctor_name}` is already defined"
-                                        ),
-                                        kyokara_span::Span {
-                                            file: import_file_id,
-                                            range: import_range,
-                                        },
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
-                PubData::Effect(cap_item) => {
-                    let name = cap_item.name;
-                    if importing_info.scope.effects.contains_key(&name) {
-                        let name_str = name.resolve(interner);
-                        diagnostics.push(kyokara_diagnostics::Diagnostic::error(
-                            format!("conflicting import: `{name_str}` is already defined"),
-                            kyokara_span::Span {
-                                file: import_file_id,
-                                range: import_range,
-                            },
-                        ));
-                    } else {
-                        let idx = importing_info.item_tree.effects.alloc(cap_item);
-                        importing_info.scope.effects.insert(name, idx);
                     }
                 }
             }
@@ -626,10 +576,23 @@ fn resolve_project_imports(
     diagnostics
 }
 
+#[derive(Clone)]
 enum PubData {
     Fn(FnItem),
     Type(TypeItem),
+    Trait(TraitItem),
     Effect(EffectItem),
+}
+
+impl PubData {
+    fn name(&self) -> Name {
+        match self {
+            PubData::Fn(item) => item.name,
+            PubData::Type(item) => item.name,
+            PubData::Trait(item) => item.name,
+            PubData::Effect(item) => item.name,
+        }
+    }
 }
 
 fn module_path_label(path: &ModulePath, interner: &Interner) -> String {
@@ -660,6 +623,12 @@ fn collect_pub_data(item_tree: &ItemTree) -> Vec<PubData> {
         }
     }
 
+    for (_, trait_item) in item_tree.traits.iter() {
+        if trait_item.is_pub {
+            items.push(PubData::Trait(trait_item.clone()));
+        }
+    }
+
     for (_, cap_item) in item_tree.effects.iter() {
         if cap_item.is_pub {
             items.push(PubData::Effect(cap_item.clone()));
@@ -667,6 +636,177 @@ fn collect_pub_data(item_tree: &ItemTree) -> Vec<PubData> {
     }
 
     items
+}
+
+fn import_pub_item_into_namespace(
+    importing_info: &mut ModuleInfo,
+    namespace: &mut kyokara_hir_def::resolver::NamespaceScope,
+    item: PubData,
+) {
+    match item {
+        PubData::Fn(mut fn_item) => {
+            fn_item.source_range = None;
+            let name = fn_item.name;
+            let idx = importing_info.item_tree.functions.alloc(fn_item);
+            namespace.functions.entry(name).or_default().push(idx);
+        }
+        PubData::Type(type_item) => {
+            let name = type_item.name;
+            let idx = importing_info.item_tree.types.alloc(type_item);
+            namespace.types.insert(name, idx);
+        }
+        PubData::Trait(trait_item) => {
+            let name = trait_item.name;
+            let idx = importing_info.item_tree.traits.alloc(trait_item);
+            namespace.traits.insert(name, idx);
+        }
+        PubData::Effect(effect_item) => {
+            let name = effect_item.name;
+            let idx = importing_info.item_tree.effects.alloc(effect_item);
+            namespace.effects.insert(name, idx);
+        }
+    }
+}
+
+fn import_named_pub_item(
+    importing_info: &mut ModuleInfo,
+    pub_data: &[PubData],
+    member: &ImportMemberItem,
+    interner: &Interner,
+    import_file_id: FileId,
+    import_range: TextRange,
+    diagnostics: &mut Vec<kyokara_diagnostics::Diagnostic>,
+) -> bool {
+    let visible_name = member.alias.unwrap_or(member.name);
+    let matching: Vec<_> = pub_data
+        .iter()
+        .filter(|item| item.name() == member.name)
+        .cloned()
+        .collect();
+    if matching.is_empty() {
+        return false;
+    }
+
+    if matching.iter().all(|item| matches!(item, PubData::Fn(_))) {
+        for item in matching {
+            let PubData::Fn(mut fn_item) = item else {
+                unreachable!("all matching items should be functions");
+            };
+            let overlaps_existing = importing_info
+                .scope
+                .functions
+                .get(&visible_name)
+                .map(|existing| {
+                    existing.iter().any(|existing_idx| {
+                        call_shapes_overlap(
+                            &importing_info.item_tree.functions[*existing_idx].params,
+                            &fn_item.params,
+                        )
+                    })
+                })
+                .unwrap_or(false);
+            if overlaps_existing {
+                diagnostics.push(kyokara_diagnostics::Diagnostic::error(
+                    format!(
+                        "conflicting import: overload family for `{}` overlaps an existing definition",
+                        visible_name.resolve(interner)
+                    ),
+                    kyokara_span::Span {
+                        file: import_file_id,
+                        range: import_range,
+                    },
+                ));
+                return true;
+            }
+            fn_item.source_range = None;
+            fn_item.name = visible_name;
+            let idx = importing_info.item_tree.functions.alloc(fn_item);
+            importing_info
+                .scope
+                .functions
+                .entry(visible_name)
+                .or_default()
+                .push(idx);
+        }
+        return true;
+    }
+
+    let item = matching
+        .into_iter()
+        .find(|item| !matches!(item, PubData::Fn(_)))
+        .expect("non-function import target should exist");
+    match item {
+        PubData::Fn(_) => unreachable!("function-only imports returned early"),
+        PubData::Type(mut type_item) => {
+            if importing_info.scope.types.contains_key(&visible_name) {
+                diagnostics.push(kyokara_diagnostics::Diagnostic::error(
+                    format!(
+                        "conflicting import: `{}` is already defined",
+                        visible_name.resolve(interner)
+                    ),
+                    kyokara_span::Span {
+                        file: import_file_id,
+                        range: import_range,
+                    },
+                ));
+                return true;
+            }
+            type_item.name = visible_name;
+            let variants_info = match &type_item.kind {
+                TypeDefKind::Adt { variants } => variants
+                    .iter()
+                    .enumerate()
+                    .map(|(vi, v)| (v.name, vi))
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            };
+            let idx = importing_info.item_tree.types.alloc(type_item);
+            importing_info.scope.types.insert(visible_name, idx);
+            for (variant_name, variant_idx) in variants_info {
+                importing_info
+                    .scope
+                    .type_variants
+                    .insert((idx, variant_name), variant_idx);
+            }
+        }
+        PubData::Trait(mut trait_item) => {
+            if importing_info.scope.traits.contains_key(&visible_name) {
+                diagnostics.push(kyokara_diagnostics::Diagnostic::error(
+                    format!(
+                        "conflicting import: `{}` is already defined",
+                        visible_name.resolve(interner)
+                    ),
+                    kyokara_span::Span {
+                        file: import_file_id,
+                        range: import_range,
+                    },
+                ));
+                return true;
+            }
+            trait_item.name = visible_name;
+            let idx = importing_info.item_tree.traits.alloc(trait_item);
+            importing_info.scope.traits.insert(visible_name, idx);
+        }
+        PubData::Effect(mut effect_item) => {
+            if importing_info.scope.effects.contains_key(&visible_name) {
+                diagnostics.push(kyokara_diagnostics::Diagnostic::error(
+                    format!(
+                        "conflicting import: `{}` is already defined",
+                        visible_name.resolve(interner)
+                    ),
+                    kyokara_span::Span {
+                        file: import_file_id,
+                        range: import_range,
+                    },
+                ));
+                return true;
+            }
+            effect_item.name = visible_name;
+            let idx = importing_info.item_tree.effects.alloc(effect_item);
+            importing_info.scope.effects.insert(visible_name, idx);
+        }
+    }
+    true
 }
 
 #[cfg(test)]
@@ -786,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn project_import_constructor_collision_emits_diagnostic() {
+    fn project_namespace_imports_do_not_flatten_constructor_names() {
         let dir = make_temp_dir();
         let main_path = dir.join("main.ky");
         let a_path = dir.join("a.ky");
@@ -798,15 +938,11 @@ mod tests {
         std::fs::write(&b_path, "pub type B = Clash(Int)\n").expect("b module should be writable");
 
         let result = check_project(&main_path);
-        let has_collision = result.lowering_diagnostics.iter().any(|d| {
-            d.message
-                .contains("conflicting import: constructor `Clash` is already defined")
-        });
 
         std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
         assert!(
-            has_collision,
-            "expected constructor collision diagnostic, got: {:?}",
+            result.lowering_diagnostics.is_empty(),
+            "namespace imports should not flatten constructor names, got: {:?}",
             result
                 .lowering_diagnostics
                 .iter()

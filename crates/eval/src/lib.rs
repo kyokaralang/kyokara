@@ -11,9 +11,10 @@ pub mod manifest;
 pub mod value;
 
 use kyokara_hir::{
-    ModulePath, activate_synthetic_imports, check_module, check_project, collect_item_tree,
-    register_builtin_intrinsics, register_builtin_methods, register_builtin_traits,
-    register_builtin_types, register_static_methods, register_synthetic_modules,
+    ModulePath, activate_synthetic_imports, activate_type_member_imports, check_module,
+    check_project, collect_item_tree, register_builtin_intrinsics, register_builtin_methods,
+    register_builtin_traits, register_builtin_types, register_static_methods,
+    register_synthetic_modules,
 };
 use kyokara_intern::Interner;
 use kyokara_span::{FileId, TextRange, TextSize};
@@ -165,6 +166,7 @@ pub fn run_with_manifest(
         &mut item_result.module_scope,
         &mut interner,
     );
+    activate_type_member_imports(&item_result.tree, &mut item_result.module_scope);
 
     // 6. Type-check.
     let type_check = check_module(
@@ -195,6 +197,7 @@ pub fn run_with_manifest(
         item_result.module_scope,
         type_check.fn_bodies,
         type_check.let_bodies,
+        FxHashMap::default(),
         FxHashMap::default(),
         FxHashMap::default(),
         interner,
@@ -256,6 +259,7 @@ pub fn run_project_with_manifest(
         &mut entry_info.scope,
         &mut project.interner,
     );
+    activate_type_member_imports(&entry_info.item_tree, &mut entry_info.scope);
 
     // Collect fn bodies: start with the entry module's type check.
     let entry_tc = project
@@ -280,20 +284,39 @@ pub fn run_project_with_manifest(
         .get(&entry_path)
         .ok_or(RuntimeError::TypeError("entry module not found".into()))?;
 
-    // Build the set of module paths that the entry module imports.
+    // Build the set of module paths that the entry module imports and the
+    // visible namespace names for namespace imports.
+    let mut imported_namespace_names: FxHashMap<ModulePath, Vec<kyokara_hir_def::name::Name>> =
+        FxHashMap::default();
     let imported_mod_paths: Vec<ModulePath> = entry_info
         .item_tree
         .imports
         .iter()
         .filter_map(|imp| {
-            let target_name = imp.path.last()?;
-            // Resolve to the actual module path, same as resolve_project_imports does.
-            for (mod_path, _) in project.module_graph.iter() {
-                if mod_path.last() == Some(target_name) {
-                    return Some(mod_path.clone());
-                }
+            let direct_path = ModulePath(imp.path.segments.clone());
+            let resolved_path = if project.module_graph.get(&direct_path).is_some() {
+                Some(direct_path)
+            } else {
+                let target_name = imp.path.last()?;
+                // Resolve to the actual module path, same as resolve_project_imports does.
+                project.module_graph.iter().find_map(|(mod_path, _)| {
+                    (mod_path.last() == Some(target_name)).then(|| mod_path.clone())
+                })
+            }?;
+
+            if let kyokara_hir_def::item_tree::ImportKind::Namespace { alias } = &imp.kind {
+                let visible_name = alias.unwrap_or_else(|| {
+                    imp.path
+                        .last()
+                        .expect("namespace import path should not be empty")
+                });
+                imported_namespace_names
+                    .entry(resolved_path.clone())
+                    .or_default()
+                    .push(visible_name);
             }
-            None
+
+            Some(resolved_path)
         })
         .collect();
 
@@ -304,6 +327,8 @@ pub fn run_project_with_manifest(
         kyokara_hir_def::item_tree::FnItemIdx,
         FxHashMap<kyokara_hir_def::name::Name, Vec<kyokara_hir_def::item_tree::FnItemIdx>>,
     > = FxHashMap::default();
+    let mut module_scope_overrides: FxHashMap<kyokara_hir_def::item_tree::FnItemIdx, kyokara_hir_def::resolver::ModuleScope> =
+        FxHashMap::default();
     let mut let_scope_overrides: FxHashMap<
         kyokara_hir_def::item_tree::FnItemIdx,
         FxHashMap<kyokara_hir_def::name::Name, Value>,
@@ -361,6 +386,32 @@ pub fn run_project_with_manifest(
                         .or_default()
                         .push(entry_fn_idx);
                 }
+
+                if let Some(namespace_names) = imported_namespace_names.get(mod_path) {
+                    for namespace_name in namespace_names {
+                        let Some(namespace) = entry_info.scope.namespaces.get(namespace_name) else {
+                            continue;
+                        };
+                        let Some(namespace_candidates) = namespace.functions.get(&src_fn_item.name)
+                        else {
+                            continue;
+                        };
+                        for &entry_fn_idx in namespace_candidates.iter().filter(|&&candidate_idx| {
+                            let candidate = &entry_info.item_tree.functions[candidate_idx];
+                            candidate.params == src_fn_item.params
+                                && candidate.ret_type == src_fn_item.ret_type
+                                && candidate.type_params == src_fn_item.type_params
+                        }) {
+                            fn_bodies
+                                .entry(entry_fn_idx)
+                                .or_insert_with(|| body.clone());
+                            let family = module_fn_map.entry(src_fn_item.name).or_default();
+                            if !family.contains(&entry_fn_idx) {
+                                family.push(entry_fn_idx);
+                            }
+                        }
+                    }
+                }
                 continue;
             }
 
@@ -385,6 +436,7 @@ pub fn run_project_with_manifest(
         // Attach the same module-local map to every function from this module.
         for fn_idx in module_fn_map.values().flat_map(|candidates| candidates.iter().copied()) {
             fn_scope_overrides.insert(fn_idx, module_fn_map.clone());
+            module_scope_overrides.insert(fn_idx, mod_scope.clone());
         }
 
         if !tc.let_bodies.is_empty() {
@@ -395,6 +447,7 @@ pub fn run_project_with_manifest(
                 mod_scope.clone(),
                 tc.fn_bodies.clone(),
                 tc.let_bodies.clone(),
+                FxHashMap::default(),
                 FxHashMap::default(),
                 FxHashMap::default(),
                 module_interner,
@@ -419,6 +472,7 @@ pub fn run_project_with_manifest(
         entry_tc.let_bodies.clone(),
         let_scope_overrides,
         fn_scope_overrides,
+        module_scope_overrides,
         project.interner,
         manifest,
     );
