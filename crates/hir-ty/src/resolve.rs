@@ -264,7 +264,6 @@ mod tests {
             },
         });
         let tree = ItemTree {
-            module_name: None,
             imports: vec![],
             functions: Arena::new(),
             types,

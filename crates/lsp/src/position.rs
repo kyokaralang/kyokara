@@ -86,7 +86,7 @@ pub fn symbol_at_offset(root: &SyntaxNode, offset: TextSize) -> SymbolAtPosition
         TokenAtOffset::Single(t) => t,
         TokenAtOffset::Between(left, right) => {
             // Prefer the ident token.
-            if left.kind() == SyntaxKind::Ident {
+            if left.kind().is_identifier_token() {
                 left
             } else {
                 right
@@ -95,7 +95,7 @@ pub fn symbol_at_offset(root: &SyntaxNode, offset: TextSize) -> SymbolAtPosition
         TokenAtOffset::None => return SymbolAtPosition::None,
     };
 
-    if token.kind() != SyntaxKind::Ident {
+    if !token.kind().is_identifier_token() {
         return SymbolAtPosition::None;
     }
 
@@ -232,7 +232,7 @@ pub fn symbol_at_offset_with_scope(
         let token = match root.token_at_offset(offset) {
             TokenAtOffset::Single(tok) => Some(tok),
             TokenAtOffset::Between(left, right) => {
-                if left.kind() == SyntaxKind::Ident {
+                if left.kind().is_identifier_token() {
                     Some(left)
                 } else {
                     Some(right)
@@ -241,7 +241,7 @@ pub fn symbol_at_offset_with_scope(
             TokenAtOffset::None => None,
         };
         if let Some(tok) = token
-            && tok.kind() == SyntaxKind::Ident
+            && tok.kind().is_identifier_token()
             && tok.text() == name
             && crate::goto_def::find_local_def_range_syntax(root, name, offset).is_some()
         {

@@ -24,8 +24,9 @@ This RFC locks:
 Kyokara already has a workable local module story:
 
 1. file path determines module path,
-2. `pub` controls visibility,
-3. `import` brings public names into scope.
+2. there is no source-level `module Path` declaration,
+3. `pub` controls visibility,
+4. `import` brings public names into scope.
 
 That is enough for one project, but not enough for a language ecosystem.
 
@@ -98,7 +99,8 @@ Rules:
 1. `src/lib.ky` is the root module of a `lib` package.
 2. `src/main.ky` is the entry module of a `bin` package.
 3. Other `.ky` files under `src/` follow the existing file-path-to-module-path rule.
-4. Package-internal module imports remain exactly the same as today, relative to the package source root.
+4. There is no source-level module declaration override inside a package.
+5. Package-internal module imports remain exactly the same as today, relative to the package source root.
 
 Example:
 
@@ -203,7 +205,8 @@ Examples:
 This preserves the existing module rule inside each package:
 
 1. file path determines module path,
-2. package boundary adds only the explicit `deps.<alias>` prefix.
+2. source files do not declare or override module identity,
+3. package boundary adds only the explicit `deps.<alias>` prefix.
 
 ### P5. Lockfile and resolution
 

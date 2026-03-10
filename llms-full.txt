@@ -19,7 +19,7 @@ Problems Kyokara solves:
 
 ### Modules and Imports
 
-**Implemented:** Convention-based file layout — file path determines module path. No explicit `module` declarations.
+**Implemented:** Convention-based file layout — file path determines module path. No source-level `module Path` declarations.
 
 ```
 project/

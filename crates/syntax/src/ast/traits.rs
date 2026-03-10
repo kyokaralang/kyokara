@@ -5,7 +5,7 @@ use kyokara_parser::SyntaxKind;
 use crate::ast::support;
 use crate::language::SyntaxToken;
 
-/// Implemented by nodes that have an `Ident` name token.
+/// Implemented by nodes that have an identifier-like name token.
 pub trait HasName: super::AstNode {
     fn name_token(&self) -> Option<SyntaxToken> {
         support::name_token(self.syntax())

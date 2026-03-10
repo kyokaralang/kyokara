@@ -15,7 +15,7 @@ pub(super) fn type_expr(p: &mut Parser<'_>) -> Option<CompletedMarker> {
     match p.current() {
         FnKw => Some(fn_type(p)),
         LBrace => Some(brace_type(p)),
-        Ident => Some(name_type(p)),
+        _ if p.current().is_identifier_token() => Some(name_type(p)),
         _ if p.current().is_keyword() => Some(name_type(p)),
         _ => {
             p.error("expected type expression");

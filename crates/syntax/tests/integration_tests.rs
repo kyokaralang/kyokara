@@ -216,8 +216,8 @@ fn roundtrip_type_def_variants() {
 }
 
 #[test]
-fn roundtrip_module_and_import() {
-    let src = "module Main\n\nimport Std.IO as IO";
+fn roundtrip_import_only_program() {
+    let src = "import Std.IO as IO";
     let green = parse_ok(src);
     assert_eq!(green_text(&green), src);
 }
@@ -918,9 +918,7 @@ fn roundtrip_structural_record_expr() {
 
 #[test]
 fn roundtrip_full_program() {
-    let src = r#"module Main
-
-import Std.IO as IO
+    let src = r#"import Std.IO as IO
 
 type Option<T> =
     Some(T)

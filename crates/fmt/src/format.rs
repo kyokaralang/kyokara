@@ -27,7 +27,6 @@ fn format_token(tok: &SyntaxToken) -> Doc {
 fn format_node_inner(node: &SyntaxNode) -> Doc {
     match node.kind() {
         SyntaxKind::SourceFile => format_source_file(node),
-        SyntaxKind::ModuleDecl => format_module_decl(node),
         SyntaxKind::ImportDecl => format_import_decl(node),
         SyntaxKind::Path => format_path(node),
         SyntaxKind::ImportAlias => format_import_alias(node),
@@ -130,16 +129,11 @@ fn verbatim(node: &SyntaxNode) -> Doc {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-/// Find the first token of the given kind in a node's direct children.
-fn find_token(node: &SyntaxNode, kind: SyntaxKind) -> Option<SyntaxToken> {
-    node.children_with_tokens()
-        .filter_map(|it| it.into_token())
-        .find(|tok| tok.kind() == kind)
-}
-
 /// Find the first identifier token in a node's direct children.
 fn find_ident(node: &SyntaxNode) -> Option<SyntaxToken> {
-    find_token(node, SyntaxKind::Ident)
+    node.children_with_tokens()
+        .filter_map(|it| it.into_token())
+        .find(|tok| tok.kind().is_identifier_token())
 }
 
 /// Find the first child node of the given kind.
@@ -192,8 +186,7 @@ fn format_source_file(node: &SyntaxNode) -> Doc {
     let is_top_level_item = |c: &SyntaxNode| {
         matches!(
             c.kind(),
-            SyntaxKind::ModuleDecl
-                | SyntaxKind::ImportDecl
+            SyntaxKind::ImportDecl
                 | SyntaxKind::TypeDef
                 | SyntaxKind::FnDef
                 | SyntaxKind::EffectDef
@@ -206,11 +199,10 @@ fn format_source_file(node: &SyntaxNode) -> Doc {
     let all_children =
         comments::format_children_with_comments(node, &is_top_level_item, format_node);
 
-    // Separate into module, imports, and items based on original node kinds.
+    // Separate into imports and items based on original node kinds.
     let child_nodes_iter: Vec<SyntaxNode> =
         node.children().filter(|c| is_top_level_item(c)).collect();
 
-    let mut module_docs = Vec::new();
     let mut import_docs = Vec::new();
     let mut import_sort_keys = Vec::new();
     let mut item_docs = Vec::new();
@@ -219,7 +211,6 @@ fn format_source_file(node: &SyntaxNode) -> Doc {
     for child_node in child_nodes_iter {
         if let Some(child_doc) = all_iter.next() {
             match child_node.kind() {
-                SyntaxKind::ModuleDecl => module_docs.push(child_doc),
                 SyntaxKind::ImportDecl => {
                     import_sort_keys.push(import_sort_key(&child_node));
                     import_docs.push(child_doc);
@@ -248,8 +239,6 @@ fn format_source_file(node: &SyntaxNode) -> Doc {
     }
 
     let mut parts = Vec::new();
-    parts.extend(module_docs);
-
     if !import_docs.is_empty() {
         if !parts.is_empty() {
             parts.push(Doc::HardLine);
@@ -285,15 +274,7 @@ fn import_sort_key(node: &SyntaxNode) -> String {
     }
 }
 
-// ── Module / Import ─────────────────────────────────────────────────
-
-fn format_module_decl(node: &SyntaxNode) -> Doc {
-    let mut parts = vec![Doc::text("module"), Doc::text(" ")];
-    if let Some(path) = find_child_node(node, SyntaxKind::Path) {
-        parts.push(format_node(&path));
-    }
-    Doc::concat(parts)
-}
+// ── Import ──────────────────────────────────────────────────────────
 
 fn format_import_decl(node: &SyntaxNode) -> Doc {
     let mut parts = vec![Doc::text("import"), Doc::text(" ")];
@@ -319,7 +300,7 @@ fn format_path(node: &SyntaxNode) -> Doc {
     let segments: Vec<Doc> = node
         .children_with_tokens()
         .filter_map(|it| it.into_token())
-        .filter(|tok| tok.kind() == SyntaxKind::Ident)
+        .filter(|tok| tok.kind().is_identifier_token())
         .map(|tok| format_token(&tok))
         .collect();
     Doc::join(segments, Doc::text("."))
@@ -1112,7 +1093,7 @@ fn format_field_expr(node: &SyntaxNode) -> Doc {
     let field = node
         .children_with_tokens()
         .filter_map(|it| it.into_token())
-        .filter(|tok| tok.kind() == SyntaxKind::Ident)
+        .filter(|tok| tok.kind().is_identifier_token())
         .last();
 
     let mut parts = Vec::new();
@@ -1495,7 +1476,7 @@ fn format_record_pat(node: &SyntaxNode) -> Doc {
     let fields: Vec<SyntaxToken> = node
         .children_with_tokens()
         .filter_map(|it| it.into_token())
-        .filter(|tok| tok.kind() == SyntaxKind::Ident)
+        .filter(|tok| tok.kind().is_identifier_token())
         .collect();
     // Skip the first ident if it's part of the path
     let has_path = find_child_node(node, SyntaxKind::Path).is_some();
@@ -1506,7 +1487,7 @@ fn format_record_pat(node: &SyntaxNode) -> Doc {
         let direct_idents: Vec<SyntaxToken> = node
             .children_with_tokens()
             .filter_map(|it| it.into_token())
-            .filter(|tok| tok.kind() == SyntaxKind::Ident)
+            .filter(|tok| tok.kind().is_identifier_token())
             .collect();
         direct_idents.iter().map(format_token).collect()
     } else {

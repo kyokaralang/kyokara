@@ -42,11 +42,6 @@ fn fmt_empty_source() {
 }
 
 #[test]
-fn fmt_module_decl() {
-    assert_fmt("module  Main", "module Main\n");
-}
-
-#[test]
 fn fmt_import_decl() {
     assert_fmt("import  Std.IO", "import Std.IO\n");
 }
@@ -61,14 +56,6 @@ fn fmt_import_sorting() {
     assert_fmt(
         "import Std.IO\nimport Std.Collections\nimport Std.Base",
         "import Std.Base\nimport Std.Collections\nimport Std.IO\n",
-    );
-}
-
-#[test]
-fn fmt_module_and_imports() {
-    assert_fmt(
-        "module Main\n\nimport Std.IO\nimport Std.Base",
-        "module Main\n\nimport Std.Base\nimport Std.IO\n",
     );
 }
 
@@ -498,9 +485,7 @@ fn fmt_comments_preserved_count() {
 
 #[test]
 fn fmt_idempotency_full_program() {
-    let input = r#"module Main
-
-import Std.IO
+    let input = r#"import Std.IO
 import Std.Collections
 
 type Option = Some(Int) | None

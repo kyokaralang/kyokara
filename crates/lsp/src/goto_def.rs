@@ -84,7 +84,7 @@ fn find_variant_def(root: &SyntaxNode, name: &str, source: &str, uri: &Url) -> O
             let ident = node
                 .children_with_tokens()
                 .filter_map(|e| e.into_token())
-                .find(|t| t.kind() == SyntaxKind::Ident);
+                .find(|t| t.kind().is_identifier_token());
             if ident.is_some_and(|t| t.text() == name) {
                 let range = text_range_to_lsp_range(node.text_range(), source);
                 return Some(Location::new(uri.clone(), range));
@@ -279,7 +279,7 @@ fn token_at_offset_prefer_ident(root: &SyntaxNode, offset: TextSize) -> Option<S
     match root.token_at_offset(offset) {
         TokenAtOffset::Single(tok) => Some(tok),
         TokenAtOffset::Between(left, right) => {
-            if left.kind() == SyntaxKind::Ident {
+            if left.kind().is_identifier_token() {
                 Some(left)
             } else {
                 Some(right)
@@ -310,7 +310,7 @@ fn collect_pattern_binding_tokens(pat: &Pat, out: &mut Vec<SyntaxToken>) {
                 .syntax()
                 .children_with_tokens()
                 .filter_map(|it| it.into_token())
-                .find(|t| t.kind() == SyntaxKind::Ident)
+                .find(|t| t.kind().is_identifier_token())
             {
                 out.push(tok);
             }

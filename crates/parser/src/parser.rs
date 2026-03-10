@@ -119,7 +119,7 @@ impl<'i> Parser<'i> {
     /// Returns `true` when the current token can lexically occupy an
     /// identifier slot (either a true identifier or a reserved keyword).
     pub fn at_ident_like(&self) -> bool {
-        self.at(SyntaxKind::Ident) || self.current().is_keyword()
+        self.current().is_identifier_token() || self.current().is_keyword()
     }
 
     /// Peek at the token after the current one (used to look past `pub`).
@@ -206,7 +206,8 @@ impl<'i> Parser<'i> {
     /// Consume an identifier or emit a targeted reserved-keyword diagnostic,
     /// falling back to generic recovery for non-identifier tokens.
     pub fn expect_identifier_recover(&mut self, role: IdentifierRole, recovery: TokenSet) -> bool {
-        if self.eat(SyntaxKind::Ident) {
+        if self.current().is_identifier_token() {
+            self.bump();
             return true;
         }
         if self.current().is_keyword() {
@@ -310,7 +311,7 @@ impl<'i> Parser<'i> {
             let current = self.current();
             if recovery.contains(current) {
                 if current == SyntaxKind::LBrace
-                    && prev_kind == Some(SyntaxKind::Ident)
+                    && prev_kind.is_some_and(SyntaxKind::is_identifier_token)
                     && self.looks_like_record_literal_brace()
                 {
                     self.skip_balanced_braces();
@@ -339,7 +340,7 @@ impl<'i> Parser<'i> {
 
     fn looks_like_record_literal_brace(&self) -> bool {
         self.at(SyntaxKind::LBrace)
-            && self.nth(1) == SyntaxKind::Ident
+            && self.nth(1).is_identifier_token()
             && self.nth(2) == SyntaxKind::Colon
     }
 
@@ -460,7 +461,6 @@ mod tests {
     #[test]
     fn expect_identifier_reports_exact_keyword_lexeme_for_all_roles() {
         let keywords = [
-            SyntaxKind::ModuleKw,
             SyntaxKind::ImportKw,
             SyntaxKind::AsKw,
             SyntaxKind::TypeKw,

@@ -28,7 +28,7 @@ pub fn rename_symbol(
     validate_new_name(&result.interner, &result.module_scope, new_name, kind)?;
 
     // 3. Check the new name is not a keyword.
-    if SyntaxKind::from_keyword(new_name).is_some() {
+    if SyntaxKind::is_reserved_keyword_text(new_name) {
         return Err(RefactorError::NewNameIsKeyword {
             name: new_name.to_string(),
         });
@@ -102,7 +102,7 @@ pub fn rename_symbol_project(
     };
 
     // 3. Check the new name is not a keyword.
-    if SyntaxKind::from_keyword(new_name).is_some() {
+    if SyntaxKind::is_reserved_keyword_text(new_name) {
         return Err(RefactorError::NewNameIsKeyword {
             name: new_name.to_string(),
         });
@@ -179,7 +179,7 @@ fn is_locally_defined(root: &SyntaxNode, name: &str, kind: SymbolKind) -> bool {
         let Some(token) = element.into_token() else {
             continue;
         };
-        if token.kind() != SyntaxKind::Ident || token.text() != name {
+        if !token.kind().is_identifier_token() || token.text() != name {
             continue;
         }
         let Some(parent) = token.parent() else {
@@ -317,7 +317,7 @@ fn collect_rename_edits(
         let Some(token) = element.into_token() else {
             continue;
         };
-        if token.kind() != SyntaxKind::Ident || token.text() != old_name {
+        if !token.kind().is_identifier_token() || token.text() != old_name {
             continue;
         }
 
@@ -436,7 +436,7 @@ fn is_locally_shadowed(token: &SyntaxToken, name: &str) -> bool {
             SyntaxKind::Param => {
                 for child in node.children_with_tokens() {
                     if let Some(t) = child.into_token()
-                        && t.kind() == SyntaxKind::Ident
+                        && t.kind().is_identifier_token()
                     {
                         if t.text() == name {
                             return true;
@@ -454,7 +454,7 @@ fn is_locally_shadowed(token: &SyntaxToken, name: &str) -> bool {
                     if child.kind() == SyntaxKind::IdentPat {
                         for element in child.descendants_with_tokens() {
                             if let Some(t) = element.into_token()
-                                && t.kind() == SyntaxKind::Ident
+                                && t.kind().is_identifier_token()
                                 && t.text() == name
                             {
                                 return true;

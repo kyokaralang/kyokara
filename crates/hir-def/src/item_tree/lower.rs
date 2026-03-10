@@ -39,13 +39,6 @@ pub fn collect_item_tree(
         interner,
     };
 
-    // Module declaration
-    if let Some(module_decl) = file.module_decl()
-        && let Some(path) = module_decl.path()
-    {
-        ctx.tree.module_name = Some(ctx.lower_path(&path));
-    }
-
     // Imports
     for import in file.imports() {
         ctx.lower_import(&import);

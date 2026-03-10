@@ -41,7 +41,9 @@ Ident            <- [a-zA-Z_] [a-zA-Z0-9_]*
 # Keywords
 # Note: `cap` is lexed as a reserved keyword for targeted diagnostics, but
 # item parsing rejects it and requires `effect` declarations.
-Keyword          <- 'module' / 'import' / 'as' / 'type' / 'fn' / 'let' / 'pub'
+# Note: `module` is not reserved; Kyokara has no explicit `module Path`
+# declaration syntax, and file path determines module identity.
+Keyword          <- 'import' / 'as' / 'type' / 'fn' / 'let' / 'pub'
                   / 'var'
                   / 'match' / 'cap' / 'effect' / 'with' / 'contract'
                   / 'requires' / 'ensures' / 'invariant'
@@ -74,13 +76,12 @@ GtGt             <- '>>'
 ### Source File
 
 ```peg
-SourceFile       <- ModuleDecl? ImportDecl* Item* EOF
+SourceFile       <- ImportDecl* Item* EOF
 ```
 
 ### Module & Imports
 
 ```peg
-ModuleDecl       <- 'module' Path
 ImportDecl       <- 'import' Path ImportAlias?
 ImportAlias      <- 'as' Ident
 Path             <- Ident ('.' Ident)*
@@ -295,11 +296,12 @@ RecordPat          <- Path? '{' (Ident (',' Ident)* ','?)? '}'
 ## Reserved Words
 
 All keywords listed above are reserved and cannot be used as identifiers.
+`module` is not reserved and may be used as a normal identifier.
 
 ```
 all      as       cap      contract  effect   else     ensures
 false    fn       for      if        import   in        invariant
-let      match    module   old       property  pub      var
+let      match    old      property  pub      var
 requires return   true     type      where    while     with
 break    continue
 ```

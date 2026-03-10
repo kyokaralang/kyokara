@@ -9,7 +9,7 @@
 
 ## Language Features
 
-- Convention-based modules: file path = module path (`math.ky` → module `math`), `import math` brings pub names into scope
+- Convention-based modules: file path = module path (`math.ky` → module `math`), `import math` brings pub names into scope, no source-level `module Path` declaration
 - Private by default: use `pub` keyword to export functions, types, and capabilities across modules
 - Pure by default: functions without `with` clauses cannot perform side effects
 - Explicit capabilities: `with net`, `with db`, `with clock`, `with secrets` — deny-by-default, manifest-enforced

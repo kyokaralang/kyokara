@@ -1,6 +1,6 @@
 //! Top-level item parsing.
 //!
-//! Handles module declarations, imports, type definitions, function
+//! Handles imports, type definitions, function
 //! definitions, effect definitions, property definitions, and
 //! let bindings.
 
@@ -10,8 +10,7 @@ use crate::token_set::TokenSet;
 
 /// Tokens that can start an item — used for error recovery.
 pub(super) const ITEM_RECOVERY: TokenSet = TokenSet::new(&[
-    ModuleKw, ImportKw, TypeKw, TraitKw, ImplKw, FnKw, CapKw, EffectKw, PropertyKw, LetKw, VarKw,
-    PubKw,
+    ImportKw, TypeKw, TraitKw, ImplKw, FnKw, CapKw, EffectKw, PropertyKw, LetKw, VarKw, PubKw,
 ]);
 const CLAUSE_EXPR_RECOVERY: TokenSet = TokenSet::new(&[
     LBrace,
@@ -85,14 +84,24 @@ pub(super) fn item(p: &mut Parser<'_>) -> Option<CompletedMarker> {
     Some(cm)
 }
 
-// ── Module & Imports ────────────────────────────────────────────────
+// ── Invalid legacy module declaration / Imports ────────────────────
 
-/// `module Path`
-pub(super) fn module_decl(p: &mut Parser<'_>) -> CompletedMarker {
+pub(super) fn recover_invalid_module_decl(p: &mut Parser<'_>) {
     let m = p.open();
+    p.error("unexpected `module` at top level");
     p.bump(); // module
-    super::parse_path(p);
-    m.complete(p, ModuleDecl)
+
+    if p.at_ident_like() {
+        p.expect_identifier(IdentifierRole::PathSegment);
+        while p.eat(Dot) {
+            if !p.at_ident_like() {
+                break;
+            }
+            p.expect_identifier(IdentifierRole::PathSegment);
+        }
+    }
+
+    m.complete(p, ErrorNode);
 }
 
 /// `import Path ImportAlias?`
@@ -192,8 +201,7 @@ fn variant(p: &mut Parser<'_>) {
 }
 
 fn starts_variant_list(p: &Parser<'_>) -> bool {
-    (p.at(Ident) || (p.current().is_keyword() && p.current() != FnKw))
-        && matches!(p.nth(1), Pipe | LParen)
+    p.at_ident_like() && p.current() != FnKw && matches!(p.nth(1), Pipe | LParen)
 }
 
 /// `'(' TypeExpr (',' TypeExpr)* ','? ')'`

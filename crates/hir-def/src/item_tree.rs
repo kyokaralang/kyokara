@@ -30,7 +30,6 @@ pub type LetItemIdx = Idx<LetItem>;
 /// All top-level items in a single module/file.
 #[derive(Debug, Default, Clone)]
 pub struct ItemTree {
-    pub module_name: Option<Path>,
     pub imports: Vec<Import>,
     pub functions: Arena<FnItem>,
     pub types: Arena<TypeItem>,

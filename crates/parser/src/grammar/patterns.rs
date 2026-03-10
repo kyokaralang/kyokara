@@ -17,6 +17,7 @@ use crate::token_set::TokenSet;
 /// Tokens that can start a pattern.
 pub(super) const PATTERN_START: TokenSet = TokenSet::new(&[
     Ident,
+    ModuleKw,
     Underscore,
     IntLiteral,
     FloatLiteral,
@@ -46,7 +47,7 @@ fn pattern_with_role(p: &mut Parser<'_>, keyword_role: IdentifierRole) -> Option
             literal_pat(p)
         }
         LBrace => record_pat(p, None),
-        Ident => ident_or_constructor_pat(p),
+        _ if p.current().is_identifier_token() => ident_or_constructor_pat(p),
         _ if p.current().is_keyword() => {
             p.expect_identifier(keyword_role);
             return None;

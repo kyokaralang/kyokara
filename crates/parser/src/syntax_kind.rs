@@ -42,7 +42,7 @@ pub enum SyntaxKind {
     Ident,
 
     // ── Keywords ─────────────────────────────────────────────────────
-    /// `module`
+    /// Contextual `module` token.
     ModuleKw,
     /// `import`
     ImportKw,
@@ -194,8 +194,6 @@ pub enum SyntaxKind {
     // Top-level
     /// Root node of every source file.
     SourceFile,
-    /// `module Foo`
-    ModuleDecl,
     /// `import Foo.Bar`
     ImportDecl,
     /// Dotted path (`Foo.Bar.baz`).
@@ -387,12 +385,16 @@ impl SyntaxKind {
         )
     }
 
+    /// Returns `true` for token kinds that are accepted in identifier slots.
+    pub fn is_identifier_token(self) -> bool {
+        matches!(self, Self::Ident | Self::ModuleKw)
+    }
+
     /// Returns `true` for keyword tokens.
     pub fn is_keyword(self) -> bool {
         matches!(
             self,
-            Self::ModuleKw
-                | Self::ImportKw
+            Self::ImportKw
                 | Self::AsKw
                 | Self::TypeKw
                 | Self::TraitKw
@@ -430,7 +432,6 @@ impl SyntaxKind {
     /// Returns the source text for keyword tokens.
     pub fn keyword_text(self) -> Option<&'static str> {
         match self {
-            Self::ModuleKw => Some("module"),
             Self::ImportKw => Some("import"),
             Self::AsKw => Some("as"),
             Self::TypeKw => Some("type"),
@@ -569,6 +570,11 @@ impl SyntaxKind {
             _ => None,
         }
     }
+
+    /// Returns `true` when `text` is a reserved keyword in identifier slots.
+    pub fn is_reserved_keyword_text(text: &str) -> bool {
+        Self::from_keyword(text).is_some_and(Self::is_keyword)
+    }
 }
 
 #[cfg(test)]
@@ -578,7 +584,6 @@ mod tests {
     #[test]
     fn lexed_keyword_text_roundtrips_with_from_keyword() {
         let keywords = [
-            SyntaxKind::ModuleKw,
             SyntaxKind::ImportKw,
             SyntaxKind::AsKw,
             SyntaxKind::TypeKw,

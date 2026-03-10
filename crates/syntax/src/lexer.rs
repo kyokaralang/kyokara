@@ -280,7 +280,6 @@ mod tests {
     #[test]
     fn keywords() {
         let kws = [
-            ("module", ModuleKw),
             ("import", ImportKw),
             ("as", AsKw),
             ("type", TypeKw),
@@ -334,6 +333,12 @@ mod tests {
             let tokens = lex_kinds(text);
             assert_eq!(tokens, [(Ident, text)], "should be ident: {text}");
         }
+    }
+
+    #[test]
+    fn module_is_tokenized_as_contextual_identifier_token() {
+        let tokens = lex_kinds("module");
+        assert_eq!(tokens, [(ModuleKw, "module")]);
     }
 
     #[test]
@@ -554,8 +559,7 @@ mod tests {
     #[test]
     fn smoke_program() {
         let src = r#"
-module Main
-
+let module = 0
 import Std.IO as IO
 
 type Option<T> =
@@ -584,8 +588,8 @@ let result = Some(42) |> map(fn(x) => x + 1)
         // Spot-check some tokens
         let non_trivia: Vec<_> = tokens.iter().filter(|t| !t.kind.is_trivia()).collect();
 
-        assert_eq!(non_trivia[0].kind, ModuleKw);
-        assert_eq!(non_trivia[1].kind, Ident); // Main
-        assert_eq!(non_trivia[2].kind, ImportKw);
+        assert_eq!(non_trivia[0].kind, LetKw);
+        assert_eq!(non_trivia[1].kind, ModuleKw);
+        assert_eq!(non_trivia[4].kind, ImportKw);
     }
 }
