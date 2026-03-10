@@ -43,7 +43,7 @@ Ident            <- [a-zA-Z_] [a-zA-Z0-9_]*
 # item parsing rejects it and requires `effect` declarations.
 # Note: `module` is not reserved; Kyokara has no explicit `module Path`
 # declaration syntax, and file path determines module identity.
-Keyword          <- 'import' / 'as' / 'type' / 'fn' / 'let' / 'pub'
+Keyword          <- 'import' / 'from' / 'as' / 'type' / 'fn' / 'let' / 'pub'
                   / 'var'
                   / 'match' / 'cap' / 'effect' / 'with' / 'contract'
                   / 'requires' / 'ensures' / 'invariant'
@@ -82,7 +82,10 @@ SourceFile       <- ImportDecl* Item* EOF
 ### Module & Imports
 
 ```peg
-ImportDecl       <- 'import' Path ImportAlias?
+ImportDecl       <- NamespaceImport / MemberImport
+NamespaceImport  <- 'import' Path ImportAlias?
+MemberImport     <- 'from' Path 'import' ImportMember (',' ImportMember)*
+ImportMember     <- Ident ImportAlias?
 ImportAlias      <- 'as' Ident
 Path             <- Ident ('.' Ident)*
 ```

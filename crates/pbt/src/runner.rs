@@ -154,6 +154,7 @@ pub fn run_tests(source: &str, config: &TestConfig) -> Result<TestReport, String
         type_check.let_bodies,
         FxHashMap::default(),
         FxHashMap::default(),
+        FxHashMap::default(),
         interner,
         None,
     );
@@ -222,6 +223,7 @@ pub fn run_project_tests(
         entry_info.scope.clone(),
         fn_bodies,
         entry_tc.let_bodies.clone(),
+        FxHashMap::default(),
         FxHashMap::default(),
         FxHashMap::default(),
         project.interner,

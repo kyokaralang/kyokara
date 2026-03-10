@@ -222,6 +222,45 @@ pub fn symbol_at_offset_with_scope(
 ) -> SymbolAtPosition {
     let base = symbol_at_offset(root, offset);
 
+    if let SymbolAtPosition::FieldAccess { ref field_name } = base {
+        let token = match root.token_at_offset(offset) {
+            TokenAtOffset::Single(tok) => Some(tok),
+            TokenAtOffset::Between(left, right) => {
+                if left.kind().is_identifier_token() {
+                    Some(left)
+                } else {
+                    Some(right)
+                }
+            }
+            TokenAtOffset::None => None,
+        };
+        if let Some(tok) = token
+            && tok.kind().is_identifier_token()
+            && let Some(field_expr) = tok.parent()
+            && field_expr.kind() == SyntaxKind::FieldExpr
+            && let Some(base_node) = field_expr.children().next()
+        {
+            let type_name = base_node.text().to_string();
+            if let Some(type_name) = type_name.rsplit('.').next()
+                && let Some((_, &type_idx)) = module_scope
+                    .types
+                    .iter()
+                    .find(|(name, _)| name.resolve(interner) == type_name)
+                && module_scope
+                    .type_variants
+                    .keys()
+                    .any(|(owner, variant)| {
+                        *owner == type_idx && variant.resolve(interner) == field_name
+                    })
+            {
+                return SymbolAtPosition::Variant {
+                    name: field_name.clone(),
+                    is_definition: false,
+                };
+            }
+        }
+    }
+
     // Only override the PathExpr/CallExpr case where the base classifier
     // unconditionally returns Function for usage sites.
     if let SymbolAtPosition::Function {

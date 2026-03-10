@@ -103,9 +103,9 @@ fn rename_variant() {
     let src = r#"type Color = Red | Green | Blue
 fn name(c: Color) -> String {
     match (c) {
-        Red => "red"
-        Green => "green"
-        Blue => "blue"
+        Color.Red => "red"
+        Color.Green => "green"
+        Color.Blue => "blue"
     }
 }"#;
     let result = kyokara_hir::check_file(src);
@@ -123,7 +123,7 @@ fn name(c: Color) -> String {
         "variant def should be renamed: {new_source}"
     );
     assert!(
-        new_source.contains("Crimson =>"),
+        new_source.contains("Color.Crimson =>"),
         "pattern should be renamed: {new_source}"
     );
     assert!(
@@ -236,7 +236,7 @@ fn add_missing_match_cases() {
     let src = r#"type Color = Red | Green | Blue
 fn pick(c: Color) -> Int {
     match (c) {
-        Red => 1
+        Color.Red => 1
     }
 }"#;
     let result = kyokara_hir::check_file(src);
@@ -259,12 +259,12 @@ fn pick(c: Color) -> Int {
     assert!(!refactor.edits.is_empty(), "expected edits");
     let edit = &refactor.edits[0];
     assert!(
-        edit.new_text.contains("Green"),
+        edit.new_text.contains("Color.Green"),
         "should contain Green: {}",
         edit.new_text
     );
     assert!(
-        edit.new_text.contains("Blue"),
+        edit.new_text.contains("Color.Blue"),
         "should contain Blue: {}",
         edit.new_text
     );
@@ -275,7 +275,7 @@ fn add_missing_match_cases_from_diagnostics() {
     let src = r#"type Color = Red | Green | Blue
 fn pick(c: Color) -> Int {
     match (c) {
-        Red => 1
+        Color.Red => 1
     }
 }"#;
     let result = kyokara_hir::check_file(src);
@@ -300,12 +300,12 @@ fn pick(c: Color) -> Int {
     assert!(!refactor.edits.is_empty(), "expected edits");
     let edit = &refactor.edits[0];
     assert!(
-        edit.new_text.contains("Green"),
+        edit.new_text.contains("Color.Green"),
         "should contain Green: {}",
         edit.new_text
     );
     assert!(
-        edit.new_text.contains("Blue"),
+        edit.new_text.contains("Color.Blue"),
         "should contain Blue: {}",
         edit.new_text
     );
@@ -313,7 +313,8 @@ fn pick(c: Color) -> Int {
 
 #[test]
 fn add_missing_match_cases_empty_nested_match_uses_context_indent() {
-    let src = r#"type Color = Red | Green | Blue
+    let src = r#"from Color import Red, Green, Blue
+type Color = Red | Green | Blue
 fn pick(c: Color) -> Int {
     if (1 == 1) {
         match (c) {
@@ -359,7 +360,8 @@ fn pick(c: Color) -> Int {
 
 #[test]
 fn add_missing_match_cases_inline_nested_match_uses_context_indent() {
-    let src = r#"type Color = Red | Green | Blue
+    let src = r#"from Color import Red, Green, Blue
+type Color = Red | Green | Blue
 fn pick(c: Color) -> Int {
     {
         match (c) { Red => 1 }
@@ -475,7 +477,7 @@ fn rename_multifile() {
 
     std::fs::write(
         &main_path,
-        "import math\nfn main() -> Int {\n    let x = add(10, 20)\n    x\n}\n",
+        "from math import add\nfn main() -> Int {\n    let x = add(10, 20)\n    x\n}\n",
     )
     .unwrap();
     std::fs::write(
@@ -635,7 +637,7 @@ fn project_rename_with_import_renames_both_modules() {
 
     std::fs::write(
         &main_path,
-        "import math\nfn main() -> Int {\n    let x = add(10, 20)\n    x\n}\n",
+        "from math import add\nfn main() -> Int {\n    let x = add(10, 20)\n    x\n}\n",
     )
     .unwrap();
     std::fs::write(
@@ -881,7 +883,7 @@ fn transact_rename_multifile_verified() {
 
     std::fs::write(
         &main_path,
-        "import math\nfn main() -> Int {\n    let x = add(10, 20)\n    x\n}\n",
+        "from math import add\nfn main() -> Int {\n    let x = add(10, 20)\n    x\n}\n",
     )
     .unwrap();
     std::fs::write(
@@ -911,7 +913,7 @@ fn transact_rename_multifile_reports_failed_verification_when_project_has_errors
 
     std::fs::write(
         &main_path,
-        "import math\nfn main() -> Int {\n    let x = add(10, 20)\n    x + missing\n}\n",
+        "from math import add\nfn main() -> Int {\n    let x = add(10, 20)\n    x + missing\n}\n",
     )
     .unwrap();
     std::fs::write(
@@ -940,7 +942,8 @@ fn transact_rename_multifile_reports_failed_verification_when_project_has_errors
 
 #[test]
 fn quickfix_match_cases_transact_verified() {
-    let src = r#"type Color = Red | Green | Blue
+    let src = r#"from Color import Red, Green, Blue
+type Color = Red | Green | Blue
 fn pick(c: Color) -> Int {
     match (c) {
         Red => 1
@@ -1039,7 +1042,7 @@ fn transact_project_skipped_when_forced() {
 
     std::fs::write(
         &main_path,
-        "import math\nfn main() -> Int {\n    let x = add(10, 20)\n    x\n}\n",
+        "from math import add\nfn main() -> Int {\n    let x = add(10, 20)\n    x\n}\n",
     )
     .unwrap();
     std::fs::write(
@@ -1114,7 +1117,7 @@ fn transact_project_with_invalid_path_returns_io_error() {
     let math_path = dir.path().join("math.ky");
     std::fs::write(
         &main_path,
-        "import math\nfn caller() -> Int { add(1, 2) }\n",
+        "from math import add\nfn caller() -> Int { add(1, 2) }\n",
     )
     .unwrap();
     std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x + y }\n").unwrap();
@@ -1138,7 +1141,7 @@ fn transact_project_success_returns_verified() {
     let math_path = dir.path().join("math.ky");
     std::fs::write(
         &main_path,
-        "import math\nfn caller() -> Int { add(1, 2) }\n",
+        "from math import add\nfn caller() -> Int { add(1, 2) }\n",
     )
     .unwrap();
     std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x + y }\n").unwrap();
@@ -1219,13 +1222,13 @@ fn project_quickfix_match_cases_filters_by_target_file() {
     // main.ky: type A with missing arm
     std::fs::write(
         &main_path,
-        "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        X => 1\n    }\n}\n",
+        "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        A.X => 1\n    }\n}\n",
     )
     .unwrap();
     // math.ky: type B with missing arm
     std::fs::write(
         &math_path,
-        "pub type B = P | Q\npub fn check_b(b: B) -> Int {\n    match (b) {\n        P => 1\n    }\n}\n",
+        "pub type B = P | Q\npub fn check_b(b: B) -> Int {\n    match (b) {\n        B.P => 1\n    }\n}\n",
     )
     .unwrap();
 
@@ -1340,7 +1343,7 @@ fn project_quickfix_wrong_target_file_returns_error() {
 
     std::fs::write(
         &main_path,
-        "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        X => 1\n    }\n}\n",
+        "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        A.X => 1\n    }\n}\n",
     )
     .unwrap();
     std::fs::write(&math_path, "pub fn add(x: Int, y: Int) -> Int { x + y }\n").unwrap();
@@ -1383,7 +1386,7 @@ fn project_quickfix_missing_target_file_returns_io_error() {
     let main_path = dir.path().join("main.ky");
     std::fs::write(
         &main_path,
-        "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        X => 1\n    }\n}\n",
+        "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        A.X => 1\n    }\n}\n",
     )
     .unwrap();
 
@@ -1428,7 +1431,7 @@ fn project_quickfix_missing_module_info_returns_internal_error() {
     let main_path = dir.path().join("main.ky");
     std::fs::write(
         &main_path,
-        "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        X => 1\n    }\n}\n",
+        "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        A.X => 1\n    }\n}\n",
     )
     .unwrap();
 

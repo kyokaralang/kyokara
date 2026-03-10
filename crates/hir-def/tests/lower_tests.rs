@@ -3,7 +3,7 @@
 
 use kyokara_hir_def::body::lower::lower_body;
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, Literal, Stmt, UnaryOp};
-use kyokara_hir_def::item_tree::TypeDefKind;
+use kyokara_hir_def::item_tree::{ImportKind, TypeDefKind};
 use kyokara_hir_def::item_tree::lower::collect_item_tree;
 use kyokara_hir_def::pat::Pat;
 use kyokara_intern::Interner;
@@ -77,19 +77,36 @@ fn collect_adt_with_constructors() {
         panic!("expected ADT");
     }
 
-    // Constructors registered in module scope
-    assert!(result.module_scope.constructors.len() >= 2);
+    // Variants are registered under the owning type, not as global constructors.
+    let type_idx = result.tree.types.iter().next().unwrap().0;
+    let just = kyokara_hir_def::name::Name::new(&mut interner, "Just");
+    let nothing = kyokara_hir_def::name::Name::new(&mut interner, "Nothing");
+    assert!(result.module_scope.type_variants.contains_key(&(type_idx, just)));
+    assert!(result
+        .module_scope
+        .type_variants
+        .contains_key(&(type_idx, nothing)));
 }
 
 #[test]
 fn collect_imports() {
-    let root = parse_source("import Bar.Baz\nimport Qux as Q");
+    let root = parse_source("import Bar.Baz\nimport Qux as Q\nfrom math import gcd, lcm as least");
     let sf = SourceFile::cast(root).unwrap();
     let mut interner = Interner::new();
     let result = collect_item_tree(&sf, file_id(), &mut interner);
 
-    assert_eq!(result.tree.imports.len(), 2);
-    assert!(result.tree.imports[1].alias.is_some());
+    assert_eq!(result.tree.imports.len(), 3);
+    assert!(matches!(
+        result.tree.imports[1].kind,
+        ImportKind::Namespace { alias: Some(_) }
+    ));
+    match &result.tree.imports[2].kind {
+        ImportKind::Members { members } => {
+            assert_eq!(members.len(), 2);
+            assert!(members[1].alias.is_some());
+        }
+        ImportKind::Namespace { .. } => panic!("expected member import"),
+    }
 }
 
 #[test]
@@ -811,20 +828,22 @@ fn desugar_propagation_to_match() {
             match &body.exprs[*tail] {
                 Expr::Match { arms, .. } => {
                     assert_eq!(arms.len(), 2);
-                    // First arm: Ok pattern
+                    // First arm: Result.Ok pattern
                     match &body.pats[arms[0].pat] {
                         Pat::Constructor { path, args } => {
-                            assert_eq!(path.segments[0].resolve(&interner), "Ok");
+                            assert_eq!(path.segments[0].resolve(&interner), "Result");
+                            assert_eq!(path.segments[1].resolve(&interner), "Ok");
                             assert_eq!(args.len(), 1);
                         }
-                        other => panic!("expected Ok constructor pat, got {other:?}"),
+                        other => panic!("expected Result.Ok constructor pat, got {other:?}"),
                     }
-                    // Second arm: Err pattern with Return body
+                    // Second arm: Result.Err pattern with Return body
                     match &body.pats[arms[1].pat] {
                         Pat::Constructor { path, .. } => {
-                            assert_eq!(path.segments[0].resolve(&interner), "Err");
+                            assert_eq!(path.segments[0].resolve(&interner), "Result");
+                            assert_eq!(path.segments[1].resolve(&interner), "Err");
                         }
-                        other => panic!("expected Err constructor pat, got {other:?}"),
+                        other => panic!("expected Result.Err constructor pat, got {other:?}"),
                     }
                     // Err body should be Return(Call(Err, [__e]))
                     match &body.exprs[arms[1].body] {

@@ -77,7 +77,7 @@ fn refactor_project_rename_typechecked() {
     let (_dir, main_path) = write_project(&[
         (
             "main.ky",
-            "import math\nfn main() -> Int {\n  let x = add(1, 2)\n  x\n}\n",
+            "from math import add\nfn main() -> Int {\n  let x = add(1, 2)\n  x\n}\n",
         ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
     ]);
@@ -156,7 +156,7 @@ fn refactor_project_alias_shadow_case_renames_only_target_module() {
     let (_dir, main_path) = write_project(&[
         (
             "main.ky",
-            "import util as math\nfn main() -> Int { add(1, 2) }\n",
+            "import util as math\nfrom util import add\nfn main() -> Int { add(1, 2) }\n",
         ),
         ("util.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x - y }\n"),
@@ -214,7 +214,7 @@ fn refactor_apply_must_refuse_failed_verification_without_force() {
     let (_dir, main_path) = write_project(&[
         (
             "main.ky",
-            "import math\nfn main() -> Int { let z = missing\nadd(1, 2) }\n",
+            "from math import add\nfn main() -> Int { let z = missing\nadd(1, 2) }\n",
         ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x - y }\n"),
     ]);

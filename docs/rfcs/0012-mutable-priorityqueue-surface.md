@@ -148,8 +148,8 @@ fn frontier_demo() -> String {
     .push(1, "nearer")
 
   match (pq.pop()) {
-    Some(item) => item.value,
-    None => "none",
+    Option.Some(item) => item.value,
+    Option.None => "none",
   }
 }
 ```

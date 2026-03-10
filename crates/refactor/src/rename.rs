@@ -10,6 +10,8 @@ use kyokara_intern::Interner;
 use kyokara_parser::SyntaxKind;
 use kyokara_span::FileId;
 use kyokara_syntax::{SyntaxNode, SyntaxToken};
+use kyokara_syntax::ast::AstNode;
+use kyokara_syntax::ast::nodes::ImportMember;
 
 use crate::{RefactorError, RefactorResult, SymbolKind, TextEdit};
 
@@ -247,10 +249,13 @@ fn name_exists_in_scope(
         SymbolKind::Function => scope.functions.keys().any(|n| n.resolve(interner) == name),
         SymbolKind::Type => scope.types.keys().any(|n| n.resolve(interner) == name),
         SymbolKind::Capability => scope.effects.keys().any(|n| n.resolve(interner) == name),
-        SymbolKind::Variant => scope
-            .constructors
-            .keys()
-            .any(|n| n.resolve(interner) == name),
+        SymbolKind::Variant => {
+            scope.constructors.keys().any(|n| n.resolve(interner) == name)
+                || scope
+                    .type_variants
+                    .keys()
+                    .any(|(_, variant_name)| variant_name.resolve(interner) == name)
+        }
     }
 }
 
@@ -297,6 +302,16 @@ fn validate_new_name(
             existing_kind: SymbolKind::Variant,
         });
     }
+    if scope
+        .type_variants
+        .keys()
+        .any(|(_, variant_name)| variant_name.resolve(interner) == new_name)
+    {
+        return Err(RefactorError::NameConflict {
+            name: new_name.to_string(),
+            existing_kind: SymbolKind::Variant,
+        });
+    }
 
     Ok(())
 }
@@ -325,6 +340,17 @@ fn collect_rename_edits(
             continue;
         };
 
+        if parent.kind() == SyntaxKind::ImportMember
+            && is_import_member_name_token(&token, &parent)
+        {
+            edits.push(TextEdit {
+                file_id,
+                range: token.text_range(),
+                new_text: new_name.to_string(),
+            });
+            continue;
+        }
+
         if should_rename_token(&parent, kind) {
             // For function renames, skip PathExpr usages that are locally
             // shadowed by a local binding or Param with the same name.
@@ -342,6 +368,16 @@ fn collect_rename_edits(
     // Sort descending by start offset for correct application order.
     edits.sort_by(|a, b| b.range.start().cmp(&a.range.start()));
     edits
+}
+
+fn is_import_member_name_token(token: &SyntaxToken, parent: &SyntaxNode) -> bool {
+    let Some(member) = ImportMember::cast(parent.clone()) else {
+        return false;
+    };
+    member
+        .name_token()
+        .as_ref()
+        .is_some_and(|name_tok| name_tok.text_range() == token.text_range())
 }
 
 /// Determine if an ident token with the given parent should be renamed

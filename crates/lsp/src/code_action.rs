@@ -153,7 +153,7 @@ mod tests {
         let source = "type Color = Red | Green | Blue\n\
                       fn pick(c: Color) -> Int {\n\
                         match (c) {\n\
-                          Red => 1\n\
+                          Color.Red => 1\n\
                         }\n\
                       }";
         let result = kyokara_hir::check_file(source);

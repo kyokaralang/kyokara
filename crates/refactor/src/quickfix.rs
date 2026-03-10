@@ -5,7 +5,7 @@ use kyokara_hir_ty::diagnostics::TyDiagnosticData;
 use kyokara_span::{FileId, Span, TextRange};
 use kyokara_syntax::SyntaxNode;
 use kyokara_syntax::ast::AstNode;
-use kyokara_syntax::ast::nodes::{FnDef, MatchExpr};
+use kyokara_syntax::ast::nodes::{FnDef, MatchExpr, Pat};
 use text_size::TextSize;
 
 use crate::{RefactorError, RefactorResult, TextEdit};
@@ -145,6 +145,7 @@ fn build_match_edit_from_node(
 ) -> Result<RefactorResult, RefactorError> {
     if let Some(arm_list) = match_expr.arm_list() {
         let last_arm = arm_list.arms().last();
+        let variant_prefix = infer_missing_variant_prefix(match_expr).unwrap_or_default();
 
         // Prefer an existing arm's indentation, but derive the fallback from
         // the surrounding match context instead of guessing a fixed width.
@@ -157,7 +158,7 @@ fn build_match_edit_from_node(
         // Build new arms text.
         let new_arms: String = missing
             .iter()
-            .map(|v| format!("{indent}{v} => _"))
+            .map(|v| format!("{indent}{variant_prefix}{v} => _"))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -194,6 +195,25 @@ fn build_match_edit_from_node(
     Err(RefactorError::NoDiagnosticAtOffset {
         offset: match_expr.syntax().text_range().start().into(),
     })
+}
+
+fn infer_missing_variant_prefix(match_expr: &MatchExpr) -> Option<String> {
+    let arm_list = match_expr.arm_list()?;
+    for arm in arm_list.arms() {
+        let Some(pat) = arm.pat() else {
+            continue;
+        };
+        let path = match pat {
+            Pat::Constructor(pat) => pat.path(),
+            Pat::Ident(pat) => pat.path(),
+            _ => None,
+        }?;
+        let segments: Vec<String> = path.segments().map(|seg| seg.text().to_string()).collect();
+        if segments.len() >= 2 {
+            return Some(format!("{}.", segments[..segments.len() - 1].join(".")));
+        }
+    }
+    None
 }
 
 // ── Capability ───────────────────────────────────────────────────────

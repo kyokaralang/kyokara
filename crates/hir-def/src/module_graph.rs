@@ -98,6 +98,10 @@ impl ModuleGraph {
         self.modules.iter()
     }
 
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&ModulePath, &mut ModuleInfo)> {
+        self.modules.iter_mut()
+    }
+
     pub fn len(&self) -> usize {
         self.modules.len()
     }

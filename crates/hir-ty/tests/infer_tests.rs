@@ -337,7 +337,7 @@ fn err_continue_outside_loop() {
 #[test]
 fn err_for_pattern_must_be_irrefutable() {
     check_err(
-        "fn foo(xs: List<Option<Int>>) { for (Some(x) in xs) { x } }",
+        "fn foo(xs: List<Option<Int>>) { for (Option.Some(x) in xs) { x } }",
         "for loop pattern must be irrefutable",
     );
 }
@@ -556,7 +556,7 @@ fn err_negation_on_bool() {
 fn infer_adt_constructor_call() {
     check_ok(
         "type Maybe<T> = Just(T) | Nothing
-         fn foo() -> Maybe<Int> { Just(42) }",
+         fn foo() -> Maybe<Int> { Maybe.Just(42) }",
     );
 }
 
@@ -564,7 +564,7 @@ fn infer_adt_constructor_call() {
 fn infer_adt_nullary_constructor() {
     check_ok(
         "type Maybe<T> = Just(T) | Nothing
-         fn foo() -> Maybe<Int> { Nothing }",
+         fn foo() -> Maybe<Int> { Maybe.Nothing }",
     );
 }
 
@@ -574,8 +574,8 @@ fn infer_match_basic() {
         "type Bool2 = True | False
          fn foo(x: Bool2) -> Int {
              match (x) {
-                 True => 1
-                 False => 0
+                 Bool2.True => 1
+                 Bool2.False => 0
              }
          }",
     );
@@ -587,8 +587,8 @@ fn infer_match_with_bind() {
         "type Maybe<T> = Just(T) | Nothing
          fn foo(x: Maybe<Int>) -> Int {
              match (x) {
-                 Just(v) => v
-                 Nothing => 0
+                 Maybe.Just(v) => v
+                 Maybe.Nothing => 0
              }
          }",
     );
@@ -602,8 +602,8 @@ fn err_non_exhaustive_match() {
         "type Color = Red | Green | Blue
          fn foo(c: Color) -> Int {
              match (c) {
-                 Red => 1
-                 Green => 2
+                 Color.Red => 1
+                 Color.Green => 2
              }
          }",
         "non-exhaustive",
@@ -616,7 +616,7 @@ fn exhaustive_with_wildcard() {
         "type Color = Red | Green | Blue
          fn foo(c: Color) -> Int {
              match (c) {
-                 Red => 1
+                 Color.Red => 1
                  _ => 0
              }
          }",
@@ -629,9 +629,9 @@ fn err_redundant_arm() {
         "type Bool2 = True | False
          fn foo(x: Bool2) -> Int {
              match (x) {
-                 True => 1
-                 False => 0
-                 True => 2
+                 Bool2.True => 1
+                 Bool2.False => 0
+                 Bool2.True => 2
              }
          }",
         "redundant",
@@ -645,7 +645,7 @@ fn err_redundant_arm_after_wildcard() {
          fn foo(x: Bool2) -> Int {
              match (x) {
                  _ => 0
-                 True => 1
+                 Bool2.True => 1
              }
          }",
         "redundant",
@@ -963,9 +963,9 @@ fn infer_seq_scan_unfold_int_pow_happy_paths() {
             let scanned = (1..<4).scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
             let unfolded = (0).unfold(fn(state: Int) =>
                 if (state < 3) {
-                    Some({ value: state + 1, state: state + 1 })
+                    Option.Some({ value: state + 1, state: state + 1 })
                 } else {
-                    None
+                    Option.None
                 }
             ).to_list()
             let p = 2.pow(10)
@@ -989,9 +989,9 @@ fn infer_seq_unfold_accepts_named_record_alias_payload() {
 fn main() -> Int {
     let unfolded = (0).unfold(fn(state: Int) =>
         if (state < 3) {
-            Some(PickStep { value: state + 1, state: state + 1 })
+            Option.Some(PickStep { value: state + 1, state: state + 1 })
         } else {
-            None
+            Option.None
         }
     ).to_list()
     unfolded.len()
@@ -1031,13 +1031,13 @@ fn infer_option_result_combinator_parity_happy_paths() {
         "fn main() -> Int { collections.List.new().push(41).head().unwrap_or(0) }",
         "fn main() -> Int { collections.List.new().push(41).head().map_or(0, fn(n: Int) => n + 1) }",
         "fn main() -> Int { collections.List.new().push(41).head().map(fn(n: Int) => n + 1).unwrap_or(0) }",
-        "fn main() -> Int { collections.List.new().push(41).head().and_then(fn(n: Int) => Some(n + 1)).unwrap_or(0) }",
+        "fn main() -> Int { collections.List.new().push(41).head().and_then(fn(n: Int) => Option.Some(n + 1)).unwrap_or(0) }",
         "fn main() -> Int { \"41\".parse_int().map(fn(n: Int) => n + 1).unwrap_or(0) }",
-        "fn main() -> Int { \"41\".parse_int().and_then(fn(n: Int) => Ok(n + 1)).unwrap_or(0) }",
+        "fn main() -> Int { \"41\".parse_int().and_then(fn(n: Int) => Result.Ok(n + 1)).unwrap_or(0) }",
         "fn main() -> Int {
             match (\"oops\".parse_int().map_err(fn(_e: ParseError) => 7)) {
-                Ok(n) => n
-                Err(e) => e
+                Result.Ok(n) => n
+                Result.Err(e) => e
             }
         }",
     ];
@@ -1148,7 +1148,7 @@ fn err_seq_scan_unfold_int_pow_wrong_arity_or_types() {
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { (0).unfold(fn(state: Int) => Some({ value: state + 1 })).count() }",
+            src: "fn main() -> Int { (0).unfold(fn(state: Int) => Option.Some({ value: state + 1 })).count() }",
             expected_fragment: "type mismatch",
         },
         Case {
@@ -1349,8 +1349,8 @@ fn infer_deque_and_list_index_update_happy_paths() {
         fn main() -> Int {
             let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
             let q1 = match (q0.pop_front()) {
-                Some(p) => p.rest.push_back(p.value + 10)
-                None => q0
+                Option.Some(p) => p.rest.push_back(p.value + 10)
+                Option.None => q0
             }
 
             let xs = collections.List.new().push(10).push(20).set(1, 99)
@@ -1374,11 +1374,11 @@ fn infer_deque_pop_back_happy_paths() {
         fn main() -> Int {
             let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
             match (q0.pop_back()) {
-                Some(p1) => match (p1.rest.pop_back()) {
-                    Some(p2) => p1.value + p2.value + p2.rest.len()
-                    None => -1
+                Option.Some(p1) => match (p1.rest.pop_back()) {
+                    Option.Some(p2) => p1.value + p2.value + p2.rest.len()
+                    Option.None => -1
                 }
-                None => -1
+                Option.None => -1
             }
         }"#];
 
@@ -1399,8 +1399,8 @@ fn infer_collections_deque_constructor_happy_paths_rfc_0004() {
         fn main() -> Int {
             let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
             let q1 = match (q0.pop_front()) {
-                Some(p) => p.rest.push_back(p.value + 10)
-                None => q0
+                Option.Some(p) => p.rest.push_back(p.value + 10)
+                Option.None => q0
             }
             q1.len()
         }"#,
@@ -1857,8 +1857,8 @@ fn infer_mutable_priority_queue_surface_happy_paths_rfc_0012() {
                 .push(5, "far")
                 .push(1, "near")
             match (pq.peek()) {
-                Some(item) => item.priority + pq.len()
-                None => 0
+                Option.Some(item) => item.priority + pq.len()
+                Option.None => 0
             }
         }"#,
         r#"import collections as c
@@ -1868,8 +1868,8 @@ fn infer_mutable_priority_queue_surface_happy_paths_rfc_0012() {
                 .push(1, "low")
                 .push(9, "high")
             match (pq.pop()) {
-                Some(item) => item.priority
-                None => 0
+                Option.Some(item) => item.priority
+                Option.None => 0
             }
         }"#,
         r#"import collections
@@ -1883,8 +1883,8 @@ fn infer_mutable_priority_queue_surface_happy_paths_rfc_0012() {
                 .push(a, "a")
                 .push(b, "b")
             match (pq.peek()) {
-                Some(item) => item.priority.score
-                None => 0
+                Option.Some(item) => item.priority.score
+                Option.None => 0
             }
         }"#,
     ];
@@ -2005,9 +2005,9 @@ fn infer_opaque_traversal_surface_happy_paths_rfc_0003() {
         r#"fn main() -> Int {
             let xs = (0).unfold(fn(state: Int) =>
                 if (state < 3) {
-                    Some({ value: state + 1, state: state + 1 })
+                    Option.Some({ value: state + 1, state: state + 1 })
                 } else {
-                    None
+                    Option.None
                 }
             ).to_list()
             xs.len() + xs[0]
@@ -2017,9 +2017,9 @@ fn infer_opaque_traversal_surface_happy_paths_rfc_0003() {
         fn main() -> Int {
             let xs = Seed { x: 0 }.unfold(fn(state: Seed) =>
                 if (state.x < 3) {
-                    Some({ value: state.x, state: Seed { x: state.x + 1 } })
+                    Option.Some({ value: state.x, state: Seed { x: state.x + 1 } })
                 } else {
-                    None
+                    Option.None
                 }
             ).to_list()
             xs.len() + xs[0]
@@ -2040,7 +2040,7 @@ fn infer_opaque_traversal_surface_happy_paths_rfc_0003() {
 fn err_seq_static_constructors_are_rejected_rfc_0003() {
     let cases = [
         "fn main() -> Int { Seq.range(0, 3).count() }",
-        "fn main() -> Int { Seq.unfold(0, fn(state: Int) => None).count() }",
+        "fn main() -> Int { Seq.unfold(0, fn(state: Int) => Option.None).count() }",
     ];
 
     for src in cases {
@@ -2152,8 +2152,8 @@ fn match_arm_scope_isolation() {
         "type Maybe<T> = Just(T) | Nothing
          fn foo(o: Maybe<Int>) -> Int {
              let result = match (o) {
-                 Just(v) => v
-                 Nothing => 0
+                 Maybe.Just(v) => v
+                 Maybe.Nothing => 0
              }
              result
          }",
@@ -2459,9 +2459,9 @@ fn exhaustive_option_bool_with_literal_arms() {
     check_ok(
         "fn foo(x: Option<Bool>) -> Int {
              match (x) {
-                 Some(true) => 1
-                 Some(false) => 0
-                 None => 2
+                 Option.Some(true) => 1
+                 Option.Some(false) => 0
+                 Option.None => 2
              }
          }",
     );
@@ -2472,8 +2472,8 @@ fn err_non_exhaustive_option_bool_with_partial_literal_arms() {
     check_err(
         "fn foo(x: Option<Bool>) -> Int {
              match (x) {
-                 Some(true) => 1
-                 None => 2
+                 Option.Some(true) => 1
+                 Option.None => 2
              }
          }",
         "non-exhaustive",
@@ -2485,9 +2485,9 @@ fn err_non_exhaustive_option_int_with_literal_arms() {
     check_err(
         "fn foo(x: Option<Int>) -> Int {
              match (x) {
-                 Some(1) => 1
-                 Some(2) => 2
-                 None => 0
+                 Option.Some(1) => 1
+                 Option.Some(2) => 2
+                 Option.None => 0
              }
          }",
         "non-exhaustive",

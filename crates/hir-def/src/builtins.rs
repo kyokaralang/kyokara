@@ -6,8 +6,8 @@
 //! item tree collection but before type-checking.
 
 use crate::item_tree::{
-    FnItem, FnParam, ItemTree, TraitItem, TraitMethodItem, TraitRefItem, TypeDefKind, TypeItem,
-    TypeItemIdx, TypeParamDef, VariantDef,
+    FnItem, FnParam, ImportKind, ItemTree, TraitItem, TraitMethodItem, TraitRefItem, TypeDefKind,
+    TypeItem, TypeItemIdx, TypeParamDef, VariantDef,
 };
 use crate::name::Name;
 use crate::path::Path;
@@ -16,16 +16,6 @@ use crate::resolver::{
 };
 use crate::type_ref::TypeRef;
 use kyokara_intern::Interner;
-
-/// Temporary reservation until qualified constructors are implemented.
-pub const RESERVED_CORE_CONSTRUCTORS: [&str; 6] =
-    ["Some", "None", "Ok", "Err", "InvalidInt", "InvalidFloat"];
-
-pub fn is_reserved_core_constructor_name(name: Name, interner: &Interner) -> bool {
-    RESERVED_CORE_CONSTRUCTORS
-        .iter()
-        .any(|reserved| name.resolve(interner) == *reserved)
-}
 
 fn core_hidden_type_name(interner: &mut Interner, core: CoreType) -> Name {
     let hidden = match core {
@@ -319,8 +309,8 @@ fn register_option(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut 
         },
     );
 
-    scope.constructors.insert(some_name, (idx, 0));
-    scope.constructors.insert(none_name, (idx, 1));
+    scope.type_variants.insert((idx, some_name), 0);
+    scope.type_variants.insert((idx, none_name), 1);
 }
 
 /// `List<T>` — opaque builtin type (no variants, no pattern matching).
@@ -507,8 +497,8 @@ fn register_result(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut 
         },
     );
 
-    scope.constructors.insert(ok_name, (idx, 0));
-    scope.constructors.insert(err_name, (idx, 1));
+    scope.type_variants.insert((idx, ok_name), 0);
+    scope.type_variants.insert((idx, err_name), 1);
 }
 /// `type ParseError = InvalidInt(String) | InvalidFloat(String)`
 fn register_parse_error(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
@@ -540,8 +530,8 @@ fn register_parse_error(tree: &mut ItemTree, scope: &mut ModuleScope, interner: 
         },
     );
 
-    scope.constructors.insert(invalid_int_name, (idx, 0));
-    scope.constructors.insert(invalid_float_name, (idx, 1));
+    scope.type_variants.insert((idx, invalid_int_name), 0);
+    scope.type_variants.insert((idx, invalid_float_name), 1);
 }
 
 /// Allocate all intrinsic FnItem signatures in the item tree and return
@@ -1308,6 +1298,7 @@ pub fn register_synthetic_modules(
     for &(mod_name_str, fns) in module_fns {
         let mod_name = Name::new(interner, mod_name_str);
         let mut mod_fns = kyokara_stdx::FxHashMap::default();
+        let namespace = scope.namespaces.entry(mod_name).or_default();
 
         for &(intrinsic_name, pub_name) in fns {
             let intr_name = Name::new(interner, intrinsic_name);
@@ -1315,6 +1306,7 @@ pub fn register_synthetic_modules(
 
             if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&intr_name) {
                 mod_fns.insert(pub_fn_name, fn_idx);
+                namespace.functions.insert(pub_fn_name, vec![fn_idx]);
             } else {
                 // Intrinsic not yet allocated (e.g., read_line, read_stdin are new).
                 // Allocate a stub FnItem for it.
@@ -1323,10 +1315,31 @@ pub fn register_synthetic_modules(
                 let idx = tree.functions.alloc(fn_item);
                 scope.intrinsic_fn_lookup.insert(intr_name, idx);
                 mod_fns.insert(pub_fn_name, idx);
+                namespace.functions.insert(pub_fn_name, vec![idx]);
             }
         }
 
         scope.synthetic_modules.insert(mod_name, mod_fns);
+    }
+
+    let collections = Name::new(interner, "collections");
+    let collections_ns = scope.namespaces.entry(collections).or_default();
+    for type_name in [
+        "List",
+        "BitSet",
+        "Map",
+        "Set",
+        "Deque",
+        "MutableList",
+        "MutablePriorityQueue",
+        "MutableMap",
+        "MutableSet",
+        "MutableBitSet",
+    ] {
+        let name = Name::new(interner, type_name);
+        if let Some(&type_idx) = scope.types.get(&name) {
+            collections_ns.types.insert(name, type_idx);
+        }
     }
 }
 
@@ -1341,39 +1354,101 @@ pub fn activate_synthetic_imports(
     interner: &mut Interner,
 ) {
     for import in &tree.imports {
-        if import.path.segments.len() == 1 {
-            let seg = import.path.segments[0];
-            if let Some(mod_fns) = scope.synthetic_modules.get(&seg).cloned() {
-                let visible_name = import.alias.unwrap_or(seg);
-                if visible_name != seg {
-                    scope
-                        .synthetic_modules
-                        .entry(visible_name)
-                        .or_insert(mod_fns);
-
-                    let aliased_static_entries: Vec<_> = scope
-                        .synthetic_module_static_methods
-                        .iter()
-                        .filter_map(|((module_name, type_name, method_name), &fn_idx)| {
-                            if *module_name == seg {
-                                Some((*type_name, *method_name, fn_idx))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-                    for (type_name, method_name, fn_idx) in aliased_static_entries {
+        if import.path.segments.len() != 1 {
+            continue;
+        }
+        let seg = import.path.segments[0];
+        match &import.kind {
+            ImportKind::Namespace { alias } => {
+                if let Some(mod_fns) = scope.synthetic_modules.get(&seg).cloned() {
+                    let visible_name = alias.unwrap_or(seg);
+                    if visible_name != seg {
                         scope
+                            .synthetic_modules
+                            .entry(visible_name)
+                            .or_insert(mod_fns);
+
+                        let aliased_static_entries: Vec<_> = scope
                             .synthetic_module_static_methods
-                            .insert((visible_name, type_name, method_name), fn_idx);
+                            .iter()
+                            .filter_map(|((module_name, type_name, method_name), &fn_idx)| {
+                                if *module_name == seg {
+                                    Some((*type_name, *method_name, fn_idx))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        for (type_name, method_name, fn_idx) in aliased_static_entries {
+                            scope
+                                .synthetic_module_static_methods
+                                .insert((visible_name, type_name, method_name), fn_idx);
+                        }
+                        if let Some(namespace) = scope.namespaces.get(&seg).cloned() {
+                            scope.namespaces.entry(visible_name).or_insert(namespace);
+                        }
+                    }
+                    scope.imported_modules.insert(visible_name);
+                }
+            }
+            ImportKind::Members { members } => {
+                let Some(namespace) = scope.namespaces.get(&seg).cloned() else {
+                    continue;
+                };
+                for member in members {
+                    let visible_name = member.alias.unwrap_or(member.name);
+                    if let Some(fns) = namespace.functions.get(&member.name) {
+                        scope.functions.insert(visible_name, fns.clone());
+                    } else if let Some(&type_idx) = namespace.types.get(&member.name) {
+                        scope.types.insert(visible_name, type_idx);
+                        scope
+                            .imported_type_namespaces
+                            .insert(visible_name, (seg, member.name));
+                    } else if let Some(&effect_idx) = namespace.effects.get(&member.name) {
+                        scope.effects.insert(visible_name, effect_idx);
+                    } else if let Some(&trait_idx) = namespace.traits.get(&member.name) {
+                        scope.traits.insert(visible_name, trait_idx);
                     }
                 }
-                scope.imported_modules.insert(visible_name);
             }
         }
     }
     // Suppress unused-mut warning when there are no imports.
     let _ = interner;
+}
+
+/// Activate `from Type import Variant` bindings after visible types are known.
+pub fn activate_type_member_imports(tree: &ItemTree, scope: &mut ModuleScope) {
+    for import in &tree.imports {
+        let ImportKind::Members { members } = &import.kind else {
+            continue;
+        };
+        let Some(type_idx) = resolve_type_import_target(scope, &import.path) else {
+            continue;
+        };
+        for member in members {
+            let Some(&variant_idx) = scope.type_variants.get(&(type_idx, member.name)) else {
+                continue;
+            };
+            let visible_name = member.alias.unwrap_or(member.name);
+            scope
+                .imported_variants
+                .insert(visible_name, (type_idx, variant_idx));
+            scope.constructors.insert(visible_name, (type_idx, variant_idx));
+        }
+    }
+}
+
+fn resolve_type_import_target(scope: &ModuleScope, path: &Path) -> Option<TypeItemIdx> {
+    if path.is_single() {
+        return scope.types.get(&path.segments[0]).copied();
+    }
+    let namespace_name = path.segments[0];
+    let type_name = *path.segments.last()?;
+    scope
+        .namespaces
+        .get(&namespace_name)
+        .and_then(|namespace| namespace.types.get(&type_name).copied())
 }
 
 /// Create FnItem for a new module intrinsic (e.g., read_line, read_stdin).

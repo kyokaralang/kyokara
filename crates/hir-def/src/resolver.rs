@@ -9,6 +9,7 @@ use kyokara_intern::Interner;
 
 use crate::item_tree::{EffectItemIdx, FnItemIdx, LetItemIdx, TraitItemIdx, TypeItemIdx};
 use crate::name::Name;
+use crate::path::Path;
 use crate::scope::{ScopeDef, ScopeIdx, ScopeTree};
 
 /// Primitive receiver categories (for method dispatch).
@@ -185,6 +186,14 @@ pub struct WellKnownNames {
     pub set: Option<Name>,
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct NamespaceScope {
+    pub functions: FxHashMap<Name, Vec<FnItemIdx>>,
+    pub types: FxHashMap<Name, TypeItemIdx>,
+    pub effects: FxHashMap<Name, EffectItemIdx>,
+    pub traits: FxHashMap<Name, TraitItemIdx>,
+}
+
 /// Module-level scope: items + constructors + imports.
 #[derive(Debug, Default, Clone)]
 pub struct ModuleScope {
@@ -198,10 +207,25 @@ pub struct ModuleScope {
     pub effects: FxHashMap<Name, EffectItemIdx>,
     /// Trait definitions.
     pub traits: FxHashMap<Name, TraitItemIdx>,
-    /// ADT constructors: `VariantName -> (type_idx, variant_idx)`.
+    /// ADT variants owned by a type: `(type_idx, variant_name) -> variant_idx`.
+    pub type_variants: FxHashMap<(TypeItemIdx, Name), usize>,
+    /// Bare constructors currently in scope.
+    ///
+    /// Long term this should contain only explicitly imported variants. It is
+    /// kept as the single bare-constructor lookup table so the rest of the
+    /// pipeline can continue to resolve constructor expressions/patterns
+    /// uniformly while the ownership model is tightened.
     pub constructors: FxHashMap<Name, (TypeItemIdx, usize)>,
+    /// Bare variants explicitly brought into scope via `from Type import Variant`.
+    pub imported_variants: FxHashMap<Name, (TypeItemIdx, usize)>,
     /// Imported names: `local_name -> import_index`.
     pub imports: FxHashMap<Name, usize>,
+    /// Namespace imports from ordinary project modules: `local_name -> exported scope`.
+    pub namespaces: FxHashMap<Name, NamespaceScope>,
+    /// Imported module-member type aliases that retain constructor/static ownership.
+    /// Used for cases like `from collections import Map as M`, allowing `M.new()`
+    /// to resolve through the original `collections.Map` owner.
+    pub imported_type_namespaces: FxHashMap<Name, (Name, Name)>,
     /// Method definitions: `(receiver_identity, method_name)` → candidate `FnItemIdx`s.
     ///
     /// Most entries contain exactly one method. A small fixed arity family such as
@@ -231,6 +255,52 @@ pub struct ModuleScope {
     /// Synthetic modules that have been explicitly imported (e.g., `import io`).
     /// Module-qualified calls only resolve if the module name is in this set.
     pub imported_modules: FxHashSet<Name>,
+}
+
+impl ModuleScope {
+    pub fn namespace_visible(&self, name: Name) -> bool {
+        self.namespaces.contains_key(&name)
+            && (!self.synthetic_modules.contains_key(&name)
+                || self.imported_modules.contains(&name)
+                || self.imports.contains_key(&name))
+    }
+
+    pub fn visible_namespace(&self, name: Name) -> Option<&NamespaceScope> {
+        if self.namespace_visible(name) {
+            self.namespaces.get(&name)
+        } else {
+            None
+        }
+    }
+
+    pub fn resolve_type_path(&self, path: &Path) -> Option<TypeItemIdx> {
+        match path.segments.as_slice() {
+            [] => None,
+            [name] => self.types.get(name).copied(),
+            [namespace, rest @ ..] => {
+                let type_name = *rest.last()?;
+                self.visible_namespace(*namespace)
+                    .and_then(|ns| ns.types.get(&type_name).copied())
+            }
+        }
+    }
+
+    pub fn resolve_constructor_path(&self, path: &Path) -> Option<(TypeItemIdx, usize)> {
+        match path.segments.as_slice() {
+            [] => None,
+            [name] => self.constructors.get(name).copied(),
+            [type_prefix @ .., variant_name] => {
+                let type_path = Path {
+                    segments: type_prefix.to_vec(),
+                };
+                let type_idx = self.resolve_type_path(&type_path)?;
+                self.type_variants
+                    .get(&(type_idx, *variant_name))
+                    .copied()
+                    .map(|variant_idx| (type_idx, variant_idx))
+            }
+        }
+    }
 }
 
 /// The full resolver used during body lowering.
@@ -314,14 +384,17 @@ impl<'a> Resolver<'a> {
             return Some(ResolvedName::Trait(idx));
         }
 
-        // 2b. Synthetic modules (io, math, hash, fs) — only if explicitly imported.
+        // 2b. Imported namespaces and synthetic modules.
+        if self.module.namespace_visible(name) {
+            return Some(ResolvedName::Module(name));
+        }
         if self.module.imported_modules.contains(&name)
             && self.module.synthetic_modules.contains_key(&name)
         {
             return Some(ResolvedName::Module(name));
         }
 
-        // 3. Constructors
+        // 3. Constructors in scope.
         if let Some(&(type_idx, variant_idx)) = self.module.constructors.get(&name) {
             return Some(ResolvedName::Constructor {
                 type_idx,
@@ -374,14 +447,17 @@ impl<'a> Resolver<'a> {
             return Some(ResolvedName::Trait(idx));
         }
 
-        // 2b. Synthetic modules — only if explicitly imported.
+        // 2b. Imported namespaces and synthetic modules.
+        if self.module.namespace_visible(name) {
+            return Some(ResolvedName::Module(name));
+        }
         if self.module.imported_modules.contains(&name)
             && self.module.synthetic_modules.contains_key(&name)
         {
             return Some(ResolvedName::Module(name));
         }
 
-        // 3. Constructors
+        // 3. Constructors in scope.
         if let Some(&(type_idx, variant_idx)) = self.module.constructors.get(&name) {
             return Some(ResolvedName::Constructor {
                 type_idx,

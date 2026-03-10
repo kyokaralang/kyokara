@@ -19,6 +19,21 @@ fn normalize_immutable_collection_constructor_import(source: &str) -> Cow<'_, st
     }
 }
 
+fn with_imports(header: &str, src: &str) -> String {
+    format!("{header}\n{src}")
+}
+
+fn with_option_variants(src: &str) -> String {
+    with_imports("from Option import Some, None", src)
+}
+
+fn with_core_variants(src: &str) -> String {
+    with_imports(
+        "from Option import Some, None\nfrom Result import Ok, Err\nfrom ParseError import InvalidInt, InvalidFloat",
+        src,
+    )
+}
+
 fn check(source: &str, file_name: &str) -> CheckOutput {
     let source = normalize_immutable_collection_constructor_import(source);
     raw_check(source.as_ref(), file_name)
@@ -114,7 +129,7 @@ fn check_char_code_surface_typechecks() {
 #[test]
 fn check_char_decimal_digit_surface_typechecks() {
     let output = check(
-        r#"fn main() -> Int {
+        &with_option_variants(r#"fn main() -> Int {
     let a = if ('7'.is_decimal_digit()) { 1 } else { 0 }
     let b = match ('7'.to_decimal_digit()) {
         Some(n) => n
@@ -125,7 +140,7 @@ fn check_char_decimal_digit_surface_typechecks() {
         None => 0
     }
     a + b + c
-}"#,
+}"#),
         "test.ky",
     );
     assert!(
@@ -1340,7 +1355,7 @@ fn patch_missing_match_arm() {
     let src = "type Color = Red | Green | Blue
         fn describe(c: Color) -> Int {
             match (c) {
-                Red => 1
+                Color.Red => 1
             }
         }";
     let output = check(src, "test.ky");
@@ -1352,12 +1367,12 @@ fn patch_missing_match_arm() {
     assert!(!diag.fixes.is_empty(), "expected non-empty fixes for E0009");
     let fix = &diag.fixes[0];
     assert!(
-        fix.replacement.contains("Green"),
+        fix.replacement.contains("Color.Green"),
         "fix should mention Green: {}",
         fix.replacement
     );
     assert!(
-        fix.replacement.contains("Blue"),
+        fix.replacement.contains("Color.Blue"),
         "fix should mention Blue: {}",
         fix.replacement
     );
@@ -1672,7 +1687,7 @@ fn check_project_imported_and_local_arity_distinct_family_is_allowed() {
     let output = check_project_from_files(&[
         (
             "main.ky",
-            "import util\nfn foo() -> Int { 1 }\nfn main() -> Int { foo() + foo(2) }\n",
+            "from util import foo\nfn foo() -> Int { 1 }\nfn main() -> Int { foo() + foo(2) }\n",
         ),
         ("util.ky", "pub fn foo(x: Int) -> Int { x + 1 }\n"),
     ]);
@@ -1688,7 +1703,7 @@ fn check_project_import_overlap_same_shape_is_rejected() {
     let output = check_project_from_files(&[
         (
             "main.ky",
-            "import util\nfn foo(x: Int) -> Int { x }\nfn main() -> Int { 0 }\n",
+            "from util import foo\nfn foo(x: Int) -> Int { x }\nfn main() -> Int { 0 }\n",
         ),
         ("util.ky", "pub fn foo(x: Int) -> Int { x + 1 }\n"),
     ]);
@@ -1707,7 +1722,7 @@ fn check_project_imported_overloaded_function_family_cannot_be_used_as_value() {
     let output = check_project_from_files(&[
         (
             "main.ky",
-            "import util\nfn main() -> Int {\n  let f = foo\n  0\n}\n",
+            "from util import foo\nfn main() -> Int {\n  let f = foo\n  0\n}\n",
         ),
         (
             "util.ky",
@@ -1919,7 +1934,7 @@ fn check_project_with_options_from_files(
 #[test]
 fn check_project_imported_function_can_read_its_top_level_let() {
     let output = check_project_from_files(&[
-        ("main.ky", "import util\nfn main() -> Int { util() }\n"),
+        ("main.ky", "from util import util\nfn main() -> Int { util() }\n"),
         ("util.ky", "let off = 1\npub fn util() -> Int { off }\n"),
     ]);
     assert!(
@@ -1933,7 +1948,7 @@ fn check_project_imported_function_can_read_its_top_level_let() {
 fn check_project_with_options_emits_typed_ast_for_multiple_files() {
     let output = check_project_with_options_from_files(
         &[
-            ("main.ky", "import math\nfn main() -> Int { add(1, 2) }\n"),
+            ("main.ky", "from math import add\nfn main() -> Int { add(1, 2) }\n"),
             ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
         ],
         &CheckOptions {
@@ -2307,7 +2322,7 @@ fn project_symbol_id_uniqueness() {
 #[test]
 fn project_symbol_graph_duplicate_fn_defs_use_unique_ids() {
     let output = check_project_from_files(&[
-        ("main.ky", "import math\nfn main() -> Int { add(1, 2) }\n"),
+        ("main.ky", "from math import add\nfn main() -> Int { add(1, 2) }\n"),
         (
             "math.ky",
             "pub fn add(x: Int, y: Int) -> Int { x + y }\npub fn add(x: Int, y: Int) -> Int { x - y }\n",
@@ -2330,7 +2345,7 @@ fn project_symbol_graph_duplicate_fn_defs_use_unique_ids() {
 #[test]
 fn project_call_edges_use_qualified_ids() {
     let output = check_project_from_files(&[
-        ("main.ky", "import math\nfn caller() -> Int { add(1, 2) }"),
+        ("main.ky", "from math import add\nfn caller() -> Int { add(1, 2) }"),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
     ]);
     let caller = output
@@ -2351,7 +2366,7 @@ fn project_symbol_graph_repeated_import_calls_are_deduped() {
     let output = check_project_from_files(&[
         (
             "main.ky",
-            "import math\nfn caller() -> Int {\n  add(1, 2)\n  add(3, 4)\n}\n",
+            "from math import add\nfn caller() -> Int {\n  add(1, 2)\n  add(3, 4)\n}\n",
         ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
     ]);
@@ -2572,7 +2587,7 @@ fn refactor_project_status_failed_when_body_lowering_diagnostics_exist() {
     let (_dir, main_path) = write_project(&[
         (
             "main.ky",
-            "import math\nfn main() -> Int { add(1, 2) + missing }\n",
+            "from math import add\nfn main() -> Int { add(1, 2) + missing }\n",
         ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
     ]);
@@ -2722,7 +2737,7 @@ fn transaction_verification_failure_has_structured_spans() {
 #[test]
 fn refactor_project_verified_json_structure() {
     let (_dir, main_path) = write_project(&[
-        ("main.ky", "import math\nfn caller() -> Int { add(1, 2) }"),
+        ("main.ky", "from math import add\nfn caller() -> Int { add(1, 2) }"),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
     ]);
     let action = kyokara_refactor::RefactorAction::RenameSymbol {
@@ -2790,11 +2805,11 @@ fn api_refactor_project_quickfix_with_target_file() {
     let (_dir, main_path) = write_project(&[
         (
             "main.ky",
-            "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        X => 1\n    }\n}",
+            "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        A.X => 1\n    }\n}",
         ),
         (
             "math.ky",
-            "pub type B = P | Q\npub fn check_b(b: B) -> Int {\n    match (b) {\n        P => 1\n    }\n}",
+            "pub type B = P | Q\npub fn check_b(b: B) -> Int {\n    match (b) {\n        B.P => 1\n    }\n}",
         ),
     ]);
 
@@ -2833,7 +2848,7 @@ fn api_refactor_project_quickfix_wrong_target_file_gives_error() {
     let (_dir, main_path) = write_project(&[
         (
             "main.ky",
-            "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        X => 1\n    }\n}",
+            "type A = X | Y\nfn check_a(a: A) -> Int {\n    match (a) {\n        A.X => 1\n    }\n}",
         ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
     ]);
@@ -2868,7 +2883,7 @@ fn api_refactor_project_io_error_surfaces_in_dto() {
     // A valid project refactor should succeed — regression test that
     // filesystem operations work and don't silently fail.
     let (_dir, main_path) = write_project(&[
-        ("main.ky", "import math\nfn caller() -> Int { add(1, 2) }"),
+        ("main.ky", "from math import add\nfn caller() -> Int { add(1, 2) }"),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }"),
     ]);
     let action = kyokara_refactor::RefactorAction::RenameSymbol {
@@ -2952,7 +2967,7 @@ fn check_project_aliased_import_resolves_by_path_not_alias() {
     let output = check_project_from_files(&[
         (
             "main.ky",
-            "import math as M\nfn main() -> Int { add(1, 2) }\n",
+            "import math as M\nfn main() -> Int { M.add(1, 2) }\n",
         ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
     ]);
@@ -2985,7 +3000,7 @@ fn check_project_aliased_synthetic_collections_import_activates_alias() {
 #[test]
 fn check_project_reports_ambiguous_import_last_segment() {
     let output = check_project_from_files(&[
-        ("main.ky", "import math\nfn main() -> Int { value() }\n"),
+        ("main.ky", "import math\nfn main() -> Int { math.value() }\n"),
         ("a/math.ky", "pub fn value() -> Int { 1 }\n"),
         ("b/math.ky", "pub fn value() -> Int { 2 }\n"),
     ]);
@@ -3005,7 +3020,7 @@ fn check_project_reports_ambiguous_import_last_segment() {
 fn check_project_qualified_import_resolves_duplicate_leaf_modules() {
     // `import a.math` should resolve exactly `a/math.ky` even when `b/math.ky` exists.
     let output = check_project_from_files(&[
-        ("main.ky", "import a.math\nfn main() -> Int { value() }\n"),
+        ("main.ky", "import a.math\nfn main() -> Int { math.value() }\n"),
         ("a/math.ky", "pub fn value() -> Int { 1 }\n"),
         ("b/math.ky", "pub fn value() -> Int { 2 }\n"),
     ]);
@@ -3025,7 +3040,7 @@ fn check_project_qualified_import_resolves_duplicate_leaf_modules() {
 fn check_project_qualified_import_missing_path_does_not_match_by_leaf() {
     // `import c.math` should not fall back to any `*.math` leaf modules.
     let output = check_project_from_files(&[
-        ("main.ky", "import c.math\nfn main() -> Int { value() }\n"),
+        ("main.ky", "import c.math\nfn main() -> Int { math.value() }\n"),
         ("a/math.ky", "pub fn value() -> Int { 1 }\n"),
         ("b/math.ky", "pub fn value() -> Int { 2 }\n"),
     ]);
@@ -3071,7 +3086,7 @@ fn check_project_lowering_diagnostic_has_real_file_path() {
 #[test]
 fn constructor_pattern_binding_is_in_scope() {
     // `Some(x) => x` should not produce "unresolved name x".
-    let src = "fn main() -> Int { match (Some(1)) { Some(x) => x, None => 0 } }";
+    let src = &with_option_variants("fn main() -> Int { match (Some(1)) { Some(x) => x, None => 0 } }");
     let output = check(src, "test.ky");
     let unresolved: Vec<_> = output
         .diagnostics
@@ -3088,7 +3103,9 @@ fn constructor_pattern_binding_is_in_scope() {
 #[test]
 fn constructor_pattern_arity_mismatch_produces_diagnostic() {
     // `Some(_, _)` has 2 args but Some expects 1.
-    let src = "fn main() -> Int { match (Some(1)) { Some(_, _) => 0, None => 1 } }";
+    let src = &with_option_variants(
+        "fn main() -> Int { match (Some(1)) { Some(_, _) => 0, None => 1 } }",
+    );
     let output = check(src, "test.ky");
     let arity_errors: Vec<_> = output
         .diagnostics
@@ -3109,7 +3126,9 @@ fn constructor_pattern_arity_mismatch_produces_diagnostic() {
 #[test]
 fn nested_constructor_pattern_binding_is_in_scope() {
     // `Some(Some(x)) => x` — nested constructor bindings should also work.
-    let src = "fn main() -> Int { match (Some(Some(1))) { Some(Some(x)) => x, _ => 0 } }";
+    let src = &with_option_variants(
+        "fn main() -> Int { match (Some(Some(1))) { Some(Some(x)) => x, _ => 0 } }",
+    );
     let output = check(src, "test.ky");
     let unresolved: Vec<_> = output
         .diagnostics
@@ -3132,27 +3151,27 @@ type Packet = Num(Int) | Lst(List<Packet>)
 
 fn cmp(a: Packet, b: Packet) -> Int {
   match (a) {
-    Num(av) => match (b) {
-      Num(bv) => av - bv,
-      Lst(_bs) => -1,
+    Packet.Num(av) => match (b) {
+      Packet.Num(bv) => av - bv,
+      Packet.Lst(_bs) => -1,
     },
-    Lst(items) => if (items.len() == 0) {
+    Packet.Lst(items) => if (items.len() == 0) {
       match (b) {
-        Num(_bv) => 1,
-        Lst(other_items) => if (other_items.len() == 0) { 0 } else { -1 },
+        Packet.Num(_bv) => 1,
+        Packet.Lst(other_items) => if (other_items.len() == 0) { 0 } else { -1 },
       }
     } else {
       match (items[0]) {
-        Num(head) => head,
-        Lst(inner) => inner.len(),
+        Packet.Num(head) => head,
+        Packet.Lst(inner) => inner.len(),
       }
     },
   }
 }
 
 fn main() -> Int {
-  let nested = Lst(collections.List.new().push(Lst(collections.List.new().push(Num(7)))))
-  cmp(nested, Num(0))
+  let nested = Packet.Lst(collections.List.new().push(Packet.Lst(collections.List.new().push(Packet.Num(7)))))
+  cmp(nested, Packet.Num(0))
 }
 "#;
     assert_check_no_diagnostics(src, "recursive ADT nested packet matches");
@@ -3248,7 +3267,9 @@ fn unknown_constructor_pattern_diagnostic_uses_pattern_span() {
 
 #[test]
 fn constructor_pattern_arity_mismatch_diagnostic_uses_pattern_span() {
-    let src = "fn main() -> Int { match (Some(1)) { Some(_, _) => 0, None => 1 } }";
+    let src = &with_option_variants(
+        "fn main() -> Int { match (Some(1)) { Some(_, _) => 0, None => 1 } }",
+    );
     let output = check(src, "test.ky");
     let diag = output
         .diagnostics
@@ -3641,7 +3662,7 @@ fn refined_type_produces_unsupported_diagnostic() {
 #[test]
 fn let_constructor_pattern_bindings_in_scope() {
     // `let Some(x) = Some(1)` — x should be in scope after the let binding.
-    let src = "fn main() -> Int { let Some(x) = Some(1)\n x }";
+    let src = "from Option import Some\nfn main() -> Int { let Some(x) = Some(1)\n x }";
     let output = check(src, "test.ky");
     let unresolved: Vec<_> = output
         .diagnostics
@@ -3659,7 +3680,7 @@ fn let_constructor_pattern_bindings_in_scope() {
 fn project_import_collision_produces_diagnostic() {
     // Two modules export `pub fn foo()` — importing both should produce a collision diagnostic.
     let output = check_project_from_files(&[
-        ("main.ky", "import a\nimport b\nfn main() -> Int { foo() }"),
+        ("main.ky", "from a import foo\nfrom b import foo\nfn main() -> Int { foo() }"),
         ("a.ky", "pub fn foo() -> Int { 1 }"),
         ("b.ky", "pub fn foo() -> Int { 2 }"),
     ]);
@@ -3687,7 +3708,7 @@ fn project_import_collision_produces_diagnostic() {
 #[test]
 fn project_import_collision_does_not_misattribute_call_edge_to_specific_module() {
     let output = check_project_from_files(&[
-        ("main.ky", "import a\nimport b\nfn main() -> Int { foo() }"),
+        ("main.ky", "from a import foo\nfrom b import foo\nfn main() -> Int { foo() }"),
         ("a.ky", "pub fn foo() -> Int { 1 }"),
         ("b.ky", "pub fn foo() -> Int { 2 }"),
     ]);
@@ -4354,7 +4375,7 @@ fn project_symbol_graph_pre_post_shadow_with_imported_function() {
     let output = check_project_from_files(&[
         (
             "main.ky",
-            "import math\nfn caller() -> Int {\n  add(1, 2)\n  let add = fn(x: Int, y: Int) => x\n  add(1, 2)\n}\n",
+            "from math import add\nfn caller() -> Int {\n  add(1, 2)\n  let add = fn(x: Int, y: Int) => x\n  add(1, 2)\n}\n",
         ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
     ]);
@@ -4383,7 +4404,7 @@ fn project_symbol_graph_conflicting_import_keeps_local_call_edge() {
     let output = check_project_from_files(&[
         (
             "main.ky",
-            "import math\nfn add(x: Int, y: Int) -> Int { x - y }\nfn caller() -> Int { add(5, 3) }\n",
+            "from math import add\nfn add(x: Int, y: Int) -> Int { x - y }\nfn caller() -> Int { add(5, 3) }\n",
         ),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
     ]);
@@ -4460,7 +4481,7 @@ fn symbol_graph_call_edge_invariants_project_import_shadow_matrix() {
     let output = check_project_from_files(&[
         (
             "main.ky",
-            "import math\n\
+            "from math import add\n\
              fn imported_shadow() -> Int {\n\
                add(1, 2)\n\
                let add = fn(x, y) => x\n\
@@ -4543,7 +4564,7 @@ fn symbol_graph_call_edges_stable_under_local_only_edits_project_mode() {
     let (dir_a, main_a) = write_project(&[
         (
             "main.ky",
-            "import math\n\
+            "from math import add\n\
              fn main() -> Int {\n\
                let local = fn() => 0\n\
                local()\n\
@@ -4557,7 +4578,7 @@ fn symbol_graph_call_edges_stable_under_local_only_edits_project_mode() {
     let (dir_b, main_b) = write_project(&[
         (
             "main.ky",
-            "import math\n\
+            "from math import add\n\
              fn main() -> Int {\n\
                let renamed_local = fn() => 0\n\
                renamed_local()\n\
@@ -4697,7 +4718,7 @@ fn project_metamorphic_local_alpha_rename_preserves_edges_and_diagnostics() {
     let original = [
         (
             "main.ky",
-            "import math\n\
+            "from math import add\n\
              fn main() -> Int {\n\
                let local = fn() => 0\n\
                local()\n\
@@ -4709,7 +4730,7 @@ fn project_metamorphic_local_alpha_rename_preserves_edges_and_diagnostics() {
     let transformed = [
         (
             "main.ky",
-            "import math\n\
+            "from math import add\n\
              fn main() -> Int {\n\
                let renamed_local = fn() => 0\n\
                renamed_local()\n\
@@ -4726,7 +4747,7 @@ fn project_metamorphic_local_alpha_rename_preserves_edges_in_entry_and_imported_
     let original = [
         (
             "main.ky",
-            "import math\n\
+            "from math import inc\n\
              fn local_add(x: Int) -> Int {\n\
                let tmp = x + 1\n\
                tmp\n\
@@ -4747,7 +4768,7 @@ fn project_metamorphic_local_alpha_rename_preserves_edges_in_entry_and_imported_
     let transformed = [
         (
             "main.ky",
-            "import math\n\
+            "from math import inc\n\
              fn local_add(x: Int) -> Int {\n\
                let renamed_tmp = x + 1\n\
                renamed_tmp\n\
@@ -4771,13 +4792,13 @@ fn project_metamorphic_local_alpha_rename_preserves_edges_in_entry_and_imported_
 #[test]
 fn project_metamorphic_nested_block_shadow_preserves_outer_import_attribution() {
     let original = [
-        ("main.ky", "import math\nfn main() -> Int { add(1, 2) }\n"),
+        ("main.ky", "from math import add\nfn main() -> Int { add(1, 2) }\n"),
         ("math.ky", "pub fn add(x: Int, y: Int) -> Int { x + y }\n"),
     ];
     let transformed = [
         (
             "main.ky",
-            "import math\n\
+            "from math import add\n\
              fn main() -> Int {\n\
                {\n\
                  let add = fn(x, y) => x\n\
@@ -4796,7 +4817,7 @@ fn project_metamorphic_lambda_param_rename_preserves_edges_and_diagnostics() {
     let original = [
         (
             "main.ky",
-            "import math\n\
+            "from math import add\n\
              fn main() -> Int {\n\
                add(1, 2)\n\
                let g = fn(add) => add(1, 2)\n\
@@ -4808,7 +4829,7 @@ fn project_metamorphic_lambda_param_rename_preserves_edges_and_diagnostics() {
     let transformed = [
         (
             "main.ky",
-            "import math\n\
+            "from math import add\n\
              fn main() -> Int {\n\
                add(1, 2)\n\
                let g = fn(callback) => callback(1, 2)\n\
@@ -5073,7 +5094,7 @@ fn check_seq_any_all_find_canonical_surface_has_no_diagnostics() {
 #[test]
 fn check_seq_scan_unfold_int_pow_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
-        r#"fn main() -> Int {
+        &with_option_variants(r#"fn main() -> Int {
             let a = (1..<4).scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
             let b = (0).unfold(fn(state: Int) =>
                 if (state < 3) {
@@ -5083,7 +5104,7 @@ fn check_seq_scan_unfold_int_pow_canonical_surface_has_no_diagnostics() {
                 }
             ).to_list()
             a.len() + b.len() + 2.pow(10)
-        }"#,
+        }"#),
         "seq scan/unfold + int.pow canonical surface",
     );
 }
@@ -5091,7 +5112,7 @@ fn check_seq_scan_unfold_int_pow_canonical_surface_has_no_diagnostics() {
 #[test]
 fn check_seq_unfold_accepts_named_record_alias_payload() {
     assert_check_no_diagnostics(
-        r#"type PickStep = { value: Int, state: Int }
+        &with_option_variants(r#"type PickStep = { value: Int, state: Int }
 
         fn main() -> Int {
             (0).unfold(fn(state: Int) =>
@@ -5101,7 +5122,7 @@ fn check_seq_unfold_accepts_named_record_alias_payload() {
                     None
                 }
             ).count()
-        }"#,
+        }"#),
         "seq unfold accepts named record payload alias",
     );
 }
@@ -5314,7 +5335,7 @@ fn main() -> String { h.md5("abc") }"#,
 #[test]
 fn check_option_result_combinator_parity_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
-        r#"fn main() -> Int {
+        &with_core_variants(r#"fn main() -> Int {
             let o0 = collections.List.new().head().unwrap_or(1)
             let o1 = collections.List.new().push(41).head().map_or(0, fn(n: Int) => n + 1)
             let o2 = collections.List.new().push(41).head().map(fn(n: Int) => n + 1).unwrap_or(0)
@@ -5326,7 +5347,7 @@ fn check_option_result_combinator_parity_canonical_surface_has_no_diagnostics() 
                 Err(e) => e
             }
             o0 + o1 + o2 + o3 + r1 + r2 + r3
-        }"#,
+        }"#),
         "option/result combinator parity canonical surface",
     );
 }
@@ -6008,7 +6029,7 @@ fn check_mutable_set_derived_hash_eq_element_has_no_set_diagnostic() {
 #[test]
 fn check_collections_mutable_priority_queue_constructor_surface_has_no_diagnostics_rfc_0012() {
     assert_check_no_diagnostics(
-        r#"import collections
+        &with_option_variants(r#"import collections
 
 fn main() -> Int {
     let pq: MutablePriorityQueue<Int, String> = collections.MutablePriorityQueue.new_min()
@@ -6018,7 +6039,7 @@ fn main() -> Int {
         Some(item) => item.priority + pq.len()
         None => 0
     }
-}"#,
+}"#),
         "collections.MutablePriorityQueue constructor canonical surface",
     );
 }
@@ -6027,7 +6048,7 @@ fn main() -> Int {
 fn check_collections_mutable_priority_queue_alias_constructor_surface_has_no_diagnostics_rfc_0012()
 {
     assert_check_no_diagnostics(
-        r#"import collections as c
+        &with_option_variants(r#"import collections as c
 
 fn main() -> Int {
     let pq: MutablePriorityQueue<Int, String> = c.MutablePriorityQueue.new_max()
@@ -6037,7 +6058,7 @@ fn main() -> Int {
         Some(item) => item.priority
         None => 0
     }
-}"#,
+}"#),
         "collections.MutablePriorityQueue alias constructor canonical surface",
     );
 }
@@ -6219,7 +6240,7 @@ fn main() -> Unit {
 #[test]
 fn check_opaque_traversal_surface_has_no_diagnostics_rfc_0003() {
     assert_check_no_diagnostics(
-        r#"type Seed = { x: Int }
+        &with_option_variants(r#"type Seed = { x: Int }
 
 fn main() -> Int {
     let a = (0..<5).count()
@@ -6238,7 +6259,7 @@ fn main() -> Int {
         }
     ).count()
     a + b + c
-}"#,
+}"#),
         "opaque traversal canonical surface",
     );
 }
@@ -6313,7 +6334,7 @@ fn main() -> Int {
 #[test]
 fn check_deque_and_list_index_update_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
-        r#"import collections
+        &with_option_variants(r#"import collections
 
 fn main() -> Int {
             let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
@@ -6325,7 +6346,7 @@ fn main() -> Int {
             let xs = collections.List.new().push(10).push(20).set(1, 99)
             let ys = xs.update(0, fn(n: Int) => n + 1)
             ys.get(0).unwrap_or(0) + ys.get(1).unwrap_or(0) + q1.len()
-        }"#,
+        }"#),
         "deque + list set/update canonical surface",
     );
 }
@@ -6333,7 +6354,7 @@ fn main() -> Int {
 #[test]
 fn check_deque_pop_back_canonical_surface_has_no_diagnostics() {
     assert_check_no_diagnostics(
-        r#"import collections
+        &with_option_variants(r#"import collections
 
 fn main() -> Int {
     let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
@@ -6344,7 +6365,7 @@ fn main() -> Int {
         }
         None => -1
     }
-}"#,
+}"#),
         "deque pop_back canonical surface",
     );
 }

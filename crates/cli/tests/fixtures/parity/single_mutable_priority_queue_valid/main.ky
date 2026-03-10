@@ -1,4 +1,5 @@
 import collections
+from Option import Some, None
 
 fn main() -> Int {
   let pq: MutablePriorityQueue<Int, Int> = collections.MutablePriorityQueue.new_min()

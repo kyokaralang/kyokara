@@ -116,14 +116,54 @@ impl ImportDecl {
         support::child(&self.syntax)
     }
 
+    pub fn is_from_import(&self) -> bool {
+        self.syntax
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .any(|tok| tok.kind() == SyntaxKind::FromKw)
+    }
+
     pub fn alias(&self) -> Option<ImportAlias> {
         support::child(&self.syntax)
+    }
+
+    pub fn member_list(&self) -> Option<ImportMemberList> {
+        support::child(&self.syntax)
+    }
+
+    pub fn members(&self) -> Vec<ImportMember> {
+        self.member_list()
+            .map(|list| list.members().collect())
+            .unwrap_or_default()
     }
 }
 
 define_ast_node!(ImportAlias, ImportAlias);
 
 impl HasName for ImportAlias {}
+
+define_ast_node!(ImportMemberList, ImportMemberList);
+
+impl ImportMemberList {
+    pub fn members(&self) -> impl Iterator<Item = ImportMember> + '_ {
+        support::children(&self.syntax)
+    }
+}
+
+define_ast_node!(ImportMember, ImportMember);
+
+impl ImportMember {
+    pub fn name_token(&self) -> Option<SyntaxToken> {
+        self.syntax
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .find(|tok| tok.kind().is_identifier_token())
+    }
+
+    pub fn alias(&self) -> Option<ImportAlias> {
+        support::child(&self.syntax)
+    }
+}
 
 define_ast_node!(Path, Path);
 

@@ -44,6 +44,8 @@ pub enum SyntaxKind {
     // ── Keywords ─────────────────────────────────────────────────────
     /// Contextual `module` token.
     ModuleKw,
+    /// `from`
+    FromKw,
     /// `import`
     ImportKw,
     /// `as`
@@ -196,6 +198,10 @@ pub enum SyntaxKind {
     SourceFile,
     /// `import Foo.Bar`
     ImportDecl,
+    /// `Name ('as' Alias)? (',' ...)*` inside `from` imports.
+    ImportMemberList,
+    /// Single imported member inside `from` import.
+    ImportMember,
     /// Dotted path (`Foo.Bar.baz`).
     Path,
     /// `as` rename in imports.
@@ -394,7 +400,8 @@ impl SyntaxKind {
     pub fn is_keyword(self) -> bool {
         matches!(
             self,
-            Self::ImportKw
+            Self::FromKw
+                | Self::ImportKw
                 | Self::AsKw
                 | Self::TypeKw
                 | Self::TraitKw
@@ -432,6 +439,7 @@ impl SyntaxKind {
     /// Returns the source text for keyword tokens.
     pub fn keyword_text(self) -> Option<&'static str> {
         match self {
+            Self::FromKw => Some("from"),
             Self::ImportKw => Some("import"),
             Self::AsKw => Some("as"),
             Self::TypeKw => Some("type"),
@@ -536,6 +544,7 @@ impl SyntaxKind {
     pub fn from_keyword(text: &str) -> Option<SyntaxKind> {
         match text {
             "module" => Some(Self::ModuleKw),
+            "from" => Some(Self::FromKw),
             "import" => Some(Self::ImportKw),
             "as" => Some(Self::AsKw),
             "type" => Some(Self::TypeKw),
@@ -584,6 +593,7 @@ mod tests {
     #[test]
     fn lexed_keyword_text_roundtrips_with_from_keyword() {
         let keywords = [
+            SyntaxKind::FromKw,
             SyntaxKind::ImportKw,
             SyntaxKind::AsKw,
             SyntaxKind::TypeKw,

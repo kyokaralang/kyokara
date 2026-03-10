@@ -1,3 +1,5 @@
+from Option import Some, None
+
 fn main() -> Int {
   let Some(_) = None
   0

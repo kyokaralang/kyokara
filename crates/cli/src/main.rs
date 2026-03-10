@@ -767,7 +767,7 @@ mod tests {
 
         let main_path = dir.join("main.ky");
         let nested_mod = dir.join("a").join("b.ky");
-        std::fs::write(&main_path, "import a.b\nfn main() -> Int { foo() }").unwrap();
+        std::fs::write(&main_path, "import a.b\nfn main() -> Int { b.foo() }").unwrap();
         std::fs::write(&nested_mod, "pub fn foo() -> Int { 1 }").unwrap();
 
         assert!(

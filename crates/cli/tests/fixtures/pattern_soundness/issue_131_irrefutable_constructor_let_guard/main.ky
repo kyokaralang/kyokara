@@ -1,5 +1,5 @@
 type Pair = Pair(Int, Int)
 fn main() -> Int {
-  let Pair(a, b) = Pair(1, 2)
+  let Pair.Pair(a, b) = Pair.Pair(1, 2)
   a + b
 }

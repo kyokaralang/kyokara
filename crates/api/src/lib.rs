@@ -21,6 +21,9 @@ use kyokara_hir_ty::TypeCheckResult;
 use kyokara_intern::Interner;
 use kyokara_span::TextRange;
 use kyokara_stdx::FxHashMap;
+use kyokara_syntax::SyntaxNode;
+use kyokara_syntax::ast::AstNode;
+use kyokara_syntax::ast::nodes::{MatchExpr as SyntaxMatchExpr, Pat as SyntaxPat};
 use serde::Serialize;
 
 // ── Top-level output ────────────────────────────────────────────────
@@ -269,14 +272,17 @@ pub fn check_project_with_options(
 
     // Type-check diagnostics from all modules.
     for (mod_path, tc) in &result.type_checks {
-        let file_name = result
+        let mod_info = result
             .module_graph
             .get(mod_path)
-            .and_then(|i| result.file_map.path(i.file_id))
+            .expect("module graph entry exists while iterating type_checks");
+        let file_name = result
+            .file_map
+            .path(mod_info.file_id)
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| format!("<unresolved:{:?}>", mod_path));
-
-        let item_tree = result.module_graph.get(mod_path).map(|i| &i.item_tree);
+        let root = SyntaxNode::new_root(kyokara_syntax::parse(&mod_info.source).green);
+        let item_tree = &mod_info.item_tree;
 
         // Body lowering diagnostics (unresolved names, duplicates).
         for diag in &tc.body_lowering_diagnostics {
@@ -285,11 +291,14 @@ pub fn check_project_with_options(
         }
 
         for (data, span) in &tc.raw_diagnostics {
-            if let Some(tree) = item_tree {
-                diagnostics.push(convert_ty_diagnostic(
-                    data, span, interner, tree, &file_name,
-                ));
-            }
+            diagnostics.push(convert_ty_diagnostic(
+                data,
+                span,
+                interner,
+                item_tree,
+                &file_name,
+                Some(&root),
+            ));
         }
     }
 
@@ -523,6 +532,7 @@ fn convert_result(result: &CheckResult, file_name: &str, options: &CheckOptions)
     }
 
     // Type-checker raw diagnostics.
+    let root = SyntaxNode::new_root(result.green.clone());
     for (data, span) in &result.type_check.raw_diagnostics {
         diagnostics.push(convert_ty_diagnostic(
             data,
@@ -530,6 +540,7 @@ fn convert_result(result: &CheckResult, file_name: &str, options: &CheckOptions)
             interner,
             &result.item_tree,
             file_name,
+            Some(&root),
         ));
     }
 
@@ -588,6 +599,7 @@ fn convert_ty_diagnostic(
     interner: &Interner,
     item_tree: &kyokara_hir::ItemTree,
     file_name: &str,
+    root: Option<&SyntaxNode>,
 ) -> DiagnosticDto {
     let expected_type = data
         .expected_ty()
@@ -610,9 +622,12 @@ fn convert_ty_diagnostic(
 
     match data {
         TyDiagnosticData::MissingMatchArms { missing } => {
+            let variant_prefix = root
+                .and_then(|root| infer_match_variant_prefix(root, span.range))
+                .unwrap_or_default();
             let replacement = missing
                 .iter()
-                .map(|v| format!("| {v} -> _"))
+                .map(|v| format!("| {variant_prefix}{v} -> _"))
                 .collect::<Vec<_>>()
                 .join("\n");
             fixes.push(FixDto {
@@ -649,6 +664,36 @@ fn convert_ty_diagnostic(
         actual_type,
         fixes,
     }
+}
+
+fn infer_match_variant_prefix(root: &SyntaxNode, diag_range: TextRange) -> Option<String> {
+    let match_expr = root
+        .descendants()
+        .find_map(|n| SyntaxMatchExpr::cast(n.clone()).filter(|_| n.text_range() == diag_range))
+        .or_else(|| {
+            root.descendants().find_map(|n| {
+                SyntaxMatchExpr::cast(n.clone()).filter(|_| {
+                    let r = n.text_range();
+                    r.start() <= diag_range.start() && r.end() >= diag_range.end()
+                })
+            })
+        })?;
+    let arm_list = match_expr.arm_list()?;
+    for arm in arm_list.arms() {
+        let Some(pat) = arm.pat() else {
+            continue;
+        };
+        let path = match pat {
+            SyntaxPat::Constructor(pat) => pat.path(),
+            SyntaxPat::Ident(pat) => pat.path(),
+            _ => None,
+        }?;
+        let segments: Vec<String> = path.segments().map(|seg| seg.text().to_string()).collect();
+        if segments.len() >= 2 {
+            return Some(format!("{}.", segments[..segments.len() - 1].join(".")));
+        }
+    }
+    None
 }
 
 fn convert_lowering_diagnostic(

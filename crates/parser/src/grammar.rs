@@ -25,7 +25,7 @@ pub(crate) fn source_file(p: &mut Parser<'_>) {
     }
 
     // Import declarations.
-    while p.at(ImportKw) {
+    while p.at(ImportKw) || p.at(FromKw) {
         items::import_decl(p);
     }
 

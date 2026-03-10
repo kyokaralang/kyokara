@@ -90,8 +90,8 @@ fn pattern_exhaustiveness_matrix() {
             name: "bit_all_variants_exhaustive",
             prelude: "type Bit = Zero | One",
             match_ty: "Bit",
-            arms: "    Zero => 0\n    One => 1",
-            scrutinees: &["Zero", "One"],
+            arms: "    Bit.Zero => 0\n    Bit.One => 1",
+            scrutinees: &["Bit.Zero", "Bit.One"],
             expected_runtime_exhaustive: true,
             mode: SoundnessMode::Strict,
             issue: None,
@@ -100,8 +100,8 @@ fn pattern_exhaustiveness_matrix() {
             name: "bit_missing_variant_non_exhaustive",
             prelude: "type Bit = Zero | One",
             match_ty: "Bit",
-            arms: "    Zero => 0",
-            scrutinees: &["Zero", "One"],
+            arms: "    Bit.Zero => 0",
+            scrutinees: &["Bit.Zero", "Bit.One"],
             expected_runtime_exhaustive: false,
             mode: SoundnessMode::Strict,
             issue: None,
@@ -110,8 +110,8 @@ fn pattern_exhaustiveness_matrix() {
             name: "opt_nested_missing_leaf_non_exhaustive",
             prelude: "type AB = A | B\ntype Opt = Some(AB) | None",
             match_ty: "Opt",
-            arms: "    Some(A) => 1\n    None => 0",
-            scrutinees: &["Some(A)", "Some(B)", "None"],
+            arms: "    Opt.Some(AB.A) => 1\n    Opt.None => 0",
+            scrutinees: &["Opt.Some(AB.A)", "Opt.Some(AB.B)", "Opt.None"],
             expected_runtime_exhaustive: false,
             mode: SoundnessMode::Strict,
             issue: Some(137),
@@ -120,8 +120,8 @@ fn pattern_exhaustiveness_matrix() {
             name: "tri_all_variants_exhaustive",
             prelude: "type Tri = A | B | C",
             match_ty: "Tri",
-            arms: "    A => 1\n    B => 2\n    C => 3",
-            scrutinees: &["A", "B", "C"],
+            arms: "    Tri.A => 1\n    Tri.B => 2\n    Tri.C => 3",
+            scrutinees: &["Tri.A", "Tri.B", "Tri.C"],
             expected_runtime_exhaustive: true,
             mode: SoundnessMode::Strict,
             issue: None,
@@ -130,8 +130,8 @@ fn pattern_exhaustiveness_matrix() {
             name: "tri_missing_variant_non_exhaustive",
             prelude: "type Tri = A | B | C",
             match_ty: "Tri",
-            arms: "    A => 1\n    B => 2",
-            scrutinees: &["A", "B", "C"],
+            arms: "    Tri.A => 1\n    Tri.B => 2",
+            scrutinees: &["Tri.A", "Tri.B", "Tri.C"],
             expected_runtime_exhaustive: false,
             mode: SoundnessMode::Strict,
             issue: None,
@@ -140,8 +140,8 @@ fn pattern_exhaustiveness_matrix() {
             name: "wrap3_nested_missing_leaf_non_exhaustive",
             prelude: "type ABC = A | B | C\ntype Wrap3 = Wrap(ABC) | Empty",
             match_ty: "Wrap3",
-            arms: "    Wrap(A) => 1\n    Empty => 0",
-            scrutinees: &["Wrap(A)", "Wrap(B)", "Wrap(C)", "Empty"],
+            arms: "    Wrap3.Wrap(ABC.A) => 1\n    Wrap3.Empty => 0",
+            scrutinees: &["Wrap3.Wrap(ABC.A)", "Wrap3.Wrap(ABC.B)", "Wrap3.Wrap(ABC.C)", "Wrap3.Empty"],
             expected_runtime_exhaustive: false,
             mode: SoundnessMode::Strict,
             issue: Some(137),
@@ -217,16 +217,16 @@ fn metamorphic_catch_all_addition_does_not_increase_errors() {
     let original = r#"
 type Color = Red | Green | Blue
 fn main() -> Int {
-  match (Red) {
-    Red => 1
+  match (Color.Red) {
+    Color.Red => 1
   }
 }
 "#;
     let transformed = r#"
 type Color = Red | Green | Blue
 fn main() -> Int {
-  match (Red) {
-    Red => 1
+  match (Color.Red) {
+    Color.Red => 1
     _ => 0
   }
 }
@@ -279,20 +279,20 @@ fn metamorphic_arm_reorder_preserves_exhaustiveness_and_behavior() {
     let original = r#"
 type Color = Red | Green | Blue
 fn main() -> Int {
-  match (Green) {
-    Red => 1
-    Green => 1
-    Blue => 1
+  match (Color.Green) {
+    Color.Red => 1
+    Color.Green => 1
+    Color.Blue => 1
   }
 }
 "#;
     let transformed = r#"
 type Color = Red | Green | Blue
 fn main() -> Int {
-  match (Green) {
-    Blue => 1
-    Red => 1
-    Green => 1
+  match (Color.Green) {
+    Color.Blue => 1
+    Color.Red => 1
+    Color.Green => 1
   }
 }
 "#;
@@ -314,10 +314,10 @@ fn metamorphic_nested_flat_equivalence() {
 type AB = A | B
 type Opt = Some(AB) | None
 fn main() -> Int {
-  match (Some(B)) {
-    Some(A) => 1
-    Some(B) => 2
-    None => 0
+  match (Opt.Some(AB.B)) {
+    Opt.Some(AB.A) => 1
+    Opt.Some(AB.B) => 2
+    Opt.None => 0
   }
 }
 "#;
@@ -325,12 +325,12 @@ fn main() -> Int {
 type AB = A | B
 type Opt = Some(AB) | None
 fn main() -> Int {
-  match (Some(B)) {
-    Some(x) => match (x) {
-      A => 1
-      B => 2
+  match (Opt.Some(AB.B)) {
+    Opt.Some(x) => match (x) {
+      AB.A => 1
+      AB.B => 2
     }
-    None => 0
+    Opt.None => 0
   }
 }
 "#;
@@ -349,6 +349,8 @@ fn main() -> Int {
 fn metamorphic_alpha_rename_binder_preserves_diagnostics_and_behavior() {
     let bin = PathBuf::from(env!("CARGO_BIN_EXE_kyokara"));
     let original = r#"
+from Option import Some, None
+
 fn main() -> Int {
   match (Some(1)) {
     Some(x) => x
@@ -357,6 +359,8 @@ fn main() -> Int {
 }
 "#;
     let transformed = r#"
+from Option import Some, None
+
 fn main() -> Int {
   match (Some(1)) {
     Some(y) => y

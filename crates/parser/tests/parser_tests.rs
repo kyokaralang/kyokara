@@ -67,6 +67,51 @@ fn import_decl() {
 }
 
 #[test]
+fn from_import_decl() {
+    let (events, errors) = parse_tokens(&[
+        FromKw, Ident, ImportKw, Ident, Comma, Ident, AsKw, Ident,
+    ]);
+    assert!(has_no_errors(&errors));
+    assert!(has_node(&events, ImportDecl));
+    assert!(has_node(&events, ImportMemberList));
+    assert_eq!(count_start_nodes(&events, ImportMember), 2);
+    assert!(has_node(&events, ImportAlias));
+}
+
+#[test]
+fn source_file_accepts_namespace_and_member_imports() {
+    let (events, errors) = parse_tokens(&[
+        ImportKw, Ident, FromKw, Ident, ImportKw, Ident, FnKw, Ident, LParen, RParen, LBrace,
+        RBrace,
+    ]);
+    assert!(has_no_errors(&errors));
+    assert_eq!(count_start_nodes(&events, ImportDecl), 2);
+    assert!(has_node(&events, FnDef));
+}
+
+#[test]
+fn from_import_rejects_star_import() {
+    let (_events, errors) = parse_tokens(&[FromKw, Ident, ImportKw, Star]);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message.contains("star imports are not supported")),
+        "expected targeted star-import parse error, got: {errors:?}"
+    );
+}
+
+#[test]
+fn from_import_rejects_relative_import() {
+    let (_events, errors) = parse_tokens(&[FromKw, Dot, Ident, ImportKw, Ident]);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message.contains("relative imports are not supported")),
+        "expected targeted relative-import parse error, got: {errors:?}"
+    );
+}
+
+#[test]
 fn source_file_recovers_from_pub_property_without_hanging() {
     // pub property p() {}
     let (_events, errors) =
