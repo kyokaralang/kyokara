@@ -153,6 +153,24 @@ fn check_char_decimal_digit_surface_typechecks() {
 }
 
 #[test]
+fn check_float_state_surface_typechecks() {
+    let output = check(
+        "fn main() -> Bool {
+    let nan = 0.0 / 0.0
+    let pos = 1.0 / 0.0
+    let neg = (0.0 - 1.0) / 0.0
+    nan.is_nan() && pos.is_infinite() && neg.is_infinite() && 0.0.is_finite()
+}",
+        "test.ky",
+    );
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn check_char_to_digit_requires_int_radix() {
     let output = check(
         r#"fn main() -> Int {

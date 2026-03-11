@@ -6171,6 +6171,20 @@ fn eval_float_division_by_zero_is_negative_infinity() {
 }
 
 #[test]
+fn eval_float_division_by_negative_zero_flips_infinity_sign() {
+    let val = run_ok(
+        "fn main() -> Bool { (1.0 / -0.0).is_infinite() && ((0.0 - 1.0) / -0.0).is_infinite() }",
+    );
+    assert_eq!(val, Value::Bool(true));
+
+    let pos = run_ok("fn main() -> Float { (0.0 - 1.0) / -0.0 }");
+    assert_eq!(pos, Value::Float(f64::INFINITY));
+
+    let neg = run_ok("fn main() -> Float { 1.0 / -0.0 }");
+    assert_eq!(neg, Value::Float(f64::NEG_INFINITY));
+}
+
+#[test]
 fn eval_float_zero_divided_by_zero_is_nan() {
     let val = run_ok("fn main() -> Float { 0.0 / 0.0 }");
     match val {
@@ -6182,6 +6196,15 @@ fn eval_float_zero_divided_by_zero_is_nan() {
 #[test]
 fn eval_float_modulo_by_zero_is_nan() {
     let val = run_ok("fn main() -> Float { 1.0 % 0.0 }");
+    match val {
+        Value::Float(f) => assert!(f.is_nan(), "expected NaN, got {f}"),
+        other => panic!("expected Float, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_float_modulo_by_negative_zero_is_nan() {
+    let val = run_ok("fn main() -> Float { 1.0 % -0.0 }");
     match val {
         Value::Float(f) => assert!(f.is_nan(), "expected NaN, got {f}"),
         other => panic!("expected Float, got {other:?}"),
@@ -6201,8 +6224,21 @@ fn eval_float_is_infinite_detects_infinity() {
 }
 
 #[test]
+fn eval_float_is_infinite_detects_negative_infinity() {
+    let val = run_ok("fn main() -> Bool { ((0.0 - 1.0) / 0.0).is_infinite() }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
 fn eval_float_is_finite_detects_finite_values() {
     let val = run_ok("fn main() -> Bool { 1.5.is_finite() }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_float_zero_is_finite_and_not_special() {
+    let val =
+        run_ok("fn main() -> Bool { 0.0.is_finite() && !0.0.is_nan() && !0.0.is_infinite() }");
     assert_eq!(val, Value::Bool(true));
 }
 
