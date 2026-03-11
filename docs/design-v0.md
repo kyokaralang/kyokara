@@ -261,6 +261,8 @@ fn withdraw(acct: Account, amt: Money) -> Result<Account, WithdrawError>
 
 `old(expr)` refers to pre-state.
 
+`ensures` expressions evaluate against the function-entry environment plus an implicit `result` binding for the returned value. Direct parameter reads inside `ensures` therefore remain stable even if the body consumed or shadowed those values while producing the result.
+
 ### 2.9 Property-based tests
 
 ```kyokara
@@ -359,7 +361,7 @@ Rules:
 ### 3.4 Contracts lowering
 
 * `requires`: pre-state checks
-* `ensures`: post-state obligations referencing saved `old(...)` values
+* `ensures`: post-state obligations evaluated against the function-entry environment plus implicit `result`; `old(...)` captures pre-state expressions explicitly
 
 Verification policy:
 * v0.1: contracts are runtime assertions + property tests (QuickCheck-style)

@@ -1,19 +1,25 @@
-import io
+from collections import List, MutableList
 
 fn abs(x: Int) -> Int
-  ensures (result >= 0){
+contract
+  ensures (result >= 0)
+{
   if (x < 0) { 0 - x } else { x }
 }
 
 fn increment(x: Int) -> Int
+contract
   requires (x >= 0)
-  ensures (result == old(x) + 1){
+  ensures (result == old(x) + 1)
+{
   x + 1
 }
 
 fn clamp(x: Int, lo: Int, hi: Int) -> Int
+contract
   requires (lo <= hi)
-  ensures (result >= lo){
+  ensures (result >= lo)
+{
   if (x < lo) {
     lo
   } else {
@@ -21,11 +27,20 @@ fn clamp(x: Int, lo: Int, hi: Int) -> Int
   }
 }
 
-fn main() -> Unit {
-  io.println("abs(-5) = ".concat(abs(-5).to_string()))
-  io.println("abs(3)  = ".concat(abs(3).to_string()))
-  io.println("increment(9) = ".concat(increment(9).to_string()))
-  io.println("clamp(50, 0, 10) = ".concat(clamp(50, 0, 10).to_string()))
-  io.println("clamp(-5, 0, 10) = ".concat(clamp(-5, 0, 10).to_string()))
-  io.println("clamp(7, 0, 10)  = ".concat(clamp(7, 0, 10).to_string()))
+fn sort_ranges(ranges: List<Int>) -> List<Int>
+contract
+  ensures (result.len() == ranges.len())
+{
+  ranges.sorted()
+}
+
+fn main() -> Int {
+  let sorted = sort_ranges(MutableList.new().push(2).push(1).to_list())
+  abs(-5)
+    + abs(3)
+    + increment(9)
+    + clamp(50, 0, 10)
+    + clamp(-5, 0, 10)
+    + clamp(7, 0, 10)
+    + sorted.get(0).unwrap_or(0)
 }
