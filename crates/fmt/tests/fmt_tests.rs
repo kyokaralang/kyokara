@@ -52,6 +52,64 @@ fn fmt_import_with_alias() {
 }
 
 #[test]
+fn fmt_from_import_single_member() {
+    assert_fmt("from  math  import  gcd", "from math import gcd\n");
+}
+
+#[test]
+fn fmt_from_import_multiple_members() {
+    assert_fmt(
+        "from  collections  import  List , MutableList",
+        "from collections import List, MutableList\n",
+    );
+}
+
+#[test]
+fn fmt_from_import_with_member_alias() {
+    assert_fmt(
+        "from  math  import  gcd  as  g",
+        "from math import gcd as g\n",
+    );
+}
+
+#[test]
+fn fmt_from_import_multiple_members_with_aliases() {
+    assert_fmt(
+        "from  math  import  gcd  as  g , lcm  as  least",
+        "from math import gcd as g, lcm as least\n",
+    );
+}
+
+#[test]
+fn fmt_from_import_variant_members() {
+    assert_fmt(
+        "from  Result  import  Ok , Err",
+        "from Result import Ok, Err\n",
+    );
+}
+
+#[test]
+fn fmt_import_sorting_preserves_namespace_and_member_forms() {
+    assert_fmt(
+        "from io import println\nimport collections\nfrom fs import read_file\nimport hash",
+        "import collections\nfrom fs import read_file\nimport hash\nfrom io import println\n",
+    );
+}
+
+#[test]
+fn fmt_from_import_full_program_preserves_member_binding_surface() {
+    assert_fmt_parse_ok(
+        "from math import gcd as g\nfrom Result import Ok, Err\nfn main() -> Int { g(8, 12) }",
+        "from Result import Ok, Err\nfrom math import gcd as g\n\nfn main() -> Int {\n  g(8, 12)\n}\n",
+    );
+}
+
+#[test]
+fn fmt_from_import_idempotent_when_already_canonical() {
+    assert_unchanged("from fs import read_file\nfrom io import println\n");
+}
+
+#[test]
 fn fmt_import_sorting() {
     assert_fmt(
         "import Std.IO\nimport Std.Collections\nimport Std.Base",

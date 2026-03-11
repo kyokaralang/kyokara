@@ -4,6 +4,8 @@
 //! tree. Unknown or error nodes fall back to verbatim text output.
 
 use kyokara_parser::SyntaxKind;
+use kyokara_syntax::ast::nodes::{ImportDecl, ImportMember};
+use kyokara_syntax::ast::AstNode;
 use kyokara_syntax::{SyntaxNode, SyntaxToken};
 
 use crate::comments;
@@ -277,6 +279,28 @@ fn import_sort_key(node: &SyntaxNode) -> String {
 // ── Import ──────────────────────────────────────────────────────────
 
 fn format_import_decl(node: &SyntaxNode) -> Doc {
+    if let Some(import_decl) = ImportDecl::cast(node.clone()) {
+        if import_decl.is_from_import() {
+            let mut parts = vec![Doc::text("from"), Doc::text(" ")];
+            if let Some(path) = import_decl.path() {
+                parts.push(format_node(path.syntax()));
+            }
+            parts.push(Doc::text(" "));
+            parts.push(Doc::text("import"));
+            if let Some(member_list) = import_decl.member_list() {
+                let members: Vec<Doc> = member_list
+                    .members()
+                    .map(|member| format_import_member(&member))
+                    .collect();
+                if !members.is_empty() {
+                    parts.push(Doc::text(" "));
+                    parts.push(Doc::join(members, Doc::text(", ")));
+                }
+            }
+            return Doc::concat(parts);
+        }
+    }
+
     let mut parts = vec![Doc::text("import"), Doc::text(" ")];
     if let Some(path) = find_child_node(node, SyntaxKind::Path) {
         parts.push(format_node(&path));
@@ -284,6 +308,18 @@ fn format_import_decl(node: &SyntaxNode) -> Doc {
     if let Some(alias) = find_child_node(node, SyntaxKind::ImportAlias) {
         parts.push(Doc::text(" "));
         parts.push(format_node(&alias));
+    }
+    Doc::concat(parts)
+}
+
+fn format_import_member(member: &ImportMember) -> Doc {
+    let mut parts = Vec::new();
+    if let Some(name) = member.name_token() {
+        parts.push(format_token(&name));
+    }
+    if let Some(alias) = member.alias() {
+        parts.push(Doc::text(" "));
+        parts.push(format_node(alias.syntax()));
     }
     Doc::concat(parts)
 }
