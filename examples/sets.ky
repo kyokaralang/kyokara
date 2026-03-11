@@ -1,13 +1,13 @@
-import collections
+from collections import Set, MutableSet
 
 // Set and MutableSet pair showcase.
 
 fn base_set() -> Set<Int> {
-  collections.MutableSet.new().insert(3).insert(1).insert(3).insert(2).to_set()
+  MutableSet.new().insert(3).insert(1).insert(3).insert(2).to_set()
 }
 
 fn immutable_set_api() -> Int {
-  let empty: Set<Int> = collections.Set.new()
+  let empty: Set<Int> = Set.new()
   let snapshot = base_set()
   let values = snapshot.values().to_list()
 
@@ -28,7 +28,7 @@ fn immutable_set_api() -> Int {
 }
 
 fn mutable_set_api() -> Int {
-  let s = collections.MutableSet.with_capacity(8)
+  let s = MutableSet.with_capacity(8)
   let _a = s.insert(5)
   let _b = s.insert(7)
   let _c = s.insert(5)
@@ -36,7 +36,7 @@ fn mutable_set_api() -> Int {
   let values_before = s.values().to_list()
   let _d = s.remove(5)
   let snapshot = s.to_set()
-  let round_trip = collections.MutableSet.from_set(snapshot).insert(9).to_set()
+  let round_trip = MutableSet.from_set(snapshot).insert(9).to_set()
 
   if (
     had_five

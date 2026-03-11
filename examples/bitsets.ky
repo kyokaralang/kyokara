@@ -1,11 +1,11 @@
-import collections
+from collections import BitSet, MutableBitSet
 
 // BitSet and MutableBitSet pair showcase.
 
 fn immutable_bitset_api() -> Int {
-  let empty = collections.BitSet.new(8)
+  let empty = BitSet.new(8)
   let a = empty.with_bit(1).with_bit(3).with_bit(5)
-  let b = collections.BitSet.new(8).with_bit(3).with_bit(4).with_bit(5)
+  let b = BitSet.new(8).with_bit(3).with_bit(4).with_bit(5)
   let toggled = a.without_bit(1).toggled(4)
   let union = a.union(b)
   let intersection = a.intersection(b)
@@ -36,21 +36,21 @@ fn immutable_bitset_api() -> Int {
 }
 
 fn mutable_bitset_api() -> Int {
-  let grown = collections.MutableBitSet.from_bitset(collections.BitSet.new(8).with_bit(1).with_bit(3))
+  let grown = MutableBitSet.from_bitset(BitSet.new(8).with_bit(1).with_bit(3))
   let alias = grown
   let _a = grown.set(0)
   let _b = grown.reset(1)
   let _c = alias.flip(2)
   let values = grown.values().to_list()
 
-  let unioned = collections.MutableBitSet.from_bitset(grown.to_bitset())
-    .union_with(collections.MutableBitSet.new(8).set(3).set(4))
-  let intersected = collections.MutableBitSet.from_bitset(collections.BitSet.new(8).with_bit(0).with_bit(2).with_bit(4))
-    .intersection_with(collections.MutableBitSet.new(8).set(0).set(4).set(7))
-  let differenced = collections.MutableBitSet.from_bitset(collections.BitSet.new(8).with_bit(0).with_bit(2).with_bit(4))
-    .difference_with(collections.MutableBitSet.new(8).set(2))
-  let xored = collections.MutableBitSet.from_bitset(collections.BitSet.new(8).with_bit(0).with_bit(2))
-    .xor_with(collections.MutableBitSet.new(8).set(2).set(5))
+  let unioned = MutableBitSet.from_bitset(grown.to_bitset())
+    .union_with(MutableBitSet.new(8).set(3).set(4))
+  let intersected = MutableBitSet.from_bitset(BitSet.new(8).with_bit(0).with_bit(2).with_bit(4))
+    .intersection_with(MutableBitSet.new(8).set(0).set(4).set(7))
+  let differenced = MutableBitSet.from_bitset(BitSet.new(8).with_bit(0).with_bit(2).with_bit(4))
+    .difference_with(MutableBitSet.new(8).set(2))
+  let xored = MutableBitSet.from_bitset(BitSet.new(8).with_bit(0).with_bit(2))
+    .xor_with(MutableBitSet.new(8).set(2).set(5))
   let snapshot = unioned.to_bitset()
 
   if (

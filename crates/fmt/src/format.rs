@@ -4,8 +4,8 @@
 //! tree. Unknown or error nodes fall back to verbatim text output.
 
 use kyokara_parser::SyntaxKind;
-use kyokara_syntax::ast::nodes::{ImportDecl, ImportMember};
 use kyokara_syntax::ast::AstNode;
+use kyokara_syntax::ast::nodes::{ImportDecl, ImportMember};
 use kyokara_syntax::{SyntaxNode, SyntaxToken};
 
 use crate::comments;

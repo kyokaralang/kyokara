@@ -7721,6 +7721,9 @@ impl Interpreter {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use std::borrow::Cow;
+    use std::collections::BTreeSet;
+
     use kyokara_hir::check_file;
     use kyokara_hir_def::item_tree::{TypeDefKind, TypeItem, VariantDef};
     use kyokara_hir_def::path::Path;
@@ -7730,6 +7733,78 @@ mod tests {
 
     use super::*;
     use crate::value::MapKey;
+
+    const COLLECTION_TYPE_NAMES: &[&str] = &[
+        "List",
+        "BitSet",
+        "Map",
+        "Set",
+        "Deque",
+        "MutableList",
+        "MutableDeque",
+        "MutablePriorityQueue",
+        "MutableMap",
+        "MutableSet",
+        "MutableBitSet",
+    ];
+
+    fn contains_bare_ident(source: &str, ident: &str) -> bool {
+        source.match_indices(ident).any(|(idx, _)| {
+            let prev = source[..idx].chars().next_back();
+            let next = source[idx + ident.len()..].chars().next();
+            let prev_ok =
+                prev.is_none_or(|ch| !matches!(ch, 'A'..='Z' | 'a'..='z' | '0'..='9' | '_' | '.'));
+            let next_ok =
+                next.is_none_or(|ch| !matches!(ch, 'A'..='Z' | 'a'..='z' | '0'..='9' | '_'));
+            prev_ok && next_ok
+        })
+    }
+
+    fn imported_collection_members(source: &str) -> BTreeSet<&str> {
+        let mut imported = BTreeSet::new();
+        for line in source.lines() {
+            let Some(rest) = line.trim().strip_prefix("from collections import ") else {
+                continue;
+            };
+            for member in rest.split(',') {
+                let name = member.split_whitespace().next().unwrap_or_default();
+                if COLLECTION_TYPE_NAMES.contains(&name) {
+                    imported.insert(name);
+                }
+            }
+        }
+        imported
+    }
+
+    fn normalize_collection_imports(source: &str) -> Cow<'_, str> {
+        let uses_collections_visibility = source.contains("collections.")
+            || source.contains("import collections")
+            || source.contains("from collections import ");
+        if !uses_collections_visibility {
+            return Cow::Borrowed(source);
+        }
+
+        let mut header_lines = Vec::new();
+        if source.contains("collections.") && !source.contains("import collections") {
+            header_lines.push("import collections".to_owned());
+        }
+
+        let imported = imported_collection_members(source);
+        let needed: Vec<&str> = COLLECTION_TYPE_NAMES
+            .iter()
+            .copied()
+            .filter(|name| contains_bare_ident(source, name) && !imported.contains(name))
+            .collect();
+        if !needed.is_empty() {
+            header_lines.push(format!("from collections import {}", needed.join(", ")));
+        }
+
+        if header_lines.is_empty() {
+            Cow::Borrowed(source)
+        } else {
+            Cow::Owned(format!("{}\n{source}", header_lines.join("\n")))
+        }
+    }
 
     fn make_test_interpreter_and_body() -> (Interpreter, Body, TypeItemIdx, Name, Name) {
         let mut interner = Interner::new();
@@ -7845,7 +7920,8 @@ mod tests {
     }
 
     fn make_checked_interpreter(source: &str) -> Interpreter {
-        let checked = check_file(source);
+        let source = normalize_collection_imports(source);
+        let checked = check_file(source.as_ref());
         assert!(
             checked.parse_errors.is_empty(),
             "parse errors: {:?}",

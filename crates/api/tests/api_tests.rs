@@ -8,12 +8,74 @@ use kyokara_api::{
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
-fn normalize_immutable_collection_constructor_import(source: &str) -> Cow<'_, str> {
-    let uses_collections_module = source.contains("collections.");
-    if uses_collections_module && !source.contains("import collections") {
-        Cow::Owned(format!("import collections\n{source}"))
-    } else {
+const COLLECTION_TYPE_NAMES: &[&str] = &[
+    "List",
+    "BitSet",
+    "Map",
+    "Set",
+    "Deque",
+    "MutableList",
+    "MutableDeque",
+    "MutablePriorityQueue",
+    "MutableMap",
+    "MutableSet",
+    "MutableBitSet",
+];
+
+fn contains_bare_ident(source: &str, ident: &str) -> bool {
+    source.match_indices(ident).any(|(idx, _)| {
+        let prev = source[..idx].chars().next_back();
+        let next = source[idx + ident.len()..].chars().next();
+        let prev_ok =
+            prev.is_none_or(|ch| !matches!(ch, 'A'..='Z' | 'a'..='z' | '0'..='9' | '_' | '.'));
+        let next_ok = next.is_none_or(|ch| !matches!(ch, 'A'..='Z' | 'a'..='z' | '0'..='9' | '_'));
+        prev_ok && next_ok
+    })
+}
+
+fn imported_collection_members(source: &str) -> BTreeSet<&str> {
+    let mut imported = BTreeSet::new();
+    for line in source.lines() {
+        let Some(rest) = line.trim().strip_prefix("from collections import ") else {
+            continue;
+        };
+        for member in rest.split(',') {
+            let name = member.split_whitespace().next().unwrap_or_default();
+            if COLLECTION_TYPE_NAMES.contains(&name) {
+                imported.insert(name);
+            }
+        }
+    }
+    imported
+}
+
+fn normalize_collection_imports(source: &str) -> Cow<'_, str> {
+    let uses_collections_visibility = source.contains("collections.")
+        || source.contains("import collections")
+        || source.contains("from collections import ");
+    if !uses_collections_visibility {
+        return Cow::Borrowed(source);
+    }
+
+    let mut header_lines = Vec::new();
+    if source.contains("collections.") && !source.contains("import collections") {
+        header_lines.push("import collections".to_owned());
+    }
+
+    let imported = imported_collection_members(source);
+    let needed: Vec<&str> = COLLECTION_TYPE_NAMES
+        .iter()
+        .copied()
+        .filter(|name| contains_bare_ident(source, name) && !imported.contains(name))
+        .collect();
+    if !needed.is_empty() {
+        header_lines.push(format!("from collections import {}", needed.join(", ")));
+    }
+
+    if header_lines.is_empty() {
         Cow::Borrowed(source)
+    } else {
+        Cow::Owned(format!("{}\n{source}", header_lines.join("\n")))
     }
 }
 
@@ -33,12 +95,12 @@ fn with_core_variants(src: &str) -> String {
 }
 
 fn check(source: &str, file_name: &str) -> CheckOutput {
-    let source = normalize_immutable_collection_constructor_import(source);
+    let source = normalize_collection_imports(source);
     raw_check(source.as_ref(), file_name)
 }
 
 fn check_with_options(source: &str, file_name: &str, options: &CheckOptions) -> CheckOutput {
-    let source = normalize_immutable_collection_constructor_import(source);
+    let source = normalize_collection_imports(source);
     raw_check_with_options(source.as_ref(), file_name, options)
 }
 
@@ -648,6 +710,8 @@ fn main() -> Int {
 #[test]
 fn check_while_and_for_loops_typecheck() {
     let src = r#"
+from collections import List
+
 fn main(xs: List<Int>) -> Int {
   for (x in xs) { x }
   while (true) { break }
@@ -691,7 +755,7 @@ fn check_for_non_traversable_source_reports_targeted_type_diagnostic() {
 #[test]
 fn check_refutable_for_pattern_reports_targeted_type_diagnostic() {
     let output = check(
-        "fn main(xs: List<Option<Int>>) { for (Some(x) in xs) { x } }",
+        "from collections import List\nfn main(xs: List<Option<Int>>) { for (Some(x) in xs) { x } }",
         "test.ky",
     );
     assert!(
@@ -1233,16 +1297,48 @@ fn symbol_graph_contains_types() {
     assert_eq!(variant_names, vec!["Red", "Green", "Blue"]);
 
     assert!(
-        type_names.contains(&"MutableList"),
-        "MutableList builtin type should be in symbol graph: {type_names:?}"
+        type_names.contains(&"Option"),
+        "Option builtin type should be in symbol graph: {type_names:?}"
     );
     assert!(
-        type_names.contains(&"MutableMap"),
-        "MutableMap builtin type should be in symbol graph: {type_names:?}"
+        type_names.contains(&"Result"),
+        "Result builtin type should be in symbol graph: {type_names:?}"
+    );
+    assert!(
+        type_names.contains(&"Seq"),
+        "Seq builtin type should be in symbol graph: {type_names:?}"
+    );
+    assert!(
+        !type_names.contains(&"MutableList"),
+        "collection builtin types should not be ambient in symbol graph: {type_names:?}"
+    );
+}
+
+#[test]
+fn symbol_graph_contains_explicitly_imported_collection_types() {
+    let src = r#"
+        from collections import List, MutablePriorityQueue
+
+        fn main() -> Int {
+            let xs: List<Int> = List.new()
+            let pq: MutablePriorityQueue<Int, Int> = MutablePriorityQueue.new_min()
+            xs.len() + pq.len()
+        }
+    "#;
+    let output = check(src, "test.ky");
+    let type_names: Vec<&str> = output
+        .symbol_graph
+        .types
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
+    assert!(
+        type_names.contains(&"List"),
+        "explicitly imported List should be in symbol graph: {type_names:?}"
     );
     assert!(
         type_names.contains(&"MutablePriorityQueue"),
-        "MutablePriorityQueue builtin type should be in symbol graph: {type_names:?}"
+        "explicitly imported MutablePriorityQueue should be in symbol graph: {type_names:?}"
     );
 }
 
@@ -2269,7 +2365,7 @@ fn project_symbol_graph_no_duplicate_builtins() {
         ("main.ky", "fn foo() -> Int { 1 }"),
         ("math.ky", "pub fn bar() -> Int { 2 }"),
     ]);
-    for builtin in &["Option", "Result", "List", "Map"] {
+    for builtin in &["Option", "Result", "Seq", "ParseError"] {
         let count = output
             .symbol_graph
             .types
@@ -2487,7 +2583,10 @@ fn project_capability_ids_are_module_qualified() {
 #[test]
 fn project_builtin_type_ids_are_unqualified() {
     let output = check_project_from_files(&[
-        ("main.ky", "fn foo() -> Int { 1 }"),
+        (
+            "main.ky",
+            "from collections import List, Map\nfn foo() -> Int { let xs: List<Int> = List.new() let m: Map<Int, Int> = Map.new() xs.len() + m.len() }",
+        ),
         ("math.ky", "pub fn bar() -> Int { 2 }"),
     ]);
     for builtin in &["Option", "Result", "List", "Map"] {
@@ -3828,7 +3927,7 @@ fn cyclic_type_alias_does_not_crash() {
 #[test]
 fn extra_type_args_produce_diagnostic() {
     // `List<Int, Int>` has 2 type args but List expects 1.
-    let src = "fn f(x: List<Int, Int>) -> Int { 1 }\nfn main() -> Int { 1 }";
+    let src = "from collections import List\nfn f(x: List<Int, Int>) -> Int { 1 }\nfn main() -> Int { 1 }";
     let output = check(src, "test.ky");
     let arity_errs: Vec<_> = output
         .diagnostics

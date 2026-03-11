@@ -1,10 +1,10 @@
-import collections
+from collections import Map, MutableList, MutableMap
 
 // Map and MutableMap pair showcase.
 // Immutable Map is a snapshot/query type; MutableMap is the edit path.
 
 fn base_map() -> Map<String, Int> {
-  collections.MutableMap.new()
+  MutableMap.new()
     .insert("alpha", 1)
     .insert("beta", 2)
     .insert("gamma", 3)
@@ -12,7 +12,7 @@ fn base_map() -> Map<String, Int> {
 }
 
 fn immutable_map_api() -> Int {
-  let empty: Map<String, Int> = collections.Map.new()
+  let empty: Map<String, Int> = Map.new()
   let snapshot = base_map()
   let keys = snapshot.keys().to_list()
   let value_sum = snapshot.values().fold(0, fn(acc: Int, n: Int) => acc + n)
@@ -34,8 +34,8 @@ fn immutable_map_api() -> Int {
 }
 
 fn mutable_map_api() -> Int {
-  let calls = collections.MutableList.new().push(0)
-  let m = collections.MutableMap.with_capacity(8)
+  let calls = MutableList.new().push(0)
+  let m = MutableMap.with_capacity(8)
 
   let first = m.get_or_insert_with("alpha", fn() =>
     if (true) {
@@ -61,7 +61,7 @@ fn mutable_map_api() -> Int {
   let values_before = m.values().fold(0, fn(acc: Int, n: Int) => acc + n)
   let _c = m.remove("beta")
   let snapshot = m.to_map()
-  let round_trip = collections.MutableMap.from_map(snapshot).insert("delta", 4).to_map()
+  let round_trip = MutableMap.from_map(snapshot).insert("delta", 4).to_map()
 
   if (
     first == 7

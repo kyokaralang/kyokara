@@ -15,7 +15,7 @@ use kyokara_hir::{
 use kyokara_hir_def::expr::{CallArg, Expr, ExprIdx, MatchArm, PatIdx, Stmt};
 use kyokara_hir_def::item_tree::{FnItemIdx, ItemTree};
 use kyokara_hir_def::pat::Pat;
-use kyokara_hir_def::resolver::{ModuleScope, ResolvedName};
+use kyokara_hir_def::resolver::{CoreType, ModuleScope, ResolvedName};
 use kyokara_hir_def::scope::ScopeDef;
 use kyokara_hir_ty::TypeCheckResult;
 use kyokara_intern::Interner;
@@ -308,10 +308,25 @@ pub fn check_project_with_options(
     let mut all_types = Vec::new();
     let mut all_capabilities = Vec::new();
 
-    let builtin_names: std::collections::HashSet<&str> =
-        ["Option", "Result", "List", "Map", "Set", "ParseError"]
-            .into_iter()
-            .collect();
+    let builtin_names: std::collections::HashSet<&str> = [
+        "Option",
+        "Result",
+        "List",
+        "BitSet",
+        "Map",
+        "Set",
+        "Deque",
+        "MutableList",
+        "MutableDeque",
+        "MutablePriorityQueue",
+        "MutableMap",
+        "MutableSet",
+        "MutableBitSet",
+        "Seq",
+        "ParseError",
+    ]
+    .into_iter()
+    .collect();
     let mut seen_builtins: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for (mod_path, tc) in &result.type_checks {
@@ -351,7 +366,13 @@ pub fn check_project_with_options(
             }
 
             // Symbol graph with module prefix.
-            let graph = build_module_symbol_graph(&info.item_tree, tc, interner, prefix.as_deref());
+            let graph = build_module_symbol_graph(
+                &info.item_tree,
+                &info.scope,
+                tc,
+                interner,
+                prefix.as_deref(),
+            );
             all_functions.extend(graph.functions);
             all_capabilities.extend(graph.capabilities);
 
@@ -786,6 +807,7 @@ fn nested_symbol_id(
 fn build_symbol_graph(result: &CheckResult) -> SymbolGraphDto {
     build_module_symbol_graph(
         &result.item_tree,
+        &result.module_scope,
         &result.type_check,
         &result.interner,
         None,
@@ -794,6 +816,7 @@ fn build_symbol_graph(result: &CheckResult) -> SymbolGraphDto {
 
 fn build_module_symbol_graph(
     item_tree: &kyokara_hir::ItemTree,
+    module_scope: &ModuleScope,
     type_check: &kyokara_hir::TypeCheckResult,
     interner: &Interner,
     module_prefix: Option<&str>,
@@ -882,7 +905,7 @@ fn build_module_symbol_graph(
     }
 
     // Types.
-    let types: Vec<TypeNodeDto> = item_tree
+    let mut types: Vec<TypeNodeDto> = item_tree
         .types
         .iter()
         .filter_map(|(_, type_item)| {
@@ -951,6 +974,34 @@ fn build_module_symbol_graph(
         })
         .collect();
 
+    let mut seen_type_names: std::collections::HashSet<String> =
+        types.iter().map(|t| t.name.clone()).collect();
+    for (visible_name, (module_name, _)) in &module_scope.imported_type_namespaces {
+        if module_name.resolve(interner) != "collections" {
+            continue;
+        }
+        let Some(&type_idx) = module_scope.types.get(visible_name) else {
+            continue;
+        };
+        let Some(core) = module_scope.core_types.kind_for_idx(type_idx) else {
+            continue;
+        };
+        if !is_collection_core_type(core) {
+            continue;
+        }
+        let type_item = &item_tree.types[type_idx];
+        let visible_name_str = visible_name.resolve(interner).to_owned();
+        if !seen_type_names.insert(visible_name_str.clone()) {
+            continue;
+        }
+        types.push(type_node_from_item(
+            type_item,
+            &visible_name_str,
+            interner,
+            module_prefix,
+        ));
+    }
+
     // Capabilities — also emit member functions as fn nodes with cap-qualified IDs.
     let mut cap_member_fn_nodes: Vec<FnNodeDto> = Vec::new();
     let capabilities: Vec<CapNodeDto> = item_tree
@@ -1005,6 +1056,89 @@ fn build_module_symbol_graph(
         functions,
         types,
         capabilities,
+    }
+}
+
+fn is_collection_core_type(core: CoreType) -> bool {
+    matches!(
+        core,
+        CoreType::List
+            | CoreType::BitSet
+            | CoreType::Map
+            | CoreType::Set
+            | CoreType::Deque
+            | CoreType::MutableList
+            | CoreType::MutableDeque
+            | CoreType::MutablePriorityQueue
+            | CoreType::MutableMap
+            | CoreType::MutableSet
+            | CoreType::MutableBitSet
+    )
+}
+
+fn type_node_from_item(
+    type_item: &kyokara_hir_def::item_tree::TypeItem,
+    visible_name: &str,
+    interner: &Interner,
+    module_prefix: Option<&str>,
+) -> TypeNodeDto {
+    let type_params: Vec<String> = type_item
+        .type_params
+        .iter()
+        .map(|n| n.name.resolve(interner).to_owned())
+        .collect();
+    let (kind, fields, variants) = match &type_item.kind {
+        TypeDefKind::Alias(TypeRef::Record {
+            fields: alias_fields,
+        }) => {
+            let fs: Vec<ParamDto> = alias_fields
+                .iter()
+                .map(|(n, tr)| ParamDto {
+                    name: n.resolve(interner).to_owned(),
+                    ty: kyokara_hir::display_type_ref(tr, interner),
+                })
+                .collect();
+            ("record".to_owned(), fs, Vec::new())
+        }
+        TypeDefKind::Alias(_) => ("alias".to_owned(), Vec::new(), Vec::new()),
+        TypeDefKind::Record { fields: def_fields } => {
+            let fs: Vec<ParamDto> = def_fields
+                .iter()
+                .map(|(n, tr)| ParamDto {
+                    name: n.resolve(interner).to_owned(),
+                    ty: kyokara_hir::display_type_ref(tr, interner),
+                })
+                .collect();
+            ("record".to_owned(), fs, Vec::new())
+        }
+        TypeDefKind::Adt { variants: vs } => {
+            let var_dtos: Vec<VariantDto> = vs
+                .iter()
+                .map(|v| {
+                    let vname = v.name.resolve(interner).to_owned();
+                    let vid = nested_symbol_id("type", visible_name, &vname, module_prefix);
+                    VariantDto {
+                        id: vid,
+                        name: vname,
+                        fields: v
+                            .fields
+                            .iter()
+                            .map(|tr| kyokara_hir::display_type_ref(tr, interner))
+                            .collect(),
+                    }
+                })
+                .collect();
+            ("adt".to_owned(), Vec::new(), var_dtos)
+        }
+    };
+    let id = symbol_id("type", visible_name, module_prefix);
+    TypeNodeDto {
+        id,
+        name: visible_name.to_owned(),
+        kind,
+        type_params,
+        fields,
+        variants,
     }
 }
 

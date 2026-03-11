@@ -1,10 +1,10 @@
 {
   "check": {
     "ok": false,
-    "messages_all": ["no method"]
+    "messages_all": ["unresolved name `List`"]
   },
   "run": {
     "ok": false,
-    "stderr_contains": ["no method"]
+    "stderr_contains": ["unresolved name `List`"]
   }
 }

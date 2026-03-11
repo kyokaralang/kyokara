@@ -378,12 +378,7 @@ fn add_builtin_completions(items: &mut Vec<CompletionItem>) {
         "Unit",
         "Option",
         "Result",
-        "List",
-        "BitSet",
-        "Map",
-        "Set",
-        "MutablePriorityQueue",
-        "MutableBitSet",
+        "Seq",
         "ParseError",
     ] {
         items.push(CompletionItem {
@@ -590,12 +585,16 @@ mod tests {
         assert!(
             items
                 .iter()
-                .any(|i| i.label == "Set" && i.detail.as_deref() == Some("builtin"))
+                .any(|i| i.label == "Seq" && i.detail.as_deref() == Some("builtin"))
         );
         assert!(
             items
                 .iter()
                 .any(|i| i.label == "ParseError" && i.detail.as_deref() == Some("builtin"))
+        );
+        assert!(
+            !items.iter().any(|i| i.label == "List"),
+            "did not expect ambient collection type completion without import: {items:?}"
         );
     }
 

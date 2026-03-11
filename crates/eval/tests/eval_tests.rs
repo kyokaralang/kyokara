@@ -2,22 +2,85 @@
 #![allow(clippy::unwrap_used)]
 
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::sync::{Mutex, OnceLock};
 
 use kyokara_eval::manifest::CapabilityManifest;
 use kyokara_eval::value::Value;
 
-fn normalize_immutable_collection_constructor_import(source: &str) -> Cow<'_, str> {
-    let uses_collections_module = source.contains("collections.");
-    if uses_collections_module && !source.contains("import collections") {
-        Cow::Owned(format!("import collections\n{source}"))
-    } else {
+const COLLECTION_TYPE_NAMES: &[&str] = &[
+    "List",
+    "BitSet",
+    "Map",
+    "Set",
+    "Deque",
+    "MutableList",
+    "MutableDeque",
+    "MutablePriorityQueue",
+    "MutableMap",
+    "MutableSet",
+    "MutableBitSet",
+];
+
+fn contains_bare_ident(source: &str, ident: &str) -> bool {
+    source.match_indices(ident).any(|(idx, _)| {
+        let prev = source[..idx].chars().next_back();
+        let next = source[idx + ident.len()..].chars().next();
+        let prev_ok =
+            prev.is_none_or(|ch| !matches!(ch, 'A'..='Z' | 'a'..='z' | '0'..='9' | '_' | '.'));
+        let next_ok = next.is_none_or(|ch| !matches!(ch, 'A'..='Z' | 'a'..='z' | '0'..='9' | '_'));
+        prev_ok && next_ok
+    })
+}
+
+fn imported_collection_members(source: &str) -> BTreeSet<&str> {
+    let mut imported = BTreeSet::new();
+    for line in source.lines() {
+        let Some(rest) = line.trim().strip_prefix("from collections import ") else {
+            continue;
+        };
+        for member in rest.split(',') {
+            let name = member.split_whitespace().next().unwrap_or_default();
+            if COLLECTION_TYPE_NAMES.contains(&name) {
+                imported.insert(name);
+            }
+        }
+    }
+    imported
+}
+
+fn normalize_collection_imports(source: &str) -> Cow<'_, str> {
+    let uses_collections_visibility = source.contains("collections.")
+        || source.contains("import collections")
+        || source.contains("from collections import ");
+    if !uses_collections_visibility {
+        return Cow::Borrowed(source);
+    }
+
+    let mut header_lines = Vec::new();
+    if source.contains("collections.") && !source.contains("import collections") {
+        header_lines.push("import collections".to_owned());
+    }
+
+    let imported = imported_collection_members(source);
+    let needed: Vec<&str> = COLLECTION_TYPE_NAMES
+        .iter()
+        .copied()
+        .filter(|name| contains_bare_ident(source, name) && !imported.contains(name))
+        .collect();
+    if !needed.is_empty() {
+        header_lines.push(format!("from collections import {}", needed.join(", ")));
+    }
+
+    if header_lines.is_empty() {
         Cow::Borrowed(source)
+    } else {
+        Cow::Owned(format!("{}\n{source}", header_lines.join("\n")))
     }
 }
 
 fn run_ok(source: &str) -> Value {
-    let source = normalize_immutable_collection_constructor_import(source);
+    let source = normalize_collection_imports(source);
     match kyokara_eval::run(source.as_ref()) {
         Ok(result) => result.value,
         Err(e) => panic!("runtime error: {e}"),
@@ -25,7 +88,7 @@ fn run_ok(source: &str) -> Value {
 }
 
 fn run_err(source: &str) -> String {
-    let source = normalize_immutable_collection_constructor_import(source);
+    let source = normalize_collection_imports(source);
     match kyokara_eval::run(source.as_ref()) {
         Ok(result) => panic!("expected error, got {:?}", result.value),
         Err(e) => e.to_string(),
@@ -69,7 +132,7 @@ fn run_ok_with_call_depth_limit(source: &str, limit: usize) -> Value {
 }
 
 fn check_has_compile_errors(source: &str) -> bool {
-    let source = normalize_immutable_collection_constructor_import(source);
+    let source = normalize_collection_imports(source);
     let result = kyokara_hir::check_file(source.as_ref());
     !result.parse_errors.is_empty()
         || result

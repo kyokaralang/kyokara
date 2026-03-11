@@ -1,11 +1,11 @@
-import collections
+from collections import List, MutableList
 
 // List and MutableList pair showcase.
 // This file focuses on pair-specific APIs and conversions.
 // See seq.ky for the full shared traversal family.
 
 fn base_list() -> List<Int> {
-  collections.MutableList.new()
+  MutableList.new()
     .push(3)
     .push(1)
     .push(4)
@@ -15,7 +15,7 @@ fn base_list() -> List<Int> {
 }
 
 fn immutable_list_api() -> Int {
-  let empty: List<Int> = collections.List.new()
+  let empty: List<Int> = List.new()
   let xs = base_list()
   let reversed = xs.reversed()
   let sorted = xs.sorted()
@@ -49,7 +49,7 @@ fn immutable_list_traversal() -> Int {
   let mapped = xs.map(fn(n: Int) => n + 1).to_list()
   let filtered = xs.filter(fn(n: Int) => n > 2).to_list()
   let flat = xs
-    .flat_map(fn(n: Int) => collections.MutableList.new().push(n).push(n + 10).to_list())
+    .flat_map(fn(n: Int) => MutableList.new().push(n).push(n + 10).to_list())
     .to_list()
   let scanned = xs.scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
   let enumerated = xs.enumerate().to_list()
@@ -97,9 +97,9 @@ fn immutable_list_traversal() -> Int {
 }
 
 fn mutable_list_api() -> Int {
-  let empty = collections.MutableList.new()
-  let from_snapshot = collections.MutableList.from_list(base_list())
-  let xs = collections.MutableList.new()
+  let empty = MutableList.new()
+  let from_snapshot = MutableList.from_list(base_list())
+  let xs = MutableList.new()
 
   let _a = xs.push(3)
   let _b = xs.push(1)

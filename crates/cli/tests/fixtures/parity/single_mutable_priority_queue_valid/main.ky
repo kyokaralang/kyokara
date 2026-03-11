@@ -1,4 +1,5 @@
 import collections
+from collections import MutablePriorityQueue
 from Option import Some, None
 
 fn main() -> Int {

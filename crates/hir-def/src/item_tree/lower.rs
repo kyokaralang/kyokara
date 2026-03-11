@@ -13,7 +13,7 @@ use crate::call_family::call_shapes_overlap;
 use crate::item_tree::*;
 use crate::name::Name;
 use crate::path::Path;
-use crate::resolver::{ModuleScope, PrimitiveType, ReceiverKey, core_type_from_public_name};
+use crate::resolver::{ModuleScope, PrimitiveType, ReceiverKey};
 use crate::type_ref::TypeRef;
 
 /// Result of item tree collection.
@@ -549,10 +549,6 @@ impl ItemTreeCtx<'_> {
 
         if let Some(&type_idx) = self.module_scope.types.get(&recv_name) {
             return Some(ReceiverKey::User(type_idx));
-        }
-
-        if let Some(core) = core_type_from_public_name(recv_name, self.interner) {
-            return Some(ReceiverKey::Core(core));
         }
 
         None

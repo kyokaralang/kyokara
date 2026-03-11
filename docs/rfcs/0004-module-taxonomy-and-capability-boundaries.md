@@ -46,9 +46,9 @@ Every call site follows this matrix:
 
 | Surface category | Import required | `with` required | Manifest grant required |
 |---|---|---|---|
-| Prelude pure value APIs (`List`, `Map`, `Set`, `String`, etc.) | No | No | No |
-| Pure module APIs (`collections.*`, `math.*`, etc.) | Yes | No | No |
-| Effect module APIs (`io.*`, `fs.*`, `net.*`, etc.) | Yes | Yes | Yes |
+| Ambient pure value APIs (`Int`, `String`, `Option`, `Result`, etc.) | No | No | No |
+| Pure module APIs (`collections.*`, `math.*`, member imports from those modules, etc.) | Yes | No | No |
+| Built-in effect module APIs (`io.*`, `fs.*`, `net.*`, etc.) | Yes | No | Yes |
 
 Key rule:
 
@@ -56,27 +56,28 @@ Key rule:
 2. `with` + manifest control authority.
 3. Import never grants authority.
 4. Built-in capability names are strict, case-sensitive lowercase (`io`, `fs`) matching module names.
+5. Source-level `with` remains for user-defined effect tracking, not as a visibility gate for built-in `io`/`fs` module calls.
 
 ### P2. Namespace tiers
 
-#### Tier A: Prelude core (minimal)
+#### Tier A: Ambient core (minimal)
 
 Keep only ubiquitous pure types globally visible:
 
 1. `Int`, `Float`, `Bool`, `String`, `Char`, `Unit`
-2. `Option`, `Result`
-3. `List`, `Map`, `Set`
+2. `Option`, `Result`, `ParseError`
+3. traversal constructors like `start..<end` and `seed.unfold(step)`
 
 #### Tier B: Pure feature modules
 
-Specialized pure APIs live in modules and are imported explicitly.
+Collection and specialized pure APIs live in modules and are imported explicitly.
 
 Initial policy:
 
-1. `Deque` should be exposed via `collections` (not prelude-global).
-2. `MutableDeque` should be exposed via `collections` (not prelude-global).
-3. The priority-queue family should be introduced in `collections` directly.
-4. Future specialized structures (for example `BitSet` and `MutableBitSet`) should follow the same rule.
+1. All collection family names are exposed via `collections` rather than ambient global scope.
+2. Canonical examples should prefer `from collections import List, MutableMap, ...` for repeated local use.
+3. `collections.X` and `import collections as c` / `c.X` remain valid explicit namespace paths.
+4. The priority-queue family is introduced in `collections` directly.
 
 #### Tier C: Effect modules
 
@@ -90,9 +91,17 @@ APIs that can perform side effects remain module-qualified and capability-scoped
 
 Canonical placement for specialized collection constructors:
 
-1. `collections.Deque.new()`
-2. `collections.MutableDeque.new()`
-3. `collections.MutablePriorityQueue.new_min()` (first shipped surface; see RFC 0012)
+1. `collections.List.new()`
+2. `collections.Map.new()`
+3. `collections.Set.new()`
+4. `collections.BitSet.new(size)`
+5. `collections.Deque.new()`
+6. `collections.MutableList.new()`
+7. `collections.MutableDeque.new()`
+8. `collections.MutableMap.new()`
+9. `collections.MutableSet.new()`
+10. `collections.MutableBitSet.new(size)`
+11. `collections.MutablePriorityQueue.new_min()` (first shipped surface; see RFC 0012)
 
 Once a value exists, behavior remains owner methods, with immutable and mutable collection surfaces following RFC 0009's naming split:
 

@@ -143,16 +143,15 @@ impl<'a> InferenceCtx<'a> {
                         .copied()
                         .any(|bound| self.trait_name_satisfies(bound, trait_name))
                 }),
-            Ty::Int => self.builtin_trait_name_satisfied("Int", trait_name),
-            Ty::String => self.builtin_trait_name_satisfied("String", trait_name),
-            Ty::Char => self.builtin_trait_name_satisfied("Char", trait_name),
-            Ty::Bool => self.builtin_trait_name_satisfied("Bool", trait_name),
-            Ty::Unit => self.builtin_trait_name_satisfied("Unit", trait_name),
-            Ty::Float => self.builtin_trait_name_satisfied("Float", trait_name),
+            Ty::Int => self.builtin_primitive_trait_satisfied("Int", trait_name),
+            Ty::String => self.builtin_primitive_trait_satisfied("String", trait_name),
+            Ty::Char => self.builtin_primitive_trait_satisfied("Char", trait_name),
+            Ty::Bool => self.builtin_primitive_trait_satisfied("Bool", trait_name),
+            Ty::Unit => self.builtin_primitive_trait_satisfied("Unit", trait_name),
+            Ty::Float => self.builtin_primitive_trait_satisfied("Float", trait_name),
             Ty::Adt { def, args } => {
-                let type_name = self.item_tree.types[def].name.resolve(self.interner);
-                if self.module_scope.core_types.kind_for_idx(def).is_some() {
-                    self.builtin_trait_name_satisfied(type_name, trait_name)
+                if let Some(core) = self.module_scope.core_types.kind_for_idx(def) {
+                    self.builtin_core_trait_satisfied(core, trait_name)
                 } else {
                     self.user_adt_satisfies_trait(def, &args, trait_name)
                 }
@@ -176,65 +175,65 @@ impl<'a> InferenceCtx<'a> {
             .is_some_and(|trait_name| self.ty_satisfies_trait_name(ty, trait_name))
     }
 
-    fn builtin_trait_name_satisfied(&self, type_name: &str, trait_name: Name) -> bool {
+    fn builtin_primitive_trait_satisfied(&self, type_name: &str, trait_name: Name) -> bool {
+        let trait_name = trait_name.resolve(self.interner);
+        match trait_name {
+            "Eq" => matches!(type_name, "Int" | "String" | "Char" | "Bool" | "Unit"),
+            "Ord" => matches!(type_name, "Int" | "String" | "Char" | "Bool" | "Unit"),
+            "Hash" => matches!(type_name, "Int" | "String" | "Char" | "Bool" | "Unit"),
+            "Show" => !matches!(type_name, "<fn>"),
+            _ => false,
+        }
+    }
+
+    fn builtin_core_trait_satisfied(&self, core: CoreType, trait_name: Name) -> bool {
         let trait_name = trait_name.resolve(self.interner);
         match trait_name {
             "Eq" => matches!(
-                type_name,
-                "Int"
-                    | "String"
-                    | "Char"
-                    | "Bool"
-                    | "Unit"
-                    | "Option"
-                    | "Result"
-                    | "List"
-                    | "MutableList"
-                    | "Deque"
-                    | "MutableDeque"
-                    | "BitSet"
-                    | "MutableBitSet"
-                    | "Map"
-                    | "MutableMap"
-                    | "Set"
-                    | "MutableSet"
-                    | "ParseError"
+                core,
+                CoreType::Option
+                    | CoreType::Result
+                    | CoreType::List
+                    | CoreType::MutableList
+                    | CoreType::Deque
+                    | CoreType::MutableDeque
+                    | CoreType::BitSet
+                    | CoreType::MutableBitSet
+                    | CoreType::Map
+                    | CoreType::MutableMap
+                    | CoreType::Set
+                    | CoreType::MutableSet
+                    | CoreType::ParseError
             ),
             "Ord" => matches!(
-                type_name,
-                "Int"
-                    | "String"
-                    | "Char"
-                    | "Bool"
-                    | "Unit"
-                    | "Option"
-                    | "Result"
-                    | "List"
-                    | "MutableList"
-                    | "Deque"
-                    | "MutableDeque"
-                    | "ParseError"
+                core,
+                CoreType::Option
+                    | CoreType::Result
+                    | CoreType::List
+                    | CoreType::MutableList
+                    | CoreType::Deque
+                    | CoreType::MutableDeque
+                    | CoreType::ParseError
             ),
             "Hash" => matches!(
-                type_name,
-                "Int"
-                    | "String"
-                    | "Char"
-                    | "Bool"
-                    | "Unit"
-                    | "Option"
-                    | "Result"
-                    | "List"
-                    | "Deque"
-                    | "BitSet"
-                    | "Map"
-                    | "Set"
-                    | "ParseError"
+                core,
+                CoreType::Option
+                    | CoreType::Result
+                    | CoreType::List
+                    | CoreType::Deque
+                    | CoreType::BitSet
+                    | CoreType::Map
+                    | CoreType::Set
+                    | CoreType::ParseError
             ),
-            "Show" => !matches!(type_name, "<fn>"),
+            "Show" => true,
             "IntoTraversal" => matches!(
-                type_name,
-                "List" | "MutableList" | "Deque" | "MutableDeque" | "Seq"
+                core,
+                CoreType::List
+                    | CoreType::MutableList
+                    | CoreType::Deque
+                    | CoreType::MutableDeque
+                    | CoreType::Seq
             ),
             _ => false,
         }

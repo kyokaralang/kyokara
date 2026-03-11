@@ -59,6 +59,29 @@ fn core_public_type_name(interner: &mut Interner, core: CoreType) -> Name {
     Name::new(interner, public)
 }
 
+fn core_type_is_ambient(core: CoreType) -> bool {
+    matches!(
+        core,
+        CoreType::Option | CoreType::Result | CoreType::Seq | CoreType::ParseError
+    )
+}
+
+fn collection_core_types() -> [CoreType; 11] {
+    [
+        CoreType::List,
+        CoreType::BitSet,
+        CoreType::Map,
+        CoreType::Set,
+        CoreType::Deque,
+        CoreType::MutableList,
+        CoreType::MutableDeque,
+        CoreType::MutablePriorityQueue,
+        CoreType::MutableMap,
+        CoreType::MutableSet,
+        CoreType::MutableBitSet,
+    ]
+}
+
 fn register_core_type_item(
     tree: &mut ItemTree,
     scope: &mut ModuleScope,
@@ -68,7 +91,7 @@ fn register_core_type_item(
     kind: TypeDefKind,
 ) -> (TypeItemIdx, Name) {
     let public_name = core_public_type_name(interner, core);
-    let type_name = if scope.types.contains_key(&public_name) {
+    let type_name = if !core_type_is_ambient(core) || scope.types.contains_key(&public_name) {
         core_hidden_type_name(interner, core)
     } else {
         public_name
@@ -107,15 +130,12 @@ fn path_type(interner: &mut Interner, name: &str) -> TypeRef {
     }
 }
 
-/// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`,
-/// `MutableDeque<T>`, `MutablePriorityQueue<P, T>`, `MutableMap<K,V>`, `MutableSet<T>`, `Deque<T>`,
-/// `Seq<T>`, `Map<K,V>`, `Set<T>`, and `ParseError` into the
-/// item tree
-/// and module scope.
+/// Inject builtin core types into the item tree and module scope.
 ///
-/// Core types are always registered with stable identities. If a user type
-/// shadows a public name (e.g. `type Result = ...`), the core type is
-/// allocated under a hidden internal name.
+/// Ambient globals are limited to `Option`, `Result`, `Seq`, and `ParseError`.
+/// Collection families keep stable core identities but register under hidden
+/// internal names so they are only reachable through `collections.*` or an
+/// explicit member import from `collections`.
 pub fn register_builtin_types(
     tree: &mut ItemTree,
     scope: &mut ModuleScope,
@@ -1522,22 +1542,10 @@ pub fn register_synthetic_modules(
 
     let collections = Name::new(interner, "collections");
     let collections_ns = scope.namespaces.entry(collections).or_default();
-    for type_name in [
-        "List",
-        "BitSet",
-        "Map",
-        "Set",
-        "Deque",
-        "MutableList",
-        "MutableDeque",
-        "MutablePriorityQueue",
-        "MutableMap",
-        "MutableSet",
-        "MutableBitSet",
-    ] {
-        let name = Name::new(interner, type_name);
-        if let Some(&type_idx) = scope.types.get(&name) {
-            collections_ns.types.insert(name, type_idx);
+    for core in collection_core_types() {
+        if let Some(info) = scope.core_types.get(core) {
+            let public_name = core_public_type_name(interner, core);
+            collections_ns.types.insert(public_name, info.type_idx);
         }
     }
 }

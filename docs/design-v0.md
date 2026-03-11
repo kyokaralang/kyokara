@@ -175,7 +175,7 @@ Rules:
 * callers must "inherit" required effects unless the effect is introduced explicitly via scoped blocks (optional v0 feature).
 
 Open design questions (to resolve before hir-ty):
-* **Effect polymorphism**: higher-order functions need effect-polymorphic signatures, e.g. `fn map(f: fn(A) -> B with e, xs: List<A>) -> List<B> with e`. Without this, the stdlib will be painful.
+* **Effect polymorphism**: higher-order functions need effect-polymorphic signatures, e.g. `fn map(f: fn(A) -> B with e, xs: collections.List<A>) -> collections.List<B> with e`. Without this, the stdlib will be painful.
 * **Subeffecting**: is `Pure` a subeffect of every capability set? Can `with net` call a `Pure` function? (Yes — effects are an upper bound, "may do", not "must do".)
 * **Scoped capabilities**: can a caller restrict a capability before passing it? e.g. `with caps.restrict(domain="rates.example")`.
 * **Async**: if concurrency is added later, effect tracking must compose with async. Deferring concurrency to post-v0 avoids this for now.
@@ -197,6 +197,8 @@ Compiler enforces exhaustiveness.
 ### 2.7 Loop control
 
 ```kyokara
+from collections import List
+
 fn sum_odds(n: Int) -> Int {
   var acc = 0
   for (x in 0..<n) {
@@ -266,6 +268,8 @@ fn withdraw(acct: Account, amt: Money) -> Result<Account, WithdrawError>
 ### 2.9 Property-based tests
 
 ```kyokara
+from collections import List
+
 property sort_idempotent(xs: List<Int> <- Gen.auto()) {
   xs.sorted().sorted() == xs.sorted()
 }
@@ -602,16 +606,16 @@ a canonical API surface: method calls for value-owned behavior, module-qualified
 for no-owner utilities and effects, and type-namespaced constructors.
 
 Canonical visibility matrix:
-* Prelude builtin value types (no import): `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `MutablePriorityQueue<P, T>`, `BitSet`, `MutableBitSet`, `Deque<T>`, `MutableDeque<T>`, `Map<K, V>`, `Set<T>` type names and value methods.
+* Prelude builtin value types (no import): primitives plus `Option<T>`, `Result<T, E>`, `ParseError`, and internal `Seq<T>` support.
+* Collection family names (explicit visibility only): `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `MutablePriorityQueue<P, T>`, `BitSet`, `MutableBitSet`, `Deque<T>`, `MutableDeque<T>`, `Map<K, V>`, `Set<T>` become usable through `from collections import ...` or as `collections.X` after `import collections`.
 * Pure collection constructors (imported module): `collections.List.new()`, `collections.Map.new()`, `collections.Set.new()`, `collections.BitSet.new(size)`, `collections.Deque.new()`, `collections.MutableList.new()`, `collections.MutableList.from_list(xs)`, `collections.MutableMap.new()`, `collections.MutableMap.from_map(m)`, `collections.MutableMap.with_capacity(capacity)`, `collections.MutableSet.new()`, `collections.MutableSet.from_set(s)`, `collections.MutableSet.with_capacity(capacity)`, `collections.MutablePriorityQueue.new_min()`, `collections.MutablePriorityQueue.new_max()`, `collections.MutableBitSet.new(size)`, `collections.MutableBitSet.from_bitset(bs)`, `collections.MutableDeque.new()`, `collections.MutableDeque.from_deque(q)`
 * Prelude traversal constructors (no import): `start..<end`, `seed.unfold(step)`.
 * Pure no-owner utilities (imported module): `math.*`
 * Effectful utilities (imported capability modules): `io.*`, `fs.*`
 * Internal intrinsic IDs (`list_new`, `map_insert`, etc.) are implementation detail only.
 
-Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `MutablePriorityQueue<P, T>`, `BitSet`, `MutableBitSet`, `Deque<T>`, `MutableDeque<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
-injected as synthetic types before type-checking. Synthetic modules (`collections`, `io`, `math`, `fs`)
-require explicit `import collections` / `import io` / `import math` / `import fs` in all modes.
+Builtin types `Option<T>`, `Result<T, E>`, `ParseError`, and internal `Seq<T>` support are
+injected into ambient scope before type-checking. Collection families are also injected with stable core identities, but their visible names live only under `collections` or explicit `from collections import ...` bindings. Synthetic modules (`collections`, `io`, `math`, `fs`) require explicit `import collections` / `import io` / `import math` / `import fs` in all modes.
 Zero intrinsic free functions exist in user scope.
 
 Runtime soundness invariants for core APIs:
@@ -620,8 +624,7 @@ Runtime soundness invariants for core APIs:
 * Constructor/pattern resolution is owner-based: `Type.Variant` is always valid, and bare `Variant` resolves only through explicit `from Type import Variant`.
 * Core builtin constructor names are not globally reserved; user ADTs may define variants named `Some`, `None`, `Ok`, `Err`, `InvalidInt`, or `InvalidFloat` without colliding with builtin behavior.
 
-Mental model: `List`/`Map`/`Set`/`BitSet`/`Deque` are immutable snapshot and value types, while `MutableList`/`MutableMap`/`MutableSet`/`MutableBitSet`/`MutableDeque`/`MutablePriorityQueue` are the canonical build and edit types.
-`collections` is the pure module namespace for collection constructors and explicit mutable-from-immutable conversions, and `to_list`/`to_map`/`to_set`/`to_bitset`/`to_deque` move back to immutable snapshots.
+Mental model: `List`/`Map`/`Set`/`BitSet`/`Deque` are immutable snapshot and value types, while `MutableList`/`MutableMap`/`MutableSet`/`MutableBitSet`/`MutableDeque`/`MutablePriorityQueue` are the canonical build and edit types. Collection families are not ambient globals; `collections` is the pure module namespace for their visible names, constructors, and explicit mutable-from-immutable conversions, and `to_list`/`to_map`/`to_set`/`to_bitset`/`to_deque` move back to immutable snapshots.
 `io`/`fs` remain module namespaces for effectful operations.
 
 **Implemented (v0.1+):**
