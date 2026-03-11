@@ -4166,7 +4166,9 @@ impl Interpreter {
                 .lookup_slot(access.depth, access.slot)
                 .cloned()
                 .ok_or_else(|| {
-                    RuntimeError::TypeError("internal runtime error: local binding unavailable".into())
+                    RuntimeError::TypeError(
+                        "internal runtime error: local binding unavailable".into(),
+                    )
                 });
         }
         if path.segments.len() > 1
@@ -4865,9 +4867,9 @@ impl Interpreter {
             Value::MutableList(xs) => {
                 Ok(Rc::new(SeqPlan::Source(SeqSource::FromList(xs.snapshot()))))
             }
-            Value::MutableDeque(xs) => {
-                Ok(Rc::new(SeqPlan::Source(SeqSource::FromDeque(xs.snapshot()))))
-            }
+            Value::MutableDeque(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromDeque(
+                xs.snapshot(),
+            )))),
             Value::Deque(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromDeque(xs.clone())))),
             _ => Err(RuntimeError::TypeError(format!(
                 "{intrinsic_name} expects a traversal source"
@@ -8126,7 +8128,10 @@ mod tests {
             panic!("expected mutable list output");
         };
         let snapshot = updated.snapshot();
-        assert_eq!(snapshot.as_ref(), &[Value::Int(0), Value::Int(1), Value::Int(2)]);
+        assert_eq!(
+            snapshot.as_ref(),
+            &[Value::Int(0), Value::Int(1), Value::Int(2)]
+        );
         assert!(
             std::ptr::eq(before_ptr, updated.current_backing_ptr()),
             "lambda tail method chain should reuse uniquely owned param storage"
@@ -8572,7 +8577,10 @@ mod tests {
             panic!("expected mutable list output");
         };
         let snapshot = updated.snapshot();
-        assert_eq!(snapshot.as_ref(), &[Value::Int(0), Value::Int(1), Value::Int(2)]);
+        assert_eq!(
+            snapshot.as_ref(),
+            &[Value::Int(0), Value::Int(1), Value::Int(2)]
+        );
         assert!(
             std::ptr::eq(before_ptr, updated.current_backing_ptr()),
             "tail list method chain should reuse uniquely owned param storage"
@@ -8698,7 +8706,10 @@ mod tests {
             panic!("expected mutable list output");
         };
         let snapshot = updated.snapshot();
-        assert_eq!(snapshot.as_ref(), &[Value::Int(0), Value::Int(1), Value::Int(2)]);
+        assert_eq!(
+            snapshot.as_ref(),
+            &[Value::Int(0), Value::Int(1), Value::Int(2)]
+        );
         assert!(
             std::ptr::eq(before_ptr, updated.current_backing_ptr()),
             "shadow rebinding chain should preserve unique ownership across updates"

@@ -5941,7 +5941,9 @@ fn eval_parse_int_map_or_err_returns_default() {
 
 #[test]
 fn eval_option_unwrap_or_some_returns_inner_value() {
-    let val = run_ok(r#"fn main() -> Int { collections.MutableList.new().push(42).head().unwrap_or(0) }"#);
+    let val = run_ok(
+        r#"fn main() -> Int { collections.MutableList.new().push(42).head().unwrap_or(0) }"#,
+    );
     assert_eq!(val, Value::Int(42));
 }
 

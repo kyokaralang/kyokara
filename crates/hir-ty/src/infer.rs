@@ -327,13 +327,11 @@ impl<'a> InferenceCtx<'a> {
         match self.module_scope.core_types.kind_for_idx(*def) {
             Some(
                 CoreType::Seq
-                    | CoreType::List
-                    | CoreType::MutableList
-                    | CoreType::Deque
-                    | CoreType::MutableDeque,
-            ) => {
-                Some(args[0].clone())
-            }
+                | CoreType::List
+                | CoreType::MutableList
+                | CoreType::Deque
+                | CoreType::MutableDeque,
+            ) => Some(args[0].clone()),
             _ => None,
         }
     }
@@ -674,7 +672,12 @@ impl<'a> InferenceCtx<'a> {
         if expected_core != Some(CoreType::Seq)
             || !matches!(
                 actual_core,
-                Some(CoreType::List | CoreType::MutableList | CoreType::Deque | CoreType::MutableDeque)
+                Some(
+                    CoreType::List
+                        | CoreType::MutableList
+                        | CoreType::Deque
+                        | CoreType::MutableDeque
+                )
             )
         {
             return false;

@@ -708,10 +708,18 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             ReceiverKey::Core(CoreType::List),
             "is_empty",
         ),
-        ("list_reverse", ReceiverKey::Core(CoreType::List), "reversed"),
+        (
+            "list_reverse",
+            ReceiverKey::Core(CoreType::List),
+            "reversed",
+        ),
         ("list_concat", ReceiverKey::Core(CoreType::List), "concat"),
         ("list_sort", ReceiverKey::Core(CoreType::List), "sorted"),
-        ("list_sort_by", ReceiverKey::Core(CoreType::List), "sorted_by"),
+        (
+            "list_sort_by",
+            ReceiverKey::Core(CoreType::List),
+            "sorted_by",
+        ),
         (
             "list_binary_search",
             ReceiverKey::Core(CoreType::List),
@@ -719,9 +727,21 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ),
         // BitSet methods
         ("bitset_test", ReceiverKey::Core(CoreType::BitSet), "test"),
-        ("bitset_set", ReceiverKey::Core(CoreType::BitSet), "with_bit"),
-        ("bitset_reset", ReceiverKey::Core(CoreType::BitSet), "without_bit"),
-        ("bitset_flip", ReceiverKey::Core(CoreType::BitSet), "toggled"),
+        (
+            "bitset_set",
+            ReceiverKey::Core(CoreType::BitSet),
+            "with_bit",
+        ),
+        (
+            "bitset_reset",
+            ReceiverKey::Core(CoreType::BitSet),
+            "without_bit",
+        ),
+        (
+            "bitset_flip",
+            ReceiverKey::Core(CoreType::BitSet),
+            "toggled",
+        ),
         ("bitset_count", ReceiverKey::Core(CoreType::BitSet), "count"),
         ("bitset_size", ReceiverKey::Core(CoreType::BitSet), "size"),
         (
@@ -1137,7 +1157,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_any", ReceiverKey::Core(CoreType::MutableList), "any"),
         ("seq_all", ReceiverKey::Core(CoreType::MutableList), "all"),
         ("seq_find", ReceiverKey::Core(CoreType::MutableList), "find"),
-        ("seq_to_list", ReceiverKey::Core(CoreType::MutableList), "to_list"),
+        (
+            "seq_to_list",
+            ReceiverKey::Core(CoreType::MutableList),
+            "to_list",
+        ),
         // Deque methods
         (
             "deque_push_front",
@@ -1209,18 +1233,42 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             ReceiverKey::Core(CoreType::MutableDeque),
             "filter",
         ),
-        ("seq_fold", ReceiverKey::Core(CoreType::MutableDeque), "fold"),
-        ("seq_scan", ReceiverKey::Core(CoreType::MutableDeque), "scan"),
+        (
+            "seq_fold",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "fold",
+        ),
+        (
+            "seq_scan",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "scan",
+        ),
         (
             "seq_enumerate",
             ReceiverKey::Core(CoreType::MutableDeque),
             "enumerate",
         ),
         ("seq_zip", ReceiverKey::Core(CoreType::MutableDeque), "zip"),
-        ("seq_chunks", ReceiverKey::Core(CoreType::MutableDeque), "chunks"),
-        ("seq_windows", ReceiverKey::Core(CoreType::MutableDeque), "windows"),
-        ("seq_count", ReceiverKey::Core(CoreType::MutableDeque), "count"),
-        ("seq_count_by", ReceiverKey::Core(CoreType::MutableDeque), "count"),
+        (
+            "seq_chunks",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "chunks",
+        ),
+        (
+            "seq_windows",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "windows",
+        ),
+        (
+            "seq_count",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "count",
+        ),
+        (
+            "seq_count_by",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "count",
+        ),
         (
             "seq_contains",
             ReceiverKey::Core(CoreType::MutableDeque),
@@ -1233,8 +1281,16 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ),
         ("seq_any", ReceiverKey::Core(CoreType::MutableDeque), "any"),
         ("seq_all", ReceiverKey::Core(CoreType::MutableDeque), "all"),
-        ("seq_find", ReceiverKey::Core(CoreType::MutableDeque), "find"),
-        ("seq_to_list", ReceiverKey::Core(CoreType::MutableDeque), "to_list"),
+        (
+            "seq_find",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "find",
+        ),
+        (
+            "seq_to_list",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "to_list",
+        ),
         // Seq methods
         ("seq_map", ReceiverKey::Core(CoreType::Seq), "map"),
         ("seq_flat_map", ReceiverKey::Core(CoreType::Seq), "flat_map"),
@@ -2623,7 +2679,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             interner,
             "mutable_list_sort_by",
             vec![t_name],
-            vec![("xs", mutable_list_t.clone()), ("cmp", fn_tt_to_int.clone())],
+            vec![
+                ("xs", mutable_list_t.clone()),
+                ("cmp", fn_tt_to_int.clone()),
+            ],
             mutable_list_t.clone(),
         ),
         // mutable_list_binary_search<T>(xs: MutableList<T>, x: T) -> Int

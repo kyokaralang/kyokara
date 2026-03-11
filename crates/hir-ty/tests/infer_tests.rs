@@ -2067,7 +2067,8 @@ fn infer_seq_type_annotation_happy_path() {
 
 #[test]
 fn err_list_seq_bridge_is_removed_rfc_0002() {
-    let (result, _) = check("fn main() -> Int { collections.MutableList.new().push(1).seq().count() }");
+    let (result, _) =
+        check("fn main() -> Int { collections.MutableList.new().push(1).seq().count() }");
     assert!(
         result
             .diagnostics

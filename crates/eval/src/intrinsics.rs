@@ -1169,7 +1169,9 @@ impl IntrinsicFn {
                         "mutable_bitset_from_bitset expects a BitSet".into(),
                     ));
                 };
-                Ok(Value::MutableBitSet(crate::value::MutableBitSetValue::from_bitset(bitset)))
+                Ok(Value::MutableBitSet(
+                    crate::value::MutableBitSetValue::from_bitset(bitset),
+                ))
             }
             IntrinsicFn::MutableBitSetToBitSet => {
                 let Value::MutableBitSet(bitset) = &args[0] else {
