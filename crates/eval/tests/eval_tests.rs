@@ -6159,6 +6159,71 @@ fn eval_parse_float_nan() {
 }
 
 #[test]
+fn eval_float_division_by_zero_is_positive_infinity() {
+    let val = run_ok("fn main() -> Float { 1.0 / 0.0 }");
+    assert_eq!(val, Value::Float(f64::INFINITY));
+}
+
+#[test]
+fn eval_float_division_by_zero_is_negative_infinity() {
+    let val = run_ok("fn main() -> Float { (0.0 - 1.0) / 0.0 }");
+    assert_eq!(val, Value::Float(f64::NEG_INFINITY));
+}
+
+#[test]
+fn eval_float_zero_divided_by_zero_is_nan() {
+    let val = run_ok("fn main() -> Float { 0.0 / 0.0 }");
+    match val {
+        Value::Float(f) => assert!(f.is_nan(), "expected NaN, got {f}"),
+        other => panic!("expected Float, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_float_modulo_by_zero_is_nan() {
+    let val = run_ok("fn main() -> Float { 1.0 % 0.0 }");
+    match val {
+        Value::Float(f) => assert!(f.is_nan(), "expected NaN, got {f}"),
+        other => panic!("expected Float, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_float_is_nan_detects_nan() {
+    let val = run_ok("fn main() -> Bool { (0.0 / 0.0).is_nan() }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_float_is_infinite_detects_infinity() {
+    let val = run_ok("fn main() -> Bool { (1.0 / 0.0).is_infinite() }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_float_is_finite_detects_finite_values() {
+    let val = run_ok("fn main() -> Bool { 1.5.is_finite() }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_float_is_finite_rejects_nan_and_infinity() {
+    let val = run_ok("fn main() -> Bool { !(0.0 / 0.0).is_finite() && !(1.0 / 0.0).is_finite() }");
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
+fn eval_float_nan_comparisons_follow_ieee() {
+    let val = run_ok(
+        "fn main() -> Bool {
+            let nan = 0.0 / 0.0
+            nan != nan && !(nan == nan) && !(nan < 1.0) && !(nan <= 1.0) && !(nan > 1.0) && !(nan >= 1.0)
+        }",
+    );
+    assert_eq!(val, Value::Bool(true));
+}
+
+#[test]
 fn eval_parse_float_empty_fails() {
     let val = run_ok(&with_result_variants(
         r#"fn main() -> Bool {
@@ -6804,6 +6869,17 @@ fn eval_list_sort_floats_with_nan_rejected() {
         err.contains("cannot be sorted"),
         "expected compile-time sort rejection, got: {err}"
     );
+}
+
+#[test]
+fn eval_float_state_predicates_unavailable_on_int() {
+    assert!(check_has_compile_errors("fn main() -> Bool { 1.is_nan() }"));
+    assert!(check_has_compile_errors(
+        "fn main() -> Bool { 1.is_infinite() }"
+    ));
+    assert!(check_has_compile_errors(
+        "fn main() -> Bool { 1.is_finite() }"
+    ));
 }
 
 #[test]

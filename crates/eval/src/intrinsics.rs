@@ -189,6 +189,9 @@ pub enum IntrinsicFn {
     FloatMax,
     IntToFloat,
     FloatToInt,
+    FloatIsNaN,
+    FloatIsInfinite,
+    FloatIsFinite,
 
     // Parsing
     ParseInt,
@@ -1720,6 +1723,30 @@ impl IntrinsicFn {
                 };
                 Ok(Value::Int(*f as i64))
             }
+            IntrinsicFn::FloatIsNaN => {
+                let Value::Float(f) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "float_is_nan expects a Float".into(),
+                    ));
+                };
+                Ok(Value::Bool(f.is_nan()))
+            }
+            IntrinsicFn::FloatIsInfinite => {
+                let Value::Float(f) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "float_is_infinite expects a Float".into(),
+                    ));
+                };
+                Ok(Value::Bool(f.is_infinite()))
+            }
+            IntrinsicFn::FloatIsFinite => {
+                let Value::Float(f) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "float_is_finite expects a Float".into(),
+                    ));
+                };
+                Ok(Value::Bool(f.is_finite()))
+            }
 
             // ── Parsing (now complex — needs interpreter for Result construction) ──
             IntrinsicFn::OptionUnwrapOr
@@ -2466,6 +2493,15 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (Name::new(interner, "float_max"), IntrinsicFn::FloatMax),
         (Name::new(interner, "int_to_float"), IntrinsicFn::IntToFloat),
         (Name::new(interner, "float_to_int"), IntrinsicFn::FloatToInt),
+        (Name::new(interner, "float_is_nan"), IntrinsicFn::FloatIsNaN),
+        (
+            Name::new(interner, "float_is_infinite"),
+            IntrinsicFn::FloatIsInfinite,
+        ),
+        (
+            Name::new(interner, "float_is_finite"),
+            IntrinsicFn::FloatIsFinite,
+        ),
         // Parsing
         (Name::new(interner, "parse_int"), IntrinsicFn::ParseInt),
         (Name::new(interner, "parse_float"), IntrinsicFn::ParseFloat),

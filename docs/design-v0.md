@@ -686,7 +686,10 @@ while `io`/`fs` are module namespaces for effectful operations.
 * String methods ✓ — scalar-based (`s.len()` counts Unicode scalars; `s[i]`, `s.substring(a, b)`, and `s.chars()` operate on Unicode scalars), plus `s.contains(t)`, constrained-call-family `s.starts_with(t)` / `s.starts_with(t, start: idx)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()`, `s.parse_int()` → `Result<Int, ParseError>`, `s.parse_float()` → `Result<Float, ParseError>`
 * Char methods ✓ — `c.to_string()`, `c.code()` (Unicode scalar / code point value; e.g. `let bucket = ch.code() % 256`), `c.is_decimal_digit()`, `c.to_decimal_digit() -> Option<Int>`, `c.to_digit(radix: Int) -> Option<Int>` where digit conversion uses ASCII `0-9` / `a-z` / `A-Z` semantics and `radix` must be in `2..=36`
 * Int surface ✓ — native bitwise operators `&`, `|`, `^`, `~`, `<<`, `>>` (`Int` only, arithmetic `>>`, shift counts `0..63`) plus methods `n.abs()`, `n.pow(exp)` (`exp >= 0`, overflow checked), `n.to_string()`, `n.to_float()`
-* Float methods ✓ — `f.abs()`, `f.to_int()`
+* Float methods ✓ — `f.abs()`, `f.to_int()`, `f.is_nan()`, `f.is_infinite()`, `f.is_finite()`
+  * Float arithmetic intentionally follows IEEE behavior: `1.0 / 0.0` may produce `Infinity`, `-Infinity`, or `NaN`, and `1.0 % 0.0` yields `NaN`
+  * Float comparisons also follow IEEE behavior: `NaN != NaN`, and ordered comparisons with `NaN` are `false`
+  * `Float` is intentionally outside `Eq` / `Ord` / `Hash` in the phase-1 trait model because `NaN` breaks total equality and ordering laws
 * Module-qualified math ✓ — `math.min(a, b)`, `math.max(a, b)`, `math.gcd(a, b)`, `math.lcm(a, b)`, `math.fmin(a, b)`, `math.fmax(a, b)`
 * Module-qualified I/O ✓ — `io.print(s)`, `io.println(s)`, `io.read_line()`, `io.read_stdin()` (require `io` capability)
 * Module-qualified filesystem ✓ — `fs.read_file(path)` (requires `fs` capability)
