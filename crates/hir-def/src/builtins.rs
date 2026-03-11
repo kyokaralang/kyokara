@@ -1210,6 +1210,21 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             ReceiverKey::Primitive(PrimitiveType::Float),
             "abs",
         ),
+        (
+            "float_is_nan",
+            ReceiverKey::Primitive(PrimitiveType::Float),
+            "is_nan",
+        ),
+        (
+            "float_is_infinite",
+            ReceiverKey::Primitive(PrimitiveType::Float),
+            "is_infinite",
+        ),
+        (
+            "float_is_finite",
+            ReceiverKey::Primitive(PrimitiveType::Float),
+            "is_finite",
+        ),
         // Char methods
         (
             "char_to_string",
@@ -3492,6 +3507,30 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![],
             vec![("f", float_ty.clone())],
             int_ty.clone(),
+        ),
+        // float_is_nan(f: Float) -> Bool
+        mk_intrinsic(
+            interner,
+            "float_is_nan",
+            vec![],
+            vec![("f", float_ty.clone())],
+            bool_ty.clone(),
+        ),
+        // float_is_infinite(f: Float) -> Bool
+        mk_intrinsic(
+            interner,
+            "float_is_infinite",
+            vec![],
+            vec![("f", float_ty.clone())],
+            bool_ty.clone(),
+        ),
+        // float_is_finite(f: Float) -> Bool
+        mk_intrinsic(
+            interner,
+            "float_is_finite",
+            vec![],
+            vec![("f", float_ty.clone())],
+            bool_ty.clone(),
         ),
         // ── Parsing ──────────────────────────────────────────────
         // parse_int(s: String) -> Result<Int, ParseError>

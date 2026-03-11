@@ -2297,16 +2297,19 @@ impl Interpreter {
     }
 
     fn call_fn_idx_value(&mut self, fn_idx: FnItemIdx, args: Args) -> Result<Value, RuntimeError> {
-        let fn_item = &self.item_tree.functions[fn_idx];
-        if let Some(intr) = self.intrinsics.get(&fn_item.name) {
+        if self.fn_bodies.contains_key(&fn_idx) {
+            self.call_fn(fn_idx, args)
+        } else {
+            let fn_item = &self.item_tree.functions[fn_idx];
+            let Some(intr) = self.intrinsics.get(&fn_item.name) else {
+                return self.call_fn(fn_idx, args);
+            };
             self.check_intrinsic_cap(*intr)?;
             if intr.needs_interpreter() {
                 self.call_complex_intrinsic(*intr, args)
             } else {
                 intr.call(args)
             }
-        } else {
-            self.call_fn(fn_idx, args)
         }
     }
 
