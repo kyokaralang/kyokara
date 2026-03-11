@@ -2383,6 +2383,12 @@ impl Interpreter {
             if has_ensures {
                 let result_name = Name::new(&mut self.interner, "result");
                 for ens_idx in body.ensures.iter().copied() {
+                    let ensure_env = self
+                        .old_env
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or_else(|| self.env.clone());
+                    let prev_env = std::mem::replace(&mut self.env, ensure_env);
                     self.env.push_scope();
                     self.env.bind(result_name, return_val.clone());
                     if let Some(old_env) = self.old_env.as_mut() {
@@ -2395,6 +2401,7 @@ impl Interpreter {
                             if let Some(old_env) = self.old_env.as_mut() {
                                 old_env.pop_scope();
                             }
+                            self.env = prev_env;
                             return Err(err);
                         }
                     };
@@ -2402,6 +2409,7 @@ impl Interpreter {
                     if let Some(old_env) = self.old_env.as_mut() {
                         old_env.pop_scope();
                     }
+                    self.env = prev_env;
                     if !matches!(val, Value::Bool(true)) {
                         Err(RuntimeError::PostconditionFailed(fn_name_str.clone()))?;
                     }
@@ -4129,9 +4137,7 @@ impl Interpreter {
                 .lookup_slot(access.depth, access.slot)
                 .cloned()
                 .ok_or_else(|| {
-                    RuntimeError::TypeError(
-                        "internal runtime error: local binding unavailable".into(),
-                    )
+                    RuntimeError::TypeError("internal runtime error: local binding unavailable".into())
                 });
         }
         if path.segments.len() > 1

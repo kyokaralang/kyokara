@@ -3771,6 +3771,22 @@ fn run_ensures_result_and_user_result_coexist() {
 }
 
 #[test]
+fn run_ensures_can_read_persistent_param_after_body_consumes_it() {
+    let val = run_ok(
+        "from collections import List\n\
+         fn sort_ranges(ranges: List<Int>) -> List<Int>\n\
+           contract ensures (result.len() == ranges.len())\n\
+         {\n\
+           ranges.sort()\n\
+         }\n\
+         fn main() -> Int {\n\
+           sort_ranges(List.new().push(2).push(1)).get(0).unwrap_or(0)\n\
+         }",
+    );
+    assert_eq!(val, Value::Int(1));
+}
+
+#[test]
 fn run_project_rejects_body_lowering_error_in_sibling_module() {
     let err = run_project_with_files_err(&[
         ("bad.ky", "pub fn oops() -> Int { unknown_name }\n"),
