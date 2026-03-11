@@ -1291,6 +1291,7 @@ impl Interpreter {
             Value::MutablePriorityQueue(_) => {
                 name.resolve(&self.interner) == "MutablePriorityQueue"
             }
+            Value::MutableDeque(_) => name.resolve(&self.interner) == "MutableDeque",
             Value::Deque(_) => name.resolve(&self.interner) == "Deque",
             Value::BitSet(_) => name.resolve(&self.interner) == "BitSet",
             Value::MutableBitSet(_) => name.resolve(&self.interner) == "MutableBitSet",
@@ -1453,6 +1454,19 @@ impl Interpreter {
                 }
                 Ok(true)
             }
+            (Value::MutableDeque(lhs), Value::MutableDeque(rhs)) => {
+                let lhs_items = lhs.snapshot();
+                let rhs_items = rhs.snapshot();
+                if lhs_items.len() != rhs_items.len() {
+                    return Ok(false);
+                }
+                for (lhs_value, rhs_value) in lhs_items.iter().zip(rhs_items.iter()) {
+                    if !self.trait_eq_values(lhs_value, rhs_value)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
             (Value::BitSet(lhs), Value::BitSet(rhs)) => Ok(lhs == rhs),
             (Value::Map(lhs), Value::Map(rhs)) => Ok(lhs == rhs),
             (Value::Set(lhs), Value::Set(rhs)) => Ok(lhs == rhs),
@@ -1568,6 +1582,11 @@ impl Interpreter {
             (Value::Deque(lhs), Value::Deque(rhs)) => {
                 let lhs_values: Vec<_> = lhs.iter().cloned().collect();
                 let rhs_values: Vec<_> = rhs.iter().cloned().collect();
+                self.trait_compare_slices_refs(&lhs_values, &rhs_values)?
+            }
+            (Value::MutableDeque(lhs), Value::MutableDeque(rhs)) => {
+                let lhs_values: Vec<_> = lhs.snapshot().iter().cloned().collect();
+                let rhs_values: Vec<_> = rhs.snapshot().iter().cloned().collect();
                 self.trait_compare_slices_refs(&lhs_values, &rhs_values)?
             }
             (Value::BitSet(lhs), Value::BitSet(rhs)) => lhs.words().cmp(&rhs.words()),
@@ -1811,6 +1830,7 @@ impl Interpreter {
             }
             Value::MutableList(_)
             | Value::MutablePriorityQueue(_)
+            | Value::MutableDeque(_)
             | Value::MutableMap(_)
             | Value::MutableSet(_)
             | Value::MutableBitSet(_)
@@ -1886,6 +1906,15 @@ impl Interpreter {
             Value::Deque(items) => Ok(format!(
                 "Deque([{}])",
                 items
+                    .iter()
+                    .map(|item| self.trait_show_value(item))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(", ")
+            )),
+            Value::MutableDeque(items) => Ok(format!(
+                "MutableDeque([{}])",
+                items
+                    .snapshot()
                     .iter()
                     .map(|item| self.trait_show_value(item))
                     .collect::<Result<Vec<_>, _>>()?
@@ -4836,6 +4865,9 @@ impl Interpreter {
             Value::MutableList(xs) => {
                 Ok(Rc::new(SeqPlan::Source(SeqSource::FromList(xs.snapshot()))))
             }
+            Value::MutableDeque(xs) => {
+                Ok(Rc::new(SeqPlan::Source(SeqSource::FromDeque(xs.snapshot()))))
+            }
             Value::Deque(xs) => Ok(Rc::new(SeqPlan::Source(SeqSource::FromDeque(xs.clone())))),
             _ => Err(RuntimeError::TypeError(format!(
                 "{intrinsic_name} expects a traversal source"
@@ -5668,6 +5700,31 @@ impl Interpreter {
                     self.make_none()
                 }
             }
+            IntrinsicFn::MutableListHead => {
+                let Value::MutableList(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_head expects a MutableList".into(),
+                    ));
+                };
+                if let Some(val) = xs.get_cloned(0) {
+                    self.make_some(val)
+                } else {
+                    self.make_none()
+                }
+            }
+            IntrinsicFn::MutableListTail => {
+                let Value::MutableList(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_tail expects a MutableList".into(),
+                    ));
+                };
+                let snapshot = xs.snapshot();
+                if snapshot.is_empty() {
+                    Ok(Value::list(Vec::new()))
+                } else {
+                    Ok(Value::list(snapshot[1..].to_vec()))
+                }
+            }
             IntrinsicFn::MutableListLast => {
                 let Value::MutableList(xs) = &args[0] else {
                     return Err(RuntimeError::TypeError(
@@ -6029,6 +6086,14 @@ impl Interpreter {
                 };
                 Ok(Value::Bool(entries.borrow().is_empty()))
             }
+            IntrinsicFn::MutableMapToMap => {
+                let Value::MutableMap(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_to_map expects a MutableMap".into(),
+                    ));
+                };
+                Ok(Value::Map(Rc::new(entries.borrow().snapshot())))
+            }
             IntrinsicFn::SetInsert => {
                 let mut args = args.into_iter();
                 let Value::Set(mut entries) = args.next().ok_or(RuntimeError::TypeError(
@@ -6162,6 +6227,14 @@ impl Interpreter {
                 Ok(Value::seq_source(SeqSource::SetValues(Rc::new(
                     entries.borrow().snapshot(),
                 ))))
+            }
+            IntrinsicFn::MutableSetToSet => {
+                let Value::MutableSet(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_set_to_set expects a MutableSet".into(),
+                    ));
+                };
+                Ok(Value::Set(Rc::new(entries.borrow().snapshot())))
             }
             IntrinsicFn::SeqMap => {
                 let plan = self.require_traversal_plan(&args[0], "seq_map")?;
@@ -6416,6 +6489,28 @@ impl Interpreter {
                 };
                 self.make_some(payload)
             }
+            IntrinsicFn::MutableDequePopFront => {
+                let Value::MutableDeque(q) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_deque_pop_front expects a MutableDeque".into(),
+                    ));
+                };
+                match q.pop_front() {
+                    Some(value) => self.make_some(value),
+                    None => self.make_none(),
+                }
+            }
+            IntrinsicFn::MutableDequePopBack => {
+                let Value::MutableDeque(q) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_deque_pop_back expects a MutableDeque".into(),
+                    ));
+                };
+                match q.pop_back() {
+                    Some(value) => self.make_some(value),
+                    None => self.make_none(),
+                }
+            }
             IntrinsicFn::ListSort => {
                 let Value::List(xs) = &args[0] else {
                     return Err(RuntimeError::TypeError("list_sort expects a List".into()));
@@ -6426,6 +6521,21 @@ impl Interpreter {
                 };
                 let items = stable_merge_sort_by(xs.as_ref(), &mut cmp)?;
                 Ok(Value::list(items))
+            }
+            IntrinsicFn::MutableListSort => {
+                let Value::MutableList(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_sort expects a MutableList".into(),
+                    ));
+                };
+                let snapshot = xs.snapshot();
+                let mut cmp = |a: &Value, b: &Value| {
+                    let ord = self.trait_compare_values(a, b)?;
+                    Ok(ord.cmp(&0))
+                };
+                let items = stable_merge_sort_by(snapshot.as_ref(), &mut cmp)?;
+                xs.replace_all(items);
+                Ok(Value::MutableList(xs.clone()))
             }
             IntrinsicFn::ListBinarySearch => {
                 let Value::List(xs) = &args[0] else {
@@ -6439,6 +6549,27 @@ impl Interpreter {
                 while lo < hi {
                     let mid = lo + (hi - lo) / 2;
                     let ord = self.trait_compare_values(&xs[mid], needle)?;
+                    match ord.cmp(&0) {
+                        Ordering::Less => lo = mid + 1,
+                        Ordering::Greater => hi = mid,
+                        Ordering::Equal => return Ok(Value::Int(mid as i64)),
+                    }
+                }
+                Ok(Value::Int(-(lo as i64) - 1))
+            }
+            IntrinsicFn::MutableListBinarySearch => {
+                let Value::MutableList(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_binary_search expects a MutableList".into(),
+                    ));
+                };
+                let needle = &args[1];
+                let snapshot = xs.snapshot();
+                let mut lo = 0usize;
+                let mut hi = snapshot.len();
+                while lo < hi {
+                    let mid = lo + (hi - lo) / 2;
+                    let ord = self.trait_compare_values(&snapshot[mid], needle)?;
                     match ord.cmp(&0) {
                         Ordering::Less => lo = mid + 1,
                         Ordering::Greater => hi = mid,
@@ -6468,6 +6599,30 @@ impl Interpreter {
                 };
                 let items = stable_merge_sort_by(xs.as_ref(), &mut cmp)?;
                 Ok(Value::list(items))
+            }
+            IntrinsicFn::MutableListSortBy => {
+                let Value::MutableList(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_sort_by expects a MutableList".into(),
+                    ));
+                };
+                let cmp_fn = args[1].clone();
+                let snapshot = xs.snapshot();
+                let mut cmp = |a: &Value, b: &Value| {
+                    let cmp_result =
+                        self.call_value(cmp_fn.clone(), smallvec::smallvec![a.clone(), b.clone()])?;
+                    match cmp_result {
+                        Value::Int(n) if n > 0 => Ok(Ordering::Greater),
+                        Value::Int(n) if n < 0 => Ok(Ordering::Less),
+                        Value::Int(_) => Ok(Ordering::Equal),
+                        _ => Err(RuntimeError::TypeError(
+                            "mutable_list_sort_by: comparator must return Int".into(),
+                        )),
+                    }
+                };
+                let items = stable_merge_sort_by(snapshot.as_ref(), &mut cmp)?;
+                xs.replace_all(items);
+                Ok(Value::MutableList(xs.clone()))
             }
             IntrinsicFn::OptionUnwrapOr => {
                 let fallback = args[1].clone();
@@ -6715,6 +6870,11 @@ impl Interpreter {
                 .core_types
                 .get(CoreType::MutablePriorityQueue)
                 .map(|_| ReceiverKey::Core(CoreType::MutablePriorityQueue)),
+            Value::MutableDeque(_) => self
+                .module_scope
+                .core_types
+                .get(CoreType::MutableDeque)
+                .map(|_| ReceiverKey::Core(CoreType::MutableDeque)),
             Value::MutableMap(_) => self
                 .module_scope
                 .core_types
@@ -7943,32 +8103,32 @@ mod tests {
     fn lambda_method_chain_tail_reuses_param_storage_when_unique() {
         let mut interp = make_checked_interpreter(
             "import collections\n\
-             fn make() -> fn(List<Int>) -> List<Int> { fn(xs: List<Int>) => xs.push(1).push(2) }\n\
+             fn make() -> fn(MutableList<Int>) -> MutableList<Int> {\n\
+               fn(xs: MutableList<Int>) => xs.push(1).push(2)\n\
+             }\n\
              fn main() -> Unit {}",
         );
         let make_idx = fn_idx_by_name(&mut interp, "make");
         let lambda = interp
             .call_fn_by_idx(make_idx, Args::new())
             .expect("factory should return lambda");
-        let original = Value::list(vec![Value::Int(0)]);
+        let original = Value::mutable_list(vec![Value::Int(0)]);
         let before_ptr = match &original {
-            Value::List(xs) => Rc::as_ptr(xs),
-            _ => panic!("expected list"),
+            Value::MutableList(xs) => xs.current_backing_ptr(),
+            _ => panic!("expected mutable list"),
         };
 
         let out = interp
             .call_value(lambda, smallvec![original])
             .expect("lambda tail method chain should succeed");
 
-        let Value::List(updated) = &out else {
-            panic!("expected list output");
+        let Value::MutableList(updated) = &out else {
+            panic!("expected mutable list output");
         };
-        assert_eq!(
-            updated.as_ref(),
-            &[Value::Int(0), Value::Int(1), Value::Int(2)]
-        );
+        let snapshot = updated.snapshot();
+        assert_eq!(snapshot.as_ref(), &[Value::Int(0), Value::Int(1), Value::Int(2)]);
         assert!(
-            std::ptr::eq(before_ptr, Rc::as_ptr(updated)),
+            std::ptr::eq(before_ptr, updated.current_backing_ptr()),
             "lambda tail method chain should reuse uniquely owned param storage"
         );
     }
@@ -7977,8 +8137,8 @@ mod tests {
     fn lambda_tail_method_chain_does_not_consume_duplicate_receiver_use() {
         let mut interp = make_checked_interpreter(
             "import collections\n\
-             fn make() -> fn(List<Int>) -> Int {\n\
-               fn(xs: List<Int>) => xs.push(xs.len()).len() + xs.len()\n\
+             fn make() -> fn(MutableList<Int>) -> Int {\n\
+               fn(xs: MutableList<Int>) => xs.push(xs.len()).len() + xs.len()\n\
              }\n\
              fn main() -> Unit {}",
         );
@@ -7986,13 +8146,13 @@ mod tests {
         let lambda = interp
             .call_fn_by_idx(make_idx, Args::new())
             .expect("factory should return lambda");
-        let original = Value::list(vec![Value::Int(10), Value::Int(20)]);
+        let original = Value::mutable_list(vec![Value::Int(10), Value::Int(20)]);
 
         let out = interp
             .call_value(lambda, smallvec![original])
             .expect("duplicate receiver use in lambda should still succeed");
 
-        assert_eq!(out, Value::Int(5));
+        assert_eq!(out, Value::Int(6));
     }
 
     #[test]
@@ -8394,29 +8554,27 @@ mod tests {
     fn list_method_chain_tail_reuses_param_storage_when_unique() {
         let mut interp = make_checked_interpreter(
             "import collections\n\
-             fn extend(xs: List<Int>) -> List<Int> { xs.push(1).push(2) }\n\
+             fn extend(xs: MutableList<Int>) -> MutableList<Int> { xs.push(1).push(2) }\n\
              fn main() -> Unit {}",
         );
         let extend_idx = fn_idx_by_name(&mut interp, "extend");
-        let original = Value::list(vec![Value::Int(0)]);
+        let original = Value::mutable_list(vec![Value::Int(0)]);
         let before_ptr = match &original {
-            Value::List(xs) => Rc::as_ptr(xs),
-            _ => panic!("expected list"),
+            Value::MutableList(xs) => xs.current_backing_ptr(),
+            _ => panic!("expected mutable list"),
         };
 
         let out = interp
             .call_fn_by_idx(extend_idx, smallvec![original])
             .expect("tail method chain should succeed");
 
-        let Value::List(updated) = &out else {
-            panic!("expected list output");
+        let Value::MutableList(updated) = &out else {
+            panic!("expected mutable list output");
         };
-        assert_eq!(
-            updated.as_ref(),
-            &[Value::Int(0), Value::Int(1), Value::Int(2)]
-        );
+        let snapshot = updated.snapshot();
+        assert_eq!(snapshot.as_ref(), &[Value::Int(0), Value::Int(1), Value::Int(2)]);
         assert!(
-            std::ptr::eq(before_ptr, Rc::as_ptr(updated)),
+            std::ptr::eq(before_ptr, updated.current_backing_ptr()),
             "tail list method chain should reuse uniquely owned param storage"
         );
     }
@@ -8425,26 +8583,26 @@ mod tests {
     fn map_method_chain_tail_reuses_param_storage_when_unique() {
         let mut interp = make_checked_interpreter(
             "import collections\n\
-             fn extend(m: Map<String, Int>) -> Map<String, Int> {\n\
+             fn extend(m: MutableMap<String, Int>) -> MutableMap<String, Int> {\n\
                m.insert(\"a\", 1).insert(\"b\", 2)\n\
              }\n\
              fn main() -> Unit {}",
         );
         let extend_idx = fn_idx_by_name(&mut interp, "extend");
-        let original = Value::map(indexmap::IndexMap::new());
+        let original = Value::mutable_map(indexmap::IndexMap::new());
         let before_ptr = match &original {
-            Value::Map(entries) => Rc::as_ptr(entries),
-            _ => panic!("expected map"),
+            Value::MutableMap(entries) => Rc::as_ptr(entries),
+            _ => panic!("expected mutable map"),
         };
 
         let out = interp
             .call_fn_by_idx(extend_idx, smallvec![original])
             .expect("tail map method chain should succeed");
 
-        let Value::Map(updated) = &out else {
-            panic!("expected map output");
+        let Value::MutableMap(updated) = &out else {
+            panic!("expected mutable map output");
         };
-        assert_eq!(updated.len(), 2);
+        assert_eq!(updated.borrow().len(), 2);
         assert!(
             std::ptr::eq(before_ptr, Rc::as_ptr(updated)),
             "tail map method chain should reuse uniquely owned param storage"
@@ -8455,24 +8613,24 @@ mod tests {
     fn set_method_chain_tail_reuses_param_storage_when_unique() {
         let mut interp = make_checked_interpreter(
             "import collections\n\
-             fn extend(s: Set<Int>) -> Set<Int> { s.insert(1).insert(2) }\n\
+             fn extend(s: MutableSet<Int>) -> MutableSet<Int> { s.insert(1).insert(2) }\n\
              fn main() -> Unit {}",
         );
         let extend_idx = fn_idx_by_name(&mut interp, "extend");
-        let original = Value::set(indexmap::IndexSet::new());
+        let original = Value::mutable_set(indexmap::IndexSet::new());
         let before_ptr = match &original {
-            Value::Set(entries) => Rc::as_ptr(entries),
-            _ => panic!("expected set"),
+            Value::MutableSet(entries) => Rc::as_ptr(entries),
+            _ => panic!("expected mutable set"),
         };
 
         let out = interp
             .call_fn_by_idx(extend_idx, smallvec![original])
             .expect("tail set method chain should succeed");
 
-        let Value::Set(updated) = &out else {
-            panic!("expected set output");
+        let Value::MutableSet(updated) = &out else {
+            panic!("expected mutable set output");
         };
-        assert_eq!(updated.len(), 2);
+        assert_eq!(updated.borrow().len(), 2);
         assert!(
             std::ptr::eq(before_ptr, Rc::as_ptr(updated)),
             "tail set method chain should reuse uniquely owned param storage"
@@ -8483,7 +8641,7 @@ mod tests {
     fn deque_pop_front_tail_reuses_param_storage_when_unique() {
         let mut interp = make_checked_interpreter(
             "import collections\n\
-             fn pop(q: Deque<Int>) -> Option<{ value: Int, rest: Deque<Int> }> { q.pop_front() }\n\
+             fn pop(q: Deque<Int>) -> Option<{ value: Int, rest: Deque<Int> }> { q.popped_front() }\n\
              fn main() -> Unit {}",
         );
         let pop_idx = fn_idx_by_name(&mut interp, "pop");
@@ -8518,7 +8676,7 @@ mod tests {
     fn shadow_rebind_method_chain_reuses_storage_when_old_binding_dies() {
         let mut interp = make_checked_interpreter(
             "import collections\n\
-             fn extend(xs: List<Int>) -> List<Int> {\n\
+             fn extend(xs: MutableList<Int>) -> MutableList<Int> {\n\
                let xs = xs.push(1)\n\
                let xs = xs.push(2)\n\
                xs\n\
@@ -8526,25 +8684,23 @@ mod tests {
              fn main() -> Unit {}",
         );
         let extend_idx = fn_idx_by_name(&mut interp, "extend");
-        let original = Value::list(vec![Value::Int(0)]);
+        let original = Value::mutable_list(vec![Value::Int(0)]);
         let before_ptr = match &original {
-            Value::List(xs) => Rc::as_ptr(xs),
-            _ => panic!("expected list"),
+            Value::MutableList(xs) => xs.current_backing_ptr(),
+            _ => panic!("expected mutable list"),
         };
 
         let out = interp
             .call_fn_by_idx(extend_idx, smallvec![original])
             .expect("shadow rebinding should succeed");
 
-        let Value::List(updated) = &out else {
-            panic!("expected list output");
+        let Value::MutableList(updated) = &out else {
+            panic!("expected mutable list output");
         };
-        assert_eq!(
-            updated.as_ref(),
-            &[Value::Int(0), Value::Int(1), Value::Int(2)]
-        );
+        let snapshot = updated.snapshot();
+        assert_eq!(snapshot.as_ref(), &[Value::Int(0), Value::Int(1), Value::Int(2)]);
         assert!(
-            std::ptr::eq(before_ptr, Rc::as_ptr(updated)),
+            std::ptr::eq(before_ptr, updated.current_backing_ptr()),
             "shadow rebinding chain should preserve unique ownership across updates"
         );
     }
@@ -8553,31 +8709,31 @@ mod tests {
     fn tail_method_chain_does_not_consume_duplicate_receiver_use() {
         let mut interp = make_checked_interpreter(
             "import collections\n\
-             fn measure(xs: List<Int>) -> Int { xs.push(xs.len()).len() + xs.len() }\n\
+             fn measure(xs: MutableList<Int>) -> Int { xs.push(xs.len()).len() + xs.len() }\n\
              fn main() -> Unit {}",
         );
         let measure_idx = fn_idx_by_name(&mut interp, "measure");
-        let original = Value::list(vec![Value::Int(10), Value::Int(20)]);
+        let original = Value::mutable_list(vec![Value::Int(10), Value::Int(20)]);
 
         let out = interp
             .call_fn_by_idx(measure_idx, smallvec![original])
             .expect("duplicate receiver use should still succeed");
 
-        assert_eq!(out, Value::Int(5));
+        assert_eq!(out, Value::Int(6));
     }
 
     #[test]
     fn shadow_rebind_init_does_not_consume_duplicate_receiver_use() {
         let mut interp = make_checked_interpreter(
             "import collections\n\
-             fn extend(xs: List<Int>) -> Int {\n\
+             fn extend(xs: MutableList<Int>) -> Int {\n\
                let xs = xs.push(xs.len())\n\
                xs.len()\n\
              }\n\
              fn main() -> Unit {}",
         );
         let extend_idx = fn_idx_by_name(&mut interp, "extend");
-        let original = Value::list(vec![Value::Int(10), Value::Int(20)]);
+        let original = Value::mutable_list(vec![Value::Int(10), Value::Int(20)]);
 
         let out = interp
             .call_fn_by_idx(extend_idx, smallvec![original])

@@ -59,10 +59,26 @@ pub enum IntrinsicFn {
     MutableListLen,
     MutableListIsEmpty,
     MutableListGet,
+    MutableListHead,
+    MutableListTail,
     MutableListSet,
     MutableListDeleteAt,
     MutableListRemoveAt,
     MutableListUpdate,
+    MutableListReverse,
+    MutableListSort,
+    MutableListSortBy,
+    MutableListBinarySearch,
+    MutableListToList,
+    MutableDequeNew,
+    MutableDequeFromDeque,
+    MutableDequePushFront,
+    MutableDequePushBack,
+    MutableDequePopFront,
+    MutableDequePopBack,
+    MutableDequeLen,
+    MutableDequeIsEmpty,
+    MutableDequeToDeque,
     MutablePriorityQueueNewMin,
     MutablePriorityQueueNewMax,
     MutablePriorityQueuePush,
@@ -81,6 +97,8 @@ pub enum IntrinsicFn {
     MutableMapKeys,
     MutableMapValues,
     MutableMapIsEmpty,
+    MutableMapFromMap,
+    MutableMapToMap,
     MutableSetNew,
     MutableSetWithCapacity,
     MutableSetInsert,
@@ -89,6 +107,8 @@ pub enum IntrinsicFn {
     MutableSetLen,
     MutableSetIsEmpty,
     MutableSetValues,
+    MutableSetFromSet,
+    MutableSetToSet,
     MutableBitSetNew,
     MutableBitSetTest,
     MutableBitSetSet,
@@ -102,6 +122,8 @@ pub enum IntrinsicFn {
     MutableBitSetIntersection,
     MutableBitSetDifference,
     MutableBitSetXor,
+    MutableBitSetFromBitSet,
+    MutableBitSetToBitSet,
     DequeNew,
     DequePushFront,
     DequePushBack,
@@ -256,7 +278,14 @@ impl IntrinsicFn {
                 | IntrinsicFn::MutableListLast
                 | IntrinsicFn::MutableListPop
                 | IntrinsicFn::MutableListGet
+                | IntrinsicFn::MutableListHead
+                | IntrinsicFn::MutableListTail
                 | IntrinsicFn::MutableListUpdate
+                | IntrinsicFn::MutableListSort
+                | IntrinsicFn::MutableListSortBy
+                | IntrinsicFn::MutableListBinarySearch
+                | IntrinsicFn::MutableDequePopFront
+                | IntrinsicFn::MutableDequePopBack
                 | IntrinsicFn::MutablePriorityQueuePush
                 | IntrinsicFn::MutablePriorityQueuePeek
                 | IntrinsicFn::MutablePriorityQueuePop
@@ -787,6 +816,88 @@ impl IntrinsicFn {
 
                 Ok(xs.remove_at(i as usize))
             }
+            IntrinsicFn::MutableListReverse => {
+                let Value::MutableList(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_reverse expects a MutableList".into(),
+                    ));
+                };
+                xs.reverse();
+                Ok(Value::MutableList(xs.clone()))
+            }
+            IntrinsicFn::MutableListToList => {
+                let Value::MutableList(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_list_to_list expects a MutableList".into(),
+                    ));
+                };
+                Ok(Value::List(xs.snapshot()))
+            }
+            IntrinsicFn::MutableDequeNew => Ok(Value::mutable_deque(VecDeque::new())),
+            IntrinsicFn::MutableDequeFromDeque => {
+                let Value::Deque(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_deque_from_deque expects a Deque".into(),
+                    ));
+                };
+                Ok(Value::mutable_deque(xs.as_ref().clone()))
+            }
+            IntrinsicFn::MutableDequePushFront => {
+                let mut args = args;
+                let value = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_deque_push_front: missing value argument".into(),
+                ))?;
+                let Value::MutableDeque(xs) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_deque_push_front: missing mutable deque argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_deque_push_front expects a MutableDeque".into(),
+                    ));
+                };
+                xs.push_front(value);
+                Ok(Value::MutableDeque(xs))
+            }
+            IntrinsicFn::MutableDequePushBack => {
+                let mut args = args;
+                let value = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_deque_push_back: missing value argument".into(),
+                ))?;
+                let Value::MutableDeque(xs) = args.pop().ok_or(RuntimeError::TypeError(
+                    "mutable_deque_push_back: missing mutable deque argument".into(),
+                ))?
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_deque_push_back expects a MutableDeque".into(),
+                    ));
+                };
+                xs.push_back(value);
+                Ok(Value::MutableDeque(xs))
+            }
+            IntrinsicFn::MutableDequeLen => {
+                let Value::MutableDeque(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_deque_len expects a MutableDeque".into(),
+                    ));
+                };
+                Ok(Value::Int(xs.len() as i64))
+            }
+            IntrinsicFn::MutableDequeIsEmpty => {
+                let Value::MutableDeque(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_deque_is_empty expects a MutableDeque".into(),
+                    ));
+                };
+                Ok(Value::Bool(xs.is_empty()))
+            }
+            IntrinsicFn::MutableDequeToDeque => {
+                let Value::MutableDeque(xs) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_deque_to_deque expects a MutableDeque".into(),
+                    ));
+                };
+                Ok(Value::Deque(xs.snapshot()))
+            }
             IntrinsicFn::MutablePriorityQueueNewMin => {
                 Ok(Value::mutable_priority_queue(PriorityQueueDirection::Min))
             }
@@ -919,6 +1030,24 @@ impl IntrinsicFn {
                 };
                 Ok(Value::Bool(entries.borrow().is_empty()))
             }
+            IntrinsicFn::MutableMapFromMap => {
+                let Value::Map(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_from_map expects a Map".into(),
+                    ));
+                };
+                Ok(Value::MutableMap(Rc::new(std::cell::RefCell::new(
+                    crate::value::MutableMapValue::from_map((**entries).clone()),
+                ))))
+            }
+            IntrinsicFn::MutableMapToMap => {
+                let Value::MutableMap(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_map_to_map expects a MutableMap".into(),
+                    ));
+                };
+                Ok(Value::Map(Rc::new(entries.borrow().snapshot())))
+            }
             IntrinsicFn::MutableSetNew => Ok(Value::mutable_set(IndexSet::new())),
             IntrinsicFn::MutableSetWithCapacity => {
                 let Value::Int(capacity) = args[0] else {
@@ -1015,6 +1144,40 @@ impl IntrinsicFn {
                 Ok(Value::seq_source(SeqSource::SetValues(Rc::new(
                     entries.borrow().snapshot(),
                 ))))
+            }
+            IntrinsicFn::MutableSetFromSet => {
+                let Value::Set(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_set_from_set expects a Set".into(),
+                    ));
+                };
+                Ok(Value::MutableSet(Rc::new(std::cell::RefCell::new(
+                    crate::value::MutableSetValue::from_set((**entries).clone()),
+                ))))
+            }
+            IntrinsicFn::MutableSetToSet => {
+                let Value::MutableSet(entries) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_set_to_set expects a MutableSet".into(),
+                    ));
+                };
+                Ok(Value::Set(Rc::new(entries.borrow().snapshot())))
+            }
+            IntrinsicFn::MutableBitSetFromBitSet => {
+                let Value::BitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_from_bitset expects a BitSet".into(),
+                    ));
+                };
+                Ok(Value::MutableBitSet(crate::value::MutableBitSetValue::from_bitset(bitset)))
+            }
+            IntrinsicFn::MutableBitSetToBitSet => {
+                let Value::MutableBitSet(bitset) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "mutable_bitset_to_bitset expects a MutableBitSet".into(),
+                    ));
+                };
+                Ok(Value::BitSet(bitset.snapshot()))
             }
             IntrinsicFn::MutableBitSetNew => {
                 let Value::Int(size) = &args[0] else {
@@ -2008,6 +2171,11 @@ impl IntrinsicFn {
             | IntrinsicFn::MutableListLast
             | IntrinsicFn::MutableListPop
             | IntrinsicFn::MutableListGet
+            | IntrinsicFn::MutableListHead
+            | IntrinsicFn::MutableListTail
+            | IntrinsicFn::MutableListSort
+            | IntrinsicFn::MutableListSortBy
+            | IntrinsicFn::MutableListBinarySearch
             | IntrinsicFn::MutablePriorityQueuePush
             | IntrinsicFn::MutablePriorityQueuePeek
             | IntrinsicFn::MutablePriorityQueuePop
@@ -2034,6 +2202,8 @@ impl IntrinsicFn {
             | IntrinsicFn::MapGet
             | IntrinsicFn::ListUpdate
             | IntrinsicFn::MutableListUpdate
+            | IntrinsicFn::MutableDequePopFront
+            | IntrinsicFn::MutableDequePopBack
             | IntrinsicFn::DequePopFront
             | IntrinsicFn::DequePopBack
             | IntrinsicFn::ListSortBy => Err(RuntimeError::TypeError(
@@ -2151,6 +2321,14 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
             IntrinsicFn::MutableListGet,
         ),
         (
+            Name::new(interner, "mutable_list_head"),
+            IntrinsicFn::MutableListHead,
+        ),
+        (
+            Name::new(interner, "mutable_list_tail"),
+            IntrinsicFn::MutableListTail,
+        ),
+        (
             Name::new(interner, "mutable_list_set"),
             IntrinsicFn::MutableListSet,
         ),
@@ -2165,6 +2343,62 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (
             Name::new(interner, "mutable_list_update"),
             IntrinsicFn::MutableListUpdate,
+        ),
+        (
+            Name::new(interner, "mutable_list_reverse"),
+            IntrinsicFn::MutableListReverse,
+        ),
+        (
+            Name::new(interner, "mutable_list_sort"),
+            IntrinsicFn::MutableListSort,
+        ),
+        (
+            Name::new(interner, "mutable_list_sort_by"),
+            IntrinsicFn::MutableListSortBy,
+        ),
+        (
+            Name::new(interner, "mutable_list_binary_search"),
+            IntrinsicFn::MutableListBinarySearch,
+        ),
+        (
+            Name::new(interner, "mutable_list_to_list"),
+            IntrinsicFn::MutableListToList,
+        ),
+        (
+            Name::new(interner, "mutable_deque_new"),
+            IntrinsicFn::MutableDequeNew,
+        ),
+        (
+            Name::new(interner, "mutable_deque_from_deque"),
+            IntrinsicFn::MutableDequeFromDeque,
+        ),
+        (
+            Name::new(interner, "mutable_deque_push_front"),
+            IntrinsicFn::MutableDequePushFront,
+        ),
+        (
+            Name::new(interner, "mutable_deque_push_back"),
+            IntrinsicFn::MutableDequePushBack,
+        ),
+        (
+            Name::new(interner, "mutable_deque_pop_front"),
+            IntrinsicFn::MutableDequePopFront,
+        ),
+        (
+            Name::new(interner, "mutable_deque_pop_back"),
+            IntrinsicFn::MutableDequePopBack,
+        ),
+        (
+            Name::new(interner, "mutable_deque_len"),
+            IntrinsicFn::MutableDequeLen,
+        ),
+        (
+            Name::new(interner, "mutable_deque_is_empty"),
+            IntrinsicFn::MutableDequeIsEmpty,
+        ),
+        (
+            Name::new(interner, "mutable_deque_to_deque"),
+            IntrinsicFn::MutableDequeToDeque,
         ),
         (
             Name::new(interner, "mutable_priority_queue_new_min"),
@@ -2239,6 +2473,14 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
             IntrinsicFn::MutableMapIsEmpty,
         ),
         (
+            Name::new(interner, "mutable_map_from_map"),
+            IntrinsicFn::MutableMapFromMap,
+        ),
+        (
+            Name::new(interner, "mutable_map_to_map"),
+            IntrinsicFn::MutableMapToMap,
+        ),
+        (
             Name::new(interner, "mutable_set_new"),
             IntrinsicFn::MutableSetNew,
         ),
@@ -2269,6 +2511,14 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (
             Name::new(interner, "mutable_set_values"),
             IntrinsicFn::MutableSetValues,
+        ),
+        (
+            Name::new(interner, "mutable_set_from_set"),
+            IntrinsicFn::MutableSetFromSet,
+        ),
+        (
+            Name::new(interner, "mutable_set_to_set"),
+            IntrinsicFn::MutableSetToSet,
         ),
         (
             Name::new(interner, "mutable_bitset_new"),
@@ -2321,6 +2571,14 @@ pub fn all_intrinsics(interner: &mut Interner) -> Vec<(Name, IntrinsicFn)> {
         (
             Name::new(interner, "mutable_bitset_xor"),
             IntrinsicFn::MutableBitSetXor,
+        ),
+        (
+            Name::new(interner, "mutable_bitset_from_bitset"),
+            IntrinsicFn::MutableBitSetFromBitSet,
+        ),
+        (
+            Name::new(interner, "mutable_bitset_to_bitset"),
+            IntrinsicFn::MutableBitSetToBitSet,
         ),
         // Deque
         (Name::new(interner, "deque_new"), IntrinsicFn::DequeNew),

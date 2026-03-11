@@ -1,191 +1,377 @@
-# RFC 0009: Collection Surface Normalization and Mutability Semantics
+# RFC 0009: Collection Surface Freeze
 
 - Status: Draft
 - Owner: Language Design
 - Tracking issue: TBD
-- Last updated: 2026-03-06
+- Last updated: 2026-03-11
 
 ## Summary
 
-Define one canonical collection policy for v0 language freeze:
+Freeze Kyokara's collection model around one rule:
 
-1. Immutable collections keep simple canonical names (`List`, `Map`, `Set`, `Deque`, `PriorityQueue`).
-2. Mutable collections use explicit `Mutable*` naming (`MutableList`, `MutableMap`, `MutableSet`, `MutablePriorityQueue`).
-3. Collection constructors are canonically module-qualified under `collections.*` for both immutable and mutable variants.
-4. Method verbs stay aligned across immutable and mutable variants (`insert`, `remove`, `contains`, `len`, etc.); semantics are determined by receiver type.
-5. Immutable update APIs stay first-class and are not removed.
+1. Unprefixed collections are the ordinary immutable value types: `List`, `Map`, `Set`, `BitSet`, `Deque`.
+2. `Mutable*` collections are the canonical incremental build and edit path.
+3. No method name may mean "returns a new value" on an immutable type and "mutates in place" on its mutable twin.
+4. Immutable collections keep queries, traversal, and only clearly value-style transforms.
+5. Conversions between mutable and immutable forms are explicit and symmetric.
 
-This RFC closes the current inconsistency where some immutable collection constructors are global/type-local while mutable constructors are `collections.*`.
+This RFC replaces the previous direction in this document. The older "same verbs on mutable and immutable twins" model is rejected.
 
 ## Motivation
 
-Current shape is harder than necessary for both humans and AI agents:
+The old surface had an avoidable ambiguity:
 
-1. Constructor placement is inconsistent (`Map.new()` vs `collections.MutableMap.new()`).
-2. Users must memorize exceptions instead of following one stable rule.
-3. The surface does not clearly communicate the intended default (immutable) vs opt-in mutable tools.
+1. The same method name could mean copy-on-write on an immutable value and alias-visible mutation on a mutable value.
+2. That ambiguity made code review, generated code, docs, and refactors harder than necessary.
+3. It also made it too easy to write code that looked uniform while hiding materially different mutation semantics.
 
-Kyokara should optimize for one predictable lookup path and one mutability signal.
+Before surface freeze, Kyokara should make the split explicit:
 
-## Design Goals
+1. Immutable collections are snapshots and value-style transforms.
+2. Mutable collections are the edit path.
+3. Crossing that boundary is always spelled explicitly.
 
-1. One obvious constructor namespace for all collections.
-2. One obvious naming rule for mutability.
-3. No duplicate verb systems between mutable and immutable variants.
-4. Keep immutable-first reasoning model while allowing explicit mutable performance tools.
-5. Reduce API ambiguity for AI generation and refactoring.
+## Goals
+
+1. One stable naming rule for immutable vs mutable collection families.
+2. One stable law for where edit verbs live.
+3. No mutable/immutable twin pair with same-name methods but different mutation semantics.
+4. Explicit, symmetric conversions for every twin pair.
+5. A surface that is easy to teach, generate, lint, and mechanically rewrite.
 
 ## Non-Goals
 
-1. Forcing mutable mirrors for every collection immediately.
-2. Defining `PriorityQueue` algorithm details (heap policy, stability, etc.).
-3. Changing effect/capability semantics (collections remain pure APIs).
+1. Adding `Immutable*` aliases.
+2. Adding immutable `PriorityQueue` in this cleanup.
+3. Preserving source compatibility with the pre-freeze collection surface.
+4. Adding constructor shortcuts such as `List.of`, `Map.of`, or `Set.of`.
 
-## Proposal
+## Frozen Model
 
-### P1. Canonical collection naming
+### Type Names
 
-Immutable names are canonical base nouns:
+Keep these immutable value types:
 
 1. `List`
 2. `Map`
 3. `Set`
-4. `Deque`
-5. `PriorityQueue`
+4. `BitSet`
+5. `Deque`
 
-Mutable names are canonical explicit variants:
+Keep these mutable collection types:
 
 1. `MutableList`
 2. `MutableMap`
 3. `MutableSet`
-4. `MutablePriorityQueue`
+4. `MutableBitSet`
+5. `MutableDeque`
 
-`Immutable*` names are not introduced.
+Keep `MutablePriorityQueue` as mutable-only.
 
-### P2. Canonical constructor placement
+Do not introduce `ImmutableList`, `ImmutableMap`, `ImmutableSet`, or similar names.
 
-All collection constructors are canonically under `collections`:
+### Collection Law
 
-1. `collections.List.new()`
-2. `collections.Map.new()`
-3. `collections.Set.new()`
-4. `collections.Deque.new()`
-5. `collections.PriorityQueue.new_min()` / `new_max()` (reserved for a future immutable mirror if one is justified)
-6. `collections.MutableList.new()`
-7. `collections.MutableMap.new()`
-8. `collections.MutableMap.with_capacity(capacity)`
-9. `collections.MutableSet.new()`
-10. `collections.MutableSet.with_capacity(capacity)`
-9. `collections.MutablePriorityQueue.new_min()` / `new_max()` (defined by RFC 0012)
+The language-level rule is:
 
-Global/type-local constructor spellings for collections become non-canonical.
+1. Queries mirror across immutable and mutable twins where meaningful.
+2. Traversal mirrors across immutable and mutable twins where meaningful.
+3. Mutable collections own edit and mutation verbs.
+4. Immutable collections own value-style transforms only.
+5. No same-name mutable/immutable pair may differ only in mutation semantics.
 
-### P3. Method vocabulary policy
+In practice:
 
-Method names should be mirrored where semantics are conceptually the same:
+1. `len`, `is_empty`, `contains`, `get`, traversal producers, and similar read-only operations should line up across twins where the operation makes sense.
+2. `push`, `insert`, `remove`, `set`, `update`, and similar edit verbs belong on mutable collections.
+3. Immutable operations that return a changed value must use value-style names such as `sorted`, `reversed`, `with_bit`, `appended`, or `popped_front`.
+
+### Canonical Conversions
+
+Every immutable/mutable twin pair has explicit bidirectional conversion:
+
+1. `collections.MutableList.from_list(xs)` and `xs.to_list()`
+2. `collections.MutableMap.from_map(m)` and `m.to_map()`
+3. `collections.MutableSet.from_set(s)` and `s.to_set()`
+4. `collections.MutableBitSet.from_bitset(bs)` and `bs.to_bitset()`
+5. `collections.MutableDeque.from_deque(q)` and `q.to_deque()`
+
+These conversions are:
+
+1. Explicit
+2. Symmetric
+3. The canonical way to move between build/edit and snapshot/value forms
+
+`MutablePriorityQueue` remains mutable-only, so this RFC does not define an immutable twin conversion for it.
+
+### Constructor Namespace
+
+Collection constructors remain under `collections.*`.
+
+This cleanup does not add `List.of`, `Map.of`, or `Set.of`.
+
+## Family Surface
+
+### List and MutableList
+
+`List` keeps:
+
+1. Queries and traversal: `len`, `get`, `head`, `tail`, `is_empty`, `contains`, traversal family, `binary_search`
+2. Value transforms: `reversed()`, `concat(ys)`, `sorted()`, `sorted_by(f)`
+
+`List` loses edit and update verbs:
+
+1. `push`
+2. `set`
+3. `update`
+
+`MutableList` keeps edit verbs:
+
+1. `push`
+2. `insert`
+3. `last`
+4. `pop`
+5. `extend`
+6. `get`
+7. `set`
+8. `delete_at`
+9. `remove_at`
+10. `update`
+11. indexing
+
+`MutableList` also keeps mirrored queries and traversal where meaningful:
+
+1. `len`
+2. `head`
+3. `tail`
+4. `is_empty`
+5. `contains`
+6. traversal family
+7. `binary_search`
+
+`MutableList` gains in-place transforms:
+
+1. `reverse()`
+2. `sort()`
+3. `sort_by(f)`
+
+### Map and MutableMap
+
+`Map` becomes query and traversal only:
+
+1. `get`
+2. `contains`
+3. `len`
+4. `keys`
+5. `values`
+6. `is_empty`
+
+`Map` loses persistent edit verbs:
+
+1. `insert`
+2. `remove`
+
+`MutableMap` keeps:
+
+1. `insert`
+2. `remove`
+3. `get`
+4. `contains`
+5. `len`
+6. `keys`
+7. `values`
+8. `is_empty`
+9. `get_or_insert_with`
+10. `with_capacity`
+
+### Set and MutableSet
+
+`Set` becomes query and traversal only:
+
+1. `contains`
+2. `len`
+3. `is_empty`
+4. `values`
+
+`Set` loses:
+
+1. `insert`
+2. `remove`
+
+`MutableSet` keeps:
 
 1. `insert`
 2. `remove`
 3. `contains`
 4. `len`
 5. `is_empty`
-6. `values` / `keys` where applicable
+6. `values`
+7. `with_capacity`
 
-The mutation model is carried by type, not by alternate verb names.
+### BitSet and MutableBitSet
 
-### P4. Semantic distinction by receiver type
+`BitSet` keeps queries and value operations:
 
-Immutable collections:
+1. `test`
+2. `count`
+3. `size`
+4. `is_empty`
+5. `values`
+6. `union`
+7. `intersection`
+8. `difference`
+9. `xor`
 
-1. Updates return a new value.
-2. Prior aliases observe no mutation.
+Immutable per-bit edits are renamed to value-style names:
 
-Mutable collections:
+1. `set(i)` becomes `with_bit(i)`
+2. `reset(i)` becomes `without_bit(i)`
+3. `flip(i)` becomes `toggled(i)`
 
-1. Updates are alias-visible by design.
-2. Methods may return self for chaining, but mutation semantics are in-place.
+`MutableBitSet` keeps imperative per-bit edits:
 
-### P5. Immutable update APIs remain required
+1. `set`
+2. `reset`
+3. `flip`
 
-Immutable update methods on `List`/`Map`/`Set` remain part of the canonical surface.
+Mutable whole-set ops are renamed to explicit in-place verbs:
 
-Reason:
+1. `union_with`
+2. `intersection_with`
+3. `difference_with`
+4. `xor_with`
 
-1. They support pure expression-oriented code.
-2. They reduce accidental aliasing side effects.
-3. They are essential for deterministic AI transformations.
+### Deque and MutableDeque
 
-### P6. Mirror policy for future collections
+Add `collections.MutableDeque.new()` plus the twin conversions:
 
-Dual immutable/mutable variants are optional, not mandatory.
+1. `collections.MutableDeque.from_deque(q)`
+2. `q.to_deque()`
 
-Rule:
+`MutableDeque` gets imperative queue verbs:
 
-1. Add both only when both are justified by workload and ergonomics.
-2. If only one is introduced initially, naming must still follow this RFC (`PriorityQueue` or `MutablePriorityQueue`, not alternate nouns).
+1. `push_front`
+2. `push_back`
+3. `pop_front`
+4. `pop_back`
+5. `len`
+6. `is_empty`
+7. traversal family
 
-## Canonical Examples
+Persistent `Deque` uses value-style queue verbs:
 
-```kyokara
-import collections
+1. `prepended(v)`
+2. `appended(v)`
+3. `popped_front()` -> `Option<{ value: T, rest: Deque<T> }>`
+4. `popped_back()` -> `Option<{ value: T, rest: Deque<T> }>`
 
-fn immutable_example() -> Int {
-  let m = collections.Map.new().insert("a", 1).insert("b", 2)
-  m.len()
-}
-```
+## Unchanged
 
-```kyokara
-import collections
+1. `MutablePriorityQueue` remains mutable-only.
+2. `Map`, `Set`, `BitSet`, and `Deque` remain immutable value types by default.
+3. Collection constructor namespace stays under `collections.*`.
 
-fn mutable_example() -> Int {
-  let m = collections.MutableMap.new().insert("a", 1)
-  let alias = m
-  m.insert("a", 9)
-  alias.get("a").unwrap_or(0)
-}
-```
+## Breaking Change Policy
 
-## RFC Alignment and Amendments
+This is a deliberate pre-freeze breaking cleanup:
 
-### RFC 0001
+1. No compatibility shim is required.
+2. Mutable collections are the canonical construction and edit surface.
+3. Immutable `Map` and `Set` are snapshot and query types after freeze.
+4. Immutable `List` keeps only clearly value-like transforms.
+5. RFC 0009 is replaced in place rather than superseded by a new RFC.
 
-This RFC amends constructor placement for collections:
+## Implementation Requirements
 
-1. Collection constructors are module-qualified under `collections.*`.
-2. Constructor examples in RFC 0001 using unqualified `List.new()` / `Map.new()` / `Set.new()` should be updated.
+The implementation and repo surface must be updated together:
 
-### RFC 0004
+1. Builtin registrations
+2. Name resolution
+3. Type inference
+4. Evaluation and intrinsics
+5. Completions
+6. CLI parity fixtures
+7. API tests
+8. Docs
+9. Machine-facing docs
 
-This RFC strengthens RFC 0004 by removing the remaining placement split between immutable and mutable collections.
+Repo sources, tests, fixtures, and docs should be mechanically rewritten to the canonical surface wherever possible.
 
-### RFC 0005 and RFC 0008
+`MutableDeque` must be a real builtin twin, not a documented exception around persistent `Deque`.
 
-This RFC keeps their naming principle (`Mutable*`) and generalizes placement symmetry across immutable + mutable collection families.
+Docs should state explicitly:
 
-### RFC 0012
-
-RFC 0012 resolves the priority-queue rollout question for v1:
-
-1. `MutablePriorityQueue` ships first.
-2. Any immutable `PriorityQueue` mirror remains follow-up work, not v1 surface.
-
-## Migration Policy (v0 freeze window)
-
-Because the language surface is not frozen yet:
-
-1. Prefer direct normalization over long deprecation windows.
-2. Keep diagnostics and autofix hints focused on canonical `collections.*` constructor rewrites.
+1. Mutable collections are the canonical build and edit path.
+2. Immutable collections are snapshots, traversal sources, and value transforms.
 
 ## Acceptance Criteria
 
-1. One canonical constructor namespace for all collections is documented and enforced.
-2. Mutability is encoded only by `Mutable*` type naming.
-3. Immutable collection update APIs remain present.
-4. Method vocabulary is aligned across mutable and immutable variants where concepts match.
-5. Docs and examples use the canonical collection constructor forms.
+This RFC is accepted only when the repo proves all of the following:
 
-## Open Questions
+1. Queries mirror across every mutable/immutable twin pair where meaningful.
+2. Traversal mirrors across every mutable/immutable twin pair where meaningful.
+3. Twin conversions work in both directions.
+4. Immutable collections reject removed edit verbs.
+5. Mutable collections expose the canonical edit verbs.
+6. `Deque` uses `appended`, `prepended`, and `popped_*`.
+7. `MutableDeque` uses `push_*` and `pop_*`.
+8. `BitSet` uses `with_bit`, `without_bit`, and `toggled`.
+9. `MutableBitSet` uses `set`, `reset`, `flip`, and `*_with` whole-set ops.
+10. No mutable/immutable twin pair has same-name methods with different mutation semantics.
+11. Machine-facing docs match the frozen surface.
 
-1. Should non-canonical constructor spellings be hard errors immediately or staged via warning + autofix first?
-2. Should formatter auto-rewrite non-canonical collection constructor forms to `collections.*` in v0?
+## Examples
+
+### Mutable builder to immutable snapshot
+
+```kyokara
+import collections
+
+fn build_names() -> List<String> {
+  collections.MutableList.new()
+    .push("a")
+    .push("b")
+    .push("c")
+    .to_list()
+}
+```
+
+### Immutable snapshot to mutable edit path
+
+```kyokara
+import collections
+
+fn add_name(xs: List<String>, name: String) -> List<String> {
+  collections.MutableList.from_list(xs)
+    .push(name)
+    .to_list()
+}
+```
+
+### Persistent deque vs mutable deque
+
+```kyokara
+import collections
+
+fn persistent_queue(q: Deque<Int>) -> Option<{ value: Int, rest: Deque<Int> }> {
+  q.appended(1).popped_front()
+}
+
+fn mutable_queue(q: MutableDeque<Int>) -> MutableDeque<Int> {
+  q.push_back(1).push_front(0)
+}
+```
+
+### Immutable vs mutable bitset edits
+
+```kyokara
+import collections
+
+fn persistent_bits() -> BitSet {
+  collections.BitSet.new(16).with_bit(1).with_bit(3).toggled(1)
+}
+
+fn mutable_bits() -> MutableBitSet {
+  collections.MutableBitSet.new(16).set(1).set(3).flip(1)
+}
+```

@@ -1,6 +1,6 @@
 import collections
 
-fn update_count(counts: Map<String, Int>, word: String) -> Map<String, Int> {
+fn update_count(counts: MutableMap<String, Int>, word: String) -> MutableMap<String, Int> {
   counts.insert(word, counts.get(word).unwrap_or(0) + 1)
 }
 
@@ -13,13 +13,13 @@ fn checksum_counts(counts: Map<String, Int>) -> Int {
 fn main() -> Int {
   let text = "red blue red green blue red gold green blue red"
   let counts = text.split(" ").fold(
-    collections.Map.new(),
-    fn(acc: Map<String, Int>, word: String) => update_count(acc, word)
-  )
+    collections.MutableMap.new(),
+    fn(acc: MutableMap<String, Int>, word: String) => update_count(acc, word),
+  ).to_map()
   let unique = text.split(" ").fold(
-    collections.Set.new(),
-    fn(acc: Set<String>, word: String) => acc.insert(word)
-  )
+    collections.MutableSet.new(),
+    fn(acc: MutableSet<String>, word: String) => acc.insert(word),
+  ).to_set()
 
   checksum_counts(counts) + unique.len() * 1000 + unique.values().count()
 }

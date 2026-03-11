@@ -3,7 +3,7 @@
 - Status: Draft
 - Owner: Language Design
 - Tracking issue: [#253](https://github.com/kyokaralang/kyokara/issues/253)
-- Last updated: 2026-03-08
+- Last updated: 2026-03-11
 
 ## Summary
 
@@ -25,7 +25,7 @@ The immediate implementation target is the subset needed to replace current ad-h
 Kyokara currently encodes several semantic constraints directly in compiler internals:
 
 1. `Map` / `Set` keys and elements use hardcoded hashability allowlists.
-2. `List.sort()` / `binary_search()` use hardcoded orderability allowlists.
+2. ordered list operations such as `List.sorted()` / `sorted_by()` / `binary_search()` and `MutableList.sort()` / `sort_by()` use hardcoded orderability allowlists.
 3. Equality and comparison behavior are partly hardcoded to primitive families.
 4. User-defined types cannot opt into these capabilities.
 
@@ -339,7 +339,7 @@ Phase-1 compatibility note:
 The first implementation phase under this RFC must absorb current hardcoded constraint locations for:
 
 1. `Map` / `Set` hashability checks.
-2. `List.sort()` and `binary_search()` orderability checks.
+2. ordered list-operation orderability checks (`List.sorted()` / `sorted_by()` / `binary_search()` and `MutableList.sort()` / `sort_by()`).
 3. Trait-bounded type inference and diagnostics.
 4. Derived conformance generation for user nominal types.
 5. Qualified trait-call resolution and lowering.
@@ -371,7 +371,7 @@ Phase 1 is successful when:
 
 1. user-defined nominal types can derive or implement `Eq` / `Ord` / `Hash` / `Show`,
 2. `Map` / `Set` no longer depend on hardcoded key allowlists for conforming user types,
-3. `List.sort()` / `binary_search()` can accept conforming user types,
+3. ordered list operations can accept conforming user types,
 4. trait bounds participate in type-checking and error reporting,
 5. trait invocation is fully specified as qualified-only and does not reopen ordinary method lookup,
 6. semantic laws for `Eq` / `Ord` / `Hash` / `Show` are explicit,

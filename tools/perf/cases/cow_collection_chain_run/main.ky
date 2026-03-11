@@ -1,50 +1,51 @@
 import collections
 import io
 
-// Stress immutable same-name rebinding so the harness actually exercises the
-// dead-after-use local consumption path behind #333.
+// Stress explicit mutable-round-trip same-name rebinding so the harness still
+// exercises dead-after-use local consumption behind #333 under the frozen
+// collection model.
 
 fn seed_list(n: Int) -> List<Int> {
-  ((0)..<n).fold(collections.List.new(), fn(acc: List<Int>, i: Int) => acc.push(i))
+  ((0)..<n).fold(collections.MutableList.new(), fn(acc: MutableList<Int>, i: Int) => acc.push(i)).to_list()
 }
 
 fn seed_map(n: Int) -> Map<Int, Int> {
-  ((0)..<n).fold(collections.Map.new(), fn(acc: Map<Int, Int>, i: Int) => acc.insert(i, i))
+  ((0)..<n).fold(collections.MutableMap.new(), fn(acc: MutableMap<Int, Int>, i: Int) => acc.insert(i, i)).to_map()
 }
 
 fn seed_set(n: Int) -> Set<Int> {
-  ((0)..<n).fold(collections.Set.new(), fn(acc: Set<Int>, i: Int) => acc.insert(i))
+  ((0)..<n).fold(collections.MutableSet.new(), fn(acc: MutableSet<Int>, i: Int) => acc.insert(i)).to_set()
 }
 
 fn seed_deque(n: Int) -> Deque<Int> {
-  ((0)..<n).fold(collections.Deque.new(), fn(acc: Deque<Int>, i: Int) => acc.push_back(i))
+  ((0)..<n).fold(collections.MutableDeque.new(), fn(acc: MutableDeque<Int>, i: Int) => acc.push_back(i)).to_deque()
 }
 
 fn step_list(xs: List<Int>, i: Int) -> List<Int> {
-  let xs = xs.push(i)
-  let xs = xs.push(i + 1)
-  let xs = xs.push(i + 2)
+  let xs = collections.MutableList.from_list(xs).push(i).to_list()
+  let xs = collections.MutableList.from_list(xs).push(i + 1).to_list()
+  let xs = collections.MutableList.from_list(xs).push(i + 2).to_list()
   xs
 }
 
 fn step_map(m: Map<Int, Int>, i: Int) -> Map<Int, Int> {
-  let m = m.remove(i)
-  let m = m.insert(100000 + i, i)
-  let m = m.insert(200000 + i, i + 1)
+  let m = collections.MutableMap.from_map(m).remove(i).to_map()
+  let m = collections.MutableMap.from_map(m).insert(100000 + i, i).to_map()
+  let m = collections.MutableMap.from_map(m).insert(200000 + i, i + 1).to_map()
   m
 }
 
 fn step_set(s: Set<Int>, i: Int) -> Set<Int> {
-  let s = s.remove(i)
-  let s = s.insert(400000 + i)
-  let s = s.insert(500000 + i)
+  let s = collections.MutableSet.from_set(s).remove(i).to_set()
+  let s = collections.MutableSet.from_set(s).insert(400000 + i).to_set()
+  let s = collections.MutableSet.from_set(s).insert(500000 + i).to_set()
   s
 }
 
 fn step_deque(q: Deque<Int>, i: Int) -> Deque<Int> {
-  let q = q.push_back(i)
-  let q = q.push_back(i + 1)
-  let q = q.push_back(i + 2)
+  let q = collections.MutableDeque.from_deque(q).push_back(i).to_deque()
+  let q = collections.MutableDeque.from_deque(q).push_back(i + 1).to_deque()
+  let q = collections.MutableDeque.from_deque(q).push_back(i + 2).to_deque()
   q
 }
 

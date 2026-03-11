@@ -9,10 +9,8 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn normalize_immutable_collection_constructor_import(source: &str) -> Cow<'_, str> {
-    let uses_canonical_immutable_constructor = source.contains("collections.List.new(")
-        || source.contains("collections.Map.new(")
-        || source.contains("collections.Set.new(");
-    if uses_canonical_immutable_constructor && !source.contains("import collections") {
+    let uses_collections_module = source.contains("collections.");
+    if uses_collections_module && !source.contains("import collections") {
         Cow::Owned(format!("import collections\n{source}"))
     } else {
         Cow::Borrowed(source)
@@ -3026,7 +3024,7 @@ fn check_project_aliased_import_resolves_by_path_not_alias() {
 fn check_project_aliased_synthetic_collections_import_activates_alias() {
     let output = check_project_from_files(&[(
         "main.ky",
-        "import collections as c\nfn main() -> Int { c.Deque.new().push_back(1).len() }\n",
+        "import collections as c\nfn main() -> Int { c.Deque.new().appended(1).len() }\n",
     )]);
     assert!(
         output.diagnostics.is_empty(),
@@ -3218,7 +3216,11 @@ fn cmp(a: Packet, b: Packet) -> Int {
 }
 
 fn main() -> Int {
-  let nested = Packet.Lst(collections.List.new().push(Packet.Lst(collections.List.new().push(Packet.Num(7)))))
+  let nested = Packet.Lst(
+    collections.MutableList.new()
+      .push(Packet.Lst(collections.MutableList.new().push(Packet.Num(7)).to_list()))
+      .to_list()
+  )
   cmp(nested, Packet.Num(0))
 }
 "#;
@@ -4939,7 +4941,7 @@ fn diagnostic_delta_type_mismatch_adds_one_e0001() {
 fn check_set_invalid_element_type_reports_e0028() {
     let output = check(
         r#"fn main() -> Int {
-            let s = collections.Set.new().insert(3.14)
+            let s = collections.MutableSet.new().insert(3.14).to_set()
             s.len()
         }"#,
         "test.ky",
@@ -4965,7 +4967,7 @@ fn check_set_derived_hash_eq_element_has_no_set_diagnostic() {
 
         fn main() -> Int {
             let p = Point { x: 1, y: 2 }
-            let s = collections.Set.new().insert(p)
+            let s = collections.MutableSet.new().insert(p).to_set()
             if (s.contains(p)) { s.len() } else { 0 }
         }"#,
         "test.ky",
@@ -4982,10 +4984,10 @@ fn check_set_derived_hash_eq_element_has_no_set_diagnostic() {
 fn check_set_valid_element_types_have_no_set_diagnostic() {
     let output = check(
         r#"fn helper() -> Bool {
-            let i = collections.Set.new().insert(1)
-            let s = collections.Set.new().insert("x")
-            let c = collections.Set.new().insert('z')
-            let b = collections.Set.new().insert(true)
+            let i = collections.MutableSet.new().insert(1).to_set()
+            let s = collections.MutableSet.new().insert("x").to_set()
+            let c = collections.MutableSet.new().insert('z').to_set()
+            let b = collections.MutableSet.new().insert(true).to_set()
             i.len() == 1 && s.len() == 1 && c.len() == 1 && b.len() == 1
         }"#,
         "test.ky",
@@ -5004,7 +5006,7 @@ fn check_set_valid_element_types_have_no_set_diagnostic() {
 fn check_map_invalid_key_type_reports_e0024() {
     let output = check(
         r#"fn main() -> Int {
-            let m = collections.Map.new().insert(3.14, 1)
+            let m = collections.MutableMap.new().insert(3.14, 1).to_map()
             m.len()
         }"#,
         "test.ky",
@@ -5028,7 +5030,7 @@ fn check_map_derived_hash_eq_key_has_no_map_key_diagnostic() {
 
         fn main() -> Int {
             let p = Point { x: 1, y: 2 }
-            let m = collections.Map.new().insert(p, 7)
+            let m = collections.MutableMap.new().insert(p, 7).to_map()
             m.get(p).unwrap_or(0)
         }"#,
         "test.ky",
@@ -5045,10 +5047,10 @@ fn check_map_derived_hash_eq_key_has_no_map_key_diagnostic() {
 fn check_map_valid_key_types_have_no_map_key_diagnostic() {
     let output = check(
         r#"fn helper() -> Bool {
-            let i = collections.Map.new().insert(1, "x")
-            let s = collections.Map.new().insert("k", 1)
-            let c = collections.Map.new().insert('a', 1)
-            let b = collections.Map.new().insert(true, 1)
+            let i = collections.MutableMap.new().insert(1, "x").to_map()
+            let s = collections.MutableMap.new().insert("k", 1).to_map()
+            let c = collections.MutableMap.new().insert('a', 1).to_map()
+            let b = collections.MutableMap.new().insert(true, 1).to_map()
             i.len() == 1 && s.len() == 1 && c.len() == 1 && b.len() == 1
         }"#,
         "test.ky",
@@ -5069,9 +5071,9 @@ fn check_list_binary_search_list_elements_have_no_e0025() {
         r#"import collections
 
         fn main() -> Int {
-            let a = collections.List.new().push(1)
-            let b = collections.List.new().push(1).push(2)
-            let xs = collections.List.new().push(a).push(b)
+            let a = collections.MutableList.new().push(1).to_list()
+            let b = collections.MutableList.new().push(1).push(2).to_list()
+            let xs = collections.MutableList.new().push(a).push(b).to_list()
             xs.binary_search(b)
         }"#,
         "list binary_search list elements",
@@ -5082,7 +5084,7 @@ fn check_list_binary_search_list_elements_have_no_e0025() {
 fn check_list_binary_search_sortable_elements_have_no_e0025() {
     let output = check(
         r#"fn main() -> Int {
-            let xs = collections.List.new().push(1).push(3).push(5)
+            let xs = collections.MutableList.new().push(1).push(3).push(5).to_list()
             xs.binary_search(3)
         }"#,
         "test.ky",
@@ -5103,7 +5105,7 @@ fn check_iteration_ergonomics_canonical_surface_has_no_diagnostics() {
         r#"fn main() -> Bool {
             let xs = (0..<5)
             let e = xs.enumerate().to_list()
-            let z = xs.zip(collections.List.new().push(10).push(20)).to_list()
+            let z = xs.zip(collections.MutableList.new().push(10).push(20).to_list()).to_list()
             let c = xs.chunks(2).to_list()
             let w = xs.windows(3).to_list()
             e[0].index == 0 && e[0].value == 0 && z.len() == 2 && c.len() == 3 && w.len() == 3
@@ -5116,15 +5118,15 @@ fn check_iteration_ergonomics_canonical_surface_has_no_diagnostics() {
 fn check_iteration_ergonomics_chains_from_map_set_string_have_no_diagnostics() {
     assert_check_no_diagnostics(
         r#"fn main() -> Bool {
-            let m = collections.Map.new().insert("x", 1).insert("y", 2)
+            let m = collections.MutableMap.new().insert("x", 1).insert("y", 2).to_map()
             let km = m.keys().enumerate().to_list()
             let map_ok = km.len() == 2 && km[0].index == 0
 
-            let s = collections.Set.new().insert("a").insert("b").insert("c")
+            let s = collections.MutableSet.new().insert("a").insert("b").insert("c").to_set()
             let sc = s.values().chunks(2).to_list()
             let set_ok = sc.len() == 2 && sc[1].len() == 1
 
-            let p = "abc".chars().zip(collections.List.new().push(1).push(2)).to_list()
+            let p = "abc".chars().zip(collections.MutableList.new().push(1).push(2).to_list()).to_list()
             let str_ok = p.len() == 2 && p[0].left == 'a' && p[1].right == 2
 
             map_ok && set_ok && str_ok
@@ -5258,11 +5260,13 @@ fn check_seq_frequencies_canonical_surface_has_no_diagnostics() {
         r#"import collections
 
         fn main() -> Int {
-            let a = collections.List.new().push(3).push(1).push(3).push(2).frequencies()
+            let a = collections.MutableList.new().push(3).push(1).push(3).push(2).to_list().frequencies()
             let b = "a,b,a,c".split(",").frequencies()
-            let c = collections.MutableList.from_list(collections.List.new().push(1).push(2).push(1))
+            let c = collections.MutableList.from_list(
+                collections.MutableList.new().push(1).push(2).push(1).to_list()
+            )
                 .frequencies()
-            let d = collections.Deque.new().push_back(1).push_back(2).push_back(1).frequencies()
+            let d = collections.Deque.new().appended(1).appended(2).appended(1).frequencies()
             let e = (0..<4).frequencies()
             a.get(3).unwrap_or(0)
                 + b.get("a").unwrap_or(0)
@@ -5282,7 +5286,7 @@ fn check_seq_frequencies_non_hashable_element_reports_e0024() {
         type P = { x: Int }
 
         fn main() -> Int {
-            let counts = collections.List.new().push(P { x: 1 }).frequencies()
+            let counts = collections.MutableList.new().push(P { x: 1 }).to_list().frequencies()
             counts.len()
         }"#,
         "test.ky",
@@ -5305,11 +5309,14 @@ fn check_seq_count_predicate_canonical_surface_has_no_diagnostics() {
 
         fn main() -> Int {
             let a = (0..<6).count(fn(n: Int) => n % 2 == 0)
-            let b = collections.List.new().push(1).push(2).push(3).count(fn(n: Int) => n >= 2)
+            let b = collections.MutableList.new().push(1).push(2).push(3).to_list()
+                .count(fn(n: Int) => n >= 2)
             let c = "a,b,,c".split(",").count(fn(part: String) => part != "")
-            let d = collections.MutableList.from_list(collections.List.new().push(1).push(2).push(3))
+            let d = collections.MutableList.from_list(
+                collections.MutableList.new().push(1).push(2).push(3).to_list()
+            )
                 .count(fn(n: Int) => n != 2)
-            let e = collections.Deque.new().push_back(1).push_back(2).push_back(3)
+            let e = collections.Deque.new().appended(1).appended(2).appended(3)
                 .count(fn(n: Int) => n < 3)
             a + b + c + d + e
         }"#,
@@ -5399,9 +5406,9 @@ fn check_option_result_combinator_parity_canonical_surface_has_no_diagnostics() 
         &with_core_variants(
             r#"fn main() -> Int {
             let o0 = collections.List.new().head().unwrap_or(1)
-            let o1 = collections.List.new().push(41).head().map_or(0, fn(n: Int) => n + 1)
-            let o2 = collections.List.new().push(41).head().map(fn(n: Int) => n + 1).unwrap_or(0)
-            let o3 = collections.List.new().push(41).head().and_then(fn(n: Int) => Some(n + 1)).unwrap_or(0)
+            let o1 = collections.MutableList.new().push(41).to_list().head().map_or(0, fn(n: Int) => n + 1)
+            let o2 = collections.MutableList.new().push(41).to_list().head().map(fn(n: Int) => n + 1).unwrap_or(0)
+            let o3 = collections.MutableList.new().push(41).to_list().head().and_then(fn(n: Int) => Some(n + 1)).unwrap_or(0)
             let r1 = "41".parse_int().map(fn(n: Int) => n + 1).unwrap_or(0)
             let r2 = "41".parse_int().and_then(fn(n: Int) => Ok(n + 1)).unwrap_or(0)
             let r3 = match ("oops".parse_int().map_err(fn(_e: ParseError) => 7)) {
@@ -5419,7 +5426,7 @@ fn check_option_result_combinator_parity_canonical_surface_has_no_diagnostics() 
 fn check_option_and_then_wrong_mapper_result_reports_type_mismatch() {
     let output = check(
         r#"fn main() -> Int {
-            collections.List.new().push(1).head().and_then(fn(n: Int) => n + 1).unwrap_or(0)
+            collections.MutableList.new().push(1).to_list().head().and_then(fn(n: Int) => n + 1).unwrap_or(0)
         }"#,
         "test.ky",
     );
@@ -5494,9 +5501,9 @@ fn check_seq_surface_canonical_has_no_diagnostics() {
                 .filter(fn(n: Int) => n > 2)
             let a = xs.count()
             let b = xs.to_list().len()
-            let c = collections.List.new().push(1).push(2).count()
-            let d = collections.Map.new().insert("a", 1).insert("b", 2).keys().count()
-            let e = collections.Set.new().insert("x").insert("y").values().count()
+            let c = collections.MutableList.new().push(1).push(2).to_list().count()
+            let d = collections.MutableMap.new().insert("a", 1).insert("b", 2).to_map().keys().count()
+            let e = collections.MutableSet.new().insert("x").insert("y").to_set().values().count()
             let f = "a,b,c".split(",").count()
             let g = "x\ny".lines().count()
             let h = "abc".chars().count()
@@ -5525,14 +5532,14 @@ fn tokenize(line: String) -> Tokens {
 
 fn main() -> Int {
     let builtin = (0..<3)
-        .flat_map(fn(n: Int) => collections.List.new().push(n).push(n + 10))
+        .flat_map(fn(n: Int) => collections.MutableList.new().push(n).push(n + 10).to_list())
         .count()
     let user = "a,b\nc,d"
         .lines()
         .flat_map(fn(line: String) => tokenize(line))
         .count()
     let direct = IntoTraversal.into_seq(Tokens {
-        items: collections.List.new().push("x").push("y")
+        items: collections.MutableList.new().push("x").push("y").to_list()
     }).count()
     builtin + user + direct
 }"#,
@@ -5563,7 +5570,7 @@ fn check_removed_list_traversal_surface_reports_diagnostics() {
     let output = check(
         r#"fn main() -> Int {
             let a = List.range(0, 5).len()
-            let b = collections.List.new().push(1).seq().len()
+            let b = collections.MutableList.new().push(1).to_list().seq().len()
             a + b
         }"#,
         "test.ky",
@@ -5585,16 +5592,17 @@ fn check_collection_first_traversal_surface_has_no_diagnostics_rfc_0002() {
         r#"import collections
 
 fn main() -> Int {
-            let list_count = collections.List.new().push(1).push(2).push(3)
+            let list_count = collections.MutableList.new().push(1).push(2).push(3).to_list()
                 .map(fn(n: Int) => n + 1)
                 .filter(fn(n: Int) => n > 2)
                 .count()
-            let deque_count = collections.Deque.new().push_back(1).push_back(2).push_back(3)
+            let deque_count = collections.Deque.new().appended(1).appended(2).appended(3)
                 .map(fn(n: Int) => n * 2)
                 .count()
-            let z1 = collections.List.new().push(1).push(2).zip((10..<13)).count()
-            let z2 = (0..<3).zip(collections.List.new().push(7).push(8)).count()
-            let z3 = collections.Deque.new().push_back(1).push_back(2).zip(collections.List.new().push(9)).count()
+            let z1 = collections.MutableList.new().push(1).push(2).to_list().zip((10..<13)).count()
+            let z2 = (0..<3).zip(collections.MutableList.new().push(7).push(8).to_list()).count()
+            let z3 = collections.Deque.new().appended(1).appended(2)
+                .zip(collections.MutableList.new().push(9).to_list()).count()
             list_count + deque_count + z1 + z2 + z3
         }"#,
         "collection-first traversal canonical surface",
@@ -5607,7 +5615,7 @@ fn check_collections_deque_constructor_surface_has_no_diagnostics_rfc_0004() {
         r#"import collections
 
 fn main() -> Int {
-    let q = collections.Deque.new().push_back(1).push_back(2)
+    let q = collections.Deque.new().appended(1).appended(2)
     q.len()
 }"#,
         "collections.Deque constructor canonical surface",
@@ -5620,7 +5628,7 @@ fn check_collections_alias_constructor_surface_has_no_diagnostics_rfc_0004() {
         r#"import collections as c
 
 fn main() -> Int {
-    c.Deque.new().push_back(1).len()
+    c.Deque.new().appended(1).len()
 }"#,
         "collections alias constructor canonical surface",
     );
@@ -5645,9 +5653,9 @@ fn check_collections_list_map_set_constructor_surface_has_no_diagnostics_rfc_000
         r#"import collections
 
 fn main() -> Int {
-    let xs = collections.List.new().push(1).push(2)
-    let m = collections.Map.new().insert("a", 10).insert("b", 20)
-    let s = collections.Set.new().insert("x").insert("y")
+    let xs = collections.MutableList.new().push(1).push(2).to_list()
+    let m = collections.MutableMap.new().insert("a", 10).insert("b", 20).to_map()
+    let s = collections.MutableSet.new().insert("x").insert("y").to_set()
     xs.len() + m.len() + s.len()
 }"#,
         "collections.List/Map/Set constructor canonical surface",
@@ -5660,9 +5668,9 @@ fn check_collections_alias_list_map_set_constructor_surface_has_no_diagnostics_r
         r#"import collections as c
 
 fn main() -> Int {
-    let xs: List<Int> = c.List.new().push(1)
-    let m: Map<String, Int> = c.Map.new().insert("a", 1)
-    let s: Set<String> = c.Set.new().insert("x")
+    let xs: List<Int> = c.MutableList.new().push(1).to_list()
+    let m: Map<String, Int> = c.MutableMap.new().insert("a", 1).to_map()
+    let s: Set<String> = c.MutableSet.new().insert("x").to_set()
     xs.len() + m.len() + s.len()
 }"#,
         "collections alias List/Map/Set constructor canonical surface",
@@ -5695,7 +5703,9 @@ fn check_collections_mutable_list_constructor_surface_has_no_diagnostics_rfc_000
 
 fn main() -> Int {
     let xs = collections.MutableList.new().push(1).push(2)
-    let ys = collections.MutableList.from_list(collections.List.new().push(3).push(4)).set(0, 9)
+    let ys = collections.MutableList.from_list(
+        collections.MutableList.new().push(3).push(4).to_list()
+    ).set(0, 9)
     xs.update(1, fn(n: Int) => n + 10).len() + ys.get(0).unwrap_or(0)
 }"#,
         "collections.MutableList constructor canonical surface",
@@ -5708,11 +5718,13 @@ fn check_mutable_list_stack_ops_surface_has_no_diagnostics() {
         r#"import collections
 
 fn main() -> Int {
-    let xs = collections.MutableList.from_list(collections.List.new().push(1).push(2))
+    let xs = collections.MutableList.from_list(
+        collections.MutableList.new().push(1).push(2).to_list()
+    )
     let last = xs.last().unwrap_or(0)
     let popped = xs.pop().unwrap_or(0)
     let alias = xs
-    let _ = xs.extend(collections.List.new().push(7).push(8))
+    let _ = xs.extend(collections.MutableList.new().push(7).push(8).to_list())
     last + popped + alias.len()
 }"#,
         "collections.MutableList pop/last/extend canonical surface",
@@ -6172,7 +6184,7 @@ fn check_collections_bitset_constructor_surface_has_no_diagnostics_rfc_0010() {
         r#"import collections
 
 fn main() -> Int {
-    let bs = collections.BitSet.new(16).set(1).set(3)
+    let bs = collections.BitSet.new(16).with_bit(1).with_bit(3)
     if (bs.test(3)) { bs.count() + bs.size() } else { 0 }
 }"#,
         "collections.BitSet constructor canonical surface",
@@ -6198,7 +6210,7 @@ fn check_collections_alias_bitset_constructor_surface_has_no_diagnostics_rfc_001
         r#"import collections as c
 
 fn main() -> Int {
-    let a: BitSet = c.BitSet.new(8).set(2)
+    let a: BitSet = c.BitSet.new(8).with_bit(2)
     let b: MutableBitSet = c.MutableBitSet.new(8).set(4)
     if (a.test(2) && b.test(4)) { 1 } else { 0 }
 }"#,
@@ -6229,7 +6241,7 @@ fn check_bitset_non_int_index_reports_type_mismatch() {
     let output = check(
         r#"import collections
 fn main() -> Int {
-    collections.BitSet.new(8).set("x").count()
+    collections.BitSet.new(8).with_bit("x").count()
 }"#,
         "test.ky",
     );
@@ -6249,7 +6261,7 @@ fn check_bitset_binary_ops_wrong_rhs_type_reports_type_mismatch() {
         r#"import collections
 fn main() -> Int {
     let bs = collections.BitSet.new(8)
-    bs.union(collections.Set.new().insert(1)).count()
+    bs.union(collections.MutableSet.new().insert(1).to_set()).count()
 }"#,
         "test.ky",
     );
@@ -6365,7 +6377,7 @@ fn check_seq_type_annotation_has_no_diagnostics() {
 fn check_list_seq_bridge_is_rejected_rfc_0002() {
     let output = check(
         r#"fn main() -> Int {
-            collections.List.new().push(1).seq().count()
+            collections.MutableList.new().push(1).to_list().seq().count()
         }"#,
         "test.ky",
     );
@@ -6384,7 +6396,7 @@ fn check_non_traversal_seq_param_still_rejects_list_rfc_0002() {
     let output = check(
         r#"fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }
 fn main() -> Int {
-    let xs = collections.List.new().push(1).push(2)
+    let xs = collections.MutableList.new().push(1).push(2).to_list()
     takes_seq(xs)
 }"#,
         "test.ky",
@@ -6407,13 +6419,13 @@ fn check_deque_and_list_index_update_canonical_surface_has_no_diagnostics() {
             r#"import collections
 
 fn main() -> Int {
-            let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
-            let q1 = match (q0.pop_front()) {
-                Some(p) => p.rest.push_back(p.value + 10)
+            let q0 = collections.Deque.new().appended(1).appended(2).prepended(0)
+            let q1 = match (q0.popped_front()) {
+                Some(p) => p.rest.appended(p.value + 10)
                 None => q0
             }
 
-            let xs = collections.List.new().push(10).push(20).set(1, 99)
+            let xs = collections.MutableList.new().push(10).push(20).set(1, 99)
             let ys = xs.update(0, fn(n: Int) => n + 1)
             ys.get(0).unwrap_or(0) + ys.get(1).unwrap_or(0) + q1.len()
         }"#,
@@ -6429,9 +6441,9 @@ fn check_deque_pop_back_canonical_surface_has_no_diagnostics() {
             r#"import collections
 
 fn main() -> Int {
-    let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
-    match (q0.pop_back()) {
-        Some(p1) => match (p1.rest.pop_back()) {
+    let q0 = collections.Deque.new().appended(1).appended(2).prepended(0)
+    match (q0.popped_back()) {
+        Some(p1) => match (p1.rest.popped_back()) {
             Some(p2) => p1.value + p2.value + p2.rest.len()
             None => -1
         }
@@ -6450,7 +6462,7 @@ fn check_non_canonical_free_deque_list_set_update_functions_report_unresolved_na
             let q = deque_new()
             let q = deque_push_back(q, 1)
             let _ = deque_pop_back(q)
-            let xs = list_set(collections.List.new().push(1), 0, 2)
+            let xs = list_set(collections.MutableList.new().push(1).to_list(), 0, 2)
             let ys = list_update(xs, 0, fn(n: Int) => n + 1)
             q.len() + ys.len()
         }"#,
@@ -6470,7 +6482,7 @@ fn check_non_canonical_free_deque_list_set_update_functions_report_unresolved_na
 fn check_list_update_wrong_mapper_type_reports_type_mismatch() {
     let output = check(
         r#"fn main() -> Int {
-            collections.List.new().push(1).update(0, fn(n: Int) => "x").len()
+            collections.MutableList.new().push(1).update(0, fn(n: Int) => "x").len()
         }"#,
         "test.ky",
     );

@@ -191,6 +191,7 @@ impl<'a> InferenceCtx<'a> {
                     | "List"
                     | "MutableList"
                     | "Deque"
+                    | "MutableDeque"
                     | "BitSet"
                     | "MutableBitSet"
                     | "Map"
@@ -211,6 +212,7 @@ impl<'a> InferenceCtx<'a> {
                     | "List"
                     | "MutableList"
                     | "Deque"
+                    | "MutableDeque"
                     | "ParseError"
             ),
             "Hash" => matches!(
@@ -230,7 +232,10 @@ impl<'a> InferenceCtx<'a> {
                     | "ParseError"
             ),
             "Show" => !matches!(type_name, "<fn>"),
-            "IntoTraversal" => matches!(type_name, "List" | "MutableList" | "Deque" | "Seq"),
+            "IntoTraversal" => matches!(
+                type_name,
+                "List" | "MutableList" | "Deque" | "MutableDeque" | "Seq"
+            ),
             _ => false,
         }
     }
@@ -320,7 +325,13 @@ impl<'a> InferenceCtx<'a> {
             return None;
         }
         match self.module_scope.core_types.kind_for_idx(*def) {
-            Some(CoreType::Seq | CoreType::List | CoreType::MutableList | CoreType::Deque) => {
+            Some(
+                CoreType::Seq
+                    | CoreType::List
+                    | CoreType::MutableList
+                    | CoreType::Deque
+                    | CoreType::MutableDeque,
+            ) => {
                 Some(args[0].clone())
             }
             _ => None,
@@ -663,7 +674,7 @@ impl<'a> InferenceCtx<'a> {
         if expected_core != Some(CoreType::Seq)
             || !matches!(
                 actual_core,
-                Some(CoreType::List | CoreType::MutableList | CoreType::Deque)
+                Some(CoreType::List | CoreType::MutableList | CoreType::Deque | CoreType::MutableDeque)
             )
         {
             return false;

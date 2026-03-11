@@ -1,25 +1,149 @@
 import collections
 
-// List storage + direct traversal methods.
+// List and MutableList pair showcase.
+// This file focuses on pair-specific APIs and conversions.
+// See seq.ky for the full shared traversal family.
 
-fn double(x: Int) -> Int { x * 2 }
+fn base_list() -> List<Int> {
+  collections.MutableList.new()
+    .push(3)
+    .push(1)
+    .push(4)
+    .push(1)
+    .push(5)
+    .to_list()
+}
+
+fn immutable_list_api() -> Int {
+  let empty: List<Int> = collections.List.new()
+  let xs = base_list()
+  let reversed = xs.reversed()
+  let sorted = xs.sorted()
+  let sorted_desc = xs.sorted_by(fn(a: Int, b: Int) => b - a)
+  let concatenated = xs.concat(reversed)
+
+  if (
+    empty.is_empty()
+      && xs.len() == 5
+      && xs.get(1).unwrap_or(-1) == 1
+      && xs.head().unwrap_or(-1) == 3
+      && xs.tail().len() == 4
+      && !xs.is_empty()
+      && reversed[0] == 5
+      && reversed[4] == 3
+      && concatenated.len() == 10
+      && sorted[0] == 1
+      && sorted[3] == 4
+      && sorted_desc[0] == 5
+      && sorted.binary_search(4) == 3
+      && sorted.binary_search(2) == -3
+  ) {
+    1
+  } else {
+    0
+  }
+}
+
+fn immutable_list_traversal() -> Int {
+  let xs = base_list()
+  let mapped = xs.map(fn(n: Int) => n + 1).to_list()
+  let filtered = xs.filter(fn(n: Int) => n > 2).to_list()
+  let flat = xs
+    .flat_map(fn(n: Int) => collections.MutableList.new().push(n).push(n + 10).to_list())
+    .to_list()
+  let scanned = xs.scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
+  let enumerated = xs.enumerate().to_list()
+  let zipped = xs.zip(mapped).to_list()
+  let chunks = xs.chunks(2).to_list()
+  let windows = xs.windows(3).to_list()
+  let folded = xs.fold(0, fn(acc: Int, n: Int) => acc + n)
+  let count_all = xs.count()
+  let count_ones = xs.count(fn(n: Int) => n == 1)
+  let frequencies = xs.frequencies()
+
+  if (
+    mapped.len() == 5
+      && mapped[0] == 4
+      && filtered.len() == 3
+      && filtered[2] == 5
+      && flat.len() == 10
+      && flat[1] == 13
+      && scanned.len() == 6
+      && scanned[0] == 0
+      && scanned[5] == 14
+      && enumerated[2].index == 2
+      && enumerated[2].value == 4
+      && zipped[0].left == 3
+      && zipped[0].right == 4
+      && chunks.len() == 3
+      && chunks[1][0] == 4
+      && windows.len() == 3
+      && windows[2][1] == 1
+      && folded == 14
+      && count_all == 5
+      && count_ones == 2
+      && xs.contains(4)
+      && xs.any(fn(n: Int) => n > 4)
+      && xs.all(fn(n: Int) => n > 0)
+      && xs.find(fn(n: Int) => n == 4).unwrap_or(-1) == 4
+      && frequencies.get(1).unwrap_or(0) == 2
+      && frequencies.get(5).unwrap_or(0) == 1
+      && frequencies.len() == 4
+  ) {
+    1
+  } else {
+    0
+  }
+}
+
+fn mutable_list_api() -> Int {
+  let empty = collections.MutableList.new()
+  let from_snapshot = collections.MutableList.from_list(base_list())
+  let xs = collections.MutableList.new()
+
+  let _a = xs.push(3)
+  let _b = xs.push(1)
+  let _c = xs.insert(1, 2)
+  let head = xs.head().unwrap_or(-1)
+  let tail_len = xs.tail().len()
+  let last = xs.last().unwrap_or(-1)
+  let popped = xs.pop().unwrap_or(-1)
+  let _d = xs.extend(base_list())
+  let _e = xs.set(1, 8)
+  let removed = xs.remove_at(3)
+  let _f = xs.delete_at(4)
+  let _g = xs.update(0, fn(n: Int) => n + 1)
+  let _h = xs.reverse()
+  let _i = xs.sort()
+  let found = xs.binary_search(5)
+  let _j = xs.sort_by(fn(a: Int, b: Int) => b - a)
+  let snapshot = xs.to_list()
+
+  if (
+    empty.is_empty()
+      && from_snapshot.len() == 5
+      && from_snapshot.get(2).unwrap_or(-1) == 4
+      && head == 3
+      && tail_len == 2
+      && last == 1
+      && popped == 1
+      && !xs.is_empty()
+      && xs.len() == 5
+      && xs.get(0).unwrap_or(-1) == 8
+      && xs[1] == 5
+      && removed == 1
+      && found == 3
+      && xs.contains(4)
+      && xs.count(fn(n: Int) => n >= 4) == 4
+      && xs.find(fn(n: Int) => n == 5).unwrap_or(-1) == 5
+      && snapshot[4] == 3
+  ) {
+    1
+  } else {
+    0
+  }
+}
 
 fn main() -> Int {
-  // Build a list [1, 2, 3, 4, 5]
-  let xs = collections.List.new().push(1).push(2).push(3).push(4).push(5)
-
-  // Map: [2, 4, 6, 8, 10]
-  let doubled = xs.map(double)
-
-  // Fold: 6 + 8 + 10 = 24
-  let total = doubled
-    .filter(fn(x: Int) => x > 4)
-    .fold(0, fn(acc: Int, x: Int) => acc + x)
-
-  // Verify storage operations stay on List.
-  let rev = xs.reverse()
-  let combined = xs.concat(rev)
-
-  // total (24) + combined.len() (10) = 34
-  total + combined.len()
+  immutable_list_api() * 100 + immutable_list_traversal() * 10 + mutable_list_api()
 }

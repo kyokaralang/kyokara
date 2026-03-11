@@ -24,7 +24,10 @@ fn build_rules(page_count: Int) -> MutableList<Bool> {
 }
 
 fn make_update(page_count: Int, seed: Int) -> List<Int> {
-  (0..<18).fold(collections.List.new(), fn(acc: List<Int>, i: Int) => acc.push((seed * 9 + i * 7 + i * i) % page_count))
+  (0..<18).fold(
+    collections.MutableList.new(),
+    fn(acc: MutableList<Int>, i: Int) => acc.push((seed * 9 + i * 7 + i * i) % page_count),
+  ).to_list()
 }
 
 fn violates_order(rules: MutableList<Bool>, page_count: Int, left: Int, right: Int) -> Bool {
@@ -45,16 +48,13 @@ fn insert_sorted(sorted: List<Int>, page: Int, rules: MutableList<Bool>, page_co
     .find(fn(idx: Int) => rules[pair_id(page_count, page, sorted.get(idx).unwrap_or(0))])
     .unwrap_or(sorted.len())
 
-  let out = (0..<sorted.len()).fold(collections.List.new(), fn(acc: List<Int>, idx: Int) => {
+  let out = (0..<sorted.len()).fold(collections.MutableList.new(), fn(acc: MutableList<Int>, idx: Int) => {
     let acc = if (idx == insert_at) { acc.push(page) } else { acc }
     acc.push(sorted.get(idx).unwrap_or(0))
   })
 
-  if (insert_at == sorted.len()) {
-    out.push(page)
-  } else {
-    out
-  }
+  let out = if (insert_at == sorted.len()) { out.push(page) } else { out }
+  out.to_list()
 }
 
 fn repair_update(update: List<Int>, rules: MutableList<Bool>, page_count: Int) -> List<Int> {

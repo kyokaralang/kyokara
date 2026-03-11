@@ -265,7 +265,7 @@ fn withdraw(acct: Account, amt: Money) -> Result<Account, WithdrawError>
 
 ```kyokara
 property sort_idempotent(xs: List<Int> <- Gen.auto()) {
-  xs.sort().sort() == xs.sort()
+  xs.sorted().sorted() == xs.sorted()
 }
 
 property add_commutative(a: Int <- Gen.auto(), b: Int <- Gen.auto()) {
@@ -600,14 +600,14 @@ a canonical API surface: method calls for value-owned behavior, module-qualified
 for no-owner utilities and effects, and type-namespaced constructors.
 
 Canonical visibility matrix:
-* Prelude builtin value types (no import): `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `MutablePriorityQueue<P, T>`, `Deque<T>`, `Map<K, V>`, `Set<T>`, `BitSet`, `MutableBitSet` type names and value methods.
-* Pure collection constructors (imported module): `collections.List.new()`, `collections.Map.new()`, `collections.Set.new()`, `collections.MutableList.new()`, `collections.MutableList.from_list(xs)`, `collections.MutableMap.new()`, `collections.MutableMap.with_capacity(capacity)`, `collections.MutableSet.new()`, `collections.MutableSet.with_capacity(capacity)`, `collections.MutablePriorityQueue.new_min()`, `collections.MutablePriorityQueue.new_max()`, `collections.Deque.new()`, `collections.BitSet.new(size)`, `collections.MutableBitSet.new(size)`
+* Prelude builtin value types (no import): `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `MutablePriorityQueue<P, T>`, `BitSet`, `MutableBitSet`, `Deque<T>`, `MutableDeque<T>`, `Map<K, V>`, `Set<T>` type names and value methods.
+* Pure collection constructors (imported module): `collections.List.new()`, `collections.Map.new()`, `collections.Set.new()`, `collections.BitSet.new(size)`, `collections.Deque.new()`, `collections.MutableList.new()`, `collections.MutableList.from_list(xs)`, `collections.MutableMap.new()`, `collections.MutableMap.from_map(m)`, `collections.MutableMap.with_capacity(capacity)`, `collections.MutableSet.new()`, `collections.MutableSet.from_set(s)`, `collections.MutableSet.with_capacity(capacity)`, `collections.MutablePriorityQueue.new_min()`, `collections.MutablePriorityQueue.new_max()`, `collections.MutableBitSet.new(size)`, `collections.MutableBitSet.from_bitset(bs)`, `collections.MutableDeque.new()`, `collections.MutableDeque.from_deque(q)`
 * Prelude traversal constructors (no import): `start..<end`, `seed.unfold(step)`.
 * Pure no-owner utilities (imported module): `math.*`
 * Effectful utilities (imported capability modules): `io.*`, `fs.*`
 * Internal intrinsic IDs (`list_new`, `map_insert`, etc.) are implementation detail only.
 
-Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `MutablePriorityQueue<P, T>`, `Deque<T>`, `Map<K, V>`, `Set<T>`, `BitSet`, `MutableBitSet`, and `ParseError` are
+Builtin types `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`, `MutableMap<K, V>`, `MutableSet<T>`, `MutablePriorityQueue<P, T>`, `BitSet`, `MutableBitSet`, `Deque<T>`, `MutableDeque<T>`, `Map<K, V>`, `Set<T>`, and `ParseError` are
 injected as synthetic types before type-checking. Synthetic modules (`collections`, `io`, `math`, `fs`)
 require explicit `import collections` / `import io` / `import math` / `import fs` in all modes.
 Zero intrinsic free functions exist in user scope.
@@ -618,9 +618,9 @@ Runtime soundness invariants for core APIs:
 * Constructor/pattern resolution is owner-based: `Type.Variant` is always valid, and bare `Variant` resolves only through explicit `from Type import Variant`.
 * Core builtin constructor names are not globally reserved; user ADTs may define variants named `Some`, `None`, `Ok`, `Err`, `InvalidInt`, or `InvalidFloat` without colliding with builtin behavior.
 
-Mental model: `List`/`MutableList`/`MutableMap`/`MutableSet`/`MutablePriorityQueue`/`Deque`/`Map`/`Set`/`BitSet`/`MutableBitSet` are prelude value types (type/value namespace),
-`collections` is the pure module namespace for collection constructors (`List`/`Map`/`Set` plus specialized collections like `MutableList`, `MutableMap`, `MutableSet`, `MutablePriorityQueue`, `Deque`, `BitSet`, and `MutableBitSet`),
-while `io`/`fs` are module namespaces for effectful operations.
+Mental model: `List`/`Map`/`Set`/`BitSet`/`Deque` are immutable snapshot and value types, while `MutableList`/`MutableMap`/`MutableSet`/`MutableBitSet`/`MutableDeque`/`MutablePriorityQueue` are the canonical build and edit types.
+`collections` is the pure module namespace for collection constructors and explicit mutable-from-immutable conversions, and `to_list`/`to_map`/`to_set`/`to_bitset`/`to_deque` move back to immutable snapshots.
+`io`/`fs` remain module namespaces for effectful operations.
 
 **Implemented (v0.1+):**
 * `Option<T>` — builtin ADT (`Some(T) | None`), used as return type for safe lookups ✓
@@ -630,25 +630,25 @@ while `io`/`fs` are module namespaces for effectful operations.
 * `ParseError` — builtin ADT (`InvalidInt(String) | InvalidFloat(String)`), used as error type for `parse_int`/`parse_float` ✓
 * `List<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<Vec<Value>>`) ✓
   * Constructor: `collections.List.new()` (requires `import collections`)
-  * Methods (storage/random-access): `xs.push(v)`, `xs.len()`, `xs.get(i)` → `Option<T>`, `xs.head()` → `Option<T>`, `xs.tail()`, `xs.is_empty()`, `xs.reverse()`, `xs.concat(ys)`, `xs.set(i, v)`, `xs.update(i, f)`, `xs.sort()`, `xs.sort_by(f)`, `xs.binary_search(x)`
+  * Methods (query/value-transform): `xs.len()`, `xs.get(i)` → `Option<T>`, `xs.head()` → `Option<T>`, `xs.tail()`, `xs.is_empty()`, `xs.concat(ys)`, `xs.reversed()`, `xs.sorted()`, `xs.sorted_by(f)`, `xs.binary_search(x)`
   * Methods (traversal): `xs.map(f)`, `xs.filter(f)`, `xs.flat_map(f)`, `xs.scan(init, f)`, `xs.enumerate()`, `xs.zip(other)`, `xs.chunks(n)`, `xs.windows(n)`, `xs.fold(init, f)`, `xs.count()`, `xs.count(f)`, `xs.contains(value)`, `xs.frequencies()`, `xs.any(f)`, `xs.all(f)`, `xs.find(f)`, `xs.to_list()`
-  * Index update semantics: `set/update` require `0 <= i < len`; out-of-bounds is a direct runtime error.
+  * Immutable lists do not expose edit verbs such as `push`, `set`, or `update`.
   * Search helper: `xs.binary_search(x)` → `Int` with Rust/Java-style insertion contract:
     found index returns `>= 0`; missing element returns `-(insertion_point + 1)`.
     `insertion_point` is where `x` would be inserted to keep sorted order.
-    Only naturally orderable element types are allowed (same as `xs.sort()`).
-* `MutableList<T>` — opaque builtin type with alias-visible in-place runtime storage (`Rc<RefCell<Rc<Vec<Value>>>>`) ✓
+    Only naturally orderable element types are allowed (same as `xs.sorted()`).
+* `MutableList<T>` — opaque builtin type with alias-visible mutable runtime storage ✓
   * Constructors: `collections.MutableList.new()` and `collections.MutableList.from_list(xs)` (requires `import collections`)
-  * Methods (storage/random-access): `xs.push(v)`, `xs.insert(i, v)`, `xs.last()` → `Option<T>`, `xs.pop()` → `Option<T>`, `xs.extend(ys)` where `ys: List<T>`, `xs.len()`, `xs.is_empty()`, `xs.get(i)` → `Option<T>`, `xs.set(i, v)`, `xs.delete_at(i)`, `xs.remove_at(i)` → `T`, `xs.update(i, f)`, `xs[i]`
+  * Methods (edit/query): `xs.push(v)`, `xs.insert(i, v)`, `xs.last()` → `Option<T>`, `xs.pop()` → `Option<T>`, `xs.extend(ys)` where `ys: List<T>`, `xs.len()`, `xs.head()` → `Option<T>`, `xs.tail()`, `xs.is_empty()`, `xs.get(i)` → `Option<T>`, `xs.set(i, v)`, `xs.delete_at(i)`, `xs.remove_at(i)` → `T`, `xs.update(i, f)`, `xs.reverse()`, `xs.sort()`, `xs.sort_by(f)`, `xs.binary_search(x)`, `xs[i]`, `xs.to_list()`
   * Indexed edit semantics: `insert` requires `0 <= i <= len`; `delete_at/remove_at/set/update` require `0 <= i < len`; out-of-bounds is a direct runtime error. Use `delete_at` for fluent deletion and `remove_at` when you need the removed value.
   * Methods (traversal): `xs.map(f)`, `xs.filter(f)`, `xs.flat_map(f)`, `xs.scan(init, f)`, `xs.enumerate()`, `xs.zip(other)`, `xs.chunks(n)`, `xs.windows(n)`, `xs.fold(init, f)`, `xs.count()`, `xs.count(f)`, `xs.contains(value)`, `xs.frequencies()`, `xs.any(f)`, `xs.all(f)`, `xs.find(f)`, `xs.to_list()`
   * Mutation semantics: updates are visible across aliases that reference the same `MutableList`.
 * `MutableMap<K, V>` — opaque builtin type with alias-visible mutable key/value storage. Keys must satisfy `Hash + Eq`; invalid key types are rejected at compile time for typed mutable-map operations (E0024). For nominal keys, derive or implement those traits explicitly, e.g. `type Point derive(Eq, Hash) = { x: Int, y: Int }`. Primitive keys (`Int`, `String`, `Char`, `Bool`, `Unit`) use an internal ordered open-address fast path in mutable workloads; this is an implementation detail, not a separate surface type. ✓
-  * Constructors: `collections.MutableMap.new()` and `collections.MutableMap.with_capacity(capacity)` (requires `import collections`; capacity is a minimum live-element hint only)
-  * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.get_or_insert_with(k, fn() => v)` → `V`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()`, `m.values()`, `m.is_empty()`
+  * Constructors: `collections.MutableMap.new()`, `collections.MutableMap.from_map(m)`, and `collections.MutableMap.with_capacity(capacity)` (requires `import collections`; capacity is a minimum live-element hint only)
+  * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.get_or_insert_with(k, fn() => v)` → `V`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()`, `m.values()`, `m.is_empty()`, `m.to_map()`
 * `MutableSet<T>` — opaque builtin type with alias-visible mutable set storage. Elements must satisfy `Hash + Eq`; invalid element types are rejected at compile time for typed mutable-set operations (E0028). For nominal elements, derive or implement those traits explicitly, e.g. `type Point derive(Eq, Hash) = { x: Int, y: Int }`. Primitive elements (`Int`, `String`, `Char`, `Bool`, `Unit`) use the same internal mutable fast path strategy as `MutableMap`; this remains an implementation detail. ✓
-  * Constructors: `collections.MutableSet.new()` and `collections.MutableSet.with_capacity(capacity)` (requires `import collections`; capacity is a minimum live-element hint only)
-  * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()`
+  * Constructors: `collections.MutableSet.new()`, `collections.MutableSet.from_set(s)`, and `collections.MutableSet.with_capacity(capacity)` (requires `import collections`; capacity is a minimum live-element hint only)
+  * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()`, `s.to_set()`
 * `MutablePriorityQueue<P, T>` — opaque builtin type with alias-visible prioritized worklist storage. Priorities must satisfy `Ord`; invalid priority types are rejected at compile time with missing-`Ord` diagnostics. ✓
   * Constructors: `collections.MutablePriorityQueue.new_min()`, `collections.MutablePriorityQueue.new_max()` (requires `import collections`; `P` and `T` are inferred from context or explicit annotation)
   * Methods: `pq.push(priority, value)`, `pq.peek()` → `Option<{ priority: P, value: T }>`, `pq.pop()` → `Option<{ priority: P, value: T }>`, `pq.len()`, `pq.is_empty()`
@@ -656,17 +656,24 @@ while `io`/`fs` are module namespaces for effectful operations.
 * `BitSet` — opaque builtin dense bitset with COW-backed packed-word runtime storage (`Rc<Vec<u64>>`). This is the canonical dense bounded-bit tool; `MutableList<Bool>` remains valid but is not the intended representation for dense relation/set workloads. ✓
   * Constructor: `collections.BitSet.new(size)` (requires `import collections`)
   * Domain: valid indices are `0..size-1`; `size` is fixed at construction; negative sizes are runtime errors.
-  * Per-bit methods: `bs.test(i)`, `bs.set(i)`, `bs.reset(i)`, `bs.flip(i)`
+  * Per-bit methods: `bs.test(i)`, `bs.with_bit(i)`, `bs.without_bit(i)`, `bs.toggled(i)`
   * Whole-set methods: `bs.union(other)`, `bs.intersection(other)`, `bs.difference(other)`, `bs.xor(other)`
   * Metadata/traversal: `bs.count()`, `bs.size()`, `bs.is_empty()`, `bs.values()` (ascending index order, lazy traversal)
   * Runtime errors: out-of-range indices and binary ops on mismatched sizes are direct runtime errors.
 * `MutableBitSet` — opaque builtin dense bitset with alias-visible packed-word runtime storage (`Rc<RefCell<Rc<Vec<u64>>>>`). ✓
-  * Constructor: `collections.MutableBitSet.new(size)` (requires `import collections`)
-  * Surface mirrors `BitSet`: `test/set/reset/flip/union/intersection/difference/xor/count/size/is_empty/values`
+  * Constructors: `collections.MutableBitSet.new(size)` and `collections.MutableBitSet.from_bitset(bs)` (requires `import collections`)
+  * Surface mirrors `BitSet` queries: `test/count/size/is_empty/values`
+  * Per-bit mutation methods: `set/reset/flip`
+  * Whole-set mutation methods: `union_with/intersection_with/difference_with/xor_with`
+  * Conversion: `bs.to_bitset()`
   * Mutation semantics: updates and whole-set ops mutate in place, are alias-visible, and return the receiver for chaining.
 * `Deque<T>` — opaque builtin type with COW-backed persistent runtime storage (`Rc<VecDeque<Value>>`) ✓
   * Constructor: `collections.Deque.new()` (requires `import collections`)
-  * Methods (queue/storage): `q.push_front(v)`, `q.push_back(v)`, `q.pop_front()` → `Option<{ value: T, rest: Deque<T> }>`, `q.pop_back()` → `Option<{ value: T, rest: Deque<T> }>`, `q.len()`, `q.is_empty()`
+  * Methods (queue/storage): `q.prepended(v)`, `q.appended(v)`, `q.popped_front()` → `Option<{ value: T, rest: Deque<T> }>`, `q.popped_back()` → `Option<{ value: T, rest: Deque<T> }>`, `q.len()`, `q.is_empty()`
+  * Methods (traversal): `q.map(f)`, `q.filter(f)`, `q.flat_map(f)`, `q.scan(init, f)`, `q.enumerate()`, `q.zip(other)`, `q.chunks(n)`, `q.windows(n)`, `q.fold(init, f)`, `q.count()`, `q.count(f)`, `q.contains(value)`, `q.frequencies()`, `q.any(f)`, `q.all(f)`, `q.find(f)`, `q.to_list()`
+* `MutableDeque<T>` — opaque builtin type with alias-visible mutable queue storage ✓
+  * Constructors: `collections.MutableDeque.new()` and `collections.MutableDeque.from_deque(q)` (requires `import collections`)
+  * Methods (queue/storage): `q.push_front(v)`, `q.push_back(v)`, `q.pop_front()` → `Option<T>`, `q.pop_back()` → `Option<T>`, `q.len()`, `q.is_empty()`, `q.to_deque()`
   * Methods (traversal): `q.map(f)`, `q.filter(f)`, `q.flat_map(f)`, `q.scan(init, f)`, `q.enumerate()`, `q.zip(other)`, `q.chunks(n)`, `q.windows(n)`, `q.fold(init, f)`, `q.count()`, `q.count(f)`, `q.contains(value)`, `q.frequencies()`, `q.any(f)`, `q.all(f)`, `q.find(f)`, `q.to_list()`
 * Traversal constructors and behavior (public surface) ✓
   * Half-open range source: `start..<end` (ascending, empty when `start >= end`)
@@ -677,12 +684,12 @@ while `io`/`fs` are module namespaces for effectful operations.
 * Guidance: for predicate/search traversal, default to `s.any(f)`, `s.all(f)`, `s.find(f)`, `s.count(f)`, and `s.contains(value)`; use `s.frequencies()` for direct histogram/tally queries; reserve `s.fold(...)` for true accumulation/reduction
   * Evaluation model: each terminal re-runs the traversal pipeline from source (no single-use consumption state)
   * Implementation note: traversal is backed by an internal runtime/compiler engine type and is not nameable in user code
-* `Map<K, V>` — opaque builtin type with witness-backed persistent runtime storage and deterministic insertion-order iteration. Keys must satisfy `Hash + Eq`; invalid key types are rejected at compile time for typed map operations (E0024). For nominal keys, derive or implement those traits explicitly, e.g. `type Point derive(Eq, Hash) = { x: Int, y: Int }`. `m.keys()` and `m.values()` return deterministic insertion order traversal values. ✓
+* `Map<K, V>` — opaque builtin type with witness-backed persistent runtime storage and deterministic insertion-order iteration. Keys must satisfy `Hash + Eq`; invalid key types are rejected at compile time for typed map operations (E0024). For nominal keys, derive or implement those traits explicitly, e.g. `type Point derive(Eq, Hash) = { x: Int, y: Int }`. `m.keys()` and `m.values()` return deterministic insertion order traversal values. Immutable maps are query/snapshot types; build and edit through `MutableMap` plus `to_map()`. ✓
   * Constructor: `collections.Map.new()` (requires `import collections`)
-  * Methods: `m.insert(k, v)`, `m.get(k)` → `Option<V>`, `m.contains(k)`, `m.remove(k)`, `m.len()`, `m.keys()`, `m.values()`, `m.is_empty()`
-* `Set<T>` — opaque builtin type with witness-backed persistent runtime storage and deterministic insertion-order iteration. Elements must satisfy `Hash + Eq`; invalid element types are rejected at compile time for typed set operations (E0028). For nominal elements, derive or implement those traits explicitly, e.g. `type Point derive(Eq, Hash) = { x: Int, y: Int }`. `s.values()` returns deterministic insertion-order traversal values. ✓
+  * Methods: `m.get(k)` → `Option<V>`, `m.contains(k)`, `m.len()`, `m.keys()`, `m.values()`, `m.is_empty()`
+* `Set<T>` — opaque builtin type with witness-backed persistent runtime storage and deterministic insertion-order iteration. Elements must satisfy `Hash + Eq`; invalid element types are rejected at compile time for typed set operations (E0028). For nominal elements, derive or implement those traits explicitly, e.g. `type Point derive(Eq, Hash) = { x: Int, y: Int }`. `s.values()` returns deterministic insertion-order traversal values. Immutable sets are query/snapshot types; build and edit through `MutableSet` plus `to_set()`. ✓
   * Constructor: `collections.Set.new()` (requires `import collections`)
-  * Methods: `s.insert(v)`, `s.contains(v)`, `s.remove(v)`, `s.len()`, `s.is_empty()`, `s.values()`
+  * Methods: `s.contains(v)`, `s.len()`, `s.is_empty()`, `s.values()`
 * String methods ✓ — scalar-based (`s.len()` counts Unicode scalars; `s[i]`, `s.substring(a, b)`, and `s.chars()` operate on Unicode scalars), plus `s.contains(t)`, constrained-call-family `s.starts_with(t)` / `s.starts_with(t, start: idx)`, `s.ends_with(t)`, `s.trim()`, `s.split(sep)`, `s.to_upper()`, `s.to_lower()`, `s.concat(t)`, `s.lines()`, `s.parse_int()` → `Result<Int, ParseError>`, `s.parse_float()` → `Result<Float, ParseError>`
 * Char methods ✓ — `c.to_string()`, `c.code()` (Unicode scalar / code point value; e.g. `let bucket = ch.code() % 256`), `c.is_decimal_digit()`, `c.to_decimal_digit() -> Option<Int>`, `c.to_digit(radix: Int) -> Option<Int>` where digit conversion uses ASCII `0-9` / `a-z` / `A-Z` semantics and `radix` must be in `2..=36`
 * Int surface ✓ — native bitwise operators `&`, `|`, `^`, `~`, `<<`, `>>` (`Int` only, arithmetic `>>`, shift counts `0..63`) plus methods `n.abs()`, `n.pow(exp)` (`exp >= 0`, overflow checked), `n.to_string()`, `n.to_float()`

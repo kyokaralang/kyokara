@@ -1,0 +1,68 @@
+import collections
+from Option import Some, None
+
+// Deque and MutableDeque pair showcase.
+// Immutable Deque uses value-style queue verbs; MutableDeque owns the imperative ones.
+
+fn immutable_deque_api() -> Int {
+  let empty: Deque<Int> = collections.Deque.new()
+  let q0 = collections.Deque.new().appended(1).appended(2).prepended(0)
+  let front = match (q0.popped_front()) {
+    Some(p) => p.value * 10 + p.rest.len()
+    None => -1
+  }
+  let back = match (q0.popped_back()) {
+    Some(p) => p.value * 10 + p.rest.len()
+    None => -1
+  }
+  let as_list = q0.to_list()
+
+  if (
+    empty.is_empty()
+      && q0.len() == 3
+      && front == 2
+      && back == 22
+      && q0.contains(2)
+      && q0.count() == 3
+      && as_list[0] == 0
+      && as_list[2] == 2
+  ) {
+    1
+  } else {
+    0
+  }
+}
+
+fn mutable_deque_api() -> Int {
+  let empty = collections.MutableDeque.new()
+  let q = collections.MutableDeque.from_deque(collections.Deque.new().appended(1).appended(2))
+  let alias = q
+  let _a = q.push_front(0)
+  let _b = alias.push_back(3)
+  let front = q.pop_front().unwrap_or(-1)
+  let back = alias.pop_back().unwrap_or(-1)
+  let doubled = q.map(fn(n: Int) => n * 2).to_list()
+  let snapshot = q.to_deque()
+
+  if (
+    empty.is_empty()
+      && front == 0
+      && back == 3
+      && q.len() == 2
+      && q.contains(2)
+      && q.count(fn(n: Int) => n > 1) == 1
+      && doubled[0] == 2
+      && doubled[1] == 4
+      && snapshot.len() == 2
+      && snapshot.to_list()[0] == 1
+      && snapshot.to_list()[1] == 2
+  ) {
+    1
+  } else {
+    0
+  }
+}
+
+fn main() -> Int {
+  immutable_deque_api() * 10 + mutable_deque_api()
+}

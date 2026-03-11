@@ -1637,6 +1637,17 @@ impl MutableMapValue {
         }
     }
 
+    pub fn from_map(entries: MapValue) -> Self {
+        match &entries.storage {
+            PersistentMapStorage::Primitive(primitive) => {
+                Self::from_primitive_indexmap(primitive.entries.clone())
+            }
+            PersistentMapStorage::Generic(_) => Self {
+                storage: MutableMapStorage::Generic(entries),
+            },
+        }
+    }
+
     pub fn len(&self) -> usize {
         match &self.storage {
             MutableMapStorage::Empty { .. } => 0,
@@ -1825,6 +1836,17 @@ impl MutableSetValue {
     pub fn from_primitive_indexset(entries: IndexSet<MapKey>) -> Self {
         Self {
             storage: MutableSetStorage::Primitive(PrimitiveMutableSetValue::from_indexset(entries)),
+        }
+    }
+
+    pub fn from_set(entries: SetValue) -> Self {
+        match &entries.storage {
+            PersistentSetStorage::Primitive(primitive) => {
+                Self::from_primitive_indexset(primitive.entries.clone())
+            }
+            PersistentSetStorage::Generic(_) => Self {
+                storage: MutableSetStorage::Generic(entries),
+            },
         }
     }
 
@@ -2219,6 +2241,16 @@ impl MutableListValue {
         }
     }
 
+    pub fn replace_all(&self, values: Vec<Value>) {
+        *self.items.borrow_mut() = MutableListStorage::from_items(values);
+    }
+
+    pub fn reverse(&self) {
+        let mut values = self.snapshot().as_ref().clone();
+        values.reverse();
+        self.replace_all(values);
+    }
+
     pub fn shares_alias_storage_with(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.items, &other.items)
     }
@@ -2408,6 +2440,13 @@ impl MutableBitSetValue {
         }
     }
 
+    pub fn from_bitset(bitset: &BitSetValue) -> Self {
+        Self {
+            size_bits: bitset.size_bits,
+            words: Rc::new(RefCell::new(bitset.words.clone())),
+        }
+    }
+
     pub fn snapshot(&self) -> BitSetValue {
         BitSetValue {
             size_bits: self.size_bits,
@@ -2507,6 +2546,51 @@ impl MutableBitSetValue {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct MutableDequeValue {
+    items: Rc<RefCell<Rc<VecDeque<Value>>>>,
+}
+
+impl MutableDequeValue {
+    pub fn new(items: VecDeque<Value>) -> Self {
+        Self {
+            items: Rc::new(RefCell::new(Rc::new(items))),
+        }
+    }
+
+    pub fn snapshot(&self) -> Rc<VecDeque<Value>> {
+        self.items.borrow().clone()
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.borrow().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.borrow().is_empty()
+    }
+
+    pub fn push_front(&self, value: Value) {
+        let mut items = self.items.borrow_mut();
+        Rc::make_mut(&mut *items).push_front(value);
+    }
+
+    pub fn push_back(&self, value: Value) {
+        let mut items = self.items.borrow_mut();
+        Rc::make_mut(&mut *items).push_back(value);
+    }
+
+    pub fn pop_front(&self) -> Option<Value> {
+        let mut items = self.items.borrow_mut();
+        Rc::make_mut(&mut *items).pop_front()
+    }
+
+    pub fn pop_back(&self) -> Option<Value> {
+        let mut items = self.items.borrow_mut();
+        Rc::make_mut(&mut *items).pop_back()
+    }
+}
+
 /// A runtime value.
 ///
 /// Kept small (32 bytes) by boxing heap-heavy variants behind indirection.
@@ -2536,6 +2620,7 @@ pub enum Value {
     MutableMap(Rc<RefCell<MutableMapValue>>),
     MutableSet(Rc<RefCell<MutableSetValue>>),
     MutableBitSet(MutableBitSetValue),
+    MutableDeque(MutableDequeValue),
     Deque(Rc<VecDeque<Value>>),
     Seq(Rc<SeqPlan>),
     Map(Rc<MapValue>),
@@ -2680,6 +2765,7 @@ impl PartialEq for Value {
             (Value::MutableMap(a), Value::MutableMap(b)) => *a.borrow() == *b.borrow(),
             (Value::MutableSet(a), Value::MutableSet(b)) => *a.borrow() == *b.borrow(),
             (Value::MutableBitSet(a), Value::MutableBitSet(b)) => a.snapshot() == b.snapshot(),
+            (Value::MutableDeque(a), Value::MutableDeque(b)) => a.snapshot() == b.snapshot(),
             (Value::Deque(a), Value::Deque(b)) => a == b,
             // Sequences are lazy plans; do not force-evaluate for equality.
             (Value::Seq(_), Value::Seq(_)) => false,
@@ -2739,6 +2825,10 @@ impl Value {
 
     pub fn mutable_bitset(size_bits: usize) -> Self {
         Value::MutableBitSet(MutableBitSetValue::new(size_bits))
+    }
+
+    pub fn mutable_deque(items: VecDeque<Value>) -> Self {
+        Value::MutableDeque(MutableDequeValue::new(items))
     }
 
     pub fn seq_source(source: SeqSource) -> Self {
@@ -2861,6 +2951,11 @@ impl Value {
                 Value::BitSet(snapshot)
                     .display(interner)
                     .replace("BitSet", "MutableBitSet")
+            }
+            Value::MutableDeque(items) => {
+                let snapshot = items.snapshot();
+                let fs: Vec<String> = snapshot.iter().map(|v| v.display(interner)).collect();
+                format!("MutableDeque([{}])", fs.join(", "))
             }
             Value::Deque(items) => {
                 let fs: Vec<String> = items.iter().map(|v| v.display(interner)).collect();

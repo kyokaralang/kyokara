@@ -24,6 +24,7 @@ fn core_hidden_type_name(interner: &mut Interner, core: CoreType) -> Name {
         CoreType::List => "$core_List",
         CoreType::BitSet => "$core_BitSet",
         CoreType::MutableList => "$core_MutableList",
+        CoreType::MutableDeque => "$core_MutableDeque",
         CoreType::MutablePriorityQueue => "$core_MutablePriorityQueue",
         CoreType::MutableMap => "$core_MutableMap",
         CoreType::MutableSet => "$core_MutableSet",
@@ -44,6 +45,7 @@ fn core_public_type_name(interner: &mut Interner, core: CoreType) -> Name {
         CoreType::List => "List",
         CoreType::BitSet => "BitSet",
         CoreType::MutableList => "MutableList",
+        CoreType::MutableDeque => "MutableDeque",
         CoreType::MutablePriorityQueue => "MutablePriorityQueue",
         CoreType::MutableMap => "MutableMap",
         CoreType::MutableSet => "MutableSet",
@@ -106,7 +108,7 @@ fn path_type(interner: &mut Interner, name: &str) -> TypeRef {
 }
 
 /// Inject `Option<T>`, `Result<T, E>`, `List<T>`, `MutableList<T>`,
-/// `MutablePriorityQueue<P, T>`, `MutableMap<K,V>`, `MutableSet<T>`, `Deque<T>`,
+/// `MutableDeque<T>`, `MutablePriorityQueue<P, T>`, `MutableMap<K,V>`, `MutableSet<T>`, `Deque<T>`,
 /// `Seq<T>`, `Map<K,V>`, `Set<T>`, and `ParseError` into the
 /// item tree
 /// and module scope.
@@ -124,6 +126,7 @@ pub fn register_builtin_types(
     register_list(tree, scope, interner);
     register_bitset(tree, scope, interner);
     register_mutable_list(tree, scope, interner);
+    register_mutable_deque(tree, scope, interner);
     register_mutable_priority_queue(tree, scope, interner);
     register_mutable_map(tree, scope, interner);
     register_mutable_set(tree, scope, interner);
@@ -346,6 +349,19 @@ fn register_mutable_list(tree: &mut ItemTree, scope: &mut ModuleScope, interner:
         scope,
         interner,
         CoreType::MutableList,
+        vec![t_name],
+        TypeDefKind::Adt { variants: vec![] },
+    );
+}
+
+/// `MutableDeque<T>` — opaque builtin type (no variants, no pattern matching).
+fn register_mutable_deque(tree: &mut ItemTree, scope: &mut ModuleScope, interner: &mut Interner) {
+    let t_name = Name::new(interner, "T");
+    let _ = register_core_type_item(
+        tree,
+        scope,
+        interner,
+        CoreType::MutableDeque,
         vec![t_name],
         TypeDefKind::Adt { variants: vec![] },
     );
@@ -577,6 +593,10 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             .core_types
             .get(CoreType::MutableList)
             .map(|t| t.type_name),
+        mutable_deque: scope
+            .core_types
+            .get(CoreType::MutableDeque)
+            .map(|t| t.type_name),
         mutable_map: scope
             .core_types
             .get(CoreType::MutableMap)
@@ -679,7 +699,6 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             "parse_float",
         ),
         // List methods
-        ("list_push", ReceiverKey::Core(CoreType::List), "push"),
         ("list_len", ReceiverKey::Core(CoreType::List), "len"),
         ("list_get", ReceiverKey::Core(CoreType::List), "get"),
         ("list_head", ReceiverKey::Core(CoreType::List), "head"),
@@ -689,12 +708,10 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             ReceiverKey::Core(CoreType::List),
             "is_empty",
         ),
-        ("list_reverse", ReceiverKey::Core(CoreType::List), "reverse"),
+        ("list_reverse", ReceiverKey::Core(CoreType::List), "reversed"),
         ("list_concat", ReceiverKey::Core(CoreType::List), "concat"),
-        ("list_set", ReceiverKey::Core(CoreType::List), "set"),
-        ("list_update", ReceiverKey::Core(CoreType::List), "update"),
-        ("list_sort", ReceiverKey::Core(CoreType::List), "sort"),
-        ("list_sort_by", ReceiverKey::Core(CoreType::List), "sort_by"),
+        ("list_sort", ReceiverKey::Core(CoreType::List), "sorted"),
+        ("list_sort_by", ReceiverKey::Core(CoreType::List), "sorted_by"),
         (
             "list_binary_search",
             ReceiverKey::Core(CoreType::List),
@@ -702,9 +719,9 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ),
         // BitSet methods
         ("bitset_test", ReceiverKey::Core(CoreType::BitSet), "test"),
-        ("bitset_set", ReceiverKey::Core(CoreType::BitSet), "set"),
-        ("bitset_reset", ReceiverKey::Core(CoreType::BitSet), "reset"),
-        ("bitset_flip", ReceiverKey::Core(CoreType::BitSet), "flip"),
+        ("bitset_set", ReceiverKey::Core(CoreType::BitSet), "with_bit"),
+        ("bitset_reset", ReceiverKey::Core(CoreType::BitSet), "without_bit"),
+        ("bitset_flip", ReceiverKey::Core(CoreType::BitSet), "toggled"),
         ("bitset_count", ReceiverKey::Core(CoreType::BitSet), "count"),
         ("bitset_size", ReceiverKey::Core(CoreType::BitSet), "size"),
         (
@@ -804,6 +821,16 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             "get",
         ),
         (
+            "mutable_list_head",
+            ReceiverKey::Core(CoreType::MutableList),
+            "head",
+        ),
+        (
+            "mutable_list_tail",
+            ReceiverKey::Core(CoreType::MutableList),
+            "tail",
+        ),
+        (
             "mutable_list_set",
             ReceiverKey::Core(CoreType::MutableList),
             "set",
@@ -822,6 +849,62 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             "mutable_list_update",
             ReceiverKey::Core(CoreType::MutableList),
             "update",
+        ),
+        (
+            "mutable_list_reverse",
+            ReceiverKey::Core(CoreType::MutableList),
+            "reverse",
+        ),
+        (
+            "mutable_list_sort",
+            ReceiverKey::Core(CoreType::MutableList),
+            "sort",
+        ),
+        (
+            "mutable_list_sort_by",
+            ReceiverKey::Core(CoreType::MutableList),
+            "sort_by",
+        ),
+        (
+            "mutable_list_binary_search",
+            ReceiverKey::Core(CoreType::MutableList),
+            "binary_search",
+        ),
+        // MutableDeque methods
+        (
+            "mutable_deque_push_front",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "push_front",
+        ),
+        (
+            "mutable_deque_push_back",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "push_back",
+        ),
+        (
+            "mutable_deque_pop_front",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "pop_front",
+        ),
+        (
+            "mutable_deque_pop_back",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "pop_back",
+        ),
+        (
+            "mutable_deque_len",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "len",
+        ),
+        (
+            "mutable_deque_is_empty",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "is_empty",
+        ),
+        (
+            "mutable_deque_to_deque",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "to_deque",
         ),
         // MutablePriorityQueue methods
         (
@@ -895,6 +978,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             ReceiverKey::Core(CoreType::MutableMap),
             "is_empty",
         ),
+        (
+            "mutable_map_to_map",
+            ReceiverKey::Core(CoreType::MutableMap),
+            "to_map",
+        ),
         // MutableSet methods
         (
             "mutable_set_insert",
@@ -925,6 +1013,11 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
             "mutable_set_values",
             ReceiverKey::Core(CoreType::MutableSet),
             "values",
+        ),
+        (
+            "mutable_set_to_set",
+            ReceiverKey::Core(CoreType::MutableSet),
+            "to_set",
         ),
         // MutableBitSet methods
         (
@@ -970,22 +1063,27 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         (
             "mutable_bitset_union",
             ReceiverKey::Core(CoreType::MutableBitSet),
-            "union",
+            "union_with",
         ),
         (
             "mutable_bitset_intersection",
             ReceiverKey::Core(CoreType::MutableBitSet),
-            "intersection",
+            "intersection_with",
         ),
         (
             "mutable_bitset_difference",
             ReceiverKey::Core(CoreType::MutableBitSet),
-            "difference",
+            "difference_with",
         ),
         (
             "mutable_bitset_xor",
             ReceiverKey::Core(CoreType::MutableBitSet),
-            "xor",
+            "xor_with",
+        ),
+        (
+            "mutable_bitset_to_bitset",
+            ReceiverKey::Core(CoreType::MutableBitSet),
+            "to_bitset",
         ),
         ("seq_map", ReceiverKey::Core(CoreType::MutableList), "map"),
         (
@@ -1039,31 +1137,27 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_any", ReceiverKey::Core(CoreType::MutableList), "any"),
         ("seq_all", ReceiverKey::Core(CoreType::MutableList), "all"),
         ("seq_find", ReceiverKey::Core(CoreType::MutableList), "find"),
-        (
-            "seq_to_list",
-            ReceiverKey::Core(CoreType::MutableList),
-            "to_list",
-        ),
+        ("seq_to_list", ReceiverKey::Core(CoreType::MutableList), "to_list"),
         // Deque methods
         (
             "deque_push_front",
             ReceiverKey::Core(CoreType::Deque),
-            "push_front",
+            "prepended",
         ),
         (
             "deque_push_back",
             ReceiverKey::Core(CoreType::Deque),
-            "push_back",
+            "appended",
         ),
         (
             "deque_pop_front",
             ReceiverKey::Core(CoreType::Deque),
-            "pop_front",
+            "popped_front",
         ),
         (
             "deque_pop_back",
             ReceiverKey::Core(CoreType::Deque),
-            "pop_back",
+            "popped_back",
         ),
         ("deque_len", ReceiverKey::Core(CoreType::Deque), "len"),
         (
@@ -1104,6 +1198,43 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_all", ReceiverKey::Core(CoreType::Deque), "all"),
         ("seq_find", ReceiverKey::Core(CoreType::Deque), "find"),
         ("seq_to_list", ReceiverKey::Core(CoreType::Deque), "to_list"),
+        ("seq_map", ReceiverKey::Core(CoreType::MutableDeque), "map"),
+        (
+            "seq_flat_map",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "flat_map",
+        ),
+        (
+            "seq_filter",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "filter",
+        ),
+        ("seq_fold", ReceiverKey::Core(CoreType::MutableDeque), "fold"),
+        ("seq_scan", ReceiverKey::Core(CoreType::MutableDeque), "scan"),
+        (
+            "seq_enumerate",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "enumerate",
+        ),
+        ("seq_zip", ReceiverKey::Core(CoreType::MutableDeque), "zip"),
+        ("seq_chunks", ReceiverKey::Core(CoreType::MutableDeque), "chunks"),
+        ("seq_windows", ReceiverKey::Core(CoreType::MutableDeque), "windows"),
+        ("seq_count", ReceiverKey::Core(CoreType::MutableDeque), "count"),
+        ("seq_count_by", ReceiverKey::Core(CoreType::MutableDeque), "count"),
+        (
+            "seq_contains",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "contains",
+        ),
+        (
+            "seq_frequencies",
+            ReceiverKey::Core(CoreType::MutableDeque),
+            "frequencies",
+        ),
+        ("seq_any", ReceiverKey::Core(CoreType::MutableDeque), "any"),
+        ("seq_all", ReceiverKey::Core(CoreType::MutableDeque), "all"),
+        ("seq_find", ReceiverKey::Core(CoreType::MutableDeque), "find"),
+        ("seq_to_list", ReceiverKey::Core(CoreType::MutableDeque), "to_list"),
         // Seq methods
         ("seq_map", ReceiverKey::Core(CoreType::Seq), "map"),
         ("seq_flat_map", ReceiverKey::Core(CoreType::Seq), "flat_map"),
@@ -1132,18 +1263,14 @@ pub fn register_builtin_methods(scope: &mut ModuleScope, interner: &mut Interner
         ("seq_to_list", ReceiverKey::Core(CoreType::Seq), "to_list"),
         ("seq_unfold", ReceiverKey::Any, "unfold"),
         // Map methods
-        ("map_insert", ReceiverKey::Core(CoreType::Map), "insert"),
         ("map_get", ReceiverKey::Core(CoreType::Map), "get"),
         ("map_contains", ReceiverKey::Core(CoreType::Map), "contains"),
-        ("map_remove", ReceiverKey::Core(CoreType::Map), "remove"),
         ("map_len", ReceiverKey::Core(CoreType::Map), "len"),
         ("map_keys", ReceiverKey::Core(CoreType::Map), "keys"),
         ("map_values", ReceiverKey::Core(CoreType::Map), "values"),
         ("map_is_empty", ReceiverKey::Core(CoreType::Map), "is_empty"),
         // Set methods
-        ("set_insert", ReceiverKey::Core(CoreType::Set), "insert"),
         ("set_contains", ReceiverKey::Core(CoreType::Set), "contains"),
-        ("set_remove", ReceiverKey::Core(CoreType::Set), "remove"),
         ("set_len", ReceiverKey::Core(CoreType::Set), "len"),
         ("set_is_empty", ReceiverKey::Core(CoreType::Set), "is_empty"),
         ("set_values", ReceiverKey::Core(CoreType::Set), "values"),
@@ -1346,6 +1473,7 @@ pub fn register_synthetic_modules(
         "Set",
         "Deque",
         "MutableList",
+        "MutableDeque",
         "MutablePriorityQueue",
         "MutableMap",
         "MutableSet",
@@ -1566,6 +1694,7 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     let set = Name::new(interner, "Set");
     let deque = Name::new(interner, "Deque");
     let mutable_list = Name::new(interner, "MutableList");
+    let mutable_deque = Name::new(interner, "MutableDeque");
     let mutable_priority_queue = Name::new(interner, "MutablePriorityQueue");
     let mutable_map = Name::new(interner, "MutableMap");
     let mutable_set = Name::new(interner, "MutableSet");
@@ -1575,6 +1704,10 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     let new_min = Name::new(interner, "new_min");
     let new_max = Name::new(interner, "new_max");
     let from_list = Name::new(interner, "from_list");
+    let from_deque = Name::new(interner, "from_deque");
+    let from_map = Name::new(interner, "from_map");
+    let from_set = Name::new(interner, "from_set");
+    let from_bitset = Name::new(interner, "from_bitset");
     let list_new = Name::new(interner, "list_new");
     let bitset_new = Name::new(interner, "bitset_new");
     let map_new = Name::new(interner, "map_new");
@@ -1582,13 +1715,18 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
     let deque_new = Name::new(interner, "deque_new");
     let mutable_list_new = Name::new(interner, "mutable_list_new");
     let mutable_list_from_list = Name::new(interner, "mutable_list_from_list");
+    let mutable_deque_new = Name::new(interner, "mutable_deque_new");
+    let mutable_deque_from_deque = Name::new(interner, "mutable_deque_from_deque");
     let mutable_priority_queue_new_min = Name::new(interner, "mutable_priority_queue_new_min");
     let mutable_priority_queue_new_max = Name::new(interner, "mutable_priority_queue_new_max");
     let mutable_map_new = Name::new(interner, "mutable_map_new");
     let mutable_map_with_capacity = Name::new(interner, "mutable_map_with_capacity");
+    let mutable_map_from_map = Name::new(interner, "mutable_map_from_map");
     let mutable_set_new = Name::new(interner, "mutable_set_new");
     let mutable_set_with_capacity = Name::new(interner, "mutable_set_with_capacity");
+    let mutable_set_from_set = Name::new(interner, "mutable_set_from_set");
     let mutable_bitset_new = Name::new(interner, "mutable_bitset_new");
+    let mutable_bitset_from_bitset = Name::new(interner, "mutable_bitset_from_bitset");
     if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&list_new) {
         scope
             .synthetic_module_static_methods
@@ -1624,6 +1762,16 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
             .synthetic_module_static_methods
             .insert((collections, mutable_list, from_list), fn_idx);
     }
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_deque_new) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, mutable_deque, new), fn_idx);
+    }
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_deque_from_deque) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, mutable_deque, from_deque), fn_idx);
+    }
     if let Some(&fn_idx) = scope
         .intrinsic_fn_lookup
         .get(&mutable_priority_queue_new_min)
@@ -1650,6 +1798,11 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
             .synthetic_module_static_methods
             .insert((collections, mutable_map, with_capacity), fn_idx);
     }
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_map_from_map) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, mutable_map, from_map), fn_idx);
+    }
     if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_set_new) {
         scope
             .synthetic_module_static_methods
@@ -1660,10 +1813,20 @@ pub fn register_static_methods(scope: &mut ModuleScope, interner: &mut Interner)
             .synthetic_module_static_methods
             .insert((collections, mutable_set, with_capacity), fn_idx);
     }
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_set_from_set) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, mutable_set, from_set), fn_idx);
+    }
     if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_bitset_new) {
         scope
             .synthetic_module_static_methods
             .insert((collections, mutable_bitset, new), fn_idx);
+    }
+    if let Some(&fn_idx) = scope.intrinsic_fn_lookup.get(&mutable_bitset_from_bitset) {
+        scope
+            .synthetic_module_static_methods
+            .insert((collections, mutable_bitset, from_bitset), fn_idx);
     }
 }
 
@@ -1791,6 +1954,11 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         .get(CoreType::MutableList)
         .map(|info| info.type_name)
         .unwrap_or_else(|| Name::new(interner, "MutableList"));
+    let mutable_deque_core_name = scope
+        .core_types
+        .get(CoreType::MutableDeque)
+        .map(|info| info.type_name)
+        .unwrap_or_else(|| Name::new(interner, "MutableDeque"));
     let mutable_priority_queue_core_name = scope
         .core_types
         .get(CoreType::MutablePriorityQueue)
@@ -1902,6 +2070,10 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
     };
     let mutable_list_t = TypeRef::Path {
         path: Path::single(mutable_list_core_name),
+        args: vec![t_ref.clone()],
+    };
+    let mutable_deque_t = TypeRef::Path {
+        path: Path::single(mutable_deque_core_name),
         args: vec![t_ref.clone()],
     };
     let mutable_priority_queue_pt = TypeRef::Path {
@@ -2127,14 +2299,6 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         // ── List<T> ─────────────────────────────────────────────
         // list_new<T>() -> List<T>
         mk_intrinsic(interner, "list_new", vec![t_name], vec![], list_t.clone()),
-        // list_push<T>(xs: List<T>, x: T) -> List<T>
-        mk_intrinsic(
-            interner,
-            "list_push",
-            vec![t_name],
-            vec![("xs", list_t.clone()), ("x", t_ref.clone())],
-            list_t.clone(),
-        ),
         // list_len<T>(xs: List<T>) -> Int
         mk_intrinsic(
             interner,
@@ -2189,30 +2353,6 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             "list_concat",
             vec![t_name],
             vec![("a", list_t.clone()), ("b", list_t.clone())],
-            list_t.clone(),
-        ),
-        // list_set<T>(xs: List<T>, i: Int, x: T) -> List<T>
-        mk_intrinsic(
-            interner,
-            "list_set",
-            vec![t_name],
-            vec![
-                ("xs", list_t.clone()),
-                ("i", int_ty.clone()),
-                ("x", t_ref.clone()),
-            ],
-            list_t.clone(),
-        ),
-        // list_update<T>(xs: List<T>, i: Int, f: fn(T) -> T) -> List<T>
-        mk_intrinsic(
-            interner,
-            "list_update",
-            vec![t_name],
-            vec![
-                ("xs", list_t.clone()),
-                ("i", int_ty.clone()),
-                ("f", fn_t_to_t.clone()),
-            ],
             list_t.clone(),
         ),
         // bitset_new(size: Int) -> BitSet
@@ -2403,6 +2543,22 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![("xs", mutable_list_t.clone()), ("i", int_ty.clone())],
             option_t.clone(),
         ),
+        // mutable_list_head<T>(xs: MutableList<T>) -> Option<T>
+        mk_intrinsic(
+            interner,
+            "mutable_list_head",
+            vec![t_name],
+            vec![("xs", mutable_list_t.clone())],
+            option_t.clone(),
+        ),
+        // mutable_list_tail<T>(xs: MutableList<T>) -> List<T>
+        mk_intrinsic(
+            interner,
+            "mutable_list_tail",
+            vec![t_name],
+            vec![("xs", mutable_list_t.clone())],
+            list_t.clone(),
+        ),
         // mutable_list_set<T>(xs: MutableList<T>, i: Int, x: T) -> MutableList<T>
         mk_intrinsic(
             interner,
@@ -2442,6 +2598,121 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
                 ("f", fn_t_to_t.clone()),
             ],
             mutable_list_t.clone(),
+        ),
+        // mutable_list_reverse<T>(xs: MutableList<T>) -> MutableList<T>
+        mk_intrinsic(
+            interner,
+            "mutable_list_reverse",
+            vec![t_name],
+            vec![("xs", mutable_list_t.clone())],
+            mutable_list_t.clone(),
+        ),
+        // mutable_list_sort<T: Ord>(xs: MutableList<T>) -> MutableList<T>
+        mk_intrinsic_with_type_params(
+            interner,
+            "mutable_list_sort",
+            vec![TypeParamDef {
+                name: t_name,
+                bounds: vec![ord_bound.clone()],
+            }],
+            vec![("xs", mutable_list_t.clone())],
+            mutable_list_t.clone(),
+        ),
+        // mutable_list_sort_by<T>(xs: MutableList<T>, cmp: fn(T, T) -> Int) -> MutableList<T>
+        mk_intrinsic(
+            interner,
+            "mutable_list_sort_by",
+            vec![t_name],
+            vec![("xs", mutable_list_t.clone()), ("cmp", fn_tt_to_int.clone())],
+            mutable_list_t.clone(),
+        ),
+        // mutable_list_binary_search<T>(xs: MutableList<T>, x: T) -> Int
+        mk_intrinsic(
+            interner,
+            "mutable_list_binary_search",
+            vec![t_name],
+            vec![("xs", mutable_list_t.clone()), ("x", t_ref.clone())],
+            int_ty.clone(),
+        ),
+        // mutable_list_to_list<T>(xs: MutableList<T>) -> List<T>
+        mk_intrinsic(
+            interner,
+            "mutable_list_to_list",
+            vec![t_name],
+            vec![("xs", mutable_list_t.clone())],
+            list_t.clone(),
+        ),
+        // mutable_deque_new<T>() -> MutableDeque<T>
+        mk_intrinsic(
+            interner,
+            "mutable_deque_new",
+            vec![t_name],
+            vec![],
+            mutable_deque_t.clone(),
+        ),
+        // mutable_deque_from_deque<T>(q: Deque<T>) -> MutableDeque<T>
+        mk_intrinsic(
+            interner,
+            "mutable_deque_from_deque",
+            vec![t_name],
+            vec![("q", deque_t.clone())],
+            mutable_deque_t.clone(),
+        ),
+        // mutable_deque_push_front<T>(q: MutableDeque<T>, x: T) -> MutableDeque<T>
+        mk_intrinsic(
+            interner,
+            "mutable_deque_push_front",
+            vec![t_name],
+            vec![("q", mutable_deque_t.clone()), ("x", t_ref.clone())],
+            mutable_deque_t.clone(),
+        ),
+        // mutable_deque_push_back<T>(q: MutableDeque<T>, x: T) -> MutableDeque<T>
+        mk_intrinsic(
+            interner,
+            "mutable_deque_push_back",
+            vec![t_name],
+            vec![("q", mutable_deque_t.clone()), ("x", t_ref.clone())],
+            mutable_deque_t.clone(),
+        ),
+        // mutable_deque_pop_front<T>(q: MutableDeque<T>) -> Option<T>
+        mk_intrinsic(
+            interner,
+            "mutable_deque_pop_front",
+            vec![t_name],
+            vec![("q", mutable_deque_t.clone())],
+            option_t.clone(),
+        ),
+        // mutable_deque_pop_back<T>(q: MutableDeque<T>) -> Option<T>
+        mk_intrinsic(
+            interner,
+            "mutable_deque_pop_back",
+            vec![t_name],
+            vec![("q", mutable_deque_t.clone())],
+            option_t.clone(),
+        ),
+        // mutable_deque_len<T>(q: MutableDeque<T>) -> Int
+        mk_intrinsic(
+            interner,
+            "mutable_deque_len",
+            vec![t_name],
+            vec![("q", mutable_deque_t.clone())],
+            int_ty.clone(),
+        ),
+        // mutable_deque_is_empty<T>(q: MutableDeque<T>) -> Bool
+        mk_intrinsic(
+            interner,
+            "mutable_deque_is_empty",
+            vec![t_name],
+            vec![("q", mutable_deque_t.clone())],
+            bool_ty.clone(),
+        ),
+        // mutable_deque_to_deque<T>(q: MutableDeque<T>) -> Deque<T>
+        mk_intrinsic(
+            interner,
+            "mutable_deque_to_deque",
+            vec![t_name],
+            vec![("q", mutable_deque_t.clone())],
+            deque_t.clone(),
         ),
         // mutable_priority_queue_new_min<P: Ord, T>() -> MutablePriorityQueue<P, T>
         mk_intrinsic_with_type_params(
@@ -2662,6 +2933,22 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![("m", mutable_map_kv.clone())],
             bool_ty.clone(),
         ),
+        // mutable_map_from_map<K, V>(m: Map<K, V>) -> MutableMap<K, V>
+        mk_intrinsic(
+            interner,
+            "mutable_map_from_map",
+            vec![k_name, v_name],
+            vec![("m", map_kv.clone())],
+            mutable_map_kv.clone(),
+        ),
+        // mutable_map_to_map<K, V>(m: MutableMap<K, V>) -> Map<K, V>
+        mk_intrinsic(
+            interner,
+            "mutable_map_to_map",
+            vec![k_name, v_name],
+            vec![("m", mutable_map_kv.clone())],
+            map_kv.clone(),
+        ),
         // mutable_set_new<T>() -> MutableSet<T>
         mk_intrinsic(
             interner,
@@ -2725,6 +3012,22 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![t_name],
             vec![("s", mutable_set_t.clone())],
             seq_t.clone(),
+        ),
+        // mutable_set_from_set<T>(s: Set<T>) -> MutableSet<T>
+        mk_intrinsic(
+            interner,
+            "mutable_set_from_set",
+            vec![t_name],
+            vec![("s", set_t.clone())],
+            mutable_set_t.clone(),
+        ),
+        // mutable_set_to_set<T>(s: MutableSet<T>) -> Set<T>
+        mk_intrinsic(
+            interner,
+            "mutable_set_to_set",
+            vec![t_name],
+            vec![("s", mutable_set_t.clone())],
+            set_t.clone(),
         ),
         // mutable_bitset_new(size: Int) -> MutableBitSet
         mk_intrinsic(
@@ -2841,6 +3144,22 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
                 ("rhs", mutable_bitset_t.clone()),
             ],
             mutable_bitset_t.clone(),
+        ),
+        // mutable_bitset_from_bitset(bs: BitSet) -> MutableBitSet
+        mk_intrinsic(
+            interner,
+            "mutable_bitset_from_bitset",
+            vec![],
+            vec![("bs", bitset_t.clone())],
+            mutable_bitset_t.clone(),
+        ),
+        // mutable_bitset_to_bitset(bs: MutableBitSet) -> BitSet
+        mk_intrinsic(
+            interner,
+            "mutable_bitset_to_bitset",
+            vec![],
+            vec![("bs", mutable_bitset_t.clone())],
+            bitset_t.clone(),
         ),
         // deque_new<T>() -> Deque<T>
         mk_intrinsic(interner, "deque_new", vec![t_name], vec![], deque_t.clone()),
@@ -3077,18 +3396,6 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![],
             map_kv.clone(),
         ),
-        // map_insert<K, V>(m: Map<K,V>, k: K, v: V) -> Map<K,V>
-        mk_intrinsic(
-            interner,
-            "map_insert",
-            vec![k_name, v_name],
-            vec![
-                ("m", map_kv.clone()),
-                ("k", k_ref.clone()),
-                ("v", v_ref.clone()),
-            ],
-            map_kv.clone(),
-        ),
         // map_get<K, V>(m: Map<K,V>, k: K) -> Option<V>
         mk_intrinsic(
             interner,
@@ -3104,14 +3411,6 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![k_name, v_name],
             vec![("m", map_kv.clone()), ("k", k_ref.clone())],
             bool_ty.clone(),
-        ),
-        // map_remove<K, V>(m: Map<K,V>, k: K) -> Map<K,V>
-        mk_intrinsic(
-            interner,
-            "map_remove",
-            vec![k_name, v_name],
-            vec![("m", map_kv.clone()), ("k", k_ref.clone())],
-            map_kv.clone(),
         ),
         // map_len<K, V>(m: Map<K,V>) -> Int
         mk_intrinsic(
@@ -3148,14 +3447,6 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
         // ── Set<T> ───────────────────────────────────────────────
         // set_new<T>() -> Set<T>
         mk_intrinsic(interner, "set_new", vec![t_name], vec![], set_t.clone()),
-        // set_insert<T>(s: Set<T>, x: T) -> Set<T>
-        mk_intrinsic(
-            interner,
-            "set_insert",
-            vec![t_name],
-            vec![("s", set_t.clone()), ("x", t_ref.clone())],
-            set_t.clone(),
-        ),
         // set_contains<T>(s: Set<T>, x: T) -> Bool
         mk_intrinsic(
             interner,
@@ -3163,14 +3454,6 @@ fn intrinsic_signatures(scope: &ModuleScope, interner: &mut Interner) -> Vec<(Na
             vec![t_name],
             vec![("s", set_t.clone()), ("x", t_ref.clone())],
             bool_ty.clone(),
-        ),
-        // set_remove<T>(s: Set<T>, x: T) -> Set<T>
-        mk_intrinsic(
-            interner,
-            "set_remove",
-            vec![t_name],
-            vec![("s", set_t.clone()), ("x", t_ref.clone())],
-            set_t.clone(),
         ),
         // set_len<T>(s: Set<T>) -> Int
         mk_intrinsic(

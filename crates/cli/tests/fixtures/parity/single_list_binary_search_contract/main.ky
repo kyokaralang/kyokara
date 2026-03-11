@@ -1,7 +1,7 @@
 import collections
 
 fn main() -> Int {
-  let xs = collections.List.new().push(1).push(3).push(5).push(7)
+  let xs = collections.MutableList.new().push(1).push(3).push(5).push(7).to_list()
   let found = xs.binary_search(5)
   let missing = xs.binary_search(6)
   found * 100 + missing

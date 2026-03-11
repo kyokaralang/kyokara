@@ -3,7 +3,7 @@
 - Status: Draft
 - Owner: Language Design
 - Tracking issue: TBD
-- Last updated: 2026-03-04
+- Last updated: 2026-03-11
 
 ## Summary
 
@@ -13,7 +13,7 @@ Define one consistent mental model for API placement and authority checks:
 2. Place specialized pure APIs (including specialized collections) in pure modules.
 3. Keep side effects in capability-scoped modules with explicit authority (`with ...`) and runtime manifest checks.
 
-This RFC proposes moving specialized collections such as `Deque` and `PriorityQueue` under a `collections` module namespace while preserving value-owned method APIs.
+This RFC proposes moving specialized collections such as `Deque`, `MutableDeque`, and `MutablePriorityQueue` under a `collections` module namespace while preserving owner-method APIs on the values themselves.
 
 ## Motivation
 
@@ -74,8 +74,9 @@ Specialized pure APIs live in modules and are imported explicitly.
 Initial policy:
 
 1. `Deque` should be exposed via `collections` (not prelude-global).
-2. The priority-queue family should be introduced in `collections` directly.
-3. Future specialized structures (for example `BitSet`) should follow the same rule.
+2. `MutableDeque` should be exposed via `collections` (not prelude-global).
+3. The priority-queue family should be introduced in `collections` directly.
+4. Future specialized structures (for example `BitSet` and `MutableBitSet`) should follow the same rule.
 
 #### Tier C: Effect modules
 
@@ -90,14 +91,16 @@ APIs that can perform side effects remain module-qualified and capability-scoped
 Canonical placement for specialized collection constructors:
 
 1. `collections.Deque.new()`
-2. `collections.MutablePriorityQueue.new_min()` (first shipped surface; see RFC 0012)
+2. `collections.MutableDeque.new()`
+3. `collections.MutablePriorityQueue.new_min()` (first shipped surface; see RFC 0012)
 
-Once a value exists, behavior remains owner methods:
+Once a value exists, behavior remains owner methods, with immutable and mutable collection surfaces following RFC 0009's naming split:
 
-1. `q.push_back(x)`
-2. `q.pop_front()`
-3. `pq.push(p, v)`
-4. `pq.pop()`
+1. `q.appended(x)` on `Deque`
+2. `mq.push_back(x)` on `MutableDeque`
+3. `mq.pop_front()` on `MutableDeque`
+4. `pq.push(p, v)`
+5. `pq.pop()`
 
 ### P4. Canonical examples
 
@@ -107,7 +110,7 @@ Pure specialized collection use:
 import collections
 
 fn queue_size() -> Int {
-  let q = collections.Deque.new().push_back(1).push_back(2)
+  let q = collections.MutableDeque.new().push_back(1).push_back(2).to_deque()
   q.len()
 }
 ```
@@ -150,8 +153,8 @@ Only ubiquitous primitives should be prelude-global. Specialized pure APIs shoul
 
 ## Rollout (v0 hard-break policy)
 
-1. Move `Deque` constructor surface to `collections` namespace.
-2. Keep method behavior unchanged.
+1. Keep `Deque` / `MutableDeque` constructor surface under the `collections` namespace.
+2. Keep owner-method placement unchanged while following RFC 0009's immutable/mutable naming split.
 3. Introduce the priority-queue family directly under `collections`, with `MutablePriorityQueue` shipping first per RFC 0012.
 4. Update docs/examples/completions to module-first specialized collection references.
 

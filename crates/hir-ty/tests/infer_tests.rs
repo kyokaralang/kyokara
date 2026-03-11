@@ -27,10 +27,8 @@ fn parse_source(src: &str) -> SyntaxNode {
 }
 
 fn normalize_immutable_collection_constructor_import(source: &str) -> Cow<'_, str> {
-    let uses_canonical_immutable_constructor = source.contains("collections.List.new(")
-        || source.contains("collections.Map.new(")
-        || source.contains("collections.Set.new(");
-    if uses_canonical_immutable_constructor && !source.contains("import collections") {
+    let uses_collections_module = source.contains("collections.");
+    if uses_collections_module && !source.contains("import collections") {
         Cow::Owned(format!("import collections\n{source}"))
     } else {
         Cow::Borrowed(source)
@@ -807,7 +805,7 @@ fn infer_iteration_ergonomics_happy_paths() {
     let cases = ["fn main() -> Bool {
             let xs = (0..<5)
             let e = xs.enumerate().to_list()
-            let z = xs.zip(collections.List.new().push(10).push(20)).to_list()
+            let z = xs.zip(collections.MutableList.new().push(10).push(20)).to_list()
             let c = xs.chunks(2).to_list()
             let w = xs.windows(3).to_list()
             e.len() > 0 && z.len() == 2 && c.len() == 3 && w.len() == 3
@@ -857,14 +855,14 @@ fn infer_seq_flat_map_happy_paths() {
         r#"import collections
 
 fn main() -> Int {
-    let a = collections.List.new().push(1).push(2)
-        .flat_map(fn(n: Int) => collections.List.new().push(n).push(n + 10))
+    let a = collections.MutableList.new().push(1).push(2)
+        .flat_map(fn(n: Int) => collections.MutableList.new().push(n).push(n + 10))
         .count()
-    let b = collections.MutableList.from_list(collections.List.new().push(1).push(2))
-        .flat_map(fn(n: Int) => collections.MutableList.from_list(collections.List.new().push(n).push(n + 1)))
+    let b = collections.MutableList.from_list(collections.MutableList.new().push(1).push(2).to_list())
+        .flat_map(fn(n: Int) => collections.MutableList.from_list(collections.MutableList.new().push(n).push(n + 1).to_list()))
         .count()
-    let c = collections.Deque.new().push_back(1).push_back(2)
-        .flat_map(fn(n: Int) => collections.Deque.new().push_back(n).push_back(n + 1))
+    let c = collections.Deque.new().appended(1).appended(2)
+        .flat_map(fn(n: Int) => collections.Deque.new().appended(n).appended(n + 1))
         .count()
     let d = "a,b\nc,d".lines().flat_map(fn(line: String) => line.split(",")).count()
     a + b + c + d
@@ -886,7 +884,7 @@ fn tokenize(line: String) -> Tokens {
 fn main() -> Int {
     let count = "a,b\nc,d".lines().flat_map(fn(line: String) => tokenize(line)).count()
     let direct = IntoTraversal.into_seq(Tokens {
-        items: collections.List.new().push("x").push("y")
+        items: collections.MutableList.new().push("x").push("y").to_list()
     }).count()
     count * 10 + direct
 }"#,
@@ -920,9 +918,9 @@ fn infer_seq_contains_happy_paths() {
     let cases = [r#"import collections
 
 fn main() -> Int {
-    let a = collections.List.new().push(1).push(2).contains(2)
-    let b = collections.MutableList.from_list(collections.List.new().push(1).push(2)).contains(1)
-    let c = collections.Deque.new().push_back(1).push_back(2).contains(3)
+    let a = collections.MutableList.new().push(1).push(2).contains(2)
+    let b = collections.MutableList.from_list(collections.MutableList.new().push(1).push(2).to_list()).contains(1)
+    let c = collections.Deque.new().appended(1).appended(2).contains(3)
     let d = (0..<4).contains(3)
     let e = "a,b,c".split(",").contains("b")
 
@@ -1028,10 +1026,10 @@ fn infer_result_ergonomics_happy_paths() {
 #[test]
 fn infer_option_result_combinator_parity_happy_paths() {
     let cases = [
-        "fn main() -> Int { collections.List.new().push(41).head().unwrap_or(0) }",
-        "fn main() -> Int { collections.List.new().push(41).head().map_or(0, fn(n: Int) => n + 1) }",
-        "fn main() -> Int { collections.List.new().push(41).head().map(fn(n: Int) => n + 1).unwrap_or(0) }",
-        "fn main() -> Int { collections.List.new().push(41).head().and_then(fn(n: Int) => Option.Some(n + 1)).unwrap_or(0) }",
+        "fn main() -> Int { collections.MutableList.new().push(41).head().unwrap_or(0) }",
+        "fn main() -> Int { collections.MutableList.new().push(41).head().map_or(0, fn(n: Int) => n + 1) }",
+        "fn main() -> Int { collections.MutableList.new().push(41).head().map(fn(n: Int) => n + 1).unwrap_or(0) }",
+        "fn main() -> Int { collections.MutableList.new().push(41).head().and_then(fn(n: Int) => Option.Some(n + 1)).unwrap_or(0) }",
         "fn main() -> Int { \"41\".parse_int().map(fn(n: Int) => n + 1).unwrap_or(0) }",
         "fn main() -> Int { \"41\".parse_int().and_then(fn(n: Int) => Result.Ok(n + 1)).unwrap_or(0) }",
         "fn main() -> Int {
@@ -1252,7 +1250,7 @@ fn err_option_result_combinator_wrong_types_or_arity() {
             expected_fragment: "expected 1 argument(s)",
         },
         Case {
-            src: "fn main() -> Int { collections.List.new().push(1).head().and_then(fn(n: Int) => n + 1).unwrap_or(0) }",
+            src: "fn main() -> Int { collections.MutableList.new().push(1).head().and_then(fn(n: Int) => n + 1).unwrap_or(0) }",
             expected_fragment: "type mismatch",
         },
         Case {
@@ -1306,15 +1304,15 @@ fn err_iteration_ergonomics_wrong_arity_or_type() {
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { collections.List.new().push(1).zip(1).count() }",
+            src: "fn main() -> Int { collections.MutableList.new().push(1).zip(1).count() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { collections.List.new().push(1).chunks(true).count() }",
+            src: "fn main() -> Int { collections.MutableList.new().push(1).chunks(true).count() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { collections.List.new().push(1).windows(false).count() }",
+            src: "fn main() -> Int { collections.MutableList.new().push(1).windows(false).count() }",
             expected_fragment: "type mismatch",
         },
     ];
@@ -1347,13 +1345,13 @@ fn err_iteration_ergonomics_wrong_arity_or_type() {
 fn infer_deque_and_list_index_update_happy_paths() {
     let cases = [r#"import collections
         fn main() -> Int {
-            let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
-            let q1 = match (q0.pop_front()) {
-                Option.Some(p) => p.rest.push_back(p.value + 10)
+            let q0 = collections.Deque.new().appended(1).appended(2).prepended(0)
+            let q1 = match (q0.popped_front()) {
+                Option.Some(p) => p.rest.appended(p.value + 10)
                 Option.None => q0
             }
 
-            let xs = collections.List.new().push(10).push(20).set(1, 99)
+            let xs = collections.MutableList.new().push(10).push(20).set(1, 99)
             let ys = xs.update(0, fn(n: Int) => n + 1)
             ys.get(0).unwrap_or(0) + ys.get(1).unwrap_or(0) + q1.len()
         }"#];
@@ -1372,9 +1370,9 @@ fn infer_deque_and_list_index_update_happy_paths() {
 fn infer_deque_pop_back_happy_paths() {
     let cases = [r#"import collections
         fn main() -> Int {
-            let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
-            match (q0.pop_back()) {
-                Option.Some(p1) => match (p1.rest.pop_back()) {
+            let q0 = collections.Deque.new().appended(1).appended(2).prepended(0)
+            match (q0.popped_back()) {
+                Option.Some(p1) => match (p1.rest.popped_back()) {
                     Option.Some(p2) => p1.value + p2.value + p2.rest.len()
                     Option.None => -1
                 }
@@ -1397,16 +1395,16 @@ fn infer_collections_deque_constructor_happy_paths_rfc_0004() {
     let cases = [
         r#"import collections
         fn main() -> Int {
-            let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
-            let q1 = match (q0.pop_front()) {
-                Option.Some(p) => p.rest.push_back(p.value + 10)
+            let q0 = collections.Deque.new().appended(1).appended(2).prepended(0)
+            let q1 = match (q0.popped_front()) {
+                Option.Some(p) => p.rest.appended(p.value + 10)
                 Option.None => q0
             }
             q1.len()
         }"#,
         r#"import collections as c
         fn main() -> Int {
-            c.Deque.new().push_back(1).push_back(2).len()
+            c.Deque.new().appended(1).appended(2).len()
         }"#,
     ];
 
@@ -1458,7 +1456,7 @@ fn infer_collections_mutable_list_constructor_happy_paths_rfc_0005() {
         r#"import collections
         fn main() -> Int {
             let xs = collections.MutableList.new().push(1).push(2).set(0, 9)
-            let ys = collections.MutableList.from_list(collections.List.new().push(3).push(4))
+            let ys = collections.MutableList.from_list(collections.MutableList.new().push(3).push(4).to_list())
             xs.get(0).unwrap_or(0) + ys.len()
         }"#,
         r#"import collections as c
@@ -1474,9 +1472,9 @@ fn infer_collections_mutable_list_constructor_happy_paths_rfc_0005() {
         }"#,
         r#"import collections
         fn main() -> Int {
-            collections.MutableList.from_list(collections.List.new().push(1).push(2).push(3))
+            collections.MutableList.from_list(collections.MutableList.new().push(1).push(2).push(3).to_list())
                 .map(fn(n: Int) => n * 2)
-                .zip(collections.List.new().push(10))
+                .zip(collections.MutableList.new().push(10))
                 .count()
         }"#,
         r#"import collections
@@ -1484,7 +1482,7 @@ fn infer_collections_mutable_list_constructor_happy_paths_rfc_0005() {
             let xs = collections.MutableList.new().push(1).push(2).push(3)
             let last = xs.last().unwrap_or(0)
             let popped = xs.pop().unwrap_or(0)
-            let extended = xs.extend(collections.List.new().push(8).push(9))
+            let extended = xs.extend(collections.MutableList.new().push(8).push(9).to_list())
             last + popped + extended.len()
         }"#,
     ];
@@ -1623,27 +1621,27 @@ fn err_deque_and_list_index_update_wrong_arity_or_type() {
             expected_fragment: "expected 0 argument(s)",
         },
         Case {
-            src: "import collections\nfn main() -> Int { collections.Deque.new().push_back().len() }",
+            src: "import collections\nfn main() -> Int { collections.Deque.new().appended().len() }",
             expected_fragment: "expected 1 argument(s)",
         },
         Case {
-            src: "import collections\nfn main() -> Int { collections.Deque.new().push_back(1).pop_back(2).len() }",
+            src: "import collections\nfn main() -> Int { collections.Deque.new().appended(1).popped_back(2).len() }",
             expected_fragment: "expected 0 argument(s)",
         },
         Case {
-            src: "fn main() -> Int { collections.List.new().push(1).set(true, 2).len() }",
+            src: "fn main() -> Int { collections.MutableList.new().push(1).set(true, 2).len() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { collections.List.new().push(1).set(0, \"x\").len() }",
+            src: "fn main() -> Int { collections.MutableList.new().push(1).set(0, \"x\").len() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { collections.List.new().push(1).update(0, fn(n: Int) => \"x\").len() }",
+            src: "fn main() -> Int { collections.MutableList.new().push(1).update(0, fn(n: Int) => \"x\").len() }",
             expected_fragment: "type mismatch",
         },
         Case {
-            src: "fn main() -> Int { collections.List.new().push(1).update(0).len() }",
+            src: "fn main() -> Int { collections.MutableList.new().push(1).update(0).len() }",
             expected_fragment: "expected 2 argument(s)",
         },
     ];
@@ -1711,11 +1709,11 @@ fn infer_seq_surface_happy_paths() {
                 .count()
         }"#,
         r#"fn main() -> Int {
-            let xs = collections.List.new().push(1).push(2).push(3)
+            let xs = collections.MutableList.new().push(1).push(2).push(3)
             xs.map(fn(n: Int) => n * 2).to_list().len()
         }"#,
         r#"fn main() -> Int {
-            let keys = collections.Map.new().insert("a", 1).insert("b", 2).keys()
+            let keys = collections.MutableMap.new().insert("a", 1).insert("b", 2).keys()
             keys.count()
         }"#,
         r#"fn main() -> Int {
@@ -1737,7 +1735,7 @@ fn infer_seq_surface_happy_paths() {
 fn err_list_traversal_surface_is_removed() {
     let cases = [
         "fn main() -> Int { List.range(0, 5).len() }",
-        "fn main() -> Int { collections.List.new().push(1).seq().count() }",
+        "fn main() -> Int { collections.MutableList.new().push(1).seq().count() }",
     ];
 
     for src in cases {
@@ -1757,21 +1755,21 @@ fn err_list_traversal_surface_is_removed() {
 fn infer_collection_first_traversal_surface_happy_paths_rfc_0002() {
     let cases = [
         r#"fn main() -> Int {
-            let xs = collections.List.new().push(1).push(2).push(3)
+            let xs = collections.MutableList.new().push(1).push(2).push(3)
             xs.map(fn(n: Int) => n + 1)
                 .filter(fn(n: Int) => n > 2)
                 .count()
         }"#,
         r#"import collections
         fn main() -> Int {
-            let xs = collections.Deque.new().push_back(1).push_back(2).push_back(3)
+            let xs = collections.Deque.new().appended(1).appended(2).appended(3)
             xs.map(fn(n: Int) => n * 2).to_list().len()
         }"#,
         r#"import collections
         fn main() -> Int {
-            let a = collections.List.new().push(1).push(2).zip((10..<13)).count()
-            let b = (0..<3).zip(collections.List.new().push(7).push(8)).count()
-            let c = collections.Deque.new().push_back(1).push_back(2).zip(collections.List.new().push(9)).count()
+            let a = collections.MutableList.new().push(1).push(2).zip((10..<13)).count()
+            let b = (0..<3).zip(collections.MutableList.new().push(7).push(8)).count()
+            let c = collections.Deque.new().appended(1).appended(2).zip(collections.MutableList.new().push(9)).count()
             a + b + c
         }"#,
     ];
@@ -1790,7 +1788,7 @@ fn infer_collection_first_traversal_surface_happy_paths_rfc_0002() {
 fn infer_seq_frequencies_happy_paths() {
     let cases = [
         r#"fn main() -> Int {
-            let counts = collections.List.new().push(3).push(1).push(3).push(2).frequencies()
+            let counts = collections.MutableList.new().push(3).push(1).push(3).push(2).frequencies()
             counts.get(3).unwrap_or(0) + counts.len()
         }"#,
         r#"fn main() -> Int {
@@ -1800,14 +1798,14 @@ fn infer_seq_frequencies_happy_paths() {
         r#"import collections
 
         fn main() -> Int {
-            let counts = collections.MutableList.from_list(collections.List.new().push(1).push(2).push(1))
+            let counts = collections.MutableList.from_list(collections.MutableList.new().push(1).push(2).push(1).to_list())
                 .frequencies()
             counts.get(1).unwrap_or(0) + counts.len()
         }"#,
         r#"import collections
 
         fn main() -> Int {
-            let counts = collections.Deque.new().push_back(1).push_back(2).push_back(1).frequencies()
+            let counts = collections.Deque.new().appended(1).appended(2).appended(1).frequencies()
             counts.get(1).unwrap_or(0) + counts.len()
         }"#,
         r#"fn main() -> Int {
@@ -1818,7 +1816,7 @@ fn infer_seq_frequencies_happy_paths() {
 
         fn main() -> Int {
             let p: P = P { x: 1 }
-            let counts = collections.List.new().push(p).push(p).frequencies()
+            let counts = collections.MutableList.new().push(p).push(p).frequencies()
             counts.len()
         }"#,
     ];
@@ -1841,7 +1839,7 @@ fn infer_list_sort_accepts_derived_ord_elements() {
         fn main() -> Int {
             let a: P = P { x: 2 }
             let b: P = P { x: 1 }
-            let xs = collections.List.new().push(a).push(b).sort()
+            let xs = collections.MutableList.new().push(a).push(b).sort()
             xs.len()
         }"#,
     );
@@ -1937,12 +1935,12 @@ fn err_seq_frequencies_non_hashable_element_reports_e0024() {
         r#"import collections
 
         fn main() -> Int {
-            let inner = collections.MutableList.from_list(collections.List.new().push(1))
-            let counts = collections.List.new().push(inner).frequencies()
+            let inner = collections.MutableList.from_list(collections.MutableList.new().push(1).to_list())
+            let counts = collections.MutableList.new().push(inner).frequencies()
             counts.len()
         }"#,
         r#"fn main() -> Int {
-            let counts = collections.List.new().push(fn(x: Int) => x).frequencies()
+            let counts = collections.MutableList.new().push(fn(x: Int) => x).frequencies()
             counts.len()
         }"#,
     ];
@@ -1968,7 +1966,7 @@ fn err_seq_frequencies_named_record_without_derive_reports_e0024() {
         type P = { x: Int }
 
         fn main() -> Int {
-            let counts = collections.List.new().push(P { x: 1 }).frequencies()
+            let counts = collections.MutableList.new().push(P { x: 1 }).frequencies()
             counts.len()
         }"#,
     );
@@ -1994,11 +1992,11 @@ fn infer_opaque_traversal_surface_happy_paths_rfc_0003() {
         }"#,
         r#"fn main() -> Int {
             let a = (0..<6).count(fn(n: Int) => n % 2 == 0)
-            let b = collections.List.new().push(1).push(2).push(3).count(fn(n: Int) => n >= 2)
+            let b = collections.MutableList.new().push(1).push(2).push(3).count(fn(n: Int) => n >= 2)
             let c = "a,b,,c".split(",").count(fn(part: String) => part != "")
-            let d = collections.MutableList.from_list(collections.List.new().push(1).push(2).push(3))
+            let d = collections.MutableList.from_list(collections.MutableList.new().push(1).push(2).push(3).to_list())
                 .count(fn(n: Int) => n != 2)
-            let e = collections.Deque.new().push_back(1).push_back(2).push_back(3)
+            let e = collections.Deque.new().appended(1).appended(2).appended(3)
                 .count(fn(n: Int) => n < 3)
             a + b + c + d + e
         }"#,
@@ -2069,7 +2067,7 @@ fn infer_seq_type_annotation_happy_path() {
 
 #[test]
 fn err_list_seq_bridge_is_removed_rfc_0002() {
-    let (result, _) = check("fn main() -> Int { collections.List.new().push(1).seq().count() }");
+    let (result, _) = check("fn main() -> Int { collections.MutableList.new().push(1).seq().count() }");
     assert!(
         result
             .diagnostics
@@ -2084,7 +2082,7 @@ fn err_list_seq_bridge_is_removed_rfc_0002() {
 fn err_non_traversal_seq_param_still_rejects_list_rfc_0002() {
     let src = r#"fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }
 fn main() -> Int {
-    let xs = collections.List.new().push(1).push(2)
+    let xs = collections.MutableList.new().push(1).push(2)
     takes_seq(xs)
 }"#;
     let (result, _) = check(src);

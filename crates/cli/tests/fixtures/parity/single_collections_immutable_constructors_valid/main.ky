@@ -1,8 +1,8 @@
 import collections
 
 fn main() -> Int {
-  let xs = collections.List.new().push(1).push(2)
-  let m = collections.Map.new().insert("a", 10).insert("b", 20)
-  let s = collections.Set.new().insert("x").insert("y")
+  let xs = collections.MutableList.new().push(1).push(2).to_list()
+  let m = collections.MutableMap.new().insert("a", 10).insert("b", 20).to_map()
+  let s = collections.MutableSet.new().insert("x").insert("y").to_set()
   xs.len() + m.len() + s.len()
 }

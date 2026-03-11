@@ -3,7 +3,7 @@
 - Status: Implemented
 - Owner: Language Design
 - Tracking issue: #255 follow-up / RFC 0010 implementation lane
-- Last updated: 2026-03-07
+- Last updated: 2026-03-11
 
 ## Summary
 
@@ -32,6 +32,7 @@ Constructors are canonically module-qualified under `collections`:
 
 1. `collections.BitSet.new(size)`
 2. `collections.MutableBitSet.new(size)`
+3. `collections.MutableBitSet.from_bitset(bs)` and `bs.to_bitset()` for explicit twin conversion
 
 Bare `BitSet.new()` / `MutableBitSet.new()` are non-canonical and not provided.
 
@@ -52,6 +53,15 @@ These are monomorphic builtin types, not generic `Set<Int>` aliases.
 
 Per-bit methods:
 
+Immutable `BitSet`:
+
+1. `test(i)`
+2. `with_bit(i)`
+3. `without_bit(i)`
+4. `toggled(i)`
+
+Mutable `MutableBitSet`:
+
 1. `test(i)`
 2. `set(i)`
 3. `reset(i)`
@@ -59,12 +69,23 @@ Per-bit methods:
 
 Whole-set algebra:
 
+Immutable `BitSet`:
+
 1. `union(other)`
 2. `intersection(other)`
 3. `difference(other)`
 4. `xor(other)`
 
+Mutable `MutableBitSet`:
+
+1. `union_with(other)`
+2. `intersection_with(other)`
+3. `difference_with(other)`
+4. `xor_with(other)`
+
 Metadata/traversal:
+
+Shared across both variants:
 
 1. `count()` — set-bit cardinality
 2. `size()` — domain width
@@ -85,18 +106,20 @@ Non-goals for v1:
 
 `BitSet` is immutable value storage:
 
-1. updates return a new `BitSet`
-2. prior aliases do not observe mutation
-3. runtime uses packed word storage with COW behavior
+1. per-bit edits use `with_bit` / `without_bit` / `toggled` and return a new `BitSet`
+2. whole-set algebra uses value-style `union` / `intersection` / `difference` / `xor`
+3. prior aliases do not observe mutation
+4. runtime uses packed word storage with COW behavior
 
 ### MutableBitSet
 
 `MutableBitSet` is alias-visible mutable storage:
 
-1. updates mutate in place
-2. aliases observe the mutation
-3. mutating methods return the receiver for chaining
-4. `values()` snapshots the current packed storage for traversal stability
+1. per-bit edits use `set` / `reset` / `flip` and mutate in place
+2. whole-set algebra uses `union_with` / `intersection_with` / `difference_with` / `xor_with` and mutates in place
+3. aliases observe the mutation
+4. mutating methods return the receiver for chaining
+5. `values()` snapshots the current packed storage for traversal stability
 
 ## Runtime representation
 
@@ -125,8 +148,8 @@ A `MutableList<Bool>` can express the same information but not with the same cos
 import collections
 
 fn main() -> Bool {
-  let a = collections.BitSet.new(16).set(1).set(3)
-  let b = collections.BitSet.new(16).set(3).set(4)
+  let a = collections.BitSet.new(16).with_bit(1).with_bit(3)
+  let b = collections.BitSet.new(16).with_bit(3).with_bit(4)
   let c = a.union(b)
   c.count() == 4 && c.test(4)
 }
@@ -144,8 +167,9 @@ fn mark_seen(xs: List<Int>) -> MutableBitSet {
 
 1. `BitSet` and `MutableBitSet` are globally nameable builtin types
 2. constructors are available only under `collections.*`
-3. method surface matches this RFC exactly
-4. packed runtime representation is used
-5. `values()` yields ascending indices lazily
-6. wrong index type and wrong receiver/rhs type are rejected by normal type checking
-7. dense-bit perf harness coverage exists in the repo-owned benchmark corpus
+3. explicit `from_bitset` / `to_bitset` twin conversion is available
+4. method surface matches this RFC exactly
+5. packed runtime representation is used
+6. `values()` yields ascending indices lazily
+7. wrong index type and wrong receiver/rhs type are rejected by normal type checking
+8. dense-bit perf harness coverage exists in the repo-owned benchmark corpus

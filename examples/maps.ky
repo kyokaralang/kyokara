@@ -1,28 +1,90 @@
 import collections
 
-// Map operations: insert, lookup, keys/values.
+// Map and MutableMap pair showcase.
+// Immutable Map is a snapshot/query type; MutableMap is the edit path.
+
+fn base_map() -> Map<String, Int> {
+  collections.MutableMap.new()
+    .insert("alpha", 1)
+    .insert("beta", 2)
+    .insert("gamma", 3)
+    .to_map()
+}
+
+fn immutable_map_api() -> Int {
+  let empty: Map<String, Int> = collections.Map.new()
+  let snapshot = base_map()
+  let keys = snapshot.keys().to_list()
+  let value_sum = snapshot.values().fold(0, fn(acc: Int, n: Int) => acc + n)
+
+  if (
+    empty.is_empty()
+      && snapshot.len() == 3
+      && snapshot.get("beta").unwrap_or(0) == 2
+      && snapshot.contains("gamma")
+      && !snapshot.is_empty()
+      && keys[0] == "alpha"
+      && keys[2] == "gamma"
+      && value_sum == 6
+  ) {
+    1
+  } else {
+    0
+  }
+}
+
+fn mutable_map_api() -> Int {
+  let calls = collections.MutableList.new().push(0)
+  let m = collections.MutableMap.with_capacity(8)
+
+  let first = m.get_or_insert_with("alpha", fn() =>
+    if (true) {
+      let _c = calls.set(0, calls[0] + 1)
+      7
+    } else {
+      0
+    }
+  )
+  let second = m.get_or_insert_with("alpha", fn() =>
+    if (true) {
+      let _c = calls.set(0, calls[0] + 1)
+      99
+    } else {
+      0
+    }
+  )
+
+  let _a = m.insert("beta", 2)
+  let _b = m.insert("gamma", 3)
+  let had_beta = m.contains("beta")
+  let keys_before = m.keys().to_list()
+  let values_before = m.values().fold(0, fn(acc: Int, n: Int) => acc + n)
+  let _c = m.remove("beta")
+  let snapshot = m.to_map()
+  let round_trip = collections.MutableMap.from_map(snapshot).insert("delta", 4).to_map()
+
+  if (
+    first == 7
+      && second == 7
+      && calls[0] == 1
+      && had_beta
+      && m.get("gamma").unwrap_or(0) == 3
+      && m.len() == 2
+      && !m.is_empty()
+      && keys_before[0] == "alpha"
+      && keys_before[1] == "beta"
+      && keys_before[2] == "gamma"
+      && values_before == 12
+      && snapshot.get("beta").unwrap_or(0) == 0
+      && round_trip.get("delta").unwrap_or(0) == 4
+      && round_trip.len() == 3
+  ) {
+    1
+  } else {
+    0
+  }
+}
 
 fn main() -> Int {
-  let m = collections.Map.new().insert("x", 10).insert("y", 20).insert("z", 30)
-
-  // Lookup
-  let x_val = match (m.get("x")) {
-    Some(v) => v
-    None => 0
-  }
-
-  // Overwrite "x" with 99
-  let m2 = m.insert("x", 99)
-  let new_x = match (m2.get("x")) {
-    Some(v) => v
-    None => 0
-  }
-
-  // keys and values
-  let keys = m2.keys()
-  let vals = m2.values()
-  let sum = vals.fold(0, fn(acc: Int, v: Int) => acc + v)
-
-  // x_val (10) + new_x (99) + sum (99 + 20 + 30 = 149) = 258
-  x_val + new_x + sum
+  immutable_map_api() * 10 + mutable_map_api()
 }

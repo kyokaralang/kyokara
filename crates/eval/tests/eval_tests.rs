@@ -8,13 +8,8 @@ use kyokara_eval::manifest::CapabilityManifest;
 use kyokara_eval::value::Value;
 
 fn normalize_immutable_collection_constructor_import(source: &str) -> Cow<'_, str> {
-    // RFC 0009 makes immutable collection constructors module-qualified.
-    // Most behavior tests do not care about import mechanics, so keep them
-    // focused on behavior once they migrate to `collections.*.new()`.
-    let uses_canonical_immutable_constructor = source.contains("collections.List.new(")
-        || source.contains("collections.Map.new(")
-        || source.contains("collections.Set.new(");
-    if uses_canonical_immutable_constructor && !source.contains("import collections") {
+    let uses_collections_module = source.contains("collections.");
+    if uses_collections_module && !source.contains("import collections") {
         Cow::Owned(format!("import collections\n{source}"))
     } else {
         Cow::Borrowed(source)
@@ -254,7 +249,7 @@ fn eval_map_supports_derived_key_type() {
          type Point derive(Eq, Hash) = { x: Int, y: Int }\n\
          fn main() -> Int {\n\
              let p: Point = Point { x: 1, y: 2 }\n\
-             let m = collections.Map.new().insert(p, 7)\n\
+             let m = collections.MutableMap.new().insert(p, 7)\n\
              if (m.contains(p)) { m[p] } else { 0 }\n\
          }",
     );
@@ -282,8 +277,8 @@ fn eval_set_and_frequencies_support_derived_hash_eq_types() {
          type Point derive(Eq, Hash) = { x: Int }\n\
          fn main() -> Int {\n\
              let p: Point = Point { x: 3 }\n\
-             let s = collections.Set.new().insert(p)\n\
-             let counts = collections.List.new().push(p).push(p).frequencies()\n\
+             let s = collections.MutableSet.new().insert(p)\n\
+             let counts = collections.MutableList.new().push(p).push(p).frequencies()\n\
              if (s.contains(p)) { counts[p] } else { 0 }\n\
          }",
     );
@@ -318,7 +313,7 @@ fn eval_manual_eq_hash_impls_drive_collection_behavior() {
          fn main() -> Int {\n\
              let a: Key = Key { raw: 1 }\n\
              let b: Key = Key { raw: 3 }\n\
-             let m = collections.Map.new().insert(a, 10).insert(b, 20)\n\
+             let m = collections.MutableMap.new().insert(a, 10).insert(b, 20)\n\
              m.len() * 100 + m[a]\n\
          }",
     );
@@ -334,7 +329,7 @@ fn eval_list_sort_and_binary_search_support_user_ord() {
              let a: Point = Point { x: 3 }\n\
              let b: Point = Point { x: 1 }\n\
              let c: Point = Point { x: 2 }\n\
-             let xs = collections.List.new().push(a).push(b).push(c).sort()\n\
+             let xs = collections.MutableList.new().push(a).push(b).push(c).sort()\n\
              let needle: Point = Point { x: 2 }\n\
              xs[0].x * 100 + xs[1].x * 10 + xs.binary_search(needle)\n\
          }",
@@ -1695,7 +1690,7 @@ fn eval_user_option_with_formerly_reserved_constructors_is_allowed() {
 fn eval_list_new_and_push() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = collections.List.new()
+           let xs = collections.MutableList.new()
            let ys = xs.push(1)
            let zs = ys.push(2)
            zs.len()
@@ -1718,7 +1713,7 @@ fn eval_list_len_empty() {
 fn eval_list_get_some() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-           let xs = collections.List.new().push(10).push(20)
+           let xs = collections.MutableList.new().push(10).push(20)
            match (xs.get(1)) {
              Some(x) => x
              None => 0
@@ -1732,7 +1727,7 @@ fn eval_list_get_some() {
 fn eval_list_get_none() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-           let xs = collections.List.new().push(10)
+           let xs = collections.MutableList.new().push(10)
            match (xs.get(5)) {
              Some(x) => x
              None => -1
@@ -1746,7 +1741,7 @@ fn eval_list_get_none() {
 fn eval_list_head_some() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-           let xs = collections.List.new().push(10).push(20)
+           let xs = collections.MutableList.new().push(10).push(20)
            match (xs.head()) {
              Some(x) => x
              None => 0
@@ -1773,7 +1768,7 @@ fn eval_list_head_none() {
 fn eval_list_tail() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = collections.List.new().push(1).push(2).push(3)
+           let xs = collections.MutableList.new().push(1).push(2).push(3)
            xs.tail().len()
          }",
     );
@@ -1804,7 +1799,7 @@ fn eval_list_is_empty() {
 fn eval_list_is_empty_false() {
     let val = run_ok(
         "fn main() -> Bool {
-           collections.List.new().push(1).is_empty()
+           collections.MutableList.new().push(1).is_empty()
          }",
     );
     assert!(matches!(val, Value::Bool(false)));
@@ -1814,7 +1809,7 @@ fn eval_list_is_empty_false() {
 fn eval_list_reverse() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-           let xs = collections.List.new().push(1).push(2).push(3)
+           let xs = collections.MutableList.new().push(1).push(2).push(3)
            let rev = xs.reverse()
            match (rev.head()) {
              Some(x) => x
@@ -1829,9 +1824,9 @@ fn eval_list_reverse() {
 fn eval_list_concat() {
     let val = run_ok(
         "fn main() -> Int {
-           let a = collections.List.new().push(1).push(2)
-           let b = collections.List.new().push(3).push(4)
-           a.concat(b).len()
+           let a = collections.MutableList.new().push(1).push(2)
+           let b = collections.MutableList.new().push(3).push(4)
+           a.to_list().concat(b.to_list()).len()
          }",
     );
     assert!(matches!(val, Value::Int(4)));
@@ -1841,7 +1836,7 @@ fn eval_list_concat() {
 fn eval_list_map_lambda() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-           let xs = collections.List.new().push(1).push(2).push(3)
+           let xs = collections.MutableList.new().push(1).push(2).push(3)
            let ys = xs.map(fn(x: Int) => x * 2).to_list()
            match (ys.get(2)) {
              Some(x) => x
@@ -1857,7 +1852,7 @@ fn eval_list_map_named_fn() {
     let val = run_ok(&with_option_variants(
         "fn double(x: Int) -> Int { x * 2 }
          fn main() -> Int {
-           let xs = collections.List.new().push(5).push(10)
+           let xs = collections.MutableList.new().push(5).push(10)
            let ys = xs.map(double).to_list()
            match (ys.head()) {
              Some(x) => x
@@ -1872,7 +1867,7 @@ fn eval_list_map_named_fn() {
 fn eval_list_filter() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = collections.List.new().push(1).push(2).push(3).push(4)
+           let xs = collections.MutableList.new().push(1).push(2).push(3).push(4)
            xs.filter(fn(x: Int) => x > 2).count()
          }",
     );
@@ -1883,7 +1878,7 @@ fn eval_list_filter() {
 fn eval_list_fold_sum() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = collections.List.new().push(1).push(2).push(3)
+           let xs = collections.MutableList.new().push(1).push(2).push(3)
            xs.fold(0, fn(acc: Int, x: Int) => acc + x)
          }",
     );
@@ -1894,7 +1889,7 @@ fn eval_list_fold_sum() {
 fn eval_list_set_basic() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = collections.List.new().push(10).push(20).set(1, 99)
+           let xs = collections.MutableList.new().push(10).push(20).set(1, 99)
            xs.get(1).unwrap_or(0)
          }",
     );
@@ -1905,7 +1900,7 @@ fn eval_list_set_basic() {
 fn eval_list_update_basic() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = collections.List.new().push(10).push(20)
+           let xs = collections.MutableList.new().push(10).push(20)
            let ys = xs.update(0, fn(n: Int) => n + 5)
            ys.get(0).unwrap_or(0)
          }",
@@ -1917,7 +1912,7 @@ fn eval_list_update_basic() {
 fn eval_list_set_out_of_bounds_runtime_error() {
     let err = run_err(
         "fn main() -> Int {
-           collections.List.new().push(10).set(9, 0).len()
+           collections.MutableList.new().push(10).set(9, 0).len()
          }",
     );
     assert!(err.contains("index out of bounds"), "got: {err}");
@@ -1927,7 +1922,7 @@ fn eval_list_set_out_of_bounds_runtime_error() {
 fn eval_list_update_out_of_bounds_runtime_error() {
     let err = run_err(
         "fn main() -> Int {
-           collections.List.new().push(10).update(3, fn(n: Int) => n + 1).len()
+           collections.MutableList.new().push(10).update(3, fn(n: Int) => n + 1).len()
          }",
     );
     assert!(err.contains("index out of bounds"), "got: {err}");
@@ -1937,7 +1932,7 @@ fn eval_list_update_out_of_bounds_runtime_error() {
 fn eval_list_set_negative_index_runtime_error() {
     let err = run_err(
         "fn main() -> Int {
-           collections.List.new().push(10).set(0 - 1, 0).len()
+           collections.MutableList.new().push(10).set(0 - 1, 0).len()
          }",
     );
     assert!(err.contains("index out of bounds"), "got: {err}");
@@ -1950,9 +1945,9 @@ fn eval_deque_push_front_back_and_pop_front_fifo() {
     let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
-           let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
-           match (q0.pop_front()) {
-             Some(p1) => match (p1.rest.pop_front()) {
+           let q0 = collections.Deque.new().appended(1).appended(2).prepended(0)
+           match (q0.popped_front()) {
+             Some(p1) => match (p1.rest.popped_front()) {
                Some(p2) => p1.value * 100 + p2.value * 10 + p2.rest.len()
                None => -1
              }
@@ -1968,11 +1963,11 @@ fn eval_deque_pop_front_non_empty_returns_value_and_rest() {
     let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
-           let q0 = collections.Deque.new().push_back(10).push_back(20)
-           match (q0.pop_front()) {
+           let q0 = collections.Deque.new().appended(10).appended(20)
+           match (q0.popped_front()) {
              Some(p) =>
                if (p.value == 10 && p.rest.len() == 1) {
-                 match (p.rest.pop_front()) {
+                 match (p.rest.popped_front()) {
                    Some(p2) => p2.value
                    None => -1
                  }
@@ -1991,7 +1986,7 @@ fn eval_deque_pop_front_empty_returns_none() {
     let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
-           match (collections.Deque.new().pop_front()) {
+           match (collections.Deque.new().popped_front()) {
              Some(_p) => 0
              None => 1
            }
@@ -2005,9 +2000,9 @@ fn eval_deque_push_front_back_and_pop_back_lifo() {
     let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
-           let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
-           match (q0.pop_back()) {
-             Some(p1) => match (p1.rest.pop_back()) {
+           let q0 = collections.Deque.new().appended(1).appended(2).prepended(0)
+           match (q0.popped_back()) {
+             Some(p1) => match (p1.rest.popped_back()) {
                Some(p2) => p1.value * 100 + p2.value * 10 + p2.rest.len()
                None => -1
              }
@@ -2023,11 +2018,11 @@ fn eval_deque_pop_back_non_empty_returns_value_and_rest() {
     let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
-           let q0 = collections.Deque.new().push_back(10).push_back(20)
-           match (q0.pop_back()) {
+           let q0 = collections.Deque.new().appended(10).appended(20)
+           match (q0.popped_back()) {
              Some(p) =>
                if (p.value == 20 && p.rest.len() == 1) {
-                 match (p.rest.pop_back()) {
+                 match (p.rest.popped_back()) {
                    Some(p2) => p2.value
                    None => -1
                  }
@@ -2046,7 +2041,7 @@ fn eval_deque_pop_back_empty_returns_none() {
     let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
-           match (collections.Deque.new().pop_back()) {
+           match (collections.Deque.new().popped_back()) {
              Some(_p) => 0
              None => 1
            }
@@ -2061,11 +2056,11 @@ fn eval_deque_empty_pop_operations_are_stable() {
         "import collections
          fn main() -> Int {
            let q0 = collections.Deque.new()
-           let q1 = match (q0.pop_front()) {
+           let q1 = match (q0.popped_front()) {
              Some(p) => p.rest
              None => q0
            }
-           let q2 = match (q1.pop_back()) {
+           let q2 = match (q1.popped_back()) {
              Some(p) => p.rest
              None => q1
            }
@@ -2080,8 +2075,8 @@ fn eval_deque_pop_back_singleton_rest_is_empty() {
     let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
-           let q0 = collections.Deque.new().push_back(7)
-           match (q0.pop_back()) {
+           let q0 = collections.Deque.new().appended(7)
+           match (q0.popped_back()) {
              Some(p) =>
                if (p.value == 7 && p.rest.is_empty() && p.rest.len() == 0) {
                  1
@@ -2101,7 +2096,7 @@ fn eval_deque_is_empty_and_len() {
         "import collections
          fn main() -> Int {
            let q0: Deque<Int> = collections.Deque.new()
-           let q1 = q0.push_back(42)
+           let q1 = q0.appended(42)
            if (q0.is_empty() && q1.is_empty() == false && q1.len() == 1) { 1 } else { 0 }
          }",
     );
@@ -2113,9 +2108,9 @@ fn eval_collections_deque_constructor_surface_rfc_0004() {
     let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
-           let q0 = collections.Deque.new().push_back(1).push_back(2).push_front(0)
-           match (q0.pop_front()) {
-             Some(p1) => match (p1.rest.pop_front()) {
+           let q0 = collections.Deque.new().appended(1).appended(2).prepended(0)
+           match (q0.popped_front()) {
+             Some(p1) => match (p1.rest.popped_front()) {
                Some(p2) => p1.value * 100 + p2.value * 10 + p2.rest.len()
                None => -1
              }
@@ -2131,7 +2126,7 @@ fn eval_collections_alias_constructor_surface_rfc_0004() {
     let val = run_ok(
         "import collections as c
          fn main() -> Int {
-           c.Deque.new().push_back(1).push_back(2).len()
+           c.Deque.new().appended(1).appended(2).len()
          }",
     );
     assert!(matches!(val, Value::Int(2)));
@@ -2153,9 +2148,9 @@ fn eval_collections_list_map_set_constructor_surface_rfc_0009() {
     let val = run_ok(
         "import collections
          fn main() -> Int {
-           let xs = collections.List.new().push(1).push(2)
-           let m = collections.Map.new().insert(\"a\", 10).insert(\"b\", 20)
-           let s = collections.Set.new().insert(\"x\").insert(\"y\")
+           let xs = collections.MutableList.new().push(1).push(2)
+           let m = collections.MutableMap.new().insert(\"a\", 10).insert(\"b\", 20)
+           let s = collections.MutableSet.new().insert(\"x\").insert(\"y\")
            xs.len() * 100 + m.len() * 10 + s.len()
          }",
     );
@@ -2167,9 +2162,9 @@ fn eval_collections_alias_list_map_set_constructor_surface_rfc_0009() {
     let val = run_ok(
         "import collections as c
          fn main() -> Int {
-           let xs: List<Int> = c.List.new().push(7)
-           let m: Map<String, Int> = c.Map.new().insert(\"k\", 3)
-           let s: Set<String> = c.Set.new().insert(\"k\")
+           let xs: List<Int> = c.MutableList.new().push(7).to_list()
+           let m: Map<String, Int> = c.MutableMap.new().insert(\"k\", 3).to_map()
+           let s: Set<String> = c.MutableSet.new().insert(\"k\").to_set()
            xs.head().unwrap_or(0) + m.get(\"k\").unwrap_or(0) + if (s.contains(\"k\")) { 1 } else { 0 }
          }",
     );
@@ -2212,7 +2207,7 @@ fn eval_collections_mutable_list_constructor_surface_rfc_0005() {
         "import collections
          fn main() -> Int {
            let xs = collections.MutableList.new().push(1).push(2)
-           let ys = collections.MutableList.from_list(collections.List.new().push(3).push(4))
+           let ys = collections.MutableList.from_list(collections.MutableList.new().push(3).push(4).to_list())
            xs.len() * 10 + ys.get(1).unwrap_or(0)
          }",
     );
@@ -2723,7 +2718,7 @@ fn eval_mutable_list_aliases_observe_in_place_mutation() {
     let val = run_ok(
         "import collections
          fn main() -> Int {
-           let xs = collections.MutableList.from_list(collections.List.new().push(10).push(20))
+           let xs = collections.MutableList.from_list(collections.MutableList.new().push(10).push(20).to_list())
            let alias = xs
            xs.set(1, 99)
            xs.update(0, fn(n: Int) => n + 1)
@@ -2739,11 +2734,11 @@ fn eval_mutable_list_last_pop_and_extend_semantics() {
         r#"import collections
 
 fn main() -> Int {
-    let xs = collections.MutableList.from_list(collections.List.new().push(10).push(20).push(30))
+    let xs = collections.MutableList.from_list(collections.MutableList.new().push(10).push(20).push(30).to_list())
     let alias = xs
     let last = xs.last().unwrap_or(0)
     let popped = xs.pop().unwrap_or(0)
-    let _ = xs.extend(collections.List.new().push(40).push(50))
+    let _ = xs.extend(collections.MutableList.new().push(40).push(50).to_list())
     if (last == 30 && popped == 30 && alias.len() == 4 && alias.get(2).unwrap_or(0) == 40 && alias.get(3).unwrap_or(0) == 50) {
         1
     } else {
@@ -2815,7 +2810,7 @@ fn eval_mutable_list_indexing_and_bounds_behavior() {
     let val = run_ok(
         "import collections
          fn main() -> Int {
-           let xs = collections.MutableList.from_list(collections.List.new().push(3).push(4))
+           let xs = collections.MutableList.from_list(collections.MutableList.new().push(3).push(4).to_list())
            xs[1]
          }",
     );
@@ -2824,7 +2819,7 @@ fn eval_mutable_list_indexing_and_bounds_behavior() {
     let val = run_ok(&with_option_variants(
         "import collections
          fn main() -> Int {
-           let xs = collections.MutableList.from_list(collections.List.new().push(3).push(4))
+           let xs = collections.MutableList.from_list(collections.MutableList.new().push(3).push(4).to_list())
            match (xs.get(9)) {
              Some(_n) => 0
              None => 1
@@ -2854,7 +2849,7 @@ fn eval_mutable_list_indexing_and_bounds_behavior() {
     let err = run_err(
         "import collections
          fn main() -> Int {
-           let xs = collections.MutableList.from_list(collections.List.new().push(3).push(4))
+           let xs = collections.MutableList.from_list(collections.MutableList.new().push(3).push(4).to_list())
            xs.insert(3, 0).len()
          }",
     );
@@ -2863,7 +2858,7 @@ fn eval_mutable_list_indexing_and_bounds_behavior() {
     let err = run_err(
         "import collections
          fn main() -> Int {
-           let xs = collections.MutableList.from_list(collections.List.new().push(3).push(4))
+           let xs = collections.MutableList.from_list(collections.MutableList.new().push(3).push(4).to_list())
            xs.delete_at(-1).len()
          }",
     );
@@ -2872,7 +2867,7 @@ fn eval_mutable_list_indexing_and_bounds_behavior() {
     let err = run_err(
         "import collections
          fn main() -> Int {
-           let xs = collections.MutableList.from_list(collections.List.new().push(3).push(4))
+           let xs = collections.MutableList.from_list(collections.MutableList.new().push(3).push(4).to_list())
            xs.remove_at(2)
          }",
     );
@@ -2881,7 +2876,7 @@ fn eval_mutable_list_indexing_and_bounds_behavior() {
     let err = run_err(
         "import collections
          fn main() -> Int {
-           let xs = collections.MutableList.from_list(collections.List.new().push(3).push(4))
+           let xs = collections.MutableList.from_list(collections.MutableList.new().push(3).push(4).to_list())
            xs.set(-1, 0).len()
          }",
     );
@@ -2890,7 +2885,7 @@ fn eval_mutable_list_indexing_and_bounds_behavior() {
     let err = run_err(
         "import collections
          fn main() -> Int {
-           let xs = collections.MutableList.from_list(collections.List.new().push(3).push(4))
+           let xs = collections.MutableList.from_list(collections.MutableList.new().push(3).push(4).to_list())
            xs[2]
          }",
     );
@@ -2903,9 +2898,9 @@ fn eval_mutable_list_collection_first_traversal_semantics() {
         r#"import collections
 
 fn main() -> Int {
-    let xs = collections.MutableList.from_list(collections.List.new().push(1).push(2).push(3))
+    let xs = collections.MutableList.from_list(collections.MutableList.new().push(1).push(2).push(3).to_list())
     let count = xs.map(fn(n: Int) => n + 1).filter(fn(n: Int) => n > 2).count()
-    let zip_count = xs.zip(collections.List.new().push(10).push(20)).count()
+    let zip_count = xs.zip(collections.MutableList.new().push(10).push(20)).count()
     count * 10 + zip_count
 }"#,
     );
@@ -2918,13 +2913,13 @@ fn eval_mutable_list_any_all_find_short_circuit() {
         r#"import collections
 
 fn main() -> Int {
-    let any_hit = collections.MutableList.from_list(collections.List.new().push(1).push(0)).any(fn(n: Int) =>
+    let any_hit = collections.MutableList.from_list(collections.MutableList.new().push(1).push(0).to_list()).any(fn(n: Int) =>
         if (n == 1) { true } else { 10 / n > 0 }
     )
-    let all_ok = collections.MutableList.from_list(collections.List.new().push(0).push(1)).all(fn(n: Int) =>
+    let all_ok = collections.MutableList.from_list(collections.MutableList.new().push(0).push(1).to_list()).all(fn(n: Int) =>
         if (n == 0) { false } else { 10 / (n - 1) > 0 }
     ) == false
-    let found = collections.MutableList.from_list(collections.List.new().push(2).push(1)).find(fn(n: Int) =>
+    let found = collections.MutableList.from_list(collections.MutableList.new().push(2).push(1).to_list()).find(fn(n: Int) =>
         if (n == 2) { true } else { 10 / (n - 1) > 0 }
     ).unwrap_or(-1)
     if (any_hit && all_ok && found == 2) { 1 } else { 0 }
@@ -2939,7 +2934,7 @@ fn eval_mutable_list_seq_snapshot_excludes_push_after_pipeline_creation() {
         r#"import collections
 
 fn main() -> Int {
-    let xs = collections.MutableList.from_list(collections.List.new().push(1).push(2))
+    let xs = collections.MutableList.from_list(collections.MutableList.new().push(1).push(2).to_list())
     let seq = xs.map(fn(n: Int) => n)
     xs.push(99)
     seq.count()
@@ -2954,7 +2949,7 @@ fn eval_mutable_list_seq_snapshot_preserves_values_before_in_place_set() {
         r#"import collections
 
 fn main() -> Int {
-    let xs = collections.MutableList.from_list(collections.List.new().push(10).push(20))
+    let xs = collections.MutableList.from_list(collections.MutableList.new().push(10).push(20).to_list())
     let seq = xs.map(fn(n: Int) => n)
     xs.set(0, 99)
     xs.set(1, 77)
@@ -2970,7 +2965,7 @@ fn eval_mutable_list_seq_snapshot_excludes_indexed_edits_after_pipeline_creation
         r#"import collections
 
 fn main() -> Int {
-    let xs = collections.MutableList.from_list(collections.List.new().push(10).push(20).push(30))
+    let xs = collections.MutableList.from_list(collections.MutableList.new().push(10).push(20).push(30).to_list())
     let seq = xs.map(fn(n: Int) => n)
     let _ = xs.insert(1, 99).delete_at(0)
     seq.fold(0, fn(acc: Int, n: Int) => acc * 100 + n)
@@ -3003,9 +2998,9 @@ fn eval_nested_scope_shadow_rebind_preserves_outer_binding() {
         r#"import collections
 
 fn main() -> Int {
-    let xs = collections.List.new().push(1)
+    let xs = collections.MutableList.new().push(1).to_list()
     {
-        let xs = xs.push(2)
+        let xs = collections.MutableList.from_list(xs).push(2).to_list()
         xs.len()
     }
     xs.len()
@@ -3020,7 +3015,7 @@ fn main() -> Int {
 fn eval_map_insert_and_get() {
     let val = run_ok(&with_option_variants(
         r#"fn main() -> Int {
-           let m = collections.Map.new().insert("a", 1)
+           let m = collections.MutableMap.new().insert("a", 1)
            match (m.get("a")) {
              Some(x) => x
              None => 0
@@ -3034,7 +3029,7 @@ fn eval_map_insert_and_get() {
 fn eval_map_get_missing() {
     let val = run_ok(&with_option_variants(
         r#"fn main() -> Int {
-           let m = collections.Map.new().insert("a", 1)
+           let m = collections.MutableMap.new().insert("a", 1)
            match (m.get("b")) {
              Some(x) => x
              None => -1
@@ -3048,7 +3043,7 @@ fn eval_map_get_missing() {
 fn eval_map_contains() {
     let val = run_ok(
         r#"fn main() -> Bool {
-           let m = collections.Map.new().insert("key", 42)
+           let m = collections.MutableMap.new().insert("key", 42)
            m.contains("key")
          }"#,
     );
@@ -3059,7 +3054,7 @@ fn eval_map_contains() {
 fn eval_map_remove() {
     let val = run_ok(
         r#"fn main() -> Int {
-           let m = collections.Map.new().insert("a", 1).insert("b", 2)
+           let m = collections.MutableMap.new().insert("a", 1).insert("b", 2)
            let m2 = m.remove("a")
            m2.len()
          }"#,
@@ -3071,7 +3066,7 @@ fn eval_map_remove() {
 fn eval_map_len() {
     let val = run_ok(
         r#"fn main() -> Int {
-           let m = collections.Map.new().insert("a", 1).insert("b", 2)
+           let m = collections.MutableMap.new().insert("a", 1).insert("b", 2)
            m.len()
          }"#,
     );
@@ -3082,7 +3077,7 @@ fn eval_map_len() {
 fn eval_map_keys() {
     let val = run_ok(
         r#"fn main() -> Int {
-           let m = collections.Map.new().insert("a", 1).insert("b", 2)
+           let m = collections.MutableMap.new().insert("a", 1).insert("b", 2)
            m.keys().count()
          }"#,
     );
@@ -3093,7 +3088,7 @@ fn eval_map_keys() {
 fn eval_map_values() {
     let val = run_ok(
         r#"fn main() -> Int {
-           let m = collections.Map.new().insert("a", 10).insert("b", 20)
+           let m = collections.MutableMap.new().insert("a", 10).insert("b", 20)
            let vals = m.values()
            vals.fold(0, fn(acc: Int, x: Int) => acc + x)
          }"#,
@@ -3115,7 +3110,7 @@ fn eval_map_is_empty() {
 fn eval_map_insert_overwrite() {
     let val = run_ok(&with_option_variants(
         r#"fn main() -> Int {
-           let m0 = collections.Map.new().insert("a", 1)
+           let m0 = collections.MutableMap.new().insert("a", 1)
            let m1 = m0.insert("a", 99)
            match (m1.get("a")) {
              Some(x) => x
@@ -3345,7 +3340,7 @@ fn eval_float_abs() {
 fn eval_list_map_fold_composition() {
     let val = run_ok(
         "fn main() -> Int {
-           let xs = collections.List.new().push(1).push(2).push(3)
+           let xs = collections.MutableList.new().push(1).push(2).push(3)
            let doubled = xs.map(fn(x: Int) => x * 2)
            doubled.fold(0, fn(acc: Int, x: Int) => acc + x)
          }",
@@ -3357,7 +3352,7 @@ fn eval_list_map_fold_composition() {
 fn eval_map_list_interop() {
     let val = run_ok(
         r#"fn main() -> Int {
-           let m = collections.Map.new().insert("x", 10).insert("y", 20)
+           let m = collections.MutableMap.new().insert("x", 10).insert("y", 20)
            let keys = m.keys()
            let vals = m.values()
            keys.count() + vals.fold(0, fn(acc: Int, x: Int) => acc + x)
@@ -3773,14 +3768,14 @@ fn run_ensures_result_and_user_result_coexist() {
 #[test]
 fn run_ensures_can_read_persistent_param_after_body_consumes_it() {
     let val = run_ok(
-        "from collections import List\n\
+        "from collections import List, MutableList\n\
          fn sort_ranges(ranges: List<Int>) -> List<Int>\n\
            contract ensures (result.len() == ranges.len())\n\
          {\n\
-           ranges.sort()\n\
+           ranges.sorted()\n\
          }\n\
          fn main() -> Int {\n\
-           sort_ranges(List.new().push(2).push(1)).get(0).unwrap_or(0)\n\
+           sort_ranges(MutableList.new().push(2).push(1).to_list()).get(0).unwrap_or(0)\n\
          }",
     );
     assert_eq!(val, Value::Int(1));
@@ -3859,7 +3854,11 @@ fn cmp(a: Packet, b: Packet) -> Int {
 }
 
 fn main() -> Int {
-  let nested = Packet.Lst(collections.List.new().push(Packet.Lst(collections.List.new().push(Packet.Num(7)))))
+  let nested = Packet.Lst(
+    collections.MutableList.new()
+      .push(Packet.Lst(collections.MutableList.new().push(Packet.Num(7)).to_list()))
+      .to_list()
+  )
   cmp(nested, Packet.Num(0))
 }
 "#;
@@ -4850,7 +4849,7 @@ fn run_project_aliased_collections_import_activates_alias() {
     writeln!(main_file, "import collections as c").unwrap();
     writeln!(
         main_file,
-        "fn main() -> Int {{ c.Deque.new().push_back(1).push_back(2).len() }}"
+        "fn main() -> Int {{ c.Deque.new().appended(1).appended(2).len() }}"
     )
     .unwrap();
 
@@ -5942,7 +5941,7 @@ fn eval_parse_int_map_or_err_returns_default() {
 
 #[test]
 fn eval_option_unwrap_or_some_returns_inner_value() {
-    let val = run_ok(r#"fn main() -> Int { collections.List.new().push(42).head().unwrap_or(0) }"#);
+    let val = run_ok(r#"fn main() -> Int { collections.MutableList.new().push(42).head().unwrap_or(0) }"#);
     assert_eq!(val, Value::Int(42));
 }
 
@@ -5956,7 +5955,7 @@ fn eval_option_unwrap_or_none_returns_default() {
 fn eval_option_map_some_applies_mapper() {
     let val = run_ok(
         r#"fn main() -> Int {
-            collections.List.new().push(41).head().map(fn(n: Int) => n + 1).unwrap_or(0)
+            collections.MutableList.new().push(41).head().map(fn(n: Int) => n + 1).unwrap_or(0)
         }"#,
     );
     assert_eq!(val, Value::Int(42));
@@ -5976,7 +5975,7 @@ fn eval_option_map_or_none_returns_default() {
 fn eval_option_and_then_some_chains() {
     let val = run_ok(&with_option_variants(
         r#"fn main() -> Int {
-            collections.List.new().push(41).head().and_then(fn(n: Int) => Some(n + 1)).unwrap_or(0)
+            collections.MutableList.new().push(41).head().and_then(fn(n: Int) => Some(n + 1)).unwrap_or(0)
         }"#,
     ));
     assert_eq!(val, Value::Int(42));
@@ -6760,7 +6759,7 @@ fn eval_read_file_with_both_caps() {
 fn eval_list_sort_ints() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-            let xs = collections.List.new().push(3).push(1).push(2)
+            let xs = collections.MutableList.new().push(3).push(1).push(2)
             let sorted = xs.sort()
             match (sorted.get(0)) {
                 Some(x) => x
@@ -6775,7 +6774,7 @@ fn eval_list_sort_ints() {
 fn eval_list_sort_ints_reverse() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-            let xs = collections.List.new().push(5).push(4).push(3).push(2).push(1)
+            let xs = collections.MutableList.new().push(5).push(4).push(3).push(2).push(1)
             let sorted = xs.sort()
             match (sorted.get(4)) {
                 Some(x) => x
@@ -6790,7 +6789,7 @@ fn eval_list_sort_ints_reverse() {
 fn eval_list_sort_ints_already_sorted() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-            let xs = collections.List.new().push(1).push(2).push(3)
+            let xs = collections.MutableList.new().push(1).push(2).push(3)
             let sorted = xs.sort()
             match (sorted.get(2)) {
                 Some(x) => x
@@ -6805,7 +6804,7 @@ fn eval_list_sort_ints_already_sorted() {
 fn eval_list_sort_ints_duplicates() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-            let xs = collections.List.new().push(3).push(1).push(3).push(2)
+            let xs = collections.MutableList.new().push(3).push(1).push(3).push(2)
             let sorted = xs.sort()
             // sorted should be [1, 2, 3, 3], check index 2
             match (sorted.get(2)) {
@@ -6821,7 +6820,7 @@ fn eval_list_sort_ints_duplicates() {
 fn eval_list_sort_ints_negative() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-            let xs = collections.List.new().push(3).push(-1).push(0).push(-5)
+            let xs = collections.MutableList.new().push(3).push(-1).push(0).push(-5)
             let sorted = xs.sort()
             match (sorted.get(0)) {
                 Some(x) => x
@@ -6836,7 +6835,7 @@ fn eval_list_sort_ints_negative() {
 fn eval_list_sort_ints_single() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-            let xs = collections.List.new().push(42)
+            let xs = collections.MutableList.new().push(42)
             let sorted = xs.sort()
             match (sorted.get(0)) {
                 Some(x) => x
@@ -6852,7 +6851,7 @@ fn eval_list_sort_empty() {
     let val = run_ok(
         "fn main() -> Int {
             let xs: List<Int> = collections.List.new()
-            let sorted = xs.sort()
+            let sorted = xs.sorted()
             sorted.len()
         }",
     );
@@ -6863,7 +6862,7 @@ fn eval_list_sort_empty() {
 fn eval_list_sort_strings() {
     let val = run_ok(&with_option_variants(
         r#"fn main() -> String {
-            let xs = collections.List.new().push("banana").push("apple").push("cherry")
+            let xs = collections.MutableList.new().push("banana").push("apple").push("cherry")
             let sorted = xs.sort()
             match (sorted.get(0)) {
                 Some(s) => s
@@ -6878,7 +6877,7 @@ fn eval_list_sort_strings() {
 fn eval_list_sort_bools() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Bool {
-            let xs = collections.List.new().push(true).push(false).push(true)
+            let xs = collections.MutableList.new().push(true).push(false).push(true)
             let sorted = xs.sort()
             match (sorted.get(0)) {
                 Some(b) => b
@@ -6893,8 +6892,8 @@ fn eval_list_sort_bools() {
 fn eval_list_sort_floats_rejected() {
     let err = run_err(
         "fn main() -> Int {
-            let xs = collections.List.new().push(3.0).push(1.0).push(2.0)
-            let sorted = xs.sort()
+            let xs = collections.MutableList.new().push(3.0).push(1.0).push(2.0).to_list()
+            let sorted = xs.sorted()
             sorted.len()
         }",
     );
@@ -6912,8 +6911,8 @@ fn eval_list_sort_floats_with_nan_rejected() {
                 Ok(f) => f
                 Err(_) => 0.0
             }
-            let xs = collections.List.new().push(nan).push(1.0).push(2.0)
-            let sorted = xs.sort()
+            let xs = collections.MutableList.new().push(nan).push(1.0).push(2.0).to_list()
+            let sorted = xs.sorted()
             sorted.len()
         }"#,
     );
@@ -6938,7 +6937,7 @@ fn eval_float_state_predicates_unavailable_on_int() {
 fn eval_list_sort_chars() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Char {
-            let xs = collections.List.new().push('c').push('a').push('b')
+            let xs = collections.MutableList.new().push('c').push('a').push('b')
             let sorted = xs.sort()
             match (sorted.get(0)) {
                 Some(c) => c
@@ -6953,9 +6952,9 @@ fn eval_list_sort_chars() {
 fn eval_list_sort_lists_lexicographically() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-            let a = collections.List.new().push(1)
-            let b = collections.List.new().push(1).push(2)
-            let xs = collections.List.new().push(b).push(a)
+            let a = collections.MutableList.new().push(1)
+            let b = collections.MutableList.new().push(1).push(2)
+            let xs = collections.MutableList.new().push(b).push(a)
             let sorted = xs.sort()
             match (sorted.get(0)) {
                 Some(inner) => inner.len()
@@ -6970,7 +6969,7 @@ fn eval_list_sort_lists_lexicographically() {
 fn eval_list_binary_search_found_and_insertion_point() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = collections.List.new().push(1).push(3).push(5).push(7)
+            let xs = collections.MutableList.new().push(1).push(3).push(5).push(7)
             let found = xs.binary_search(5)
             let missing = xs.binary_search(6)
             found * 100 + missing
@@ -6994,10 +6993,10 @@ fn eval_list_binary_search_empty_returns_negative_one() {
 fn eval_list_binary_search_lists() {
     let val = run_ok(
         "fn main() -> Int {
-            let a = collections.List.new().push(1)
-            let b = collections.List.new().push(1).push(2)
-            let xs = collections.List.new().push(a).push(b)
-            let needle = collections.List.new().push(1).push(2)
+            let a = collections.MutableList.new().push(1)
+            let b = collections.MutableList.new().push(1).push(2)
+            let xs = collections.MutableList.new().push(a).push(b)
+            let needle = collections.MutableList.new().push(1).push(2)
             xs.binary_search(needle)
         }",
     );
@@ -7010,7 +7009,7 @@ fn eval_list_binary_search_lists() {
 fn eval_list_sort_by_ascending() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-            let xs = collections.List.new().push(3).push(1).push(2)
+            let xs = collections.MutableList.new().push(3).push(1).push(2)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
             match (sorted.get(0)) {
                 Some(x) => x
@@ -7025,7 +7024,7 @@ fn eval_list_sort_by_ascending() {
 fn eval_list_sort_by_descending() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-            let xs = collections.List.new().push(3).push(1).push(2)
+            let xs = collections.MutableList.new().push(3).push(1).push(2)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => b - a)
             match (sorted.get(0)) {
                 Some(x) => x
@@ -7041,7 +7040,7 @@ fn eval_list_sort_by_named_fn() {
     let val = run_ok(&with_option_variants(
         "fn cmp(a: Int, b: Int) -> Int { a - b }
         fn main() -> Int {
-            let xs = collections.List.new().push(3).push(1).push(2)
+            let xs = collections.MutableList.new().push(3).push(1).push(2)
             let sorted = xs.sort_by(cmp)
             match (sorted.get(0)) {
                 Some(x) => x
@@ -7057,7 +7056,7 @@ fn eval_list_sort_by_empty() {
     let val = run_ok(
         "fn main() -> Int {
             let xs: List<Int> = collections.List.new()
-            let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
+            let sorted = xs.sorted_by(fn(a: Int, b: Int) => a - b)
             sorted.len()
         }",
     );
@@ -7068,7 +7067,7 @@ fn eval_list_sort_by_empty() {
 fn eval_list_sort_by_single() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-            let xs = collections.List.new().push(42)
+            let xs = collections.MutableList.new().push(42)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
             match (sorted.get(0)) {
                 Some(x) => x
@@ -7083,7 +7082,7 @@ fn eval_list_sort_by_single() {
 fn eval_list_sort_by_strings_by_len() {
     let val = run_ok(&with_option_variants(
         r#"fn main() -> String {
-            let xs = collections.List.new().push("bb").push("a").push("ccc")
+            let xs = collections.MutableList.new().push("bb").push("a").push("ccc")
             let sorted = xs.sort_by(fn(a: String, b: String) => a.len() - b.len())
             match (sorted.get(0)) {
                 Some(s) => s
@@ -7101,7 +7100,7 @@ fn eval_list_sort_by_stable() {
     // 12 before 11 (both have tens=1, original order: 12 at index 1, 11 at index 2)
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-            let xs = collections.List.new().push(21).push(12).push(11).push(22)
+            let xs = collections.MutableList.new().push(21).push(12).push(11).push(22)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a / 10 - b / 10)
             match (sorted.get(0)) {
                 Some(x) => x
@@ -7117,7 +7116,7 @@ fn eval_list_sort_by_stable() {
 fn eval_list_sort_by_already_sorted() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-            let xs = collections.List.new().push(1).push(2).push(3)
+            let xs = collections.MutableList.new().push(1).push(2).push(3)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
             match (sorted.get(1)) {
                 Some(x) => x
@@ -7132,7 +7131,7 @@ fn eval_list_sort_by_already_sorted() {
 fn eval_list_sort_by_all_equal() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = collections.List.new().push(5).push(5).push(5)
+            let xs = collections.MutableList.new().push(5).push(5).push(5)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
             sorted.len()
         }",
@@ -7145,7 +7144,7 @@ fn eval_list_sort_by_comparator_error() {
     // Comparator returns Bool instead of Int
     let err = run_err(
         "fn main() -> Int {
-            let xs = collections.List.new().push(2).push(1)
+            let xs = collections.MutableList.new().push(2).push(1)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a < b)
             sorted.len()
         }",
@@ -7161,7 +7160,7 @@ fn eval_list_sort_by_runtime_error() {
     // Comparator divides by zero — error should propagate
     let err = run_err(
         "fn main() -> Int {
-            let xs = collections.List.new().push(2).push(1)
+            let xs = collections.MutableList.new().push(2).push(1)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a / 0)
             sorted.len()
         }",
@@ -7201,7 +7200,7 @@ fn eval_list_iteration_ergonomics_matrix() {
         Case {
             name: "enumerate fields",
             src: "fn main() -> Int {
-                let pairs = collections.List.new().push(10).push(20).enumerate().to_list()
+                let pairs = collections.MutableList.new().push(10).push(20).enumerate().to_list()
                 pairs[0].index + pairs[0].value + pairs[1].index + pairs[1].value
             }",
             expected: Value::Int(31),
@@ -7209,8 +7208,8 @@ fn eval_list_iteration_ergonomics_matrix() {
         Case {
             name: "zip truncates",
             src: "fn main() -> Int {
-                let pairs = collections.List.new().push(1).push(2).push(3)
-                    .zip(collections.List.new().push(10).push(20))
+                let pairs = collections.MutableList.new().push(1).push(2).push(3)
+                    .zip(collections.MutableList.new().push(10).push(20))
                     .to_list()
                 pairs.len() * 100 + pairs[0].left * 10 + pairs[1].right
             }",
@@ -7219,7 +7218,7 @@ fn eval_list_iteration_ergonomics_matrix() {
         Case {
             name: "chunks keeps tail",
             src: "fn main() -> Int {
-                let cs = collections.List.new().push(1).push(2).push(3).push(4).push(5).chunks(2).to_list()
+                let cs = collections.MutableList.new().push(1).push(2).push(3).push(4).push(5).chunks(2).to_list()
                 cs.len() * 100 + cs[0].len() * 10 + cs[2].len()
             }",
             expected: Value::Int(321),
@@ -7227,7 +7226,7 @@ fn eval_list_iteration_ergonomics_matrix() {
         Case {
             name: "windows overlap",
             src: "fn main() -> Int {
-                let ws = collections.List.new().push(1).push(2).push(3).push(4).push(5).windows(3).to_list()
+                let ws = collections.MutableList.new().push(1).push(2).push(3).push(4).push(5).windows(3).to_list()
                 ws.len() * 100 + ws[0][0] * 10 + ws[2][2]
             }",
             expected: Value::Int(315),
@@ -7235,22 +7234,22 @@ fn eval_list_iteration_ergonomics_matrix() {
         Case {
             name: "windows larger than len empty",
             src: "fn main() -> Int {
-                collections.List.new().push(1).push(2).windows(6).count()
+                collections.MutableList.new().push(1).push(2).windows(6).count()
             }",
             expected: Value::Int(0),
         },
         Case {
             name: "chaining from map set string",
             src: "fn main() -> Bool {
-                let m = collections.Map.new().insert(\"x\", 1).insert(\"y\", 2)
+                let m = collections.MutableMap.new().insert(\"x\", 1).insert(\"y\", 2)
                 let km = m.keys().enumerate().to_list()
                 let map_ok = km.len() == 2 && km[0].index == 0 && km[0].value == \"x\"
 
-                let s = collections.Set.new().insert(\"a\").insert(\"b\").insert(\"c\")
+                let s = collections.MutableSet.new().insert(\"a\").insert(\"b\").insert(\"c\")
                 let sc = s.values().chunks(2).to_list()
                 let set_ok = sc.len() == 2 && sc[0].len() == 2 && sc[1].len() == 1
 
-                let p = \"abc\".chars().zip(collections.List.new().push(10).push(20)).to_list()
+                let p = \"abc\".chars().zip(collections.MutableList.new().push(10).push(20)).to_list()
                 let string_ok = p.len() == 2 && p[0].left == 'a' && p[1].right == 20
 
                 map_ok && set_ok && string_ok
@@ -7327,7 +7326,7 @@ fn eval_seq_surface_happy_paths() {
         Case {
             name: "list to seq map filter count",
             src: r#"fn main() -> Int {
-                collections.List.new().push(1).push(2).push(3)
+                collections.MutableList.new().push(1).push(2).push(3)
                     .map(fn(n: Int) => n + 1)
                     .filter(fn(n: Int) => n > 2)
                     .count()
@@ -7374,14 +7373,14 @@ fn eval_seq_flat_map_surface_happy_paths() {
             src: r#"import collections
 
 fn main() -> Int {
-    let a = collections.List.new().push(1).push(2)
-        .flat_map(fn(n: Int) => collections.List.new().push(n).push(n + 10))
+    let a = collections.MutableList.new().push(1).push(2)
+        .flat_map(fn(n: Int) => collections.MutableList.new().push(n).push(n + 10))
         .count()
-    let b = collections.MutableList.from_list(collections.List.new().push(1).push(2))
-        .flat_map(fn(n: Int) => collections.MutableList.from_list(collections.List.new().push(n).push(n + 1)))
+    let b = collections.MutableList.from_list(collections.MutableList.new().push(1).push(2).to_list())
+        .flat_map(fn(n: Int) => collections.MutableList.from_list(collections.MutableList.new().push(n).push(n + 1).to_list()))
         .count()
-    let c = collections.Deque.new().push_back(1).push_back(2)
-        .flat_map(fn(n: Int) => collections.Deque.new().push_back(n).push_back(n + 1))
+    let c = collections.Deque.new().appended(1).appended(2)
+        .flat_map(fn(n: Int) => collections.Deque.new().appended(n).appended(n + 1))
         .count()
     let d = "a,b\nc,d".lines().flat_map(fn(line: String) => line.split(",")).count()
     a * 1000 + b * 100 + c * 10 + d
@@ -7407,7 +7406,7 @@ fn tokenize(line: String) -> Tokens {
 fn main() -> Int {
     let a = "a,b\nc,d".lines().flat_map(fn(line: String) => tokenize(line)).count()
     let b = IntoTraversal.into_seq(Tokens {
-        items: collections.List.new().push("x").push("y")
+        items: collections.MutableList.new().push("x").push("y").to_list()
     }).count()
     a * 10 + b
 }"#,
@@ -7418,12 +7417,12 @@ fn main() -> Int {
             src: r#"import collections
 
 fn main() -> Int {
-    let ok = collections.List.new().push(0).push(1)
+    let ok = collections.MutableList.new().push(0).push(1)
         .flat_map(fn(n: Int) =>
             if (n == 0) {
-                collections.List.new().push(0)
+                collections.MutableList.new().push(0)
             } else {
-                collections.List.new().push(10 / (n - 1))
+                collections.MutableList.new().push(10 / (n - 1))
             }
         )
         .any(fn(n: Int) => n == 0)
@@ -7465,7 +7464,7 @@ fn main() -> Int {
             src: r#"import collections
 
 fn spread(offset: Int) -> fn(Int) -> List<Int> {
-    fn(n: Int) => collections.List.new().push(n).push(n + offset)
+    fn(n: Int) => collections.MutableList.new().push(n).push(n + offset).to_list()
 }
 
 fn main() -> Int {
@@ -7497,16 +7496,16 @@ fn eval_collection_first_traversal_surface_semantics_rfc_0002() {
         r#"import collections
 
 fn main() -> Int {
-            let list_count = collections.List.new().push(1).push(2).push(3)
+            let list_count = collections.MutableList.new().push(1).push(2).push(3)
                 .map(fn(n: Int) => n + 1)
                 .filter(fn(n: Int) => n > 2)
                 .count()
-            let deque_count = collections.Deque.new().push_back(1).push_back(2).push_back(3)
+            let deque_count = collections.Deque.new().appended(1).appended(2).appended(3)
                 .map(fn(n: Int) => n * 2)
                 .count()
-            let z1 = collections.List.new().push(1).push(2).zip(((10)..<13)).count()
-            let z2 = ((0)..<3).zip(collections.List.new().push(7).push(8)).count()
-            let z3 = collections.Deque.new().push_back(1).push_back(2).zip(collections.List.new().push(9)).count()
+            let z1 = collections.MutableList.new().push(1).push(2).zip(((10)..<13)).count()
+            let z2 = ((0)..<3).zip(collections.MutableList.new().push(7).push(8)).count()
+            let z3 = collections.Deque.new().appended(1).appended(2).zip(collections.MutableList.new().push(9)).count()
             list_count * 100 + deque_count * 10 + z1 + z2 + z3
         }"#,
     );
@@ -7519,13 +7518,13 @@ fn eval_collection_first_any_all_find_short_circuit_rfc_0002() {
         r#"import collections
 
 fn main() -> Int {
-            let any_hit = collections.List.new().push(1).push(0).any(fn(n: Int) =>
+            let any_hit = collections.MutableList.new().push(1).push(0).any(fn(n: Int) =>
                 if (n == 1) { true } else { 10 / n > 0 }
             )
-            let all_ok = collections.Deque.new().push_back(0).push_back(1).all(fn(n: Int) =>
+            let all_ok = collections.Deque.new().appended(0).appended(1).all(fn(n: Int) =>
                 if (n == 0) { false } else { 10 / (n - 1) > 0 }
             ) == false
-            let found = collections.List.new().push(2).push(1).find(fn(n: Int) =>
+            let found = collections.MutableList.new().push(2).push(1).find(fn(n: Int) =>
                 if (n == 2) { true } else { 10 / (n - 1) > 0 }
             ).unwrap_or(-1)
             if (any_hit && all_ok && found == 2) { 1 } else { 0 }
@@ -7540,11 +7539,11 @@ fn eval_collection_first_frequencies_semantics() {
         r#"import collections
 
 fn main() -> Int {
-    let a = collections.List.new().push(3).push(1).push(3).push(2).frequencies()
+    let a = collections.MutableList.new().push(3).push(1).push(3).push(2).frequencies()
     let b = "a,b,a,c".split(",").frequencies()
-    let c = collections.MutableList.from_list(collections.List.new().push(1).push(2).push(1))
+    let c = collections.MutableList.from_list(collections.MutableList.new().push(1).push(2).push(1).to_list())
         .frequencies()
-    let d = collections.Deque.new().push_back(1).push_back(2).push_back(1).frequencies()
+    let d = collections.Deque.new().appended(1).appended(2).appended(1).frequencies()
     let e = (0..<4).frequencies()
     let empty_src: List<Int> = collections.List.new()
     let empty = empty_src.frequencies()
@@ -7578,12 +7577,12 @@ fn eval_collection_first_contains_semantics() {
         r#"import collections
 
 fn main() -> Int {
-    let a = collections.List.new().push(1).push(2).contains(2)
-    let b = collections.MutableList.from_list(collections.List.new().push(1).push(2)).contains(1)
-    let c = collections.Deque.new().push_back(1).push_back(2).contains(3)
+    let a = collections.MutableList.new().push(1).push(2).contains(2)
+    let b = collections.MutableList.from_list(collections.MutableList.new().push(1).push(2).to_list()).contains(1)
+    let c = collections.Deque.new().appended(1).appended(2).contains(3)
     let d = (0..<4).contains(3)
     let e = "a,b,c".split(",").contains("b")
-    let f = collections.Map.new().insert("x", 1).contains("x")
+    let f = collections.MutableMap.new().insert("x", 1).contains("x")
     let g = collections.MutableSet.new().insert("x").contains("x")
 
     if (a && b && !c && d && e && f && g) {
@@ -7613,11 +7612,11 @@ fn eval_collection_first_count_predicate_semantics_rfc_0002() {
 
 fn main() -> Int {
     let a = ((0)..<6).count(fn(n: Int) => n % 2 == 0)
-    let b = collections.List.new().push(1).push(2).push(3).count(fn(n: Int) => n >= 2)
+    let b = collections.MutableList.new().push(1).push(2).push(3).count(fn(n: Int) => n >= 2)
     let c = "a,b,,c".split(",").count(fn(part: String) => part != "")
-    let d = collections.MutableList.from_list(collections.List.new().push(1).push(2).push(3))
+    let d = collections.MutableList.from_list(collections.MutableList.new().push(1).push(2).push(3).to_list())
         .count(fn(n: Int) => n != 2)
-    let e = collections.Deque.new().push_back(1).push_back(2).push_back(3)
+    let e = collections.Deque.new().appended(1).appended(2).appended(3)
         .count(fn(n: Int) => n < 3)
     a * 10000 + b * 1000 + c * 100 + d * 10 + e
 }"#,
@@ -7688,7 +7687,7 @@ fn eval_seq_surface_is_rejected_rfc_0003() {
 fn eval_list_seq_bridge_is_rejected_rfc_0002() {
     let err = run_err(
         r#"fn main() -> Int {
-            collections.List.new().push(1).seq().count()
+            collections.MutableList.new().push(1).seq().count()
         }"#,
     );
     assert!(
@@ -7709,7 +7708,7 @@ fn eval_seq_type_annotation_and_param_mismatch_behavior() {
     let err = run_err(
         r#"fn takes_seq(xs: Seq<Int>) -> Int { xs.count() }
 fn main() -> Int {
-    let xs = collections.List.new().push(1).push(2)
+    let xs = collections.MutableList.new().push(1).push(2)
     takes_seq(xs)
 }"#,
     );
@@ -7791,7 +7790,7 @@ fn eval_seq_any_all_find_short_circuit_regression() {
         Case {
             name: "any short-circuits after first true",
             src: r#"fn main() -> Bool {
-                collections.List.new().push(1).push(0).any(fn(n: Int) =>
+                collections.MutableList.new().push(1).push(0).any(fn(n: Int) =>
                     if (n == 1) { true } else { 10 / n > 0 }
                 )
             }"#,
@@ -7800,7 +7799,7 @@ fn eval_seq_any_all_find_short_circuit_regression() {
         Case {
             name: "all short-circuits after first false",
             src: r#"fn main() -> Bool {
-                collections.List.new().push(0).push(1).all(fn(n: Int) =>
+                collections.MutableList.new().push(0).push(1).all(fn(n: Int) =>
                     if (n == 0) { false } else { 10 / (n - 1) > 0 }
                 ) == false
             }"#,
@@ -7809,7 +7808,7 @@ fn eval_seq_any_all_find_short_circuit_regression() {
         Case {
             name: "find short-circuits after first match",
             src: r#"fn main() -> Int {
-                collections.List.new().push(2).push(1)
+                collections.MutableList.new().push(2).push(1)
                     .find(fn(n: Int) =>
                         if (n == 2) { true } else { 10 / (n - 1) > 0 }
                     )
@@ -7986,7 +7985,7 @@ fn eval_seq_invalid_sizes_and_removed_list_surface() {
 fn eval_index_list_basic() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = collections.List.new().push(10).push(20)
+            let xs = collections.MutableList.new().push(10).push(20)
             xs[0]
         }",
     );
@@ -7997,7 +7996,7 @@ fn eval_index_list_basic() {
 fn eval_index_list_last() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = collections.List.new().push(10).push(20)
+            let xs = collections.MutableList.new().push(10).push(20)
             xs[1]
         }",
     );
@@ -8008,7 +8007,7 @@ fn eval_index_list_last() {
 fn eval_index_list_out_of_bounds() {
     let err = run_err(
         "fn main() -> Int {
-            let xs = collections.List.new().push(10).push(20)
+            let xs = collections.MutableList.new().push(10).push(20)
             xs[5]
         }",
     );
@@ -8019,7 +8018,7 @@ fn eval_index_list_out_of_bounds() {
 fn eval_index_list_negative() {
     let err = run_err(
         "fn main() -> Int {
-            let xs = collections.List.new().push(10).push(20)
+            let xs = collections.MutableList.new().push(10).push(20)
             xs[0 - 1]
         }",
     );
@@ -8091,7 +8090,7 @@ fn eval_index_string_empty() {
 fn eval_index_map_basic() {
     let val = run_ok(
         "fn main() -> Int {
-            let m = collections.Map.new().insert(\"a\", 42)
+            let m = collections.MutableMap.new().insert(\"a\", 42)
             m[\"a\"]
         }",
     );
@@ -8102,7 +8101,7 @@ fn eval_index_map_basic() {
 fn eval_index_map_missing_key() {
     let err = run_err(
         "fn main() -> Int {
-            let m = collections.Map.new().insert(\"a\", 42)
+            let m = collections.MutableMap.new().insert(\"a\", 42)
             m[\"b\"]
         }",
     );
@@ -8114,8 +8113,8 @@ fn eval_index_chained_list() {
     // Nested list indexing: list of lists
     let val = run_ok(
         "fn main() -> Int {
-            let inner = collections.List.new().push(10).push(20)
-            let outer = collections.List.new().push(inner)
+            let inner = collections.MutableList.new().push(10).push(20)
+            let outer = collections.MutableList.new().push(inner)
             outer[0][1]
         }",
     );
@@ -8126,7 +8125,7 @@ fn eval_index_chained_list() {
 fn eval_index_with_expression() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = collections.List.new().push(10).push(20).push(30)
+            let xs = collections.MutableList.new().push(10).push(20).push(30)
             xs[1 + 1]
         }",
     );
@@ -8155,7 +8154,7 @@ fn eval_index_list_then_field() {
         "type Point = { x: Int, y: Int }
         fn main() -> Int {
             let p = Point { x: 3, y: 4 }
-            let xs = collections.List.new().push(p)
+            let xs = collections.MutableList.new().push(p)
             xs[0].x
         }",
     );
@@ -8431,7 +8430,7 @@ fn eval_method_string_chars() {
 fn eval_method_list_len() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = collections.List.new().push(1).push(2)
+            let xs = collections.MutableList.new().push(1).push(2)
             xs.len()
         }",
     );
@@ -8442,7 +8441,7 @@ fn eval_method_list_len() {
 fn eval_method_list_push() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = collections.List.new().push(1)
+            let xs = collections.MutableList.new().push(1)
             let ys = xs.push(2)
             ys.len()
         }",
@@ -8454,7 +8453,7 @@ fn eval_method_list_push() {
 fn eval_method_list_get() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-            let xs = collections.List.new().push(10).push(20)
+            let xs = collections.MutableList.new().push(10).push(20)
             match (xs.get(1)) {
                 Some(v) => v
                 None => 0
@@ -8479,7 +8478,7 @@ fn eval_method_list_is_empty() {
 fn eval_method_list_reverse() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = collections.List.new().push(1).push(2)
+            let xs = collections.MutableList.new().push(1).push(2)
             let ys = xs.reverse()
             ys[0]
         }",
@@ -8491,7 +8490,7 @@ fn eval_method_list_reverse() {
 fn eval_method_list_map() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = collections.List.new().push(1).push(2)
+            let xs = collections.MutableList.new().push(1).push(2)
             let ys = xs.map(fn(x: Int) => x * 10).to_list()
             ys[0]
         }",
@@ -8503,7 +8502,7 @@ fn eval_method_list_map() {
 fn eval_method_list_filter() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = collections.List.new().push(1).push(2).push(3)
+            let xs = collections.MutableList.new().push(1).push(2).push(3)
             xs.filter(fn(x: Int) => x > 1).count()
         }",
     );
@@ -8514,7 +8513,7 @@ fn eval_method_list_filter() {
 fn eval_method_list_fold() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = collections.List.new().push(1).push(2).push(3)
+            let xs = collections.MutableList.new().push(1).push(2).push(3)
             xs.fold(0, fn(acc: Int, x: Int) => acc + x)
         }",
     );
@@ -8525,7 +8524,7 @@ fn eval_method_list_fold() {
 fn eval_method_list_sort() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = collections.List.new().push(3).push(1).push(2)
+            let xs = collections.MutableList.new().push(3).push(1).push(2)
             let sorted = xs.sort()
             sorted[0]
         }",
@@ -8537,7 +8536,7 @@ fn eval_method_list_sort() {
 fn eval_method_list_sort_by() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = collections.List.new().push(3).push(1).push(2)
+            let xs = collections.MutableList.new().push(3).push(1).push(2)
             let sorted = xs.sort_by(fn(a: Int, b: Int) => a - b)
             sorted[2]
         }",
@@ -8550,7 +8549,7 @@ fn eval_method_list_sort_by() {
 fn eval_method_map_insert_and_get() {
     let val = run_ok(&with_option_variants(
         r#"fn main() -> Int {
-            let m = collections.Map.new()
+            let m = collections.MutableMap.new()
             let m2 = m.insert("a", 42)
             match (m2.get("a")) {
                 Some(v) => v
@@ -8565,7 +8564,7 @@ fn eval_method_map_insert_and_get() {
 fn eval_method_map_contains() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            let m = collections.Map.new().insert("key", 1)
+            let m = collections.MutableMap.new().insert("key", 1)
             m.contains("key")
         }"#,
     );
@@ -8576,7 +8575,7 @@ fn eval_method_map_contains() {
 fn eval_method_map_len() {
     let val = run_ok(
         r#"fn main() -> Int {
-            let m = collections.Map.new().insert("a", 1).insert("b", 2)
+            let m = collections.MutableMap.new().insert("a", 1).insert("b", 2)
             m.len()
         }"#,
     );
@@ -8587,7 +8586,7 @@ fn eval_method_map_len() {
 fn eval_method_map_keys() {
     let val = run_ok(
         r#"fn main() -> Int {
-            let m = collections.Map.new().insert("a", 1)
+            let m = collections.MutableMap.new().insert("a", 1)
             let ks = m.keys()
             ks.count()
         }"#,
@@ -8728,8 +8727,7 @@ fn eval_method_chaining_trim_len() {
 fn eval_method_chaining_push_push_len() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs: List<Int> = collections.List.new()
-            xs.push(1).push(2).push(3).len()
+            collections.MutableList.new().push(1).push(2).push(3).len()
         }",
     );
     assert!(matches!(val, Value::Int(3)));
@@ -8757,7 +8755,7 @@ fn eval_method_flat_function_still_works() {
 fn eval_method_index_then_method() {
     let val = run_ok(
         r#"fn main() -> Int {
-            let xs = collections.List.new().push("hello")
+            let xs = collections.MutableList.new().push("hello")
             xs[0].len()
         }"#,
     );
@@ -9027,7 +9025,7 @@ fn eval_index_then_method() {
     let val = run_ok(
         r#"
         fn main() -> Int {
-            let xs = collections.List.new().push("hello").push("world")
+            let xs = collections.MutableList.new().push("hello").push("world")
             xs[0].len()
         }
         "#,
@@ -9068,7 +9066,7 @@ fn eval_index_then_field() {
         r#"
         type Point = { x: Int, y: Int }
         fn main() -> Int {
-            let xs = collections.List.new().push(Point { x: 42, y: 7 })
+            let xs = collections.MutableList.new().push(Point { x: 42, y: 7 })
             xs[0].x
         }
         "#,
@@ -9129,7 +9127,7 @@ fn eval_flat_fn_and_method_both_work() {
 fn eval_map_int_keys() {
     let val = run_ok(
         "fn main() -> Int {
-            let m = collections.Map.new().insert(1, 100).insert(2, 200).insert(3, 300)
+            let m = collections.MutableMap.new().insert(1, 100).insert(2, 200).insert(3, 300)
             m[2]
         }",
     );
@@ -9140,7 +9138,7 @@ fn eval_map_int_keys() {
 fn eval_map_bool_keys() {
     let val = run_ok(
         "fn main() -> Int {
-            let m = collections.Map.new().insert(true, 1).insert(false, 0)
+            let m = collections.MutableMap.new().insert(true, 1).insert(false, 0)
             m[true] + m[false]
         }",
     );
@@ -9151,7 +9149,7 @@ fn eval_map_bool_keys() {
 fn eval_map_char_keys() {
     let val = run_ok(
         "fn main() -> Int {
-            let m = collections.Map.new().insert('a', 1).insert('b', 2)
+            let m = collections.MutableMap.new().insert('a', 1).insert('b', 2)
             m['a'] + m['b']
         }",
     );
@@ -9163,7 +9161,7 @@ fn eval_map_mixed_operations() {
     // Insert, overwrite, remove, check contains on missing
     let val = run_ok(
         r#"fn main() -> Bool {
-            let m = collections.Map.new()
+            let m = collections.MutableMap.new()
                 .insert("x", 1)
                 .insert("y", 2)
                 .insert("x", 99)
@@ -9182,7 +9180,7 @@ fn eval_map_insertion_order_preserved() {
     // Keys should come back in insertion order (IndexMap guarantee)
     let val = run_ok(&with_option_variants(
         r#"fn main() -> String {
-            let m = collections.Map.new()
+            let m = collections.MutableMap.new()
                 .insert("c", 3)
                 .insert("a", 1)
                 .insert("b", 2)
@@ -9204,7 +9202,7 @@ fn eval_map_overwrite_preserves_position() {
     // Overwriting a key should keep its original insertion position
     let val = run_ok(&with_option_variants(
         r#"fn main() -> Int {
-            let m = collections.Map.new()
+            let m = collections.MutableMap.new()
                 .insert("a", 1)
                 .insert("b", 2)
                 .insert("a", 99)
@@ -9222,7 +9220,7 @@ fn eval_map_values_after_overwrite() {
     // After overwrite, values() should reflect the update
     let val = run_ok(
         r#"fn main() -> Int {
-            let m = collections.Map.new()
+            let m = collections.MutableMap.new()
                 .insert("a", 1)
                 .insert("b", 2)
                 .insert("a", 100)
@@ -9237,7 +9235,7 @@ fn eval_map_remove_nonexistent_key() {
     // Removing a key that doesn't exist should be a no-op
     let val = run_ok(
         r#"fn main() -> Int {
-            let m = collections.Map.new().insert("a", 1)
+            let m = collections.MutableMap.new().insert("a", 1)
             let m2 = m.remove("zzz")
             m2.len()
         }"#,
@@ -9249,7 +9247,7 @@ fn eval_map_remove_nonexistent_key() {
 fn eval_map_get_after_remove() {
     let val = run_ok(&with_option_variants(
         r#"fn main() -> Bool {
-            let m = collections.Map.new().insert("a", 1).insert("b", 2)
+            let m = collections.MutableMap.new().insert("a", 1).insert("b", 2)
             let m2 = m.remove("a")
             match (m2.get("a")) {
                 Some(_) => false
@@ -9265,7 +9263,7 @@ fn eval_map_many_inserts() {
     // Verify O(1) behavior doesn't break with more entries
     let val = run_ok(
         "fn main() -> Int {
-            let m = collections.Map.new()
+            let m = collections.MutableMap.new()
                 .insert(1, 10)
                 .insert(2, 20)
                 .insert(3, 30)
@@ -9287,8 +9285,8 @@ fn eval_map_immutable_semantics() {
     // Original map should be unchanged after insert on a copy
     let val = run_ok(
         r#"fn main() -> Bool {
-            let m1 = collections.Map.new().insert("a", 1)
-            let m2 = m1.insert("b", 2)
+            let m1 = collections.MutableMap.new().insert("a", 1).to_map()
+            let m2 = collections.MutableMap.from_map(m1).insert("b", 2).to_map()
             m1.len() == 1 && m2.len() == 2
         }"#,
     );
@@ -9299,7 +9297,7 @@ fn eval_map_immutable_semantics() {
 fn eval_map_index_with_int_key() {
     let val = run_ok(
         "fn main() -> Int {
-            let m = collections.Map.new().insert(42, 999)
+            let m = collections.MutableMap.new().insert(42, 999)
             m[42]
         }",
     );
@@ -9310,7 +9308,7 @@ fn eval_map_index_with_int_key() {
 fn eval_map_contains_missing() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            let m = collections.Map.new().insert("a", 1)
+            let m = collections.MutableMap.new().insert("a", 1)
             m.contains("z")
         }"#,
     );
@@ -9334,7 +9332,7 @@ fn eval_map_empty_keys_and_values() {
 fn eval_map_float_key_rejected_at_compile_time() {
     let err = run_err(
         "fn main() -> Int {
-            let m = collections.Map.new().insert(3.14, 1)
+            let m = collections.MutableMap.new().insert(3.14, 1)
             0
         }",
     );
@@ -9348,8 +9346,8 @@ fn eval_map_float_key_rejected_at_compile_time() {
 fn eval_map_list_key_allowed_when_elements_are_hashable() {
     let val = run_ok(
         "fn main() -> Int {
-            let xs = collections.List.new().push(1)
-            let m = collections.Map.new().insert(xs, 1)
+            let xs = collections.MutableList.new().push(1).to_list()
+            let m = collections.MutableMap.new().insert(xs, 1)
             m.get(xs).unwrap_or(0)
         }",
     );
@@ -9361,7 +9359,7 @@ fn eval_map_fn_key_rejected_at_compile_time() {
     let err = run_err(
         "fn helper() -> Int { 0 }
          fn main() -> Int {
-            let m = collections.Map.new().insert(helper, 1)
+            let m = collections.MutableMap.new().insert(helper, 1)
             0
         }",
     );
@@ -9376,10 +9374,10 @@ fn eval_map_valid_keys_no_rejection() {
     // Guard test: valid key types (Int, String, Char, Bool) should NOT trigger rejection
     run_ok(
         r#"fn main() -> Bool {
-            let m1 = collections.Map.new().insert(1, "int key")
-            let m2 = collections.Map.new().insert("str", "string key")
-            let m3 = collections.Map.new().insert('c', "char key")
-            let m4 = collections.Map.new().insert(true, "bool key")
+            let m1 = collections.MutableMap.new().insert(1, "int key")
+            let m2 = collections.MutableMap.new().insert("str", "string key")
+            let m3 = collections.MutableMap.new().insert('c', "char key")
+            let m4 = collections.MutableMap.new().insert(true, "bool key")
             m1.len() == 1 && m2.len() == 1 && m3.len() == 1 && m4.len() == 1
         }"#,
     );
@@ -9401,7 +9399,7 @@ fn eval_set_new_is_empty() {
 fn eval_set_insert_contains_and_len() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            let s = collections.Set.new().insert(1).insert(2).insert(3)
+            let s = collections.MutableSet.new().insert(1).insert(2).insert(3)
             s.contains(2) && s.len() == 3
         }"#,
     );
@@ -9412,7 +9410,7 @@ fn eval_set_insert_contains_and_len() {
 fn eval_set_insert_deduplicates_values() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            let s = collections.Set.new().insert("x").insert("x").insert("x")
+            let s = collections.MutableSet.new().insert("x").insert("x").insert("x")
             s.len() == 1 && s.contains("x")
         }"#,
     );
@@ -9423,7 +9421,7 @@ fn eval_set_insert_deduplicates_values() {
 fn eval_set_remove_existing_and_missing() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            let s1 = collections.Set.new().insert("a").insert("b")
+            let s1 = collections.MutableSet.new().insert("a").insert("b")
             let s2 = s1.remove("a")
             let s3 = s2.remove("zzz")
             !s2.contains("a") && s2.len() == 1 && s3.len() == 1
@@ -9436,8 +9434,8 @@ fn eval_set_remove_existing_and_missing() {
 fn eval_set_immutable_semantics() {
     let val = run_ok(
         r#"fn main() -> Bool {
-            let s1 = collections.Set.new().insert(1)
-            let s2 = s1.insert(2)
+            let s1 = collections.MutableSet.new().insert(1).to_set()
+            let s2 = collections.MutableSet.from_set(s1).insert(2).to_set()
             s1.len() == 1 && s2.len() == 2
         }"#,
     );
@@ -9448,7 +9446,7 @@ fn eval_set_immutable_semantics() {
 fn eval_set_values_preserve_insertion_order() {
     let val = run_ok(&with_option_variants(
         r#"fn main() -> String {
-            let s = collections.Set.new().insert("c").insert("a").insert("b")
+            let s = collections.MutableSet.new().insert("c").insert("a").insert("b")
             let vals = s.values().to_list()
             match (vals.head()) {
                 Some(v) => v
@@ -9466,7 +9464,7 @@ fn eval_set_values_preserve_insertion_order() {
 fn eval_set_values_remove_and_reinsert_goes_to_end() {
     let val = run_ok(&with_option_variants(
         r#"fn main() -> Bool {
-            let s = collections.Set.new().insert("a").insert("b").remove("a").insert("a")
+            let s = collections.MutableSet.new().insert("a").insert("b").remove("a").insert("a")
             let vals = s.values().to_list()
             match (vals.get(0)) {
                 Some(first) =>
@@ -9487,7 +9485,7 @@ fn eval_set_values_remove_and_reinsert_goes_to_end() {
 fn eval_set_float_element_rejected_at_compile_time() {
     let err = run_err(
         r#"fn main() -> Int {
-            let s = collections.Set.new().insert(3.14)
+            let s = collections.MutableSet.new().insert(3.14)
             s.len()
         }"#,
     );
@@ -9501,8 +9499,8 @@ fn eval_set_float_element_rejected_at_compile_time() {
 fn eval_set_list_element_allowed_when_elements_are_hashable() {
     let val = run_ok(
         r#"fn main() -> Int {
-            let xs = collections.List.new().push(1)
-            let s = collections.Set.new().insert(xs)
+            let xs = collections.MutableList.new().push(1).to_list()
+            let s = collections.MutableSet.new().insert(xs)
             if (s.contains(xs)) { s.len() } else { 0 }
         }"#,
     );
@@ -9514,7 +9512,7 @@ fn eval_set_fn_element_rejected_at_compile_time() {
     let err = run_err(
         r#"fn helper() -> Int { 0 }
            fn main() -> Int {
-             let s = collections.Set.new().insert(helper)
+             let s = collections.MutableSet.new().insert(helper)
              s.len()
            }"#,
     );
@@ -9528,10 +9526,10 @@ fn eval_set_fn_element_rejected_at_compile_time() {
 fn eval_set_valid_elements_no_rejection() {
     run_ok(
         r#"fn main() -> Bool {
-            let s1 = collections.Set.new().insert(1)
-            let s2 = collections.Set.new().insert("str")
-            let s3 = collections.Set.new().insert('c')
-            let s4 = collections.Set.new().insert(true)
+            let s1 = collections.MutableSet.new().insert(1)
+            let s2 = collections.MutableSet.new().insert("str")
+            let s3 = collections.MutableSet.new().insert('c')
+            let s4 = collections.MutableSet.new().insert(true)
             s1.len() == 1 && s2.len() == 1 && s3.len() == 1 && s4.len() == 1
         }"#,
     );
@@ -9542,11 +9540,11 @@ fn eval_list_rebinding_chain_preserves_prior_versions() {
     let val = run_ok(
         r#"fn main() -> Bool {
             let xs0 = collections.List.new()
-            let xs1 = xs0.push(1)
-            let xs2 = xs1.push(2)
-            let xs3 = xs2.push(3)
-            let xs4 = xs3.push(4)
-            let xs5 = xs4.push(5)
+            let xs1 = collections.MutableList.from_list(xs0).push(1).to_list()
+            let xs2 = collections.MutableList.from_list(xs1).push(2).to_list()
+            let xs3 = collections.MutableList.from_list(xs2).push(3).to_list()
+            let xs4 = collections.MutableList.from_list(xs3).push(4).to_list()
+            let xs5 = collections.MutableList.from_list(xs4).push(5).to_list()
             xs0.len() == 0 && xs3.len() == 3 && xs5.len() == 5
         }"#,
     );
@@ -9558,10 +9556,10 @@ fn eval_map_rebinding_chain_preserves_prior_versions() {
     let val = run_ok(
         r#"fn main() -> Bool {
             let m0 = collections.Map.new()
-            let m1 = m0.insert(1, 10)
-            let m2 = m1.insert(2, 20)
-            let m3 = m2.insert(3, 30)
-            let m4 = m3.insert(4, 40)
+            let m1 = collections.MutableMap.from_map(m0).insert(1, 10).to_map()
+            let m2 = collections.MutableMap.from_map(m1).insert(2, 20).to_map()
+            let m3 = collections.MutableMap.from_map(m2).insert(3, 30).to_map()
+            let m4 = collections.MutableMap.from_map(m3).insert(4, 40).to_map()
             m0.len() == 0 && m2.len() == 2 && m4.len() == 4
         }"#,
     );
@@ -9573,10 +9571,10 @@ fn eval_set_rebinding_chain_preserves_prior_versions() {
     let val = run_ok(
         r#"fn main() -> Bool {
             let s0 = collections.Set.new()
-            let s1 = s0.insert(1)
-            let s2 = s1.insert(2)
-            let s3 = s2.insert(3)
-            let s4 = s3.insert(4)
+            let s1 = collections.MutableSet.from_set(s0).insert(1).to_set()
+            let s2 = collections.MutableSet.from_set(s1).insert(2).to_set()
+            let s3 = collections.MutableSet.from_set(s2).insert(3).to_set()
+            let s4 = collections.MutableSet.from_set(s3).insert(4).to_set()
             s0.len() == 0 && s2.len() == 2 && s4.len() == 4
         }"#,
     );
@@ -9602,7 +9600,7 @@ fn eval_bitset_set_reset_flip_test_and_values() {
     let val = run_ok(
         r#"import collections
 fn main() -> Bool {
-    let bs = collections.BitSet.new(10).set(3).set(1).flip(3).set(7).reset(1)
+    let bs = collections.BitSet.new(10).with_bit(3).with_bit(1).toggled(3).with_bit(7).without_bit(1)
     let vals = bs.values().to_list()
     bs.count() == 1
         && bs.test(7)
@@ -9620,7 +9618,7 @@ fn eval_bitset_values_are_ascending() {
     let val = run_ok(
         r#"import collections
 fn main() -> Bool {
-    let vals = collections.BitSet.new(16).set(9).set(1).set(12).set(3).values().to_list()
+    let vals = collections.BitSet.new(16).with_bit(9).with_bit(1).with_bit(12).with_bit(3).values().to_list()
     vals.get(0).unwrap_or(-1) == 1
         && vals.get(1).unwrap_or(-1) == 3
         && vals.get(2).unwrap_or(-1) == 9
@@ -9635,8 +9633,8 @@ fn eval_bitset_algebra_is_correct() {
     let val = run_ok(
         r#"import collections
 fn main() -> Bool {
-    let a = collections.BitSet.new(16).set(1).set(3).set(5)
-    let b = collections.BitSet.new(16).set(3).set(4).set(5)
+    let a = collections.BitSet.new(16).with_bit(1).with_bit(3).with_bit(5)
+    let b = collections.BitSet.new(16).with_bit(3).with_bit(4).with_bit(5)
     let u = a.union(b)
     let i = a.intersection(b)
     let d = a.difference(b)
@@ -9655,8 +9653,8 @@ fn eval_bitset_is_immutable() {
     let val = run_ok(
         r#"import collections
 fn main() -> Bool {
-    let a = collections.BitSet.new(8).set(1)
-    let b = a.set(2)
+    let a = collections.BitSet.new(8).with_bit(1)
+    let b = a.with_bit(2)
     a.count() == 1 && b.count() == 2 && !a.test(2) && b.test(2)
 }"#,
     );
@@ -9686,7 +9684,7 @@ fn main() -> Bool {
     let a = collections.MutableBitSet.new(8).set(1).set(3)
     let b = collections.MutableBitSet.new(8).set(3).set(4)
     let alias = a
-    a.union(b)
+    a.union_with(b)
     alias.count() == 3 && alias.test(1) && alias.test(3) && alias.test(4)
 }"#,
     );
@@ -9710,7 +9708,7 @@ fn eval_bitset_out_of_bounds_runtime_error() {
     let err = run_err(
         r#"import collections
 fn main() -> Int {
-    collections.BitSet.new(4).set(4).count()
+    collections.BitSet.new(4).with_bit(4).count()
 }"#,
     );
     assert!(
@@ -9738,8 +9736,8 @@ fn eval_bitset_binary_size_mismatch_runtime_error() {
     let err = run_err(
         r#"import collections
 fn main() -> Int {
-    let a = collections.BitSet.new(4).set(1)
-    let b = collections.BitSet.new(8).set(1)
+    let a = collections.BitSet.new(4).with_bit(1)
+    let b = collections.BitSet.new(8).with_bit(1)
     a.union(b).count()
 }"#,
     );
@@ -9756,8 +9754,8 @@ fn eval_list_sort_list_of_lists_is_allowed() {
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
             let a: List<Int> = collections.List.new()
-            let b = collections.List.new().push(1)
-            let xs = collections.List.new().push(b).push(a)
+            let b = collections.MutableList.new().push(1).to_list()
+            let xs = collections.MutableList.new().push(b).push(a)
             let sorted = xs.sort()
             match (sorted.get(0)) {
                 Some(inner) => inner.len()
@@ -9773,8 +9771,8 @@ fn eval_list_sort_unsortable_list_of_fns() {
     let err = run_err(
         "fn helper() -> Int { 0 }
          fn main() -> Int {
-            let xs = collections.List.new().push(helper)
-            let sorted = xs.sort()
+            let xs = collections.MutableList.new().push(helper).to_list()
+            let sorted = xs.sorted()
             0
         }",
     );
@@ -9788,8 +9786,8 @@ fn eval_list_sort_unsortable_list_of_fns() {
 fn eval_list_sort_unsortable_list_of_maps() {
     let err = run_err(
         "fn main() -> Int {
-            let xs = collections.List.new().push(collections.Map.new())
-            let sorted = xs.sort()
+            let xs = collections.MutableList.new().push(collections.Map.new()).to_list()
+            let sorted = xs.sorted()
             0
         }",
     );
@@ -9804,11 +9802,14 @@ fn eval_list_sort_valid_types_no_rejection() {
     // Guard test: sortable builtin and structural value types should NOT be rejected.
     run_ok(
         r#"fn main() -> Bool {
-            let ints = collections.List.new().push(3).push(1).push(2).sort()
-            let strings = collections.List.new().push("c").push("a").push("b").sort()
-            let chars = collections.List.new().push('c').push('a').push('b').sort()
-            let bools = collections.List.new().push(true).push(false).sort()
-            let lists = collections.List.new().push(collections.List.new().push(1)).push(collections.List.new()).sort()
+            let ints = collections.MutableList.new().push(3).push(1).push(2).sort()
+            let strings = collections.MutableList.new().push("c").push("a").push("b").sort()
+            let chars = collections.MutableList.new().push('c').push('a').push('b').sort()
+            let bools = collections.MutableList.new().push(true).push(false).sort()
+            let lists = collections.MutableList.new()
+                .push(collections.MutableList.new().push(1).to_list())
+                .push(collections.List.new())
+                .sort()
             ints.len() == 3 && strings.len() == 3 && chars.len() == 3 && bools.len() == 2 && lists.len() == 2
         }"#,
     );
@@ -9821,7 +9822,7 @@ fn eval_list_get_negative_index_returns_none() {
     // Negative index should return None, not silently wrap to huge usize.
     let val = run_ok(&with_option_variants(
         "fn main() -> Int {
-           let xs = collections.List.new().push(10).push(20)
+           let xs = collections.MutableList.new().push(10).push(20)
            match (xs.get(0 - 1)) {
              Some(_) => 1
              None => 0
@@ -9839,7 +9840,7 @@ fn eval_list_update_negative_index_error() {
     // Negative index in list_update should report IndexOutOfBounds, not TypeError.
     let err = run_err(
         "fn main() -> Int {
-           collections.List.new().push(10).update(0 - 1, fn(n: Int) => n + 1).len()
+           collections.MutableList.new().push(10).update(0 - 1, fn(n: Int) => n + 1).len()
          }",
     );
     assert!(
@@ -9858,7 +9859,7 @@ fn eval_list_update_oob_error_type() {
     // list_update with positive OOB should also use IndexOutOfBounds.
     let err = run_err(
         "fn main() -> Int {
-           collections.List.new().push(10).update(5, fn(n: Int) => n + 1).len()
+           collections.MutableList.new().push(10).update(5, fn(n: Int) => n + 1).len()
          }",
     );
     assert!(
@@ -9876,7 +9877,7 @@ fn eval_list_set_oob_error_type() {
     // list_set with positive OOB should also use IndexOutOfBounds, not TypeError.
     let err = run_err(
         "fn main() -> Int {
-           collections.List.new().push(10).set(5, 0).len()
+           collections.MutableList.new().push(10).set(5, 0).len()
          }",
     );
     assert!(

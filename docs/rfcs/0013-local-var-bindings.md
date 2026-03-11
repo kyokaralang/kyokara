@@ -3,7 +3,7 @@
 - Status: Implemented
 - Owner: Language Design
 - Tracking issue: #393
-- Last updated: 2026-03-08
+- Last updated: 2026-03-11
 
 ## Summary
 
@@ -162,7 +162,7 @@ This means:
 2. Reassignment changes which value the local name refers to.
 3. Values themselves keep their existing semantics:
    - `List`, `Map`, `Set`, `BitSet`, `Deque` stay immutable values
-   - `MutableList`, `MutableMap`, `MutableSet`, `MutableBitSet` stay explicit mutable container types
+   - `MutableList`, `MutableMap`, `MutableSet`, `MutableBitSet`, `MutableDeque` stay explicit mutable container types
 
 Annotated mutable bindings are also allowed:
 
@@ -174,9 +174,9 @@ var time: Int = start_t
 So this remains valid and meaningful:
 
 ```kyokara
-var xs = collections.List.new()
-xs = xs.push(1)
-xs = xs.push(2)
+var xs = collections.MutableList.new().push(2).push(1).to_list()
+xs = xs.sorted()
+xs = xs.reversed()
 ```
 
 This RFC does **not** invert the immutable-default collection model.

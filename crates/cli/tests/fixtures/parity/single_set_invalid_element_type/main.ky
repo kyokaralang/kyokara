@@ -1,6 +1,6 @@
 import collections
 
 fn main() -> Int {
-  let s = collections.Set.new().insert(3.14)
+  let s = collections.MutableSet.new().insert(3.14).to_set()
   s.len()
 }

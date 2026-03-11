@@ -1008,7 +1008,7 @@ mod tests {
     }
 
     #[test]
-    fn cow_collection_chain_case_exercises_shadow_rebinding() -> Result<()> {
+    fn cow_collection_chain_case_exercises_explicit_round_trip_shadow_rebinding() -> Result<()> {
         let root = workspace_root()?;
         let source = fs::read_to_string(
             root.join("tools")
@@ -1018,20 +1018,22 @@ mod tests {
                 .join("main.ky"),
         )?;
         assert!(
-            source.contains("let xs = xs.push("),
-            "case must use same-name list shadow rebinding"
+            source.contains("let xs = collections.MutableList.from_list(xs)"),
+            "case must use same-name list shadow rebinding via MutableList.from_list(...).to_list()"
         );
         assert!(
-            source.contains("let m = m.insert(") && source.contains("let m = m.remove("),
-            "case must use same-name map shadow rebinding"
+            source.contains("let m = collections.MutableMap.from_map(m).remove(i).to_map()")
+                && source.contains("let m = collections.MutableMap.from_map(m).insert("),
+            "case must use same-name map shadow rebinding via MutableMap.from_map(...).to_map()"
         );
         assert!(
-            source.contains("let s = s.insert(") && source.contains("let s = s.remove("),
-            "case must use same-name set shadow rebinding"
+            source.contains("let s = collections.MutableSet.from_set(s).remove(i).to_set()")
+                && source.contains("let s = collections.MutableSet.from_set(s).insert("),
+            "case must use same-name set shadow rebinding via MutableSet.from_set(...).to_set()"
         );
         assert!(
-            source.contains("let q = q.push_back("),
-            "case must use same-name deque shadow rebinding"
+            source.contains("let q = collections.MutableDeque.from_deque(q).push_back("),
+            "case must use same-name deque shadow rebinding via MutableDeque.from_deque(...).to_deque()"
         );
         Ok(())
     }

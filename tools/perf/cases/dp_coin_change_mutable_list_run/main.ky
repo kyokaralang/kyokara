@@ -1,7 +1,7 @@
 import collections
 
 fn main() -> Int {
-  let coins = collections.List.new().push(1).push(3).push(4).push(7)
+  let coins = collections.MutableList.new().push(1).push(3).push(4).push(7).to_list()
   let amount = 60
   let inf = 10000
   let dp = collections.MutableList.new().push(0)

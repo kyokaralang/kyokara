@@ -1,0 +1,86 @@
+import collections
+
+// BitSet and MutableBitSet pair showcase.
+
+fn immutable_bitset_api() -> Int {
+  let empty = collections.BitSet.new(8)
+  let a = empty.with_bit(1).with_bit(3).with_bit(5)
+  let b = collections.BitSet.new(8).with_bit(3).with_bit(4).with_bit(5)
+  let toggled = a.without_bit(1).toggled(4)
+  let union = a.union(b)
+  let intersection = a.intersection(b)
+  let difference = a.difference(b)
+  let xor = a.xor(b)
+  let values = toggled.values().to_list()
+
+  if (
+    empty.size() == 8
+      && empty.count() == 0
+      && empty.is_empty()
+      && !empty.test(0)
+      && toggled.count() == 3
+      && values[0] == 3
+      && values[2] == 5
+      && union.count() == 4
+      && intersection.count() == 2
+      && difference.count() == 1
+      && difference.test(1)
+      && xor.count() == 2
+      && xor.test(1)
+      && xor.test(4)
+  ) {
+    1
+  } else {
+    0
+  }
+}
+
+fn mutable_bitset_api() -> Int {
+  let grown = collections.MutableBitSet.from_bitset(collections.BitSet.new(8).with_bit(1).with_bit(3))
+  let alias = grown
+  let _a = grown.set(0)
+  let _b = grown.reset(1)
+  let _c = alias.flip(2)
+  let values = grown.values().to_list()
+
+  let unioned = collections.MutableBitSet.from_bitset(grown.to_bitset())
+    .union_with(collections.MutableBitSet.new(8).set(3).set(4))
+  let intersected = collections.MutableBitSet.from_bitset(collections.BitSet.new(8).with_bit(0).with_bit(2).with_bit(4))
+    .intersection_with(collections.MutableBitSet.new(8).set(0).set(4).set(7))
+  let differenced = collections.MutableBitSet.from_bitset(collections.BitSet.new(8).with_bit(0).with_bit(2).with_bit(4))
+    .difference_with(collections.MutableBitSet.new(8).set(2))
+  let xored = collections.MutableBitSet.from_bitset(collections.BitSet.new(8).with_bit(0).with_bit(2))
+    .xor_with(collections.MutableBitSet.new(8).set(2).set(5))
+  let snapshot = unioned.to_bitset()
+
+  if (
+    grown.size() == 8
+      && !grown.is_empty()
+      && grown.count() == 3
+      && grown.test(0)
+      && !grown.test(1)
+      && grown.test(2)
+      && values[0] == 0
+      && values[2] == 3
+      && unioned.count() == 4
+      && unioned.test(4)
+      && intersected.count() == 2
+      && intersected.test(0)
+      && intersected.test(4)
+      && differenced.count() == 2
+      && differenced.test(0)
+      && differenced.test(4)
+      && xored.count() == 2
+      && xored.test(0)
+      && xored.test(5)
+      && snapshot.count() == 4
+  ) {
+    1
+  } else {
+    0
+  }
+}
+
+fn main() -> Int {
+  immutable_bitset_api() * 10 + mutable_bitset_api()
+}

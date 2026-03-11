@@ -1,6 +1,11 @@
 import collections
+from Option import Some, None
 
-// Seq usage catalog: lazy traversal sources and collection-first traversal.
+// Seq usage catalog: exhaustive traversal-family examples across the frozen collection surface.
+
+fn base_list() -> List<Int> {
+  collections.MutableList.new().push(3).push(1).push(4).push(1).push(5).to_list()
+}
 
 fn seq_range_count() -> Int {
   (0..<10).count()
@@ -11,6 +16,13 @@ fn seq_map_filter_fold() -> Int {
     .map(fn(n: Int) => n + 1)
     .filter(fn(n: Int) => n % 2 == 0)
     .fold(0, fn(acc: Int, n: Int) => acc + n)
+}
+
+fn seq_flat_map_example() -> Int {
+  let xs = (1..<4)
+    .flat_map(fn(n: Int) => collections.MutableList.new().push(n).push(n * 10).to_list())
+    .to_list()
+  xs.len() * 100 + xs[1] * 10 + xs[5]
 }
 
 fn seq_scan_example() -> Int {
@@ -30,11 +42,18 @@ fn seq_unfold_example() -> Int {
 }
 
 fn seq_from_list() -> Int {
-  let xs = collections.List.new().push(3).push(1).push(4).push(1).push(5)
+  let xs = base_list()
   xs
     .map(fn(n: Int) => n + 1)
     .filter(fn(n: Int) => n > 3)
     .fold(0, fn(acc: Int, n: Int) => acc + n)
+}
+
+fn seq_from_mutable_collections() -> Int {
+  let xs = collections.MutableList.new().push(2).push(4).push(6)
+  let q = collections.MutableDeque.new().push_back(1).push_back(2).push_back(3)
+  xs.fold(0, fn(acc: Int, n: Int) => acc + n) * 10
+    + q.filter(fn(n: Int) => n > 1).count()
 }
 
 fn seq_enumerate_example() -> Int {
@@ -44,7 +63,7 @@ fn seq_enumerate_example() -> Int {
 
 fn seq_zip_example() -> Int {
   let left = (1..<4)
-  let right = collections.List.new().push(10).push(20).push(30).push(40)
+  let right = collections.MutableList.new().push(10).push(20).push(30).push(40).to_list()
   let zs = left.zip(right).to_list()
   zs.len() * 100 + zs[0].left + zs[0].right + zs[2].right
 }
@@ -54,6 +73,21 @@ fn seq_chunks_and_windows_example() -> Int {
   let cs = base.chunks(4).to_list()
   let ws = base.windows(3).to_list()
   cs.len() * 100 + cs[1].len() * 10 + ws.len() + ws[3][0]
+}
+
+fn seq_predicate_terminals_example() -> Int {
+  let xs = base_list()
+  let any_gt4 = if (xs.any(fn(n: Int) => n > 4)) { 1 } else { 0 }
+  let all_pos = if (xs.all(fn(n: Int) => n > 0)) { 1 } else { 0 }
+  let found = xs.find(fn(n: Int) => n == 4).unwrap_or(-1)
+  let counted = xs.count(fn(n: Int) => n == 1)
+  let has_five = if (xs.contains(5)) { 1 } else { 0 }
+  any_gt4 * 10000 + all_pos * 1000 + found * 100 + counted * 10 + has_five
+}
+
+fn seq_frequencies_example() -> Int {
+  let counts = collections.MutableList.new().push(3).push(1).push(3).push(2).frequencies()
+  counts.get(3).unwrap_or(0) * 100 + counts.len() * 10 + counts.keys().count()
 }
 
 fn seq_string_producers_example() -> Int {
@@ -67,8 +101,8 @@ fn seq_string_producers_example() -> Int {
 }
 
 fn seq_map_set_producers_example() -> Int {
-  let m = collections.Map.new().insert("k1", 3).insert("k2", 5)
-  let s = collections.Set.new().insert("a").insert("b").insert("a")
+  let m = collections.MutableMap.new().insert("k1", 3).insert("k2", 5).to_map()
+  let s = collections.MutableSet.new().insert("a").insert("b").insert("a").to_set()
   let key_count = m.keys().count()
   let value_sum = m.values().fold(0, fn(acc: Int, n: Int) => acc + n)
   let set_count = s.values().count()
@@ -90,12 +124,16 @@ fn int_pow_example() -> Int {
 fn main() -> Int {
   seq_range_count()
     + seq_map_filter_fold()
+    + seq_flat_map_example()
     + seq_scan_example()
     + seq_unfold_example()
     + seq_from_list()
+    + seq_from_mutable_collections()
     + seq_enumerate_example()
     + seq_zip_example()
     + seq_chunks_and_windows_example()
+    + seq_predicate_terminals_example()
+    + seq_frequencies_example()
     + seq_string_producers_example()
     + seq_map_set_producers_example()
     + seq_reiterable_example()
