@@ -1,6 +1,6 @@
 # RFC 0011: Static Trait System and Constraint Semantics
 
-- Status: Draft
+- Status: Implemented
 - Owner: Language Design
 - Tracking issue: [#253](https://github.com/kyokaralang/kyokara/issues/253)
 - Last updated: 2026-03-11

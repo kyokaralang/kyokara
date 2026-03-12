@@ -1,17 +1,17 @@
-# RFC 0003: Opaque Traversal Constructor Surface (`..<` + `.unfold`, no public `Seq`)
+# RFC 0003: Opaque Traversal Constructor Surface (`..<` + `.unfold`, no public `Seq` constructors)
 
-- Status: Accepted
+- Status: Implemented
 - Owner: Language Design
 - Tracking issue: TBD
-- Last updated: 2026-03-04
+- Last updated: 2026-03-11
 
 ## Summary
 
-Hide traversal engine types from user surface completely.
+Hide traversal engine constructors from user surface.
 
 1. Integer range constructor is expression syntax: `start..<end`.
 2. Stateful generator constructor is universal method syntax: `seed.unfold(step)`.
-3. Public `Seq` constructor/type surface is removed (`Seq.range`, `Seq.unfold`, `Seq<T>` are invalid in user code).
+3. Public `Seq` constructor surface is removed (`Seq.range` and `Seq.unfold` are invalid in user code), while `Seq<T>` remains valid where APIs intentionally expose traversal types.
 
 Traversal remains lazy and re-iterable internally via the existing runtime/compiler traversal plan.
 
@@ -20,7 +20,7 @@ Traversal remains lazy and re-iterable internally via the existing runtime/compi
 After RFC 0002, traversal became collection-first for method chains, but constructor/type leakage still existed:
 
 1. Users could still call `Seq.range(...)` and `Seq.unfold(...)`.
-2. Users could still write `Seq<T>` in signatures.
+2. Those constructor spellings made `Seq` look like the canonical owner of traversal construction.
 3. This kept a mixed mental model and introduced unnecessary boundary mistakes.
 
 v0 design goal is a minimal, obvious, and predictable surface for AI generation.
@@ -31,7 +31,7 @@ In scope:
 
 1. Range constructor syntax (`..<`) in lexer/parser/fmt/type/runtime/lowering.
 2. Universal `.unfold(step)` method surface.
-3. Removal of public `Seq` constructor and annotation surface.
+3. Removal of public `Seq` constructor surface.
 4. Docs/completions/diagnostics alignment to opaque traversal surface.
 
 Out of scope:
@@ -39,6 +39,7 @@ Out of scope:
 1. Traversal runtime redesign/fusion.
 2. New traversal operations beyond constructor changes.
 3. Migration hints (v0 hard break policy).
+4. Removing `Seq<T>` from advanced type or adaptation positions.
 
 ## Proposal
 
@@ -65,19 +66,19 @@ Semantics are unchanged:
 1. `Option.None` stops.
 2. `Option.Some({ value, state: next })` emits `value` and continues with `next`.
 
-### P3. Remove public `Seq` surface
+### P3. Remove public `Seq` constructor surface
 
 Hard breaks:
 
 1. `Seq.range(...)` rejected.
 2. `Seq.unfold(...)` rejected.
-3. `Seq<T>` type annotation rejected.
+3. Construction must use `..<` or `.unfold(step)`, not `Seq.*`.
 
-Internal `Seq` identity remains implementation detail only.
+`Seq<T>` remains available in signatures and trait methods that intentionally expose traversal types.
 
 ### P4. User-facing hygiene
 
-1. Diagnostics should not require users to reason about public `Seq`.
+1. Diagnostics should not require users to reason about `Seq` for common construction and traversal code.
 2. Completion/symbol outputs should not advertise internal `$core_*` names.
 3. Docs/examples must use only `..<` and `.unfold(step)` for traversal construction.
 
@@ -88,7 +89,6 @@ Before:
 ```kyokara
 let xs = Seq.range(0, 5)
 let ys = Seq.unfold(0, step)
-fn f(s: Seq<Int>) -> Int { s.count() }
 ```
 
 After:
@@ -96,15 +96,15 @@ After:
 ```kyokara
 let xs = (0..<5)
 let ys = (0).unfold(step)
-// Traversal is not a nameable public type.
+fn f(s: Seq<Int>) -> Int { s.count() } // Advanced traversal type positions remain valid.
 ```
 
 ## Acceptance Criteria
 
 1. Canonical construction is exactly `..<` and `.unfold(step)`.
-2. Public `Seq.*` and `Seq<T>` are rejected.
+2. Public `Seq.range` and `Seq.unfold` are rejected, while `Seq<T>` remains available only where APIs intentionally expose traversal types.
 3. Existing traversal laziness and short-circuit behavior remain unchanged.
-4. Docs/examples/completions/diagnostics reflect the opaque traversal model.
+4. Docs/examples/completions/diagnostics reflect the opaque constructor model.
 
 ## Alternatives Considered
 
@@ -135,7 +135,7 @@ Cons:
 
 Decision: rejected.
 
-### A3. Keep `Seq.range` / `Seq.unfold` and `Seq<T>` public
+### A3. Keep `Seq.range` / `Seq.unfold` public
 
 Pros:
 
@@ -143,7 +143,7 @@ Pros:
 
 Cons:
 
-1. Preserves constructor/type leakage of internal traversal engine names.
+1. Preserves constructor leakage of internal traversal engine names.
 2. Keeps known AI pass@1 boundary confusion.
 
 Decision: rejected.

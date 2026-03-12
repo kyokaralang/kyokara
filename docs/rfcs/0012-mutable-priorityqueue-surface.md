@@ -1,10 +1,10 @@
 # RFC 0012: MutablePriorityQueue Surface
 
-- Status: Draft
+- Status: Implemented
 - Owner: Language Design
 - Tracking issue: [#257](https://github.com/kyokaralang/kyokara/issues/257)
 - Depends on: RFC 0011
-- Last updated: 2026-03-07
+- Last updated: 2026-03-11
 
 ## Summary
 

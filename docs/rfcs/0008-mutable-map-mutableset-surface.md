@@ -1,9 +1,10 @@
 # RFC 0008: MutableMap and MutableSet Surface (Follow-up to RFC 0005)
 
-- Status: Draft
+- Status: Superseded
 - Owner: Language Design
 - Tracking issue: [#365](https://github.com/kyokaralang/kyokara/issues/365)
 - Last updated: 2026-03-06
+- Superseded by: RFC 0009
 
 ## Summary
 

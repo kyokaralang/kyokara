@@ -1,9 +1,10 @@
 # RFC 0005: MutableList Naming and Placement
 
-- Status: Draft
+- Status: Superseded
 - Owner: Language Design
 - Tracking issue: TBD
 - Last updated: 2026-03-05
+- Superseded by: RFC 0009
 
 ## Summary
 

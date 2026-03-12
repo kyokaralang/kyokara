@@ -1,9 +1,9 @@
 # RFC 0001: API Surface Law (AI-first)
 
-- Status: Draft
+- Status: Accepted
 - Owner: Language Design
 - Tracking issue: [#243](https://github.com/kyokaralang/kyokara/issues/243)
-- Last updated: 2026-03-09
+- Last updated: 2026-03-11
 
 ## Summary
 
@@ -221,6 +221,7 @@ Human ergonomics sugar is allowed only if lossless and equivalent to canonical A
 ### L15. Evolution policy (`SHOULD`)
 
 Prefer additive evolution. Breaking changes require deprecation windows and migration guidance/tooling.
+Before language freeze, a ratified RFC may still approve a deliberate hard-break cleanup when it is explicitly framed as pre-freeze surface finalization.
 
 ### L16. Core behavior binds by identity, not names (`MUST`)
 

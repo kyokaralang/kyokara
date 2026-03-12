@@ -1,9 +1,9 @@
 # RFC 0014: Top-Level Immutable Let Bindings
 
-- Status: Draft
+- Status: Implemented
 - Owner: Language Design
 - Tracking issue: #410
-- Last updated: 2026-03-09
+- Last updated: 2026-03-11
 
 ## Summary
 

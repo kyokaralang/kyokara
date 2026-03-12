@@ -1,9 +1,10 @@
 # RFC 0009: Collection Surface Freeze
 
-- Status: Draft
+- Status: Implemented
 - Owner: Language Design
 - Tracking issue: TBD
 - Last updated: 2026-03-11
+- Supersedes: RFC 0005, RFC 0008
 
 ## Summary
 

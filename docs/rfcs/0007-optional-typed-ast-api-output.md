@@ -1,9 +1,10 @@
 # RFC 0007: Optional `typed_ast` Output for Compiler API (Dual-Mode Contract)
 
-- Status: Accepted
+- Status: Implemented
 - Authors: Kyokara maintainers
 - Tracking issue: [#241](https://github.com/kyokaralang/kyokara/issues/241)
 - Related: [#235](https://github.com/kyokaralang/kyokara/issues/235) (schema versioning, deferred)
+- Last updated: 2026-03-11
 
 ## Summary
 
@@ -162,4 +163,3 @@ Required guardrails:
 1. Token/trivia-preserving AST reconstruction.
 2. Mandatory always-on typed AST output.
 3. Schema version field and negotiation mechanism (deferred to #235).
-

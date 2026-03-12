@@ -1,16 +1,16 @@
-# RFC 0002: Collection-First Traversal Surface (Hide `Seq` from User API)
+# RFC 0002: Collection-First Traversal Surface (Keep `Seq` out of Canonical Method Chains)
 
-- Status: Accepted
+- Status: Implemented
 - Owner: Language Design
 - Tracking issue: TBD
-- Last updated: 2026-03-09
+- Last updated: 2026-03-11
 
 ## Summary
 
 Adopt a single intentional user-facing traversal model:
 
 1. Traversal methods are called directly on source values (`List`, `Deque`, `Map.keys()`, `Set.values()`, `String.lines()/chars()`, range/unfold sources).
-2. `Seq` remains an internal execution type and is not part of canonical user API.
+2. `Seq` is not part of the canonical day-to-day traversal method spelling, but remains available in advanced type and adaptation positions where APIs intentionally expose it.
 3. `xs.seq()` is removed from canonical surface (hard break in v0).
 
 This RFC is about API clarity and pass@1 reliability for AI-generated code.
@@ -109,13 +109,14 @@ These operations are available on traversal-capable values, including:
 
 ### P2. `Seq` visibility policy
 
-`Seq` is runtime/compiler internal and is not canonical in user API docs, examples, or diagnostics.
+`Seq` is not part of the canonical day-to-day traversal method surface.
 
 Consequences:
 
 1. `xs.seq()` is removed from canonical user surface.
-2. Existing internal execution model may still use `Seq` implementation types.
-3. User-facing errors should not require understanding internal `Seq` to fix common code.
+2. Docs/examples/diagnostics for ordinary traversal should prefer direct traversal on the source value.
+3. `Seq<T>` may still appear in advanced type and adaptation positions, such as signatures or `IntoTraversal.into_seq(self) -> Seq<T>`.
+4. User-facing errors for ordinary traversal should not require understanding internal `Seq` to fix common code.
 
 ### P3. Source constructors
 
@@ -155,6 +156,7 @@ Key rule:
 1. transform operations return traversal-capable chain values.
 2. terminal operations execute the chain.
 3. `to_list()` materializes.
+4. Advanced APIs may still expose `Seq<T>`, but ordinary traversal chains should not require it.
 
 ## Before/After
 
@@ -252,7 +254,7 @@ Decision: reject permanent dual surface.
 
 1. Day-to-day traversal code never requires `seq()`.
 2. Common previous near-miss (`List.enumerate`) is valid by construction.
-3. No loss of traversal expressiveness compared with current `Seq` surface.
+3. No loss of traversal expressiveness compared with current `Seq` surface, including advanced APIs that intentionally expose `Seq<T>`.
 4. `count()` and `count(predicate)` are both explicitly documented as the terminal count family, `contains(value)` is documented as the direct membership terminal, and `frequencies()` is documented as the canonical full-histogram terminal.
 5. RFC 0001 law text updated to reflect canonical model and the `L7A` constrained-call-family rule.
 
