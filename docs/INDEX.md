@@ -11,6 +11,7 @@ If a topic appears in multiple files, this index decides the source of truth.
 | Language/runtime design and roadmap | [`docs/design-v0.md`](design-v0.md) | Includes AI-first feature tracker and drift register. |
 | Formal grammar and parser contract | [`docs/grammar.md`](grammar.md) | Parser-facing normative grammar. |
 | API shape and naming law | [`docs/rfcs/0001-api-surface-law.md`](rfcs/0001-api-surface-law.md) | Normative API surface constraints. |
+| Module taxonomy and capability boundaries | [`docs/rfcs/0004-module-taxonomy-and-capability-boundaries.md`](rfcs/0004-module-taxonomy-and-capability-boundaries.md) | Visibility vs authority model, explicit collection imports, and built-in effect modules with manifest-gated runtime authority. |
 | Compiler API output contract | [`docs/rfcs/0007-optional-typed-ast-api-output.md`](rfcs/0007-optional-typed-ast-api-output.md) | Default diagnostics/holes/symbol_graph + optional `typed_ast` opt-in. |
 | Traversal surface policy | [`docs/rfcs/0002-collection-first-traversal-surface.md`](rfcs/0002-collection-first-traversal-surface.md), [`docs/rfcs/0003-opaque-traversal-constructor-surface.md`](rfcs/0003-opaque-traversal-constructor-surface.md) | Collection-first methods plus opaque traversal constructors; advanced `Seq<T>` type positions remain allowed where APIs intentionally expose them. |
 | Loop control surface | [`docs/rfcs/0006-loop-control-surface.md`](rfcs/0006-loop-control-surface.md) | Statement-only `while` / `for` / `break` / `continue`; RFC 0013 completes loop-carried local state. |
