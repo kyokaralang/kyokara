@@ -2,9 +2,9 @@
 
 - Status: Draft
 - Owner: Language Design
-- Tracking issue: TBD
+- Tracking issue: [#440](https://github.com/kyokaralang/kyokara/issues/440)
 - Depends on: RFC 0001, RFC 0004
-- Last updated: 2026-03-09
+- Last updated: 2026-03-13
 
 ## Summary
 
@@ -315,6 +315,28 @@ Expected result:
 1. add a dependency entry under `[dependencies]`,
 2. resolve and write `kyokara.lock`,
 3. make the package available as `deps.json`.
+
+## Incremental rollout
+
+This RFC describes the target package architecture, but it is expected to land in phases rather than one all-at-once implementation.
+
+Planned rollout shape:
+
+1. Phase 0: refactor project loading around an explicit project/package graph boundary.
+2. Phase 1: support `kyokara.toml`, package root detection, and `lib` / `bin` source roots.
+3. Phase 2: support local path dependencies plus the reserved `deps.<alias>` import namespace.
+4. Phase 3: make package-aware loading consistent across check/run/eval/API/LSP/refactor flows.
+5. Phase 4: add `kyokara.lock` and deterministic resolution behavior.
+6. Phase 5+: add remote dependency sources and package-management UX.
+
+The first intended shippable package slice is:
+
+1. package root + manifest parsing,
+2. local path dependencies,
+3. `deps.<alias>` imports,
+4. no registry requirement for the first landing.
+
+Registry publishing, git dependencies, and richer package-management commands are follow-up phases unless explicitly pulled earlier by a ratified scope decision.
 
 ## Canonical examples
 
