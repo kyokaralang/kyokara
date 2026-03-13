@@ -75,6 +75,50 @@ enum Command {
         #[arg(long)]
         project: bool,
     },
+    /// Add a package dependency to a package manifest.
+    Add {
+        /// Path to the package entry file (`src/main.ky` or `src/lib.ky`).
+        file: String,
+        /// Local dependency alias used under `deps.<alias>`.
+        #[arg(long = "as")]
+        as_alias: String,
+        /// Local path dependency source.
+        #[arg(long)]
+        path: Option<String>,
+        /// Git dependency source.
+        #[arg(long)]
+        git: Option<String>,
+        /// Exact git revision for `--git`.
+        #[arg(long)]
+        rev: Option<String>,
+        /// Registry package ID for registry dependencies.
+        package: Option<String>,
+        /// Registry version requirement for registry dependencies.
+        #[arg(long)]
+        version: Option<String>,
+        /// Optional external registry root to copy packages from.
+        #[arg(long)]
+        registry: Option<String>,
+    },
+    /// Refresh package dependency resolution.
+    Update {
+        /// Path to the package entry file (`src/main.ky` or `src/lib.ky`).
+        file: String,
+        /// Optional single alias to refresh from the external registry.
+        #[arg(long)]
+        alias: Option<String>,
+        /// Optional external registry root to copy packages from.
+        #[arg(long)]
+        registry: Option<String>,
+    },
+    /// Publish a library package into a source-first registry store.
+    Publish {
+        /// Path to the package entry file (`src/lib.ky`).
+        file: String,
+        /// Registry root directory.
+        #[arg(long)]
+        registry: String,
+    },
     /// Apply a semantic refactor to a Kyokara source file.
     Refactor {
         /// Path to the .ky source file.
@@ -108,6 +152,12 @@ enum Command {
         #[arg(long)]
         project: bool,
     },
+}
+
+enum DependencySource {
+    Path { path: String },
+    Git { git: String, rev: String },
+    Registry { package: String, version: String },
 }
 
 fn main() {
@@ -303,6 +353,60 @@ fn main() {
                     eprintln!("error: {e}");
                     std::process::exit(1);
                 }
+            }
+        }
+        Command::Add {
+            file,
+            as_alias,
+            path,
+            git,
+            rev,
+            package,
+            version,
+            registry,
+        } => {
+            let entry_path = std::path::Path::new(&file);
+            let source = match (path, git, rev, package, version) {
+                (Some(path), None, None, None, None) => DependencySource::Path { path },
+                (None, Some(git), Some(rev), None, None) => DependencySource::Git { git, rev },
+                (None, None, None, Some(package), Some(version)) => {
+                    DependencySource::Registry { package, version }
+                }
+                _ => {
+                    eprintln!(
+                        "error: add requires exactly one source form: --path, --git with --rev, or <package> with --version"
+                    );
+                    std::process::exit(1);
+                }
+            };
+            let registry_root = registry.as_deref().map(std::path::Path::new);
+            if let Err(message) =
+                add_package_dependency(entry_path, source, &as_alias, registry_root)
+            {
+                eprintln!("error: {message}");
+                std::process::exit(1);
+            }
+        }
+        Command::Update {
+            file,
+            alias,
+            registry,
+        } => {
+            let entry_path = std::path::Path::new(&file);
+            let registry_root = registry.as_deref().map(std::path::Path::new);
+            if let Err(message) =
+                update_package_dependencies(entry_path, alias.as_deref(), registry_root)
+            {
+                eprintln!("error: {message}");
+                std::process::exit(1);
+            }
+        }
+        Command::Publish { file, registry } => {
+            let entry_path = std::path::Path::new(&file);
+            let registry_root = std::path::Path::new(&registry);
+            if let Err(message) = publish_package_to_registry(entry_path, registry_root) {
+                eprintln!("error: {message}");
+                std::process::exit(1);
             }
         }
         Command::Lsp => {
@@ -547,6 +651,297 @@ fn sync_project_lockfile_if_needed(
         })
 }
 
+fn add_package_dependency(
+    entry_file: &std::path::Path,
+    source: DependencySource,
+    alias: &str,
+    registry_root: Option<&std::path::Path>,
+) -> Result<(), String> {
+    if !is_identifier(alias) {
+        return Err(format!(
+            "dependency alias `{alias}` must be a valid identifier"
+        ));
+    }
+
+    let manifest_path = package_manifest_path_for_entry(entry_file)?;
+    if let DependencySource::Registry { package, .. } = &source
+        && let Some(registry_root) = registry_root
+    {
+        copy_registry_family_into_local_store(&manifest_path, registry_root, package)?;
+    }
+
+    update_manifest_dependencies(&manifest_path, |dependencies| {
+        dependencies.insert(alias.to_string(), dependency_source_to_toml_value(source));
+        Ok(())
+    })?;
+
+    sync_project_lockfile_if_needed(entry_file, true)
+}
+
+fn update_package_dependencies(
+    entry_file: &std::path::Path,
+    alias: Option<&str>,
+    registry_root: Option<&std::path::Path>,
+) -> Result<(), String> {
+    let manifest_path = package_manifest_path_for_entry(entry_file)?;
+    if let Some(registry_root) = registry_root {
+        let manifest = read_manifest_value(&manifest_path)?;
+        if let Some(dependencies) = manifest.get("dependencies").and_then(toml::Value::as_table) {
+            for (dep_alias, spec) in dependencies {
+                if alias.is_some_and(|requested| requested != dep_alias) {
+                    continue;
+                }
+                let Some(spec_table) = spec.as_table() else {
+                    continue;
+                };
+                let Some(package) = spec_table.get("package").and_then(toml::Value::as_str) else {
+                    continue;
+                };
+                copy_registry_family_into_local_store(&manifest_path, registry_root, package)?;
+            }
+        }
+    }
+
+    let _ = std::fs::remove_file(
+        manifest_path
+            .parent()
+            .expect("manifest path should have parent")
+            .join("kyokara.lock"),
+    );
+    sync_project_lockfile_if_needed(entry_file, true)
+}
+
+fn publish_package_to_registry(
+    entry_file: &std::path::Path,
+    registry_root: &std::path::Path,
+) -> Result<(), String> {
+    let manifest_path = package_manifest_path_for_entry(entry_file)?;
+    let manifest = read_manifest_value(&manifest_path)?;
+    let package = manifest
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| {
+            format!(
+                "invalid package manifest `{}`: missing [package] table",
+                manifest_path.display()
+            )
+        })?;
+    let kind = package
+        .get("kind")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| {
+            format!(
+                "invalid package manifest `{}`: package.kind must be present",
+                manifest_path.display()
+            )
+        })?;
+    if kind != "lib" {
+        return Err("only lib packages are publishable".to_string());
+    }
+    let package_name = package
+        .get("name")
+        .and_then(toml::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "invalid package manifest `{}`: package.name must be a non-empty string",
+                manifest_path.display()
+            )
+        })?;
+    let version = package
+        .get("version")
+        .and_then(toml::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "invalid package manifest `{}`: published packages require package.version",
+                manifest_path.display()
+            )
+        })?;
+
+    if let Some(dependencies) = manifest.get("dependencies").and_then(toml::Value::as_table) {
+        for (alias, spec) in dependencies {
+            let Some(spec_table) = spec.as_table() else {
+                continue;
+            };
+            if spec_table.contains_key("path") {
+                return Err(format!(
+                    "package `{package_name}` is not publishable because dependency `{alias}` uses path dependencies"
+                ));
+            }
+            if spec_table.contains_key("git") {
+                return Err(format!(
+                    "package `{package_name}` is not publishable because dependency `{alias}` uses git dependencies"
+                ));
+            }
+        }
+    }
+
+    let package_root = manifest_path
+        .parent()
+        .expect("manifest path should have parent");
+    let dest_root = registry_root
+        .join("packages")
+        .join(package_name)
+        .join(version);
+    if dest_root.exists() {
+        return Err(format!(
+            "package `{package_name}` version `{version}` is already published in `{}`",
+            registry_root.display()
+        ));
+    }
+    copy_dir_recursive(package_root, &dest_root, |path| {
+        path.file_name().is_some_and(|name| name == ".kyokara") || path.starts_with(&dest_root)
+    })?;
+    Ok(())
+}
+
+fn dependency_source_to_toml_value(source: DependencySource) -> toml::Value {
+    let mut table = toml::map::Map::new();
+    match source {
+        DependencySource::Path { path } => {
+            table.insert("path".to_string(), toml::Value::String(path));
+        }
+        DependencySource::Git { git, rev } => {
+            table.insert("git".to_string(), toml::Value::String(git));
+            table.insert("rev".to_string(), toml::Value::String(rev));
+        }
+        DependencySource::Registry { package, version } => {
+            table.insert("package".to_string(), toml::Value::String(package));
+            table.insert("version".to_string(), toml::Value::String(version));
+        }
+    }
+    toml::Value::Table(table)
+}
+
+fn package_manifest_path_for_entry(
+    entry_file: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    if !kyokara_hir::has_package_manifest_candidate(entry_file) {
+        return Err(format!(
+            "`{}` is not a package entry file with a nearby kyokara.toml",
+            entry_file.display()
+        ));
+    }
+    entry_file
+        .parent()
+        .and_then(std::path::Path::parent)
+        .map(|path| path.join("kyokara.toml"))
+        .ok_or_else(|| {
+            format!(
+                "cannot locate package manifest for `{}`",
+                entry_file.display()
+            )
+        })
+}
+
+fn read_manifest_value(manifest_path: &std::path::Path) -> Result<toml::Value, String> {
+    let source = std::fs::read_to_string(manifest_path)
+        .map_err(|err| format!("cannot read `{}`: {err}", manifest_path.display()))?;
+    source.parse::<toml::Value>().map_err(|err| {
+        format!(
+            "invalid package manifest `{}`: {err}",
+            manifest_path.display()
+        )
+    })
+}
+
+fn update_manifest_dependencies(
+    manifest_path: &std::path::Path,
+    mutate: impl FnOnce(&mut toml::map::Map<String, toml::Value>) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut manifest = read_manifest_value(manifest_path)?;
+    let manifest_table = manifest.as_table_mut().ok_or_else(|| {
+        format!(
+            "invalid package manifest `{}`: manifest must be a TOML table",
+            manifest_path.display()
+        )
+    })?;
+    let dependencies = manifest_table
+        .entry("dependencies".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    let dependencies = dependencies.as_table_mut().ok_or_else(|| {
+        format!(
+            "invalid package manifest `{}`: [dependencies] must be a table",
+            manifest_path.display()
+        )
+    })?;
+
+    mutate(dependencies)?;
+
+    let rendered =
+        toml::to_string(&manifest).map_err(|err| format!("cannot render manifest: {err}"))?;
+    std::fs::write(manifest_path, rendered)
+        .map_err(|err| format!("cannot write `{}`: {err}", manifest_path.display()))
+}
+
+fn copy_registry_family_into_local_store(
+    manifest_path: &std::path::Path,
+    registry_root: &std::path::Path,
+    package: &str,
+) -> Result<(), String> {
+    let source_root = registry_root.join("packages").join(package);
+    if !source_root.is_dir() {
+        return Err(format!(
+            "registry package `{package}` not found in `{}`",
+            registry_root.display()
+        ));
+    }
+    let package_root = manifest_path
+        .parent()
+        .expect("manifest path should have parent");
+    let dest_root = package_root
+        .join(".kyokara")
+        .join("registry")
+        .join("packages")
+        .join(package);
+    copy_dir_recursive(&source_root, &dest_root, |_| false)
+}
+
+fn copy_dir_recursive(
+    src: &std::path::Path,
+    dst: &std::path::Path,
+    skip: impl Fn(&std::path::Path) -> bool + Copy,
+) -> Result<(), String> {
+    if skip(src) {
+        return Ok(());
+    }
+    if src.is_dir() {
+        std::fs::create_dir_all(dst)
+            .map_err(|err| format!("cannot create `{}`: {err}", dst.display()))?;
+        for entry in std::fs::read_dir(src)
+            .map_err(|err| format!("cannot read `{}`: {err}", src.display()))?
+        {
+            let entry = entry.map_err(|err| format!("cannot read `{}`: {err}", src.display()))?;
+            let child_src = entry.path();
+            let child_dst = dst.join(entry.file_name());
+            copy_dir_recursive(&child_src, &child_dst, skip)?;
+        }
+        return Ok(());
+    }
+
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("cannot create `{}`: {err}", parent.display()))?;
+    }
+    std::fs::copy(src, dst).map(|_| ()).map_err(|err| {
+        format!(
+            "cannot copy `{}` to `{}`: {err}",
+            src.display(),
+            dst.display()
+        )
+    })
+}
+
+fn is_identifier(raw: &str) -> bool {
+    let mut chars = raw.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
 /// Check if there are other `.ky` files alongside the given file.
 fn has_sibling_ky_files(entry: &std::path::Path, dir: &std::path::Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -602,12 +997,82 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::BTreeMap;
     use std::io;
+    use std::process::Command as ProcessCommand;
 
     fn patched(file: &str, source: &str) -> kyokara_api::PatchedSourceDto {
         kyokara_api::PatchedSourceDto {
             file: file.to_string(),
             source: source.to_string(),
         }
+    }
+
+    fn init_git_package_repo(
+        repo_dir: &std::path::Path,
+        package_name: &str,
+        version: &str,
+        lib_source: &str,
+    ) -> String {
+        let src_dir = repo_dir.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(
+            repo_dir.join("kyokara.toml"),
+            format!(
+                "[package]\nname = \"{package_name}\"\nversion = \"{version}\"\nedition = \"2026\"\nkind = \"lib\"\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(src_dir.join("lib.ky"), lib_source).unwrap();
+
+        let run = |args: &[&str]| {
+            let output = ProcessCommand::new("git")
+                .args(args)
+                .current_dir(repo_dir)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {:?} should succeed\nstdout:\n{}\nstderr:\n{}",
+                args,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+
+        run(&["init", "-q"]);
+        run(&["config", "user.name", "Kyokara Tests"]);
+        run(&["config", "user.email", "tests@kyokara.invalid"]);
+        run(&["add", "."]);
+        run(&["commit", "-qm", "init"]);
+
+        let output = ProcessCommand::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo_dir)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    fn write_registry_package(
+        registry_root: &std::path::Path,
+        package_name: &str,
+        version: &str,
+        lib_source: &str,
+    ) {
+        let package_dir = registry_root
+            .join("packages")
+            .join(package_name)
+            .join(version);
+        let src_dir = package_dir.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(
+            package_dir.join("kyokara.toml"),
+            format!(
+                "[package]\nname = \"{package_name}\"\nversion = \"{version}\"\nedition = \"2026\"\nkind = \"lib\"\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(src_dir.join("lib.ky"), lib_source).unwrap();
     }
 
     #[test]
@@ -905,6 +1370,238 @@ mod tests {
         assert!(
             lockfile.contains("json = { path = \"../json-pkg\" }"),
             "expected lockfile to include dependency snapshot, got: {lockfile}"
+        );
+    }
+
+    #[test]
+    fn add_package_dependency_adds_git_dependency_and_syncs_lockfile() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        let git_repo = dir.path().join("git-json");
+        std::fs::create_dir_all(&src_dir).unwrap();
+
+        let git_rev = init_git_package_repo(
+            &git_repo,
+            "acme/git-json",
+            "0.2.0",
+            "pub fn from_git() -> Int { 7 }\n",
+        );
+
+        let main_path = src_dir.join("main.ky");
+        std::fs::write(
+            dir.path().join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .unwrap();
+        std::fs::write(&main_path, "fn main() -> Int { 0 }\n").unwrap();
+
+        add_package_dependency(
+            &main_path,
+            DependencySource::Git {
+                git: git_repo.display().to_string(),
+                rev: git_rev.clone(),
+            },
+            "git_json",
+            None,
+        )
+        .expect("git add should succeed");
+
+        let manifest = std::fs::read_to_string(dir.path().join("kyokara.toml")).unwrap();
+        let lockfile = std::fs::read_to_string(dir.path().join("kyokara.lock")).unwrap();
+        let manifest_toml = manifest.parse::<toml::Value>().unwrap();
+        let manifest_dep = manifest_toml
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .and_then(|deps| deps.get("git_json"))
+            .and_then(toml::Value::as_table)
+            .unwrap();
+
+        assert!(
+            manifest_dep
+                .get("git")
+                .and_then(toml::Value::as_str)
+                .is_some_and(|value| value == git_repo.display().to_string()),
+            "expected git dependency in manifest, got: {manifest}"
+        );
+        assert!(
+            manifest_dep
+                .get("rev")
+                .and_then(toml::Value::as_str)
+                .is_some_and(|value| value == git_rev),
+            "expected git revision in manifest, got: {manifest}"
+        );
+        assert!(
+            lockfile.contains(&format!(
+                "git_json = {{ git = \"{}\", rev = \"{git_rev}\" }}",
+                git_repo.display()
+            )),
+            "expected git dependency in lockfile, got: {lockfile}"
+        );
+    }
+
+    #[test]
+    fn add_package_dependency_copies_registry_package_and_syncs_lockfile() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        let registry_root = dir.path().join("registry");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        write_registry_package(
+            &registry_root,
+            "core/json",
+            "1.4.2",
+            "pub fn from_registry() -> Int { 35 }\n",
+        );
+
+        let main_path = src_dir.join("main.ky");
+        std::fs::write(
+            dir.path().join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .unwrap();
+        std::fs::write(&main_path, "fn main() -> Int { 0 }\n").unwrap();
+
+        add_package_dependency(
+            &main_path,
+            DependencySource::Registry {
+                package: "core/json".to_string(),
+                version: "^1.4.0".to_string(),
+            },
+            "json",
+            Some(&registry_root),
+        )
+        .expect("registry add should succeed");
+
+        let manifest = std::fs::read_to_string(dir.path().join("kyokara.toml")).unwrap();
+        let lockfile = std::fs::read_to_string(dir.path().join("kyokara.lock")).unwrap();
+        let local_registry_manifest = dir
+            .path()
+            .join(".kyokara")
+            .join("registry")
+            .join("packages")
+            .join("core/json")
+            .join("1.4.2")
+            .join("kyokara.toml");
+        let manifest_toml = manifest.parse::<toml::Value>().unwrap();
+        let manifest_dep = manifest_toml
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .and_then(|deps| deps.get("json"))
+            .and_then(toml::Value::as_table)
+            .unwrap();
+
+        assert!(
+            manifest_dep
+                .get("package")
+                .and_then(toml::Value::as_str)
+                .is_some_and(|value| value == "core/json"),
+            "expected registry dependency in manifest, got: {manifest}"
+        );
+        assert!(
+            manifest_dep
+                .get("version")
+                .and_then(toml::Value::as_str)
+                .is_some_and(|value| value == "^1.4.0"),
+            "expected registry version requirement in manifest, got: {manifest}"
+        );
+        assert!(
+            lockfile.contains("json = { package = \"core/json\", version = \"1.4.2\" }"),
+            "expected exact registry version in lockfile, got: {lockfile}"
+        );
+        assert!(
+            local_registry_manifest.is_file(),
+            "expected registry package to be copied locally"
+        );
+    }
+
+    #[test]
+    fn update_package_dependencies_refreshes_registry_lockfile_to_newer_matching_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        let registry_root = dir.path().join("registry");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        write_registry_package(
+            &registry_root,
+            "core/json",
+            "1.4.2",
+            "pub fn from_registry() -> Int { 35 }\n",
+        );
+
+        let main_path = src_dir.join("main.ky");
+        std::fs::write(
+            dir.path().join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .unwrap();
+        std::fs::write(&main_path, "fn main() -> Int { 0 }\n").unwrap();
+
+        add_package_dependency(
+            &main_path,
+            DependencySource::Registry {
+                package: "core/json".to_string(),
+                version: "^1.4.0".to_string(),
+            },
+            "json",
+            Some(&registry_root),
+        )
+        .expect("registry add should succeed");
+
+        write_registry_package(
+            &registry_root,
+            "core/json",
+            "1.5.0",
+            "pub fn from_registry() -> Int { 40 }\n",
+        );
+        update_package_dependencies(&main_path, None, Some(&registry_root))
+            .expect("registry update should succeed");
+
+        let lockfile = std::fs::read_to_string(dir.path().join("kyokara.lock")).unwrap();
+        assert!(
+            lockfile.contains("json = { package = \"core/json\", version = \"1.5.0\" }"),
+            "expected updated registry version in lockfile, got: {lockfile}"
+        );
+    }
+
+    #[test]
+    fn publish_package_to_registry_copies_lib_package_and_rejects_path_dependencies() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry_root = dir.path().join("registry");
+        let src_dir = dir.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+
+        let lib_path = src_dir.join("lib.ky");
+        std::fs::write(
+            dir.path().join("kyokara.toml"),
+            "[package]\nname = \"acme/json\"\nversion = \"1.2.0\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .unwrap();
+        std::fs::write(&lib_path, "pub fn answer() -> Int { 42 }\n").unwrap();
+
+        publish_package_to_registry(&lib_path, &registry_root).expect("publish should succeed");
+
+        let published_manifest = registry_root
+            .join("packages")
+            .join("acme/json")
+            .join("1.2.0")
+            .join("kyokara.toml");
+        let published_lib = registry_root
+            .join("packages")
+            .join("acme/json")
+            .join("1.2.0")
+            .join("src")
+            .join("lib.ky");
+        assert!(published_manifest.is_file(), "expected published manifest");
+        assert!(published_lib.is_file(), "expected published source");
+
+        std::fs::write(
+            dir.path().join("kyokara.toml"),
+            "[package]\nname = \"acme/json\"\nversion = \"1.2.0\"\nedition = \"2026\"\nkind = \"lib\"\n\n[dependencies]\nutil = { path = \"../util\" }\n",
+        )
+        .unwrap();
+        let err = publish_package_to_registry(&lib_path, &registry_root)
+            .expect_err("path dependencies should block publish");
+        assert!(
+            err.contains("path dependencies"),
+            "expected path dependency rejection, got: {err}"
         );
     }
 

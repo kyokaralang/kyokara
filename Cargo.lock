@@ -1056,6 +1056,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "toml",
  "tracing",
 ]
 
@@ -1131,6 +1132,7 @@ dependencies = [
  "kyokara-stdx",
  "kyokara-syntax",
  "rowan",
+ "semver",
  "toml",
 ]
 

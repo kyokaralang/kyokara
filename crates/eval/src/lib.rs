@@ -629,11 +629,13 @@ fn runtime_package_prefix<'a>(
     module_path: &'a ModulePath,
     interner: &Interner,
 ) -> &'a [kyokara_hir_def::name::Name] {
-    if module_path.0.len() >= 2 && module_path.0[0].resolve(interner) == "deps" {
-        &module_path.0[..2]
-    } else {
-        &[]
+    let mut prefix_len = 0;
+    while prefix_len + 1 < module_path.0.len()
+        && module_path.0[prefix_len].resolve(interner) == "deps"
+    {
+        prefix_len += 2;
     }
+    &module_path.0[..prefix_len]
 }
 
 fn resolve_runtime_import_target(
@@ -650,15 +652,17 @@ fn resolve_runtime_import_target(
         .segments
         .first()
         .is_some_and(|seg| seg.resolve(interner) == "deps");
+    let importing_prefix = runtime_package_prefix(importing_mod, interner);
     if is_dependency_import {
         if import_path.segments.len() < 2 {
             return None;
         }
-        let target_path = ModulePath(import_path.segments.clone());
+        let mut target_segments = importing_prefix.to_vec();
+        target_segments.extend(import_path.segments.iter().copied());
+        let target_path = ModulePath(target_segments);
         return graph.get(&target_path).map(|_| target_path);
     }
 
-    let importing_prefix = runtime_package_prefix(importing_mod, interner);
     if import_path.segments.len() > 1 {
         let mut target_segments = importing_prefix.to_vec();
         target_segments.extend(import_path.segments.iter().copied());

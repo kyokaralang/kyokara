@@ -1,8 +1,8 @@
 # RFC 0015: Package Manifests and External Library Distribution
 
-- Status: Draft
+- Status: Implemented
 - Owner: Language Design
-- Tracking issue: [#440](https://github.com/kyokaralang/kyokara/issues/440)
+- Tracking issue: [#454](https://github.com/kyokaralang/kyokara/issues/454)
 - Depends on: RFC 0001, RFC 0004
 - Last updated: 2026-03-13
 
@@ -220,26 +220,29 @@ Responsibilities:
 
 1. record the fully resolved dependency graph,
 2. pin exact versions or exact git revisions,
-3. store registry checksums for reproducible installs,
-4. make `build`, `run`, `test`, and `check` deterministic.
+3. make `run`, `test`, and `check` deterministic,
+4. let `add` / `update` refresh the exact resolution deliberately.
 
-Current shipped v1 shape for local path dependencies:
+Current shipped v1 shape:
 
 ```toml
 version = 1
 
 [dependencies]
 json = { path = "../json-pkg" }
-util = { path = "../util-pkg" }
+http = { git = "https://github.com/acme/http-kit", rev = "4e2f9b1" }
+slug = { package = "acme/slug", version = "1.4.2" }
 ```
 
 Rules:
 
 1. `kyokara.toml` expresses intent.
 2. `kyokara.lock` records an exact resolution.
-3. In the first shipped phase, `check`, `run`, and `test` sync `kyokara.lock` for package-root entries before project loading.
+3. `check`, `run`, and `test` sync `kyokara.lock` for package-root entries before project loading.
 4. Dependency graph changes happen only when the user edits the manifest or runs an explicit update command.
-5. The first shipped lockfile records local path dependency snapshots only; git revisions, registry versions, and checksums extend the same file in later phases.
+5. Path dependencies remain exact by path.
+6. Git dependencies lock exact revisions.
+7. Registry dependencies lock exact versions after resolution from the configured source-first registry store.
 
 ### P6. Distribution model
 
@@ -252,6 +255,14 @@ Allowed sources:
 3. local path dependencies.
 
 Registry packages are published as source bundles plus manifest metadata.
+
+Current shipped model:
+
+1. each package keeps a project-local cache under `.kyokara/`,
+2. git dependencies are cloned into `.kyokara/git/<alias>/<rev>/`,
+3. registry packages live under `.kyokara/registry/packages/<package>/<version>/`,
+4. `kyokara add` / `kyokara update --registry <dir>` copy source packages from an external registry store into that local cache,
+5. project loading then resolves imports from the local cached source tree plus the lockfile.
 
 Reasons:
 
@@ -268,7 +279,7 @@ The first publishing rules are intentionally narrow.
 1. Only `lib` packages are publishable.
 2. Published packages must have a `package.name` and `version`.
 3. Packages with `path` dependencies are not publishable.
-4. Git dependencies may remain allowed for unpublished internal use, but registry publishing should require the published graph to resolve through registry packages only.
+4. Git dependencies may remain allowed for unpublished internal use, but registry publishing requires the published graph to resolve through registry packages only.
 
 This avoids shipping manifests that cannot be reproduced outside the author's machine or company network.
 
@@ -289,48 +300,51 @@ This preserves the visibility-versus-authority rule from RFC 0004:
 
 ### P9. Initial CLI direction
 
-This RFC does not fully specify CLI UX, but the intended command family is:
+Shipped command family:
 
-1. `kyokara add <package> --as <alias>`
-2. `kyokara update`
-3. `kyokara build`
-4. `kyokara run`
-5. `kyokara test`
-6. `kyokara publish`
+1. `kyokara add <entry-file> --path <path> --as <alias>`
+2. `kyokara add <entry-file> --git <url-or-path> --rev <sha> --as <alias>`
+3. `kyokara add <entry-file> <package> --version <req> --as <alias> --registry <dir>`
+4. `kyokara update <entry-file> [--alias <alias>] [--registry <dir>]`
+5. `kyokara run <entry-file>`
+6. `kyokara test <entry-file>`
+7. `kyokara publish <entry-file> --registry <dir>`
 
 Example:
 
 ```text
-kyokara add core/json --as json
+kyokara add src/main.ky core/json --version ^1.4.0 --as json --registry ./registry
 ```
 
 Expected result:
 
 1. add a dependency entry under `[dependencies]`,
-2. resolve and write `kyokara.lock`,
+2. if needed, copy registry package sources into the project-local registry cache,
+3. resolve and write `kyokara.lock`,
 3. make the package available as `deps.json`.
 
 ## Incremental rollout
 
 This RFC describes the target package architecture, but it is expected to land in phases rather than one all-at-once implementation.
 
-Planned rollout shape:
+Completed rollout shape:
 
 1. Phase 0: refactor project loading around an explicit project/package graph boundary.
 2. Phase 1: support `kyokara.toml`, package root detection, and `lib` / `bin` source roots.
 3. Phase 2: support local path dependencies plus the reserved `deps.<alias>` import namespace.
 4. Phase 3: make package-aware loading consistent across check/run/eval/API/LSP/refactor flows.
 5. Phase 4: add `kyokara.lock` and deterministic resolution behavior.
-6. Phase 5+: add remote dependency sources and package-management UX.
+6. Phase 5: add remote dependency sources and package-management UX.
 
-The first intended shippable package slice is:
+The shipped package model now includes:
 
 1. package root + manifest parsing,
 2. local path dependencies,
 3. `deps.<alias>` imports,
-4. no registry requirement for the first landing.
-
-Registry publishing, git dependencies, and richer package-management commands are follow-up phases unless explicitly pulled earlier by a ratified scope decision.
+4. deterministic `kyokara.lock`,
+5. direct git dependencies with pinned revisions,
+6. source-first registry dependencies resolved to exact versions,
+7. `kyokara add`, `kyokara update`, and `kyokara publish`.
 
 ## Canonical examples
 

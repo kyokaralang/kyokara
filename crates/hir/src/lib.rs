@@ -595,18 +595,20 @@ fn resolve_package_import(
         .segments
         .first()
         .is_some_and(|seg| seg.resolve(interner) == "deps");
+    let importing_prefix = package_prefix(importing_mod, interner);
     if is_dependency_import {
         if import_path.segments.len() < 2 {
             return Vec::new();
         }
-        let target_path = ModulePath(import_path.segments.clone());
+        let mut target_segments = importing_prefix.to_vec();
+        target_segments.extend(import_path.segments.iter().copied());
+        let target_path = ModulePath(target_segments);
         return graph
             .get(&target_path)
             .map(|_| vec![target_path])
             .unwrap_or_default();
     }
 
-    let importing_prefix = package_prefix(importing_mod, interner);
     if import_path.segments.len() > 1 {
         let mut target_segments = importing_prefix.to_vec();
         target_segments.extend(import_path.segments.iter().copied());
@@ -629,11 +631,13 @@ fn resolve_package_import(
 }
 
 fn package_prefix<'a>(module_path: &'a ModulePath, interner: &Interner) -> &'a [Name] {
-    if module_path.0.len() >= 2 && module_path.0[0].resolve(interner) == "deps" {
-        &module_path.0[..2]
-    } else {
-        &[]
+    let mut prefix_len = 0;
+    while prefix_len + 1 < module_path.0.len()
+        && module_path.0[prefix_len].resolve(interner) == "deps"
+    {
+        prefix_len += 2;
     }
+    &module_path.0[..prefix_len]
 }
 
 #[derive(Clone)]
@@ -872,6 +876,7 @@ fn import_named_pub_item(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -983,6 +988,82 @@ mod tests {
             }
         }
         panic!("failed to allocate unique temp dir");
+    }
+
+    fn init_git_package_repo(
+        repo_dir: &std::path::Path,
+        package_name: &str,
+        version: &str,
+        lib_source: &str,
+    ) -> String {
+        let src_dir = repo_dir.join("src");
+        std::fs::create_dir_all(&src_dir).expect("git package src dir should be creatable");
+        std::fs::write(
+            repo_dir.join("kyokara.toml"),
+            format!(
+                "[package]\nname = \"{package_name}\"\nversion = \"{version}\"\nedition = \"2026\"\nkind = \"lib\"\n"
+            ),
+        )
+        .expect("git package manifest should be writable");
+        std::fs::write(src_dir.join("lib.ky"), lib_source)
+            .expect("git package lib source should be writable");
+
+        let run = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(repo_dir)
+                .output()
+                .expect("git command should run");
+            assert!(
+                output.status.success(),
+                "git {:?} should succeed\nstdout:\n{}\nstderr:\n{}",
+                args,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+
+        run(&["init", "-q"]);
+        run(&["config", "user.name", "Kyokara Tests"]);
+        run(&["config", "user.email", "tests@kyokara.invalid"]);
+        run(&["add", "."]);
+        run(&["commit", "-qm", "init"]);
+
+        let output = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo_dir)
+            .output()
+            .expect("git rev-parse should run");
+        assert!(
+            output.status.success(),
+            "git rev-parse should succeed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    fn write_registry_package(
+        registry_root: &std::path::Path,
+        package_name: &str,
+        version: &str,
+        lib_source: &str,
+    ) {
+        let package_dir = registry_root
+            .join("packages")
+            .join(package_name)
+            .join(version);
+        let src_dir = package_dir.join("src");
+        std::fs::create_dir_all(&src_dir).expect("registry package src dir should be creatable");
+        std::fs::write(
+            package_dir.join("kyokara.toml"),
+            format!(
+                "[package]\nname = \"{package_name}\"\nversion = \"{version}\"\nedition = \"2026\"\nkind = \"lib\"\n"
+            ),
+        )
+        .expect("registry package manifest should be writable");
+        std::fs::write(src_dir.join("lib.ky"), lib_source)
+            .expect("registry package lib source should be writable");
     }
 
     #[test]
@@ -1520,6 +1601,153 @@ mod tests {
     }
 
     #[test]
+    fn project_load_plan_includes_transitive_dependency_modules_under_nested_deps_aliases() {
+        let dir = make_temp_dir();
+        let app_dir = dir.join("app");
+        let app_src = app_dir.join("src");
+        let util_dir = dir.join("util-pkg");
+        let util_src = util_dir.join("src");
+        let json_dir = dir.join("json-pkg");
+        let json_src = json_dir.join("src");
+        std::fs::create_dir_all(&app_src).expect("app src dir should be creatable");
+        std::fs::create_dir_all(&util_src).expect("util src dir should be creatable");
+        std::fs::create_dir_all(&json_src).expect("json src dir should be creatable");
+
+        std::fs::write(
+            app_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\nutil = { path = \"../util-pkg\" }\n",
+        )
+        .expect("app manifest should be writable");
+        std::fs::write(app_src.join("main.ky"), "fn main() -> Int { 0 }\n")
+            .expect("app entry should be writable");
+
+        std::fs::write(
+            util_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/util\"\nedition = \"2026\"\nkind = \"lib\"\n\n[dependencies]\njson = { path = \"../json-pkg\" }\n",
+        )
+        .expect("util manifest should be writable");
+        std::fs::write(util_src.join("lib.ky"), "pub fn value() -> Int { 1 }\n")
+            .expect("util root should be writable");
+
+        std::fs::write(
+            json_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/json\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .expect("json manifest should be writable");
+        std::fs::write(json_src.join("lib.ky"), "pub fn answer() -> Int { 2 }\n")
+            .expect("json root should be writable");
+        std::fs::write(json_src.join("encode.ky"), "pub fn extra() -> Int { 3 }\n")
+            .expect("json module should be writable");
+
+        let plan = discover_project_load_plan(&app_src.join("main.ky"));
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        let discovered_paths: Vec<_> = plan
+            .iter_modules()
+            .map(|(path, _)| path.0.clone())
+            .collect();
+        assert!(
+            discovered_paths.contains(&vec!["deps".to_owned(), "util".to_owned()]),
+            "expected direct dependency root, got: {discovered_paths:?}"
+        );
+        assert!(
+            discovered_paths.contains(&vec![
+                "deps".to_owned(),
+                "util".to_owned(),
+                "deps".to_owned(),
+                "json".to_owned(),
+            ]),
+            "expected nested dependency root, got: {discovered_paths:?}"
+        );
+        assert!(
+            discovered_paths.contains(&vec![
+                "deps".to_owned(),
+                "util".to_owned(),
+                "deps".to_owned(),
+                "json".to_owned(),
+                "encode".to_owned(),
+            ]),
+            "expected nested dependency module, got: {discovered_paths:?}"
+        );
+    }
+
+    #[test]
+    fn check_project_resolves_transitive_dependency_imports_inside_dependency_packages() {
+        let dir = make_temp_dir();
+        let app_dir = dir.join("app");
+        let app_src = app_dir.join("src");
+        let util_dir = dir.join("util-pkg");
+        let util_src = util_dir.join("src");
+        let json_dir = dir.join("json-pkg");
+        let json_src = json_dir.join("src");
+        std::fs::create_dir_all(&app_src).expect("app src dir should be creatable");
+        std::fs::create_dir_all(&util_src).expect("util src dir should be creatable");
+        std::fs::create_dir_all(&json_src).expect("json src dir should be creatable");
+
+        std::fs::write(
+            app_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\nutil = { path = \"../util-pkg\" }\n",
+        )
+        .expect("app manifest should be writable");
+        std::fs::write(
+            app_src.join("main.ky"),
+            "import deps.util\nfn main() -> Int { util.value() }\n",
+        )
+        .expect("app entry should be writable");
+
+        std::fs::write(
+            util_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/util\"\nedition = \"2026\"\nkind = \"lib\"\n\n[dependencies]\njson = { path = \"../json-pkg\" }\n",
+        )
+        .expect("util manifest should be writable");
+        std::fs::write(
+            util_src.join("lib.ky"),
+            "import deps.json\npub fn value() -> Int { json.answer() }\n",
+        )
+        .expect("util root should be writable");
+
+        std::fs::write(
+            json_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/json\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .expect("json manifest should be writable");
+        std::fs::write(json_src.join("lib.ky"), "pub fn answer() -> Int { 42 }\n")
+            .expect("json root should be writable");
+
+        let result = check_project(&app_src.join("main.ky"));
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            result.parse_errors.is_empty(),
+            "expected no parse errors, got: {:?}",
+            result.parse_errors
+        );
+        assert!(
+            result.lowering_diagnostics.is_empty(),
+            "expected no lowering diagnostics, got: {:?}",
+            result
+                .lowering_diagnostics
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            result
+                .type_checks
+                .iter()
+                .all(|(_, tc)| tc.diagnostics.is_empty()),
+            "expected no type diagnostics, got: {:?}",
+            result
+                .type_checks
+                .iter()
+                .flat_map(|(_, tc)| tc.diagnostics.iter().map(|d| d.message.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn check_project_rejects_local_modules_under_reserved_deps_namespace() {
         let dir = make_temp_dir();
         let app_src = dir.join("src");
@@ -1620,6 +1848,132 @@ mod tests {
         assert!(
             !lockfile.contains("../json-pkg"),
             "stale dependency path should not remain in lockfile: {lockfile}"
+        );
+    }
+
+    #[test]
+    fn sync_package_lockfile_writes_git_and_registry_dependency_snapshots() {
+        let dir = make_temp_dir();
+        let app_src = dir.join("src");
+        let git_repo = dir.join("git-json");
+        let registry_root = dir.join(".kyokara").join("registry");
+        std::fs::create_dir_all(&app_src).expect("src dir should be creatable");
+
+        let git_rev = init_git_package_repo(
+            &git_repo,
+            "acme/git-json",
+            "0.2.0",
+            "pub fn from_git() -> Int { 7 }\n",
+        );
+        write_registry_package(
+            &registry_root,
+            "core/json",
+            "1.4.2",
+            "pub fn from_registry() -> Int { 35 }\n",
+        );
+
+        let main_path = app_src.join("main.ky");
+        let manifest_path = dir.join("kyokara.toml");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\ngit_json = {{ git = \"{}\", rev = \"{}\" }}\njson = {{ package = \"core/json\", version = \"^1.4.0\" }}\n",
+                git_repo.display(),
+                git_rev
+            ),
+        )
+        .expect("manifest should be writable");
+        std::fs::write(&main_path, "fn main() -> Int { 0 }\n").expect("entry should be writable");
+
+        let lockfile_path = sync_package_lockfile_for_entry(&main_path)
+            .expect("lockfile sync should succeed")
+            .expect("package entry should produce a lockfile path");
+        let lockfile = std::fs::read_to_string(&lockfile_path).expect("lockfile should exist");
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            lockfile.contains(&format!("git = \"{}\"", git_repo.display())),
+            "expected git dependency in lockfile, got: {lockfile}"
+        );
+        assert!(
+            lockfile.contains(&format!("rev = \"{git_rev}\"")),
+            "expected git revision in lockfile, got: {lockfile}"
+        );
+        assert!(
+            lockfile.contains("json = { package = \"core/json\", version = \"1.4.2\" }"),
+            "expected exact registry version in lockfile, got: {lockfile}"
+        );
+    }
+
+    #[test]
+    fn check_project_resolves_git_and_registry_dependencies_after_lockfile_sync() {
+        let dir = make_temp_dir();
+        let app_src = dir.join("src");
+        let git_repo = dir.join("git-json");
+        let registry_root = dir.join(".kyokara").join("registry");
+        std::fs::create_dir_all(&app_src).expect("src dir should be creatable");
+
+        let git_rev = init_git_package_repo(
+            &git_repo,
+            "acme/git-json",
+            "0.2.0",
+            "pub fn from_git() -> Int { 7 }\n",
+        );
+        write_registry_package(
+            &registry_root,
+            "core/json",
+            "1.4.2",
+            "pub fn from_registry() -> Int { 35 }\n",
+        );
+
+        let main_path = app_src.join("main.ky");
+        let manifest_path = dir.join("kyokara.toml");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\ngit_json = {{ git = \"{}\", rev = \"{}\" }}\njson = {{ package = \"core/json\", version = \"^1.4.0\" }}\n",
+                git_repo.display(),
+                git_rev
+            ),
+        )
+        .expect("manifest should be writable");
+        std::fs::write(
+            &main_path,
+            "import deps.git_json\nimport deps.json\nfn main() -> Int { git_json.from_git() + json.from_registry() }\n",
+        )
+        .expect("entry should be writable");
+
+        sync_package_lockfile_for_entry(&main_path).expect("lockfile sync should succeed");
+        let result = check_project(&main_path);
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            result.parse_errors.is_empty(),
+            "expected no parse errors, got: {:?}",
+            result.parse_errors
+        );
+        assert!(
+            result.lowering_diagnostics.is_empty(),
+            "expected no lowering diagnostics, got: {:?}",
+            result
+                .lowering_diagnostics
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            result
+                .type_checks
+                .iter()
+                .all(|(_, tc)| tc.diagnostics.is_empty()),
+            "expected no type diagnostics, got: {:?}",
+            result
+                .type_checks
+                .iter()
+                .flat_map(|(_, tc)| tc.diagnostics.iter().map(|d| d.message.clone()))
+                .collect::<Vec<_>>()
         );
     }
 

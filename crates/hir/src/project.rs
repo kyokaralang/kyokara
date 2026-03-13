@@ -1,7 +1,10 @@
+use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use kyokara_hir_def::module_graph::{OwnedModulePath, discover_module_files};
+use semver::{Version, VersionReq};
 
 const PACKAGE_MANIFEST: &str = "kyokara.toml";
 const PACKAGE_LOCKFILE: &str = "kyokara.lock";
@@ -39,26 +42,16 @@ impl ProjectLoadPlan {
     pub fn from_entry_file(entry_file: &Path) -> Self {
         match detect_package_layout(entry_file) {
             Ok(Some(layout)) => {
-                let mut discovery_diagnostics =
-                    reserved_deps_namespace_diagnostics(&layout.modules);
-                let mut packages = vec![PackageLoadPlan {
-                    package_root: Some(layout.package_root.clone()),
-                    source_root: layout.source_root.clone(),
-                    entry_file: entry_file.to_path_buf(),
-                    module_prefix: OwnedModulePath::root(),
-                    modules: layout.modules,
-                }];
-
-                for dependency in &layout.manifest.dependencies {
-                    match discover_path_dependency_package(&layout.package_root, dependency) {
-                        Ok(package) => {
-                            discovery_diagnostics
-                                .extend(reserved_deps_namespace_diagnostics(&package.modules));
-                            packages.push(package);
-                        }
-                        Err(diag) => discovery_diagnostics.push(diag),
-                    }
-                }
+                let mut discovery_diagnostics = Vec::new();
+                let mut packages = Vec::new();
+                let mut active_package_roots = HashSet::new();
+                collect_dependency_packages(
+                    layout,
+                    OwnedModulePath::root(),
+                    &mut packages,
+                    &mut discovery_diagnostics,
+                    &mut active_package_roots,
+                );
 
                 Self {
                     entry_package: 0,
@@ -118,14 +111,13 @@ pub fn sync_package_lockfile_for_entry(entry_file: &Path) -> io::Result<Option<P
     }
 
     let manifest_source = std::fs::read_to_string(&manifest_path)?;
-    let Ok(manifest) = parse_package_manifest(&manifest_path, &manifest_source) else {
-        return Ok(None);
-    };
+    let manifest = parse_package_manifest(&manifest_path, &manifest_source)
+        .map_err(|diag| io::Error::other(diag.message))?;
+    let dependencies = resolve_dependencies_for_manifest(&manifest_path, &manifest)
+        .map_err(|diag| io::Error::other(diag.message))?;
 
     let lockfile_path = manifest_path.with_file_name(PACKAGE_LOCKFILE);
-    let lockfile = PackageLockfile {
-        dependencies: manifest.dependencies,
-    };
+    let lockfile = PackageLockfile { dependencies };
     let rendered = render_package_lockfile(&lockfile);
     let should_write = match std::fs::read_to_string(&lockfile_path) {
         Ok(existing) => existing != rendered,
@@ -193,20 +185,72 @@ impl PackageKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct PathDependencySpec {
-    alias: String,
-    path: PathBuf,
+enum ManifestDependencySpec {
+    Path {
+        alias: String,
+        path: PathBuf,
+    },
+    Git {
+        alias: String,
+        git: String,
+        rev: String,
+    },
+    Registry {
+        alias: String,
+        package: String,
+        version_req: String,
+    },
+}
+
+impl ManifestDependencySpec {
+    fn alias(&self) -> &str {
+        match self {
+            Self::Path { alias, .. } | Self::Git { alias, .. } | Self::Registry { alias, .. } => {
+                alias
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LockedDependencySpec {
+    Path {
+        alias: String,
+        path: PathBuf,
+    },
+    Git {
+        alias: String,
+        git: String,
+        rev: String,
+    },
+    Registry {
+        alias: String,
+        package: String,
+        version: String,
+    },
+}
+
+impl LockedDependencySpec {
+    fn alias(&self) -> &str {
+        match self {
+            Self::Path { alias, .. } | Self::Git { alias, .. } | Self::Registry { alias, .. } => {
+                alias
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PackageManifest {
+    name: String,
+    version: Option<String>,
     kind: PackageKind,
-    dependencies: Vec<PathDependencySpec>,
+    dependencies: Vec<ManifestDependencySpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PackageLockfile {
-    dependencies: Vec<PathDependencySpec>,
+    dependencies: Vec<LockedDependencySpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,6 +259,62 @@ struct DetectedPackageLayout {
     source_root: PathBuf,
     modules: Vec<(OwnedModulePath, PathBuf)>,
     manifest: PackageManifest,
+    dependencies: Vec<LockedDependencySpec>,
+}
+
+fn collect_dependency_packages(
+    layout: DetectedPackageLayout,
+    module_prefix: OwnedModulePath,
+    packages: &mut Vec<PackageLoadPlan>,
+    discovery_diagnostics: &mut Vec<ProjectDiscoveryDiagnostic>,
+    active_package_roots: &mut HashSet<PathBuf>,
+) {
+    if !active_package_roots.insert(layout.package_root.clone()) {
+        discovery_diagnostics.push(ProjectDiscoveryDiagnostic {
+            path: layout.package_root.join(PACKAGE_MANIFEST),
+            message: format!(
+                "invalid package manifest `{}`: cyclic dependency on `{}`",
+                layout.package_root.join(PACKAGE_MANIFEST).display(),
+                layout.package_root.display()
+            ),
+        });
+        return;
+    }
+
+    discovery_diagnostics.extend(reserved_deps_namespace_diagnostics(&layout.modules));
+
+    let package_root = layout.package_root.clone();
+    let source_root = layout.source_root.clone();
+    let entry_file = source_root.join(layout.manifest.kind.entry_file_name());
+    let dependencies = layout.dependencies.clone();
+    let modules = layout.modules;
+
+    packages.push(PackageLoadPlan {
+        package_root: Some(package_root.clone()),
+        source_root,
+        entry_file,
+        module_prefix: module_prefix.clone(),
+        modules,
+    });
+
+    for dependency in &dependencies {
+        match discover_locked_dependency_layout(&package_root, dependency) {
+            Ok(layout) => collect_dependency_packages(
+                layout,
+                dependency_module_prefix(&module_prefix, dependency.alias()),
+                packages,
+                discovery_diagnostics,
+                active_package_roots,
+            ),
+            Err(diag) => discovery_diagnostics.push(diag),
+        }
+    }
+
+    active_package_roots.remove(&package_root);
+}
+
+fn dependency_module_prefix(parent_prefix: &OwnedModulePath, alias: &str) -> OwnedModulePath {
+    OwnedModulePath(vec!["deps".to_owned(), alias.to_owned()]).prefixed(parent_prefix)
 }
 
 fn detect_package_layout(
@@ -232,8 +332,8 @@ fn detect_package_layout(
     })?;
     let expected_kind = PackageKind::from_entry_file(entry_file)
         .expect("package manifest paths are only built for main.ky/lib.ky entries");
-    let mut manifest = parse_package_manifest(&manifest_path, &manifest_source)?;
-    manifest.dependencies = locked_dependencies_for_manifest(&manifest_path, &manifest);
+    let manifest = parse_package_manifest(&manifest_path, &manifest_source)?;
+    let dependencies = resolve_dependencies_for_manifest(&manifest_path, &manifest)?;
 
     if manifest.kind != expected_kind {
         return Err(invalid_manifest(
@@ -256,6 +356,7 @@ fn detect_package_layout(
         source_root,
         package_root,
         manifest,
+        dependencies,
     }))
 }
 
@@ -284,13 +385,17 @@ fn parse_package_manifest(
         .get("package")
         .and_then(toml::Value::as_table)
         .ok_or_else(|| invalid_manifest(manifest_path, "missing [package] table"))?;
-    let _name = package
+    let name = package
         .get("name")
         .and_then(toml::Value::as_str)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            invalid_manifest(manifest_path, "package.name must be a non-empty string")
-        })?;
+        .ok_or_else(|| invalid_manifest(manifest_path, "package.name must be a non-empty string"))?
+        .to_owned();
+    let version = package
+        .get("version")
+        .and_then(toml::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
     let _edition = package
         .get("edition")
         .and_then(toml::Value::as_str)
@@ -303,31 +408,40 @@ fn parse_package_manifest(
         .and_then(toml::Value::as_str)
         .and_then(PackageKind::parse)
         .ok_or_else(|| invalid_manifest(manifest_path, "package.kind must be `bin` or `lib`"))?;
-    let dependencies = parse_path_dependencies(manifest_path, &manifest)?;
+    let dependencies = parse_manifest_dependencies(manifest_path, &manifest)?;
 
-    Ok(PackageManifest { kind, dependencies })
+    Ok(PackageManifest {
+        name,
+        version,
+        kind,
+        dependencies,
+    })
 }
 
-fn locked_dependencies_for_manifest(
+fn resolve_dependencies_for_manifest(
     manifest_path: &Path,
     manifest: &PackageManifest,
-) -> Vec<PathDependencySpec> {
+) -> Result<Vec<LockedDependencySpec>, ProjectDiscoveryDiagnostic> {
+    let package_root = manifest_path
+        .parent()
+        .expect("manifest file should have a parent directory");
     let lockfile_path = manifest_path.with_file_name(PACKAGE_LOCKFILE);
-    if !lockfile_path.is_file() {
-        return manifest.dependencies.clone();
+    if lockfile_path.is_file()
+        && let Ok(lockfile_source) = std::fs::read_to_string(&lockfile_path)
+        && let Ok(lockfile) = parse_package_lockfile(&lockfile_path, &lockfile_source)
+        && locked_dependencies_match_manifest(&lockfile.dependencies, &manifest.dependencies)
+    {
+        for dependency in &lockfile.dependencies {
+            ensure_locked_dependency_source(package_root, dependency)?;
+        }
+        return Ok(lockfile.dependencies);
     }
 
-    let Ok(lockfile_source) = std::fs::read_to_string(&lockfile_path) else {
-        return manifest.dependencies.clone();
-    };
-    let Ok(lockfile) = parse_package_lockfile(&lockfile_path, &lockfile_source) else {
-        return manifest.dependencies.clone();
-    };
-    if !path_dependencies_match(&lockfile.dependencies, &manifest.dependencies) {
-        return manifest.dependencies.clone();
-    }
-
-    lockfile.dependencies
+    manifest
+        .dependencies
+        .iter()
+        .map(|dependency| resolve_manifest_dependency(package_root, dependency))
+        .collect()
 }
 
 fn parse_package_lockfile(
@@ -348,44 +462,119 @@ fn parse_package_lockfile(
         ));
     }
 
-    let dependencies = parse_path_dependencies(lockfile_path, &lockfile)?;
+    let dependencies = parse_locked_dependencies(lockfile_path, &lockfile)?;
     Ok(PackageLockfile { dependencies })
 }
 
 fn render_package_lockfile(lockfile: &PackageLockfile) -> String {
     let mut dependencies = lockfile.dependencies.clone();
-    dependencies.sort_by(|lhs, rhs| lhs.alias.cmp(&rhs.alias));
+    dependencies.sort_by(|lhs, rhs| lhs.alias().cmp(rhs.alias()));
 
     let mut rendered = format!("version = {LOCKFILE_VERSION}\n\n[dependencies]\n");
     for dependency in dependencies {
-        rendered.push_str(&format!(
-            "{} = {{ path = \"{}\" }}\n",
-            dependency.alias,
-            dependency.path.display()
-        ));
+        match dependency {
+            LockedDependencySpec::Path { alias, path } => {
+                rendered.push_str(&format!("{alias} = {{ path = \"{}\" }}\n", path.display()));
+            }
+            LockedDependencySpec::Git { alias, git, rev } => {
+                rendered.push_str(&format!(
+                    "{alias} = {{ git = \"{git}\", rev = \"{rev}\" }}\n"
+                ));
+            }
+            LockedDependencySpec::Registry {
+                alias,
+                package,
+                version,
+            } => {
+                rendered.push_str(&format!(
+                    "{alias} = {{ package = \"{package}\", version = \"{version}\" }}\n"
+                ));
+            }
+        }
     }
     rendered
 }
 
-fn path_dependencies_match(lhs: &[PathDependencySpec], rhs: &[PathDependencySpec]) -> bool {
-    let mut lhs_sorted = lhs.to_vec();
-    let mut rhs_sorted = rhs.to_vec();
-    lhs_sorted.sort_by(|a, b| a.alias.cmp(&b.alias));
-    rhs_sorted.sort_by(|a, b| a.alias.cmp(&b.alias));
-    lhs_sorted == rhs_sorted
+fn locked_dependencies_match_manifest(
+    locked: &[LockedDependencySpec],
+    manifest: &[ManifestDependencySpec],
+) -> bool {
+    if locked.len() != manifest.len() {
+        return false;
+    }
+
+    let mut locked_sorted = locked.to_vec();
+    let mut manifest_sorted = manifest.to_vec();
+    locked_sorted.sort_by(|lhs, rhs| lhs.alias().cmp(rhs.alias()));
+    manifest_sorted.sort_by(|lhs, rhs| lhs.alias().cmp(rhs.alias()));
+
+    locked_sorted
+        .iter()
+        .zip(manifest_sorted.iter())
+        .all(|(locked, manifest)| manifest_dependency_matches_locked(manifest, locked))
 }
 
-fn parse_path_dependencies(
+fn manifest_dependency_matches_locked(
+    manifest: &ManifestDependencySpec,
+    locked: &LockedDependencySpec,
+) -> bool {
+    match (manifest, locked) {
+        (
+            ManifestDependencySpec::Path {
+                alias: manifest_alias,
+                path,
+            },
+            LockedDependencySpec::Path {
+                alias: locked_alias,
+                path: locked_path,
+            },
+        ) => manifest_alias == locked_alias && path == locked_path,
+        (
+            ManifestDependencySpec::Git {
+                alias: manifest_alias,
+                git,
+                rev,
+            },
+            LockedDependencySpec::Git {
+                alias: locked_alias,
+                git: locked_git,
+                rev: locked_rev,
+            },
+        ) => manifest_alias == locked_alias && git == locked_git && rev == locked_rev,
+        (
+            ManifestDependencySpec::Registry {
+                alias: manifest_alias,
+                package,
+                version_req,
+            },
+            LockedDependencySpec::Registry {
+                alias: locked_alias,
+                package: locked_package,
+                version,
+            },
+        ) => {
+            manifest_alias == locked_alias
+                && package == locked_package
+                && VersionReq::parse(version_req)
+                    .ok()
+                    .zip(Version::parse(version).ok())
+                    .is_some_and(|(req, version)| req.matches(&version))
+        }
+        _ => false,
+    }
+}
+
+fn parse_manifest_dependencies(
     manifest_path: &Path,
     manifest: &toml::Value,
-) -> Result<Vec<PathDependencySpec>, ProjectDiscoveryDiagnostic> {
+) -> Result<Vec<ManifestDependencySpec>, ProjectDiscoveryDiagnostic> {
     let Some(dependencies) = manifest.get("dependencies") else {
         return Ok(Vec::new());
     };
     let deps_table = dependencies.as_table().ok_or_else(|| {
         invalid_manifest(
             manifest_path,
-            "[dependencies] must be a TOML table of alias = { path = \"...\" } entries",
+            "[dependencies] must be a TOML table of alias = { ... } entries",
         )
     })?;
 
@@ -403,44 +592,337 @@ fn parse_path_dependencies(
                 format!("dependency `{alias}` must use inline table syntax"),
             )
         })?;
+
         let path = spec_table
             .get("path")
             .and_then(toml::Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                invalid_manifest(
+            .filter(|value| !value.is_empty());
+        let git = spec_table
+            .get("git")
+            .and_then(toml::Value::as_str)
+            .filter(|value| !value.is_empty());
+        let rev = spec_table
+            .get("rev")
+            .and_then(toml::Value::as_str)
+            .filter(|value| !value.is_empty());
+        let package = spec_table
+            .get("package")
+            .and_then(toml::Value::as_str)
+            .filter(|value| !value.is_empty());
+        let version = spec_table
+            .get("version")
+            .and_then(toml::Value::as_str)
+            .filter(|value| !value.is_empty());
+
+        let dependency = match (path, git, rev, package, version) {
+            (Some(path), None, None, None, None) => ManifestDependencySpec::Path {
+                alias: alias.clone(),
+                path: PathBuf::from(path),
+            },
+            (None, Some(git), Some(rev), None, None) => ManifestDependencySpec::Git {
+                alias: alias.clone(),
+                git: git.to_owned(),
+                rev: rev.to_owned(),
+            },
+            (None, None, None, Some(package), Some(version_req)) => {
+                ManifestDependencySpec::Registry {
+                    alias: alias.clone(),
+                    package: package.to_owned(),
+                    version_req: version_req.to_owned(),
+                }
+            }
+            _ => {
+                return Err(invalid_manifest(
                     manifest_path,
-                    format!("dependency `{alias}` must declare a non-empty path"),
-                )
-            })?;
-        let unsupported_keys: Vec<_> = spec_table
-            .keys()
-            .filter(|key| key.as_str() != "path")
-            .cloned()
-            .collect();
-        if !unsupported_keys.is_empty() {
-            return Err(invalid_manifest(
-                manifest_path,
-                format!(
-                    "dependency `{alias}` uses unsupported keys: {}",
-                    unsupported_keys.join(", ")
-                ),
-            ));
-        }
-        parsed.push(PathDependencySpec {
-            alias: alias.clone(),
-            path: PathBuf::from(path),
-        });
+                    format!(
+                        "dependency `{alias}` must use exactly one source form: {{ path = ... }}, {{ git = ..., rev = ... }}, or {{ package = ..., version = ... }}"
+                    ),
+                ));
+            }
+        };
+
+        parsed.push(dependency);
     }
 
     Ok(parsed)
 }
 
-fn discover_path_dependency_package(
+fn parse_locked_dependencies(
+    manifest_path: &Path,
+    manifest: &toml::Value,
+) -> Result<Vec<LockedDependencySpec>, ProjectDiscoveryDiagnostic> {
+    let Some(dependencies) = manifest.get("dependencies") else {
+        return Ok(Vec::new());
+    };
+    let deps_table = dependencies.as_table().ok_or_else(|| {
+        invalid_manifest(
+            manifest_path,
+            "[dependencies] must be a TOML table of alias = { ... } entries",
+        )
+    })?;
+
+    let mut parsed = Vec::with_capacity(deps_table.len());
+    for (alias, spec) in deps_table {
+        if !is_identifier(alias) {
+            return Err(invalid_manifest(
+                manifest_path,
+                format!("dependency alias `{alias}` must be a valid identifier"),
+            ));
+        }
+        let spec_table = spec.as_table().ok_or_else(|| {
+            invalid_manifest(
+                manifest_path,
+                format!("dependency `{alias}` must use inline table syntax"),
+            )
+        })?;
+
+        let path = spec_table
+            .get("path")
+            .and_then(toml::Value::as_str)
+            .filter(|value| !value.is_empty());
+        let git = spec_table
+            .get("git")
+            .and_then(toml::Value::as_str)
+            .filter(|value| !value.is_empty());
+        let rev = spec_table
+            .get("rev")
+            .and_then(toml::Value::as_str)
+            .filter(|value| !value.is_empty());
+        let package = spec_table
+            .get("package")
+            .and_then(toml::Value::as_str)
+            .filter(|value| !value.is_empty());
+        let version = spec_table
+            .get("version")
+            .and_then(toml::Value::as_str)
+            .filter(|value| !value.is_empty());
+
+        let dependency = match (path, git, rev, package, version) {
+            (Some(path), None, None, None, None) => LockedDependencySpec::Path {
+                alias: alias.clone(),
+                path: PathBuf::from(path),
+            },
+            (None, Some(git), Some(rev), None, None) => LockedDependencySpec::Git {
+                alias: alias.clone(),
+                git: git.to_owned(),
+                rev: rev.to_owned(),
+            },
+            (None, None, None, Some(package), Some(version)) => LockedDependencySpec::Registry {
+                alias: alias.clone(),
+                package: package.to_owned(),
+                version: version.to_owned(),
+            },
+            _ => {
+                return Err(invalid_manifest(
+                    manifest_path,
+                    format!(
+                        "dependency `{alias}` must use exact lockfile source form: {{ path = ... }}, {{ git = ..., rev = ... }}, or {{ package = ..., version = ... }}"
+                    ),
+                ));
+            }
+        };
+
+        parsed.push(dependency);
+    }
+
+    Ok(parsed)
+}
+
+fn resolve_manifest_dependency(
+    package_root: &Path,
+    dependency: &ManifestDependencySpec,
+) -> Result<LockedDependencySpec, ProjectDiscoveryDiagnostic> {
+    match dependency {
+        ManifestDependencySpec::Path { alias, path } => Ok(LockedDependencySpec::Path {
+            alias: alias.clone(),
+            path: path.clone(),
+        }),
+        ManifestDependencySpec::Git { alias, git, rev } => {
+            let checkout_root = git_dependency_checkout_root(package_root, alias, rev);
+            sync_git_dependency_checkout(package_root, alias, git, rev, &checkout_root)?;
+            Ok(LockedDependencySpec::Git {
+                alias: alias.clone(),
+                git: git.clone(),
+                rev: rev.clone(),
+            })
+        }
+        ManifestDependencySpec::Registry {
+            alias,
+            package,
+            version_req,
+        } => {
+            let version =
+                resolve_registry_dependency_version(package_root, alias, package, version_req)?;
+            Ok(LockedDependencySpec::Registry {
+                alias: alias.clone(),
+                package: package.clone(),
+                version,
+            })
+        }
+    }
+}
+
+fn ensure_locked_dependency_source(
+    package_root: &Path,
+    dependency: &LockedDependencySpec,
+) -> Result<(), ProjectDiscoveryDiagnostic> {
+    match dependency {
+        LockedDependencySpec::Path { .. } => Ok(()),
+        LockedDependencySpec::Git { alias, git, rev } => {
+            let checkout_root = git_dependency_checkout_root(package_root, alias, rev);
+            sync_git_dependency_checkout(package_root, alias, git, rev, &checkout_root)
+        }
+        LockedDependencySpec::Registry {
+            alias,
+            package,
+            version,
+        } => {
+            let package_root = registry_dependency_root(package_root, package, version);
+            if !package_root.join(PACKAGE_MANIFEST).is_file() {
+                return Err(invalid_manifest(
+                    &package_root.join(PACKAGE_MANIFEST),
+                    format!(
+                        "dependency `{alias}` could not find registry package `{package}` version `{version}`"
+                    ),
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
+fn git_dependency_checkout_root(package_root: &Path, alias: &str, rev: &str) -> PathBuf {
+    package_root
+        .join(".kyokara")
+        .join("git")
+        .join(alias)
+        .join(rev)
+}
+
+fn sync_git_dependency_checkout(
+    package_root: &Path,
+    alias: &str,
+    git: &str,
+    rev: &str,
+    checkout_root: &Path,
+) -> Result<(), ProjectDiscoveryDiagnostic> {
+    if checkout_root.join(PACKAGE_MANIFEST).is_file() {
+        return Ok(());
+    }
+
+    let parent = checkout_root
+        .parent()
+        .expect("git checkout root should have a parent");
+    std::fs::create_dir_all(parent).map_err(|err| {
+        invalid_manifest(
+            &package_root.join(PACKAGE_MANIFEST),
+            format!("failed to prepare git dependency `{alias}` cache: {err}"),
+        )
+    })?;
+
+    let temp_root = parent.join(format!(".tmp-{alias}-{rev}"));
+    let _ = std::fs::remove_dir_all(&temp_root);
+
+    let temp_root_str = temp_root.to_string_lossy().into_owned();
+    run_git_command(
+        &package_root.join(PACKAGE_MANIFEST),
+        &["clone", "--quiet", git, temp_root_str.as_str()],
+    )?;
+    run_git_command(
+        &package_root.join(PACKAGE_MANIFEST),
+        &["-C", temp_root_str.as_str(), "checkout", "--quiet", rev],
+    )?;
+
+    let _ = std::fs::remove_dir_all(temp_root.join(".git"));
+    let _ = std::fs::remove_dir_all(checkout_root);
+    std::fs::rename(&temp_root, checkout_root).map_err(|err| {
+        invalid_manifest(
+            &package_root.join(PACKAGE_MANIFEST),
+            format!("failed to finalize git dependency `{alias}` checkout: {err}"),
+        )
+    })?;
+
+    Ok(())
+}
+
+fn run_git_command(manifest_path: &Path, args: &[&str]) -> Result<(), ProjectDiscoveryDiagnostic> {
+    let output = Command::new("git").args(args).output().map_err(|err| {
+        invalid_manifest(
+            manifest_path,
+            format!("failed to run git command `{}`: {err}", args.join(" ")),
+        )
+    })?;
+    if !output.status.success() {
+        return Err(invalid_manifest(
+            manifest_path,
+            format!(
+                "git command `{}` failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn resolve_registry_dependency_version(
+    package_root: &Path,
+    alias: &str,
+    package: &str,
+    version_req: &str,
+) -> Result<String, ProjectDiscoveryDiagnostic> {
+    let req = VersionReq::parse(version_req).map_err(|err| {
+        invalid_manifest(
+            &package_root.join(PACKAGE_MANIFEST),
+            format!("dependency `{alias}` has invalid version requirement `{version_req}`: {err}"),
+        )
+    })?;
+    let package_dir = package_root
+        .join(".kyokara")
+        .join("registry")
+        .join("packages")
+        .join(package);
+    let entries = std::fs::read_dir(&package_dir).map_err(|err| {
+        invalid_manifest(
+            &package_root.join(PACKAGE_MANIFEST),
+            format!("dependency `{alias}` could not find registry package `{package}`: {err}"),
+        )
+    })?;
+
+    let mut candidates = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|err| {
+            invalid_manifest(
+                &package_root.join(PACKAGE_MANIFEST),
+                format!("failed to read registry package `{package}`: {err}"),
+            )
+        })?;
+        let raw_version = entry.file_name().to_string_lossy().to_string();
+        let Ok(version) = Version::parse(&raw_version) else {
+            continue;
+        };
+        if req.matches(&version) {
+            candidates.push(version);
+        }
+    }
+    candidates.sort();
+    let Some(version) = candidates.pop() else {
+        return Err(invalid_manifest(
+            &package_root.join(PACKAGE_MANIFEST),
+            format!(
+                "dependency `{alias}` could not resolve `{package}` for version requirement `{version_req}`"
+            ),
+        ));
+    };
+    Ok(version.to_string())
+}
+
+fn discover_locked_dependency_layout(
     importing_package_root: &Path,
-    dependency: &PathDependencySpec,
-) -> Result<PackageLoadPlan, ProjectDiscoveryDiagnostic> {
-    let package_root = importing_package_root.join(&dependency.path);
+    dependency: &LockedDependencySpec,
+) -> Result<DetectedPackageLayout, ProjectDiscoveryDiagnostic> {
+    ensure_locked_dependency_source(importing_package_root, dependency)?;
+    let package_root = locked_dependency_package_root(importing_package_root, dependency);
     let manifest_path = package_root.join(PACKAGE_MANIFEST);
     if !manifest_path.is_file() {
         return Err(ProjectDiscoveryDiagnostic {
@@ -448,7 +930,7 @@ fn discover_path_dependency_package(
             message: format!(
                 "invalid package manifest `{}`: dependency `{}` is missing kyokara.toml",
                 package_root.join(PACKAGE_MANIFEST).display(),
-                dependency.alias
+                dependency.alias()
             ),
         });
     }
@@ -475,18 +957,48 @@ fn discover_path_dependency_package(
             message: format!(
                 "invalid package manifest `{}`: dependency `{}` is missing src/lib.ky",
                 manifest_path.display(),
-                dependency.alias
+                dependency.alias()
             ),
         });
     }
 
-    Ok(PackageLoadPlan {
-        package_root: Some(package_root.clone()),
+    let dependencies = resolve_dependencies_for_manifest(&manifest_path, &manifest)?;
+
+    Ok(DetectedPackageLayout {
+        package_root,
         source_root: source_root.clone(),
-        entry_file: entry_file.clone(),
-        module_prefix: OwnedModulePath(vec!["deps".to_owned(), dependency.alias.clone()]),
         modules: discover_module_files(&source_root, &entry_file),
+        manifest,
+        dependencies,
     })
+}
+
+fn locked_dependency_package_root(
+    importing_package_root: &Path,
+    dependency: &LockedDependencySpec,
+) -> PathBuf {
+    match dependency {
+        LockedDependencySpec::Path { path, .. } => importing_package_root.join(path),
+        LockedDependencySpec::Git { alias, rev, .. } => {
+            git_dependency_checkout_root(importing_package_root, alias, rev)
+        }
+        LockedDependencySpec::Registry {
+            package, version, ..
+        } => registry_dependency_root(importing_package_root, package, version),
+    }
+}
+
+fn registry_dependency_root(
+    importing_package_root: &Path,
+    package: &str,
+    version: &str,
+) -> PathBuf {
+    importing_package_root
+        .join(".kyokara")
+        .join("registry")
+        .join("packages")
+        .join(package)
+        .join(version)
 }
 
 fn reserved_deps_namespace_diagnostics(
