@@ -124,6 +124,11 @@ fn main() {
             let is_multi_file = should_use_project_mode(path, project);
             let include_typed_ast = emit.as_deref() == Some("typed-ast");
 
+            if let Err(message) = sync_project_lockfile_if_needed(path, is_multi_file) {
+                eprintln!("error: {message}");
+                std::process::exit(1);
+            }
+
             if let Err(message) = validate_check_emit_format(&format, include_typed_ast) {
                 eprintln!("error: {message}");
                 std::process::exit(1);
@@ -178,6 +183,11 @@ fn main() {
         } => {
             let path = std::path::Path::new(&file);
             let is_multi_file = should_use_project_mode(path, project);
+
+            if let Err(message) = sync_project_lockfile_if_needed(path, is_multi_file) {
+                eprintln!("error: {message}");
+                std::process::exit(1);
+            }
 
             // Load capability manifest if --caps is provided.
             let manifest = caps.map(|caps_path| {
@@ -241,6 +251,11 @@ fn main() {
         } => {
             let path = std::path::Path::new(&file);
             let is_multi_file = should_use_project_mode(path, project);
+
+            if let Err(message) = sync_project_lockfile_if_needed(path, is_multi_file) {
+                eprintln!("error: {message}");
+                std::process::exit(1);
+            }
 
             let corpus_base = path
                 .parent()
@@ -512,6 +527,24 @@ fn validate_check_emit_format(format: &str, include_typed_ast: bool) -> Result<(
         return Err("`--emit typed-ast` requires `--format json`");
     }
     Ok(())
+}
+
+fn sync_project_lockfile_if_needed(
+    path: &std::path::Path,
+    is_multi_file: bool,
+) -> Result<(), String> {
+    if !is_multi_file || !kyokara_hir::has_package_manifest_candidate(path) {
+        return Ok(());
+    }
+
+    kyokara_hir::sync_package_lockfile_for_entry(path)
+        .map(|_| ())
+        .map_err(|err| {
+            format!(
+                "cannot write package lockfile for `{}`: {err}",
+                path.display()
+            )
+        })
 }
 
 /// Check if there are other `.ky` files alongside the given file.
@@ -849,6 +882,30 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sync_project_lockfile_if_needed_writes_lockfile_for_package_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+
+        let main_path = src_dir.join("main.ky");
+        std::fs::write(
+            dir.path().join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"../json-pkg\" }\n",
+        )
+        .unwrap();
+        std::fs::write(&main_path, "fn main() -> Int { 0 }\n").unwrap();
+
+        sync_project_lockfile_if_needed(&main_path, true).expect("lockfile sync should succeed");
+
+        let lockfile = std::fs::read_to_string(dir.path().join("kyokara.lock"))
+            .expect("lockfile should be written");
+        assert!(
+            lockfile.contains("json = { path = \"../json-pkg\" }"),
+            "expected lockfile to include dependency snapshot, got: {lockfile}"
+        );
     }
 
     #[test]

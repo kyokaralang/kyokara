@@ -37,7 +37,7 @@ pub use kyokara_hir_ty::ty::{Ty, display_ty, display_ty_with_tree};
 pub use kyokara_hir_ty::{TypeCheckResult, check_module};
 pub use project::{
     PackageLoadPlan, ProjectDiscoveryDiagnostic, ProjectLoadPlan, discover_project_load_plan,
-    has_package_manifest_candidate, package_entry_file_for_source,
+    has_package_manifest_candidate, package_entry_file_for_source, sync_package_lockfile_for_entry,
 };
 
 use std::collections::HashMap;
@@ -1553,6 +1553,73 @@ mod tests {
                 .iter()
                 .map(|d| d.message.as_str())
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn sync_package_lockfile_writes_path_dependency_snapshot() {
+        let dir = make_temp_dir();
+        let app_src = dir.join("src");
+        std::fs::create_dir_all(&app_src).expect("src dir should be creatable");
+
+        let main_path = app_src.join("main.ky");
+        let manifest_path = dir.join("kyokara.toml");
+        std::fs::write(
+            &manifest_path,
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"../json-pkg\" }\nutil = { path = \"../util-pkg\" }\n",
+        )
+        .expect("manifest should be writable");
+        std::fs::write(&main_path, "fn main() -> Int { 0 }\n").expect("entry should be writable");
+
+        let lockfile_path = sync_package_lockfile_for_entry(&main_path)
+            .expect("lockfile sync should succeed")
+            .expect("package entry should produce a lockfile path");
+        let lockfile = std::fs::read_to_string(&lockfile_path).expect("lockfile should exist");
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert_eq!(
+            lockfile,
+            "version = 1\n\n[dependencies]\njson = { path = \"../json-pkg\" }\nutil = { path = \"../util-pkg\" }\n"
+        );
+    }
+
+    #[test]
+    fn sync_package_lockfile_updates_after_manifest_dependency_edit() {
+        let dir = make_temp_dir();
+        let app_src = dir.join("src");
+        std::fs::create_dir_all(&app_src).expect("src dir should be creatable");
+
+        let main_path = app_src.join("main.ky");
+        let manifest_path = dir.join("kyokara.toml");
+        std::fs::write(
+            &manifest_path,
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"../json-pkg\" }\n",
+        )
+        .expect("manifest should be writable");
+        std::fs::write(&main_path, "fn main() -> Int { 0 }\n").expect("entry should be writable");
+
+        sync_package_lockfile_for_entry(&main_path).expect("initial lockfile sync should succeed");
+        std::fs::write(
+            &manifest_path,
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"../json-v2\" }\n",
+        )
+        .expect("updated manifest should be writable");
+
+        let lockfile_path = sync_package_lockfile_for_entry(&main_path)
+            .expect("updated lockfile sync should succeed")
+            .expect("package entry should produce a lockfile path");
+        let lockfile = std::fs::read_to_string(&lockfile_path).expect("lockfile should exist");
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            lockfile.contains("../json-v2"),
+            "expected updated dependency path in lockfile, got: {lockfile}"
+        );
+        assert!(
+            !lockfile.contains("../json-pkg"),
+            "stale dependency path should not remain in lockfile: {lockfile}"
         );
     }
 

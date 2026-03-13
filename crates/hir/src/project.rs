@@ -1,8 +1,11 @@
+use std::io;
 use std::path::{Path, PathBuf};
 
 use kyokara_hir_def::module_graph::{OwnedModulePath, discover_module_files};
 
 const PACKAGE_MANIFEST: &str = "kyokara.toml";
+const PACKAGE_LOCKFILE: &str = "kyokara.lock";
+const LOCKFILE_VERSION: i64 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectDiscoveryDiagnostic {
@@ -106,6 +109,35 @@ pub fn has_package_manifest_candidate(entry_file: &Path) -> bool {
     package_manifest_path(entry_file).is_some_and(|path| path.is_file())
 }
 
+pub fn sync_package_lockfile_for_entry(entry_file: &Path) -> io::Result<Option<PathBuf>> {
+    let Some(manifest_path) = package_manifest_path(entry_file) else {
+        return Ok(None);
+    };
+    if !manifest_path.is_file() {
+        return Ok(None);
+    }
+
+    let manifest_source = std::fs::read_to_string(&manifest_path)?;
+    let Ok(manifest) = parse_package_manifest(&manifest_path, &manifest_source) else {
+        return Ok(None);
+    };
+
+    let lockfile_path = manifest_path.with_file_name(PACKAGE_LOCKFILE);
+    let lockfile = PackageLockfile {
+        dependencies: manifest.dependencies,
+    };
+    let rendered = render_package_lockfile(&lockfile);
+    let should_write = match std::fs::read_to_string(&lockfile_path) {
+        Ok(existing) => existing != rendered,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => true,
+        Err(err) => return Err(err),
+    };
+    if should_write {
+        std::fs::write(&lockfile_path, rendered)?;
+    }
+    Ok(Some(lockfile_path))
+}
+
 pub fn package_entry_file_for_source(source_file: &Path) -> Option<PathBuf> {
     let source_root = source_file
         .ancestors()
@@ -173,6 +205,11 @@ struct PackageManifest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct PackageLockfile {
+    dependencies: Vec<PathDependencySpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct DetectedPackageLayout {
     package_root: PathBuf,
     source_root: PathBuf,
@@ -195,7 +232,8 @@ fn detect_package_layout(
     })?;
     let expected_kind = PackageKind::from_entry_file(entry_file)
         .expect("package manifest paths are only built for main.ky/lib.ky entries");
-    let manifest = parse_package_manifest(&manifest_path, &manifest_source)?;
+    let mut manifest = parse_package_manifest(&manifest_path, &manifest_source)?;
+    manifest.dependencies = locked_dependencies_for_manifest(&manifest_path, &manifest);
 
     if manifest.kind != expected_kind {
         return Err(invalid_manifest(
@@ -268,6 +306,73 @@ fn parse_package_manifest(
     let dependencies = parse_path_dependencies(manifest_path, &manifest)?;
 
     Ok(PackageManifest { kind, dependencies })
+}
+
+fn locked_dependencies_for_manifest(
+    manifest_path: &Path,
+    manifest: &PackageManifest,
+) -> Vec<PathDependencySpec> {
+    let lockfile_path = manifest_path.with_file_name(PACKAGE_LOCKFILE);
+    if !lockfile_path.is_file() {
+        return manifest.dependencies.clone();
+    }
+
+    let Ok(lockfile_source) = std::fs::read_to_string(&lockfile_path) else {
+        return manifest.dependencies.clone();
+    };
+    let Ok(lockfile) = parse_package_lockfile(&lockfile_path, &lockfile_source) else {
+        return manifest.dependencies.clone();
+    };
+    if !path_dependencies_match(&lockfile.dependencies, &manifest.dependencies) {
+        return manifest.dependencies.clone();
+    }
+
+    lockfile.dependencies
+}
+
+fn parse_package_lockfile(
+    lockfile_path: &Path,
+    lockfile_source: &str,
+) -> Result<PackageLockfile, ProjectDiscoveryDiagnostic> {
+    let lockfile = lockfile_source
+        .parse::<toml::Value>()
+        .map_err(|err| invalid_manifest(lockfile_path, format!("failed to parse TOML: {err}")))?;
+    let version = lockfile
+        .get("version")
+        .and_then(toml::Value::as_integer)
+        .ok_or_else(|| invalid_manifest(lockfile_path, "lockfile.version must be an integer"))?;
+    if version != LOCKFILE_VERSION {
+        return Err(invalid_manifest(
+            lockfile_path,
+            format!("lockfile.version must be {LOCKFILE_VERSION}"),
+        ));
+    }
+
+    let dependencies = parse_path_dependencies(lockfile_path, &lockfile)?;
+    Ok(PackageLockfile { dependencies })
+}
+
+fn render_package_lockfile(lockfile: &PackageLockfile) -> String {
+    let mut dependencies = lockfile.dependencies.clone();
+    dependencies.sort_by(|lhs, rhs| lhs.alias.cmp(&rhs.alias));
+
+    let mut rendered = format!("version = {LOCKFILE_VERSION}\n\n[dependencies]\n");
+    for dependency in dependencies {
+        rendered.push_str(&format!(
+            "{} = {{ path = \"{}\" }}\n",
+            dependency.alias,
+            dependency.path.display()
+        ));
+    }
+    rendered
+}
+
+fn path_dependencies_match(lhs: &[PathDependencySpec], rhs: &[PathDependencySpec]) -> bool {
+    let mut lhs_sorted = lhs.to_vec();
+    let mut rhs_sorted = rhs.to_vec();
+    lhs_sorted.sort_by(|a, b| a.alias.cmp(&b.alias));
+    rhs_sorted.sort_by(|a, b| a.alias.cmp(&b.alias));
+    lhs_sorted == rhs_sorted
 }
 
 fn parse_path_dependencies(

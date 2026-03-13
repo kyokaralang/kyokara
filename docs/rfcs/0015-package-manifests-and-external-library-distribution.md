@@ -223,29 +223,23 @@ Responsibilities:
 3. store registry checksums for reproducible installs,
 4. make `build`, `run`, `test`, and `check` deterministic.
 
-Illustrative shape:
+Current shipped v1 shape for local path dependencies:
 
 ```toml
 version = 1
 
-[[package]]
-name = "core/json"
-version = "1.4.2"
-source = "registry+https://packages.kyokara.dev"
-checksum = "sha256:..."
-
-[[package]]
-name = "acme/http-kit"
-source = "git+https://github.com/acme/http-kit?rev=4e2f9b1"
-rev = "4e2f9b1"
+[dependencies]
+json = { path = "../json-pkg" }
+util = { path = "../util-pkg" }
 ```
 
 Rules:
 
 1. `kyokara.toml` expresses intent.
 2. `kyokara.lock` records an exact resolution.
-3. Normal developer commands use the lockfile if present.
+3. In the first shipped phase, `check`, `run`, and `test` sync `kyokara.lock` for package-root entries before project loading.
 4. Dependency graph changes happen only when the user edits the manifest or runs an explicit update command.
+5. The first shipped lockfile records local path dependency snapshots only; git revisions, registry versions, and checksums extend the same file in later phases.
 
 ### P6. Distribution model
 
