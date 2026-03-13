@@ -1157,6 +1157,70 @@ fn transact_project_success_returns_verified() {
     );
 }
 
+#[test]
+fn transact_project_with_path_dependency_preserves_package_layout_for_verification() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let app_manifest = dir.path().join("app").join("kyokara.toml");
+    let app_main = dir.path().join("app").join("src").join("main.ky");
+    let json_manifest = dir.path().join("json").join("kyokara.toml");
+    let json_lib = dir.path().join("json").join("src").join("lib.ky");
+    let json_encode = dir.path().join("json").join("src").join("encode.ky");
+
+    std::fs::create_dir_all(app_main.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(json_lib.parent().unwrap()).unwrap();
+
+    std::fs::write(
+        &app_manifest,
+        "[package]\nname = \"app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"../json\" }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &app_main,
+        "import deps.json\nfn call() -> Int {\n    json.parse(\"abc\")\n}\nfn main() -> Int {\n    call()\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &json_manifest,
+        "[package]\nname = \"json\"\nedition = \"2026\"\nkind = \"lib\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &json_lib,
+        "from encode import weight\npub fn parse(s: String) -> Int {\n    weight(s)\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &json_encode,
+        "pub fn weight(s: String) -> Int {\n    s.len()\n}\n",
+    )
+    .unwrap();
+
+    let result = kyokara_hir::check_project(&app_main);
+    let action = rename_fn_action_for_target("call", "invoke", &app_main);
+    let tx = kyokara_refactor::transaction::transact_project(&app_main, &result, action).unwrap();
+
+    assert!(
+        matches!(tx.verification, VerificationStatus::Verified),
+        "expected Verified, got {:?}",
+        tx.verification
+    );
+    let combined = tx
+        .patched_sources
+        .iter()
+        .map(|(_, src)| src.as_str())
+        .collect::<Vec<_>>()
+        .join("\n---\n");
+    assert!(
+        combined.contains("fn invoke() -> Int"),
+        "expected local helper rename, got: {combined}"
+    );
+    assert!(
+        combined.contains("invoke()"),
+        "expected updated local helper call, got: {combined}"
+    );
+}
+
 // ── File-qualified quickfix tests (#44) ──────────────────────────────
 
 #[test]

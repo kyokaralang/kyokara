@@ -37,7 +37,7 @@ pub use kyokara_hir_ty::ty::{Ty, display_ty, display_ty_with_tree};
 pub use kyokara_hir_ty::{TypeCheckResult, check_module};
 pub use project::{
     PackageLoadPlan, ProjectDiscoveryDiagnostic, ProjectLoadPlan, discover_project_load_plan,
-    has_package_manifest_candidate,
+    has_package_manifest_candidate, package_entry_file_for_source,
 };
 
 use std::collections::HashMap;

@@ -4,6 +4,7 @@
 //! re-check step, so callers can gate application on verification.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use kyokara_span::{FileId, Span};
 
@@ -114,28 +115,48 @@ pub fn transact_project(
         }
     }
 
-    // Write patched sources to a temp directory preserving filenames, then re-check.
+    let project_plan = kyokara_hir::discover_project_load_plan(entry_file);
+    let copy_root = project_copy_root(&project_plan, entry_file);
+
+    // Write patched sources to a temp directory preserving package layout, then re-check.
     let temp_dir = tempfile::tempdir().map_err(|e| RefactorError::IoError {
         message: format!("failed to create temp directory: {e}"),
     })?;
 
-    let entry_name = entry_file.file_name().unwrap_or_default();
-    let mut temp_entry = temp_dir.path().join(entry_name);
+    let mut temp_entry = temp_dir
+        .path()
+        .join(project_relative_path(&copy_root, entry_file));
+
+    for package in &project_plan.packages {
+        let Some(package_root) = package.package_root.as_deref() else {
+            continue;
+        };
+        let manifest_path = package_root.join("kyokara.toml");
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let dest = temp_dir
+            .path()
+            .join(project_relative_path(&copy_root, &manifest_path));
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| RefactorError::IoError {
+                message: format!("failed to create directory {}: {e}", parent.display()),
+            })?;
+        }
+        let manifest_source =
+            std::fs::read_to_string(&manifest_path).map_err(|e| RefactorError::IoError {
+                message: format!("failed to read {}: {e}", manifest_path.display()),
+            })?;
+        std::fs::write(&dest, manifest_source).map_err(|e| RefactorError::IoError {
+            message: format!("failed to write {}: {e}", dest.display()),
+        })?;
+    }
 
     for (_mod_path, info) in result.module_graph.iter() {
         let original_path = &info.path;
-        let file_name = original_path.file_name().unwrap_or_default();
-
-        // Preserve subdirectory structure relative to the project root.
-        let relative = if let Some(parent) = entry_file.parent() {
-            original_path
-                .strip_prefix(parent)
-                .unwrap_or(std::path::Path::new(file_name))
-        } else {
-            std::path::Path::new(file_name)
-        };
-
-        let dest = temp_dir.path().join(relative);
+        let dest = temp_dir
+            .path()
+            .join(project_relative_path(&copy_root, original_path));
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| RefactorError::IoError {
                 message: format!("failed to create directory {}: {e}", parent.display()),
@@ -302,4 +323,45 @@ fn collect_project_verification(check: &kyokara_hir::ProjectCheckResult) -> Veri
     } else {
         VerificationStatus::Failed { diagnostics: diags }
     }
+}
+
+fn project_copy_root(plan: &kyokara_hir::ProjectLoadPlan, entry_file: &Path) -> PathBuf {
+    let package_roots: Vec<&Path> = plan
+        .packages
+        .iter()
+        .filter_map(|package| package.package_root.as_deref())
+        .collect();
+    if package_roots.is_empty() {
+        return entry_file.parent().unwrap_or(Path::new(".")).to_path_buf();
+    }
+
+    common_ancestor(&package_roots)
+        .unwrap_or_else(|| entry_file.parent().unwrap_or(Path::new(".")).to_path_buf())
+}
+
+fn project_relative_path<'a>(root: &Path, path: &'a Path) -> &'a Path {
+    path.strip_prefix(root)
+        .unwrap_or_else(|_| path.file_name().map(Path::new).unwrap_or(path))
+}
+
+fn common_ancestor(paths: &[&Path]) -> Option<PathBuf> {
+    let mut components: Vec<_> = paths.first()?.components().collect();
+    for path in &paths[1..] {
+        let current: Vec<_> = path.components().collect();
+        let shared_len = components
+            .iter()
+            .zip(current.iter())
+            .take_while(|(lhs, rhs)| lhs == rhs)
+            .count();
+        components.truncate(shared_len);
+        if components.is_empty() {
+            break;
+        }
+    }
+
+    let mut ancestor = PathBuf::new();
+    for component in components {
+        ancestor.push(component.as_os_str());
+    }
+    Some(ancestor)
 }

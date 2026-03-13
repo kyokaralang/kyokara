@@ -2037,6 +2037,15 @@ fn check_project_from_files(files: &[(&str, &str)]) -> kyokara_api::CheckOutput 
     check_project(&main_path)
 }
 
+fn check_project_from_entry_files(
+    files: &[(&str, &str)],
+    entry_rel: &str,
+) -> kyokara_api::CheckOutput {
+    let (dir, _) = write_project(files);
+    let entry_path = dir.path().join(entry_rel);
+    check_project(&entry_path)
+}
+
 fn check_project_with_options_from_files(
     files: &[(&str, &str)],
     options: &CheckOptions,
@@ -2058,6 +2067,52 @@ fn check_project_imported_function_can_read_its_top_level_let() {
         output.diagnostics.is_empty(),
         "expected no diagnostics, got: {:?}",
         output.diagnostics
+    );
+}
+
+#[test]
+fn check_project_symbol_graph_includes_path_dependency_functions() {
+    let output = check_project_from_entry_files(
+        &[
+            (
+                "app/kyokara.toml",
+                "[package]\nname = \"app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"../json\" }\n",
+            ),
+            (
+                "app/src/main.ky",
+                "import deps.json\nfn main() -> Int { json.parse(\"abc\") }\n",
+            ),
+            (
+                "json/kyokara.toml",
+                "[package]\nname = \"json\"\nedition = \"2026\"\nkind = \"lib\"\n",
+            ),
+            (
+                "json/src/lib.ky",
+                "pub fn parse(s: String) -> Int { s.len() }\n",
+            ),
+        ],
+        "app/src/main.ky",
+    );
+    assert!(
+        output.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        output.diagnostics
+    );
+    let ids: BTreeSet<_> = output
+        .symbol_graph
+        .functions
+        .iter()
+        .map(|function| function.id.as_str())
+        .collect();
+    assert!(
+        ids.contains("fn::deps.json::parse"),
+        "expected dependency function ID in symbol graph, got: {ids:?}"
+    );
+    let main_fn = find_function_by_id(&output, "fn::main");
+    assert!(
+        main_fn.calls.contains(&"fn::deps.json::parse".to_string()),
+        "expected main to call dependency parse, got: {:?}",
+        main_fn.calls
     );
 }
 

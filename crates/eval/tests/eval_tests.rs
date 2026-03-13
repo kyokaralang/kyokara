@@ -238,6 +238,26 @@ fn run_project_with_files_manifest_err(
     }
 }
 
+fn run_project_with_manifest_layout_ok(
+    files: &[(&str, &str)],
+    entry_rel: &str,
+    manifest: Option<CapabilityManifest>,
+) -> Value {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, source) in files {
+        let path = dir.path().join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, source).unwrap();
+    }
+    let entry_path = dir.path().join(entry_rel);
+    match kyokara_eval::run_project_with_manifest(&entry_path, manifest) {
+        Ok(result) => result.value,
+        Err(e) => panic!("runtime error: {e}"),
+    }
+}
+
 // ── Literal tests ────────────────────────────────────────────────────
 
 #[test]
@@ -303,6 +323,37 @@ fn eval_user_impl_trait_qualified_call() {
          }",
     );
     assert!(matches!(val, Value::String(ref s) if s == "p"));
+}
+
+#[test]
+fn eval_package_dependency_root_can_import_sibling_module() {
+    let value = run_project_with_manifest_layout_ok(
+        &[
+            (
+                "app/kyokara.toml",
+                "[package]\nname = \"app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"../json\" }\n",
+            ),
+            (
+                "app/src/main.ky",
+                "import deps.json\nfn main() -> Int { json.parse(\"abc\") }\n",
+            ),
+            (
+                "json/kyokara.toml",
+                "[package]\nname = \"json\"\nedition = \"2026\"\nkind = \"lib\"\n",
+            ),
+            (
+                "json/src/lib.ky",
+                "from encode import weight\npub fn parse(s: String) -> Int { weight(s) }\n",
+            ),
+            (
+                "json/src/encode.ky",
+                "pub fn weight(s: String) -> Int { s.len() }\n",
+            ),
+        ],
+        "app/src/main.ky",
+        None,
+    );
+    assert_eq!(value, Value::Int(3));
 }
 
 #[test]

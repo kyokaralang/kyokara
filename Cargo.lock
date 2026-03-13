@@ -1207,6 +1207,7 @@ dependencies = [
  "rustc-hash 2.1.1",
  "salsa",
  "serde_json",
+ "tempfile",
  "text-size",
  "tokio",
  "tower",

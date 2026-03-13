@@ -106,6 +106,22 @@ pub fn has_package_manifest_candidate(entry_file: &Path) -> bool {
     package_manifest_path(entry_file).is_some_and(|path| path.is_file())
 }
 
+pub fn package_entry_file_for_source(source_file: &Path) -> Option<PathBuf> {
+    let source_root = source_file
+        .ancestors()
+        .find(|ancestor| ancestor.file_name().and_then(|name| name.to_str()) == Some("src"))?;
+    let package_root = source_root.parent()?;
+    let manifest_path = package_root.join(PACKAGE_MANIFEST);
+    if !manifest_path.is_file() {
+        return None;
+    }
+
+    let manifest_source = std::fs::read_to_string(&manifest_path).ok()?;
+    let manifest = parse_package_manifest(&manifest_path, &manifest_source).ok()?;
+    let entry_file = source_root.join(manifest.kind.entry_file_name());
+    entry_file.is_file().then_some(entry_file)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PackageKind {
     Bin,

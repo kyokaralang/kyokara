@@ -288,37 +288,47 @@ pub fn run_project_with_manifest(
     // visible namespace names for namespace imports.
     let mut imported_namespace_names: FxHashMap<ModulePath, Vec<kyokara_hir_def::name::Name>> =
         FxHashMap::default();
-    let imported_mod_paths: Vec<ModulePath> = entry_info
-        .item_tree
-        .imports
-        .iter()
-        .filter_map(|imp| {
-            let direct_path = ModulePath(imp.path.segments.clone());
-            let resolved_path = if project.module_graph.get(&direct_path).is_some() {
-                Some(direct_path)
-            } else {
-                let target_name = imp.path.last()?;
-                // Resolve to the actual module path, same as resolve_project_imports does.
+    let mut imported_member_names: FxHashMap<
+        ModulePath,
+        Vec<(kyokara_hir_def::name::Name, kyokara_hir_def::name::Name)>,
+    > = FxHashMap::default();
+    for imp in &entry_info.item_tree.imports {
+        let direct_path = ModulePath(imp.path.segments.clone());
+        let resolved_path = if project.module_graph.get(&direct_path).is_some() {
+            Some(direct_path)
+        } else {
+            let target_name = imp.path.last();
+            target_name.and_then(|name| {
                 project.module_graph.iter().find_map(|(mod_path, _)| {
-                    (mod_path.last() == Some(target_name)).then(|| mod_path.clone())
+                    (mod_path.last() == Some(name)).then(|| mod_path.clone())
                 })
-            }?;
+            })
+        };
 
-            if let kyokara_hir_def::item_tree::ImportKind::Namespace { alias } = &imp.kind {
+        let Some(resolved_path) = resolved_path else {
+            continue;
+        };
+
+        match &imp.kind {
+            kyokara_hir_def::item_tree::ImportKind::Namespace { alias } => {
                 let visible_name = alias.unwrap_or_else(|| {
                     imp.path
                         .last()
                         .expect("namespace import path should not be empty")
                 });
                 imported_namespace_names
-                    .entry(resolved_path.clone())
+                    .entry(resolved_path)
                     .or_default()
                     .push(visible_name);
             }
-
-            Some(resolved_path)
-        })
-        .collect();
+            kyokara_hir_def::item_tree::ImportKind::Members { members } => {
+                let imported = imported_member_names.entry(resolved_path).or_default();
+                for member in members {
+                    imported.push((member.alias.unwrap_or(member.name), member.name));
+                }
+            }
+        }
+    }
 
     // Per-function module override maps used by the interpreter so imported
     // functions can resolve private helpers in their source module without
@@ -336,113 +346,153 @@ pub fn run_project_with_manifest(
         FxHashMap<kyokara_hir_def::name::Name, Value>,
     > = FxHashMap::default();
 
+    let mut runtime_functions = Vec::new();
     for (mod_path, tc) in &project.type_checks {
         if *mod_path == entry_path {
             continue;
         }
-        // Only process modules that the entry module actually imported.
-        if !imported_mod_paths.contains(mod_path) {
+        let Some(mod_info) = project.module_graph.get(mod_path) else {
+            continue;
+        };
+        for (src_fn_idx, body) in &tc.fn_bodies {
+            runtime_functions.push(ProjectRuntimeFunction {
+                module_path: mod_path.clone(),
+                fn_item: mod_info.item_tree.functions[*src_fn_idx].clone(),
+                body: body.clone(),
+                runtime_indices: Vec::new(),
+            });
+        }
+    }
+
+    {
+        let entry_info = project
+            .module_graph
+            .get_mut(&entry_path)
+            .ok_or(RuntimeError::TypeError("entry module not found".into()))?;
+
+        for runtime_fn in &mut runtime_functions {
+            let matching_indices = matching_entry_runtime_fn_indices(
+                &entry_info.item_tree,
+                &entry_info.scope,
+                imported_member_names.get(&runtime_fn.module_path),
+                imported_namespace_names.get(&runtime_fn.module_path),
+                &runtime_fn.fn_item,
+            );
+            for runtime_idx in matching_indices {
+                fn_bodies
+                    .entry(runtime_idx)
+                    .or_insert_with(|| runtime_fn.body.clone());
+                if !runtime_fn.runtime_indices.contains(&runtime_idx) {
+                    runtime_fn.runtime_indices.push(runtime_idx);
+                }
+            }
+
+            if runtime_fn.runtime_indices.is_empty() {
+                let runtime_idx = entry_info
+                    .item_tree
+                    .functions
+                    .alloc(runtime_fn.fn_item.clone());
+                fn_bodies.insert(runtime_idx, runtime_fn.body.clone());
+                runtime_fn.runtime_indices.push(runtime_idx);
+            }
+        }
+    }
+
+    for (mod_path, tc) in &project.type_checks {
+        if *mod_path == entry_path {
             continue;
         }
         let Some(mod_info) = project.module_graph.get(mod_path) else {
             continue;
         };
         let mod_item_tree = mod_info.item_tree.clone();
-        let mod_scope = mod_info.scope.clone();
 
-        // Build a module-local name -> runtime function family map.
         let mut module_fn_map: FxHashMap<
             kyokara_hir_def::name::Name,
             Vec<kyokara_hir_def::item_tree::FnItemIdx>,
         > = FxHashMap::default();
+        for runtime_fn in runtime_functions
+            .iter()
+            .filter(|runtime_fn| runtime_fn.module_path == *mod_path)
+        {
+            let Some(&runtime_idx) = runtime_fn.runtime_indices.first() else {
+                continue;
+            };
+            let runtime_family = module_fn_map.entry(runtime_fn.fn_item.name).or_default();
+            if !runtime_family.contains(&runtime_idx) {
+                runtime_family.push(runtime_idx);
+            }
+        }
 
-        // Collect private function items + bodies to splice after immutable borrows end.
-        let mut private_fns_to_splice: Vec<(
-            kyokara_hir_def::name::Name,
-            kyokara_hir_def::item_tree::FnItem,
-            kyokara_hir_def::body::Body,
-        )> = Vec::new();
+        let mut module_scope_override = mod_info.scope.clone();
+        for import in &mod_info.item_tree.imports {
+            let Some(target_path) = resolve_runtime_import_target(
+                &project.module_graph,
+                mod_path,
+                &import.path,
+                &project.interner,
+            ) else {
+                continue;
+            };
 
-        // For each body in this module, check if the entry module imported it (pub fn).
-        for (src_fn_idx, body) in &tc.fn_bodies {
-            let src_fn_item = &mod_info.item_tree.functions[*src_fn_idx];
-
-            if src_fn_item.is_pub {
-                let entry_info = project
-                    .module_graph
-                    .get(&entry_path)
-                    .ok_or(RuntimeError::TypeError("entry module not found".into()))?;
-                if let Some(entry_candidates) = entry_info.scope.functions.get(&src_fn_item.name)
-                    && let Some(&entry_fn_idx) = entry_candidates.iter().find(|&&candidate_idx| {
-                        let candidate = &entry_info.item_tree.functions[candidate_idx];
-                        candidate.params == src_fn_item.params
-                            && candidate.ret_type == src_fn_item.ret_type
-                            && candidate.type_params == src_fn_item.type_params
-                    })
-                {
-                    fn_bodies
-                        .entry(entry_fn_idx)
-                        .or_insert_with(|| body.clone());
-                    module_fn_map
-                        .entry(src_fn_item.name)
-                        .or_default()
-                        .push(entry_fn_idx);
-                }
-
-                if let Some(namespace_names) = imported_namespace_names.get(mod_path) {
-                    for namespace_name in namespace_names {
-                        let Some(namespace) = entry_info.scope.namespaces.get(namespace_name)
-                        else {
-                            continue;
-                        };
-                        let Some(namespace_candidates) = namespace.functions.get(&src_fn_item.name)
-                        else {
-                            continue;
-                        };
-                        for &entry_fn_idx in namespace_candidates.iter().filter(|&&candidate_idx| {
-                            let candidate = &entry_info.item_tree.functions[candidate_idx];
-                            candidate.params == src_fn_item.params
-                                && candidate.ret_type == src_fn_item.ret_type
-                                && candidate.type_params == src_fn_item.type_params
+            match &import.kind {
+                kyokara_hir_def::item_tree::ImportKind::Members { members } => {
+                    for member in members {
+                        let visible_name = member.alias.unwrap_or(member.name);
+                        let family = module_fn_map.entry(visible_name).or_default();
+                        for runtime_fn in runtime_functions.iter().filter(|runtime_fn| {
+                            runtime_fn.module_path == target_path
+                                && runtime_fn.fn_item.is_pub
+                                && runtime_fn.fn_item.name == member.name
                         }) {
-                            fn_bodies
-                                .entry(entry_fn_idx)
-                                .or_insert_with(|| body.clone());
-                            let family = module_fn_map.entry(src_fn_item.name).or_default();
-                            if !family.contains(&entry_fn_idx) {
-                                family.push(entry_fn_idx);
+                            let Some(&runtime_idx) = runtime_fn.runtime_indices.first() else {
+                                continue;
+                            };
+                            if !family.contains(&runtime_idx) {
+                                family.push(runtime_idx);
                             }
                         }
                     }
                 }
-                continue;
-            }
+                kyokara_hir_def::item_tree::ImportKind::Namespace { alias } => {
+                    let visible_name = alias.unwrap_or_else(|| {
+                        import
+                            .path
+                            .last()
+                            .expect("namespace import path should not be empty")
+                    });
+                    let Some(namespace) = module_scope_override.namespaces.get_mut(&visible_name)
+                    else {
+                        continue;
+                    };
 
-            private_fns_to_splice.push((src_fn_item.name, src_fn_item.clone(), body.clone()));
+                    let mut rewritten_functions = FxHashMap::default();
+                    for runtime_fn in runtime_functions.iter().filter(|runtime_fn| {
+                        runtime_fn.module_path == target_path && runtime_fn.fn_item.is_pub
+                    }) {
+                        let Some(&runtime_idx) = runtime_fn.runtime_indices.first() else {
+                            continue;
+                        };
+                        let family = rewritten_functions
+                            .entry(runtime_fn.fn_item.name)
+                            .or_insert_with(Vec::new);
+                        if !family.contains(&runtime_idx) {
+                            family.push(runtime_idx);
+                        }
+                    }
+                    namespace.functions = rewritten_functions;
+                }
+            }
         }
 
-        // Splice private helpers into the entry item tree (not entry scope).
-        // They stay inaccessible from `main` but callable from imported module
-        // functions via module-local override maps.
-        {
-            let entry_info = project
-                .module_graph
-                .get_mut(&entry_path)
-                .ok_or(RuntimeError::TypeError("entry module not found".into()))?;
-            for (name, fn_item, body) in private_fns_to_splice {
-                let idx = entry_info.item_tree.functions.alloc(fn_item);
-                fn_bodies.insert(idx, body);
-                module_fn_map.entry(name).or_default().push(idx);
-            }
-        }
-
-        // Attach the same module-local map to every function from this module.
-        for fn_idx in module_fn_map
-            .values()
-            .flat_map(|candidates| candidates.iter().copied())
-        {
+        let module_runtime_indices: Vec<_> = runtime_functions
+            .iter()
+            .filter(|runtime_fn| runtime_fn.module_path == *mod_path)
+            .flat_map(|runtime_fn| runtime_fn.runtime_indices.iter().copied())
+            .collect();
+        for fn_idx in module_runtime_indices {
             fn_scope_overrides.insert(fn_idx, module_fn_map.clone());
-            module_scope_overrides.insert(fn_idx, mod_scope.clone());
+            module_scope_overrides.insert(fn_idx, module_scope_override.clone());
         }
 
         if !tc.let_bodies.is_empty() {
@@ -450,8 +500,15 @@ pub fn run_project_with_manifest(
                 std::mem::replace(&mut project.interner, kyokara_intern::Interner::new());
             let mut let_interp = Interpreter::new(
                 mod_item_tree.clone(),
-                mod_scope.clone(),
-                tc.fn_bodies.clone(),
+                module_scope_override.clone(),
+                augmented_module_fn_bodies(
+                    mod_path,
+                    mod_info,
+                    tc,
+                    &project.module_graph,
+                    &project.interner,
+                    &runtime_functions,
+                ),
                 tc.let_bodies.clone(),
                 FxHashMap::default(),
                 FxHashMap::default(),
@@ -461,9 +518,10 @@ pub fn run_project_with_manifest(
             );
             let module_let_values = let_interp.materialize_top_level_let_values()?;
             project.interner = let_interp.into_interner();
-            for fn_idx in module_fn_map
-                .values()
-                .flat_map(|candidates| candidates.iter().copied())
+            for fn_idx in runtime_functions
+                .iter()
+                .filter(|runtime_fn| runtime_fn.module_path == *mod_path)
+                .flat_map(|runtime_fn| runtime_fn.runtime_indices.iter().copied())
             {
                 let_scope_overrides.insert(fn_idx, module_let_values.clone());
             }
@@ -489,6 +547,207 @@ pub fn run_project_with_manifest(
     let value = interp.run_main()?;
     let interner = interp.into_interner();
     Ok(RunResult { value, interner })
+}
+
+struct ProjectRuntimeFunction {
+    module_path: ModulePath,
+    fn_item: kyokara_hir_def::item_tree::FnItem,
+    body: kyokara_hir_def::body::Body,
+    runtime_indices: Vec<kyokara_hir_def::item_tree::FnItemIdx>,
+}
+
+fn project_runtime_fn_matches(
+    lhs: &kyokara_hir_def::item_tree::FnItem,
+    rhs: &kyokara_hir_def::item_tree::FnItem,
+) -> bool {
+    let compatible_source_range = match (lhs.source_range, rhs.source_range) {
+        (Some(lhs_range), Some(rhs_range)) => lhs_range == rhs_range,
+        _ => true,
+    };
+
+    lhs.name == rhs.name
+        && lhs.params == rhs.params
+        && lhs.ret_type == rhs.ret_type
+        && lhs.type_params == rhs.type_params
+        && lhs.receiver_type == rhs.receiver_type
+        && compatible_source_range
+}
+
+fn matching_entry_runtime_fn_indices(
+    entry_item_tree: &kyokara_hir::ItemTree,
+    entry_scope: &kyokara_hir::ModuleScope,
+    member_imports: Option<&Vec<(kyokara_hir_def::name::Name, kyokara_hir_def::name::Name)>>,
+    namespace_names: Option<&Vec<kyokara_hir_def::name::Name>>,
+    src_fn_item: &kyokara_hir_def::item_tree::FnItem,
+) -> Vec<kyokara_hir_def::item_tree::FnItemIdx> {
+    let mut runtime_indices = Vec::new();
+
+    if src_fn_item.is_pub {
+        if let Some(member_imports) = member_imports {
+            for (visible_name, source_name) in member_imports {
+                if *source_name != src_fn_item.name {
+                    continue;
+                }
+                let Some(entry_candidates) = entry_scope.functions.get(visible_name) else {
+                    continue;
+                };
+                for &entry_fn_idx in entry_candidates {
+                    let candidate = &entry_item_tree.functions[entry_fn_idx];
+                    if project_runtime_fn_matches(candidate, src_fn_item)
+                        && !runtime_indices.contains(&entry_fn_idx)
+                    {
+                        runtime_indices.push(entry_fn_idx);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(namespace_names) = namespace_names {
+        for namespace_name in namespace_names {
+            let Some(namespace) = entry_scope.namespaces.get(namespace_name) else {
+                continue;
+            };
+            let Some(namespace_candidates) = namespace.functions.get(&src_fn_item.name) else {
+                continue;
+            };
+            for &entry_fn_idx in namespace_candidates {
+                let candidate = &entry_item_tree.functions[entry_fn_idx];
+                if project_runtime_fn_matches(candidate, src_fn_item)
+                    && !runtime_indices.contains(&entry_fn_idx)
+                {
+                    runtime_indices.push(entry_fn_idx);
+                }
+            }
+        }
+    }
+
+    runtime_indices
+}
+
+fn runtime_package_prefix<'a>(
+    module_path: &'a ModulePath,
+    interner: &Interner,
+) -> &'a [kyokara_hir_def::name::Name] {
+    if module_path.0.len() >= 2 && module_path.0[0].resolve(interner) == "deps" {
+        &module_path.0[..2]
+    } else {
+        &[]
+    }
+}
+
+fn resolve_runtime_import_target(
+    graph: &kyokara_hir::ModuleGraph,
+    importing_mod: &ModulePath,
+    import_path: &kyokara_hir_def::path::Path,
+    interner: &Interner,
+) -> Option<ModulePath> {
+    if import_path.segments.is_empty() {
+        return None;
+    }
+
+    let is_dependency_import = import_path
+        .segments
+        .first()
+        .is_some_and(|seg| seg.resolve(interner) == "deps");
+    if is_dependency_import {
+        if import_path.segments.len() < 2 {
+            return None;
+        }
+        let target_path = ModulePath(import_path.segments.clone());
+        return graph.get(&target_path).map(|_| target_path);
+    }
+
+    let importing_prefix = runtime_package_prefix(importing_mod, interner);
+    if import_path.segments.len() > 1 {
+        let mut target_segments = importing_prefix.to_vec();
+        target_segments.extend(import_path.segments.iter().copied());
+        let target_path = ModulePath(target_segments);
+        return graph.get(&target_path).map(|_| target_path);
+    }
+
+    let resolve_name = import_path.segments[0];
+    let candidates: Vec<_> = graph
+        .iter()
+        .filter_map(|(candidate_path, _)| {
+            (runtime_package_prefix(candidate_path, interner) == importing_prefix
+                && candidate_path.last() == Some(resolve_name))
+            .then(|| candidate_path.clone())
+        })
+        .collect();
+    (candidates.len() == 1).then(|| candidates[0].clone())
+}
+
+fn augmented_module_fn_bodies(
+    module_path: &ModulePath,
+    mod_info: &kyokara_hir::ModuleInfo,
+    type_check: &kyokara_hir::TypeCheckResult,
+    graph: &kyokara_hir::ModuleGraph,
+    interner: &Interner,
+    runtime_functions: &[ProjectRuntimeFunction],
+) -> FxHashMap<kyokara_hir_def::item_tree::FnItemIdx, kyokara_hir_def::body::Body> {
+    let mut fn_bodies = type_check.fn_bodies.clone();
+    for import in &mod_info.item_tree.imports {
+        let Some(target_path) =
+            resolve_runtime_import_target(graph, module_path, &import.path, interner)
+        else {
+            continue;
+        };
+
+        match &import.kind {
+            kyokara_hir_def::item_tree::ImportKind::Members { members } => {
+                for member in members {
+                    let visible_name = member.alias.unwrap_or(member.name);
+                    let Some(candidates) = mod_info.scope.functions.get(&visible_name) else {
+                        continue;
+                    };
+                    for &candidate_idx in candidates {
+                        if fn_bodies.contains_key(&candidate_idx) {
+                            continue;
+                        }
+                        let candidate_item = &mod_info.item_tree.functions[candidate_idx];
+                        let Some(runtime_fn) = runtime_functions.iter().find(|runtime_fn| {
+                            runtime_fn.module_path == target_path
+                                && runtime_fn.fn_item.is_pub
+                                && runtime_fn.fn_item.name == member.name
+                                && project_runtime_fn_matches(&runtime_fn.fn_item, candidate_item)
+                        }) else {
+                            continue;
+                        };
+                        fn_bodies.insert(candidate_idx, runtime_fn.body.clone());
+                    }
+                }
+            }
+            kyokara_hir_def::item_tree::ImportKind::Namespace { alias } => {
+                let visible_name = alias.unwrap_or_else(|| {
+                    import
+                        .path
+                        .last()
+                        .expect("namespace import path should not be empty")
+                });
+                let Some(namespace) = mod_info.scope.namespaces.get(&visible_name) else {
+                    continue;
+                };
+                for candidates in namespace.functions.values() {
+                    for &candidate_idx in candidates {
+                        if fn_bodies.contains_key(&candidate_idx) {
+                            continue;
+                        }
+                        let candidate_item = &mod_info.item_tree.functions[candidate_idx];
+                        let Some(runtime_fn) = runtime_functions.iter().find(|runtime_fn| {
+                            runtime_fn.module_path == target_path
+                                && runtime_fn.fn_item.is_pub
+                                && project_runtime_fn_matches(&runtime_fn.fn_item, candidate_item)
+                        }) else {
+                            continue;
+                        };
+                        fn_bodies.insert(candidate_idx, runtime_fn.body.clone());
+                    }
+                }
+            }
+        }
+    }
+    fn_bodies
 }
 
 fn collect_single_file_compile_errors(

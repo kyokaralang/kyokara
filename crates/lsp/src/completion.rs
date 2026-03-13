@@ -176,6 +176,46 @@ fn try_dot_completion(
         }
     }
 
+    for (namespace_name, namespace) in &scope.namespaces {
+        if !scope.namespace_visible(*namespace_name) {
+            continue;
+        }
+        if namespace_name.resolve(interner) != base_name {
+            continue;
+        }
+
+        for (fn_name, fn_candidates) in &namespace.functions {
+            let Some(&fn_idx) = fn_candidates.first() else {
+                continue;
+            };
+            let fn_item = &tree.functions[fn_idx];
+            let params: Vec<String> = fn_item
+                .params
+                .iter()
+                .map(|p| p.name.resolve(interner).to_string())
+                .collect();
+            let ret = fn_item.ret_type.as_ref().map(|_| " -> ...").unwrap_or("");
+            let detail = format!("fn({params}){ret}", params = params.join(", "));
+            items.push(CompletionItem {
+                label: fn_name.resolve(interner).to_string(),
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some(detail),
+                ..Default::default()
+            });
+        }
+
+        for type_name in namespace.types.keys() {
+            items.push(CompletionItem {
+                label: type_name.resolve(interner).to_string(),
+                kind: Some(CompletionItemKind::CLASS),
+                detail: Some("type".to_string()),
+                ..Default::default()
+            });
+        }
+
+        return if items.is_empty() { None } else { Some(items) };
+    }
+
     // Check type-owned static methods on bare type names.
     let base_type_idx = scope.types.iter().find_map(|(ty_name, ty_idx)| {
         let resolved = ty_name.resolve(interner);

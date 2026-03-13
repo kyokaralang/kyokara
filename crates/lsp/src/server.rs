@@ -1,6 +1,7 @@
 //! Tower-LSP backend: lifecycle, text sync, and handler dispatch.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -120,10 +121,7 @@ impl KyokaraLanguageServer {
             #[cfg(test)]
             self.maybe_delay_for_text(&text).await;
 
-            let analysis = Arc::new(FileAnalysis::from_check_result(
-                kyokara_hir::check_file(&text),
-                text.clone(),
-            ));
+            let analysis = Arc::new(build_file_analysis(&uri, &text));
 
             #[cfg(test)]
             self.maybe_delay_before_publish(&text).await;
@@ -143,6 +141,110 @@ impl KyokaraLanguageServer {
     async fn document_snapshot(&self, uri: &Url) -> Option<Arc<FileAnalysis>> {
         self.documents.read().await.get(uri).cloned()
     }
+}
+
+fn build_file_analysis(uri: &Url, text: &str) -> FileAnalysis {
+    if let Ok(path) = uri.to_file_path()
+        && let Some(entry_file) = kyokara_hir::package_entry_file_for_source(&path)
+        && let Some(analysis) = build_package_file_analysis(&entry_file, &path, text)
+    {
+        return analysis;
+    }
+
+    FileAnalysis::from_check_result(kyokara_hir::check_file(text), text.to_string())
+}
+
+fn build_package_file_analysis(
+    entry_file: &Path,
+    current_file: &Path,
+    current_text: &str,
+) -> Option<FileAnalysis> {
+    let plan = kyokara_hir::discover_project_load_plan(entry_file);
+    let copy_root = project_copy_root(&plan, entry_file);
+    let temp_dir = tempfile::tempdir().ok()?;
+
+    for package in &plan.packages {
+        let Some(package_root) = package.package_root.as_deref() else {
+            continue;
+        };
+        let manifest_path = package_root.join("kyokara.toml");
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let dest = temp_dir
+            .path()
+            .join(project_relative_path(&copy_root, &manifest_path));
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).ok()?;
+        }
+        let manifest_source = std::fs::read_to_string(&manifest_path).ok()?;
+        std::fs::write(dest, manifest_source).ok()?;
+    }
+
+    for (_module_path, file_path) in plan.iter_modules() {
+        let dest = temp_dir
+            .path()
+            .join(project_relative_path(&copy_root, file_path));
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).ok()?;
+        }
+        let source = if file_path == current_file {
+            current_text.to_string()
+        } else {
+            std::fs::read_to_string(file_path).ok()?
+        };
+        std::fs::write(dest, source).ok()?;
+    }
+
+    let temp_entry = temp_dir
+        .path()
+        .join(project_relative_path(&copy_root, entry_file));
+    let temp_current = temp_dir
+        .path()
+        .join(project_relative_path(&copy_root, current_file));
+    let result = kyokara_hir::check_project(&temp_entry);
+    FileAnalysis::from_project_check_result_for_path(result, &temp_current)
+}
+
+fn project_copy_root(plan: &kyokara_hir::ProjectLoadPlan, entry_file: &Path) -> PathBuf {
+    let package_roots: Vec<&Path> = plan
+        .packages
+        .iter()
+        .filter_map(|package| package.package_root.as_deref())
+        .collect();
+    if package_roots.is_empty() {
+        return entry_file.parent().unwrap_or(Path::new(".")).to_path_buf();
+    }
+
+    common_ancestor(&package_roots)
+        .unwrap_or_else(|| entry_file.parent().unwrap_or(Path::new(".")).to_path_buf())
+}
+
+fn project_relative_path<'a>(root: &Path, path: &'a Path) -> &'a Path {
+    path.strip_prefix(root)
+        .unwrap_or_else(|_| path.file_name().map(Path::new).unwrap_or(path))
+}
+
+fn common_ancestor(paths: &[&Path]) -> Option<PathBuf> {
+    let mut components: Vec<_> = paths.first()?.components().collect();
+    for path in &paths[1..] {
+        let current: Vec<_> = path.components().collect();
+        let shared_len = components
+            .iter()
+            .zip(current.iter())
+            .take_while(|(lhs, rhs)| lhs == rhs)
+            .count();
+        components.truncate(shared_len);
+        if components.is_empty() {
+            break;
+        }
+    }
+
+    let mut ancestor = PathBuf::new();
+    for component in components {
+        ancestor.push(component.as_os_str());
+    }
+    Some(ancestor)
 }
 
 #[tower_lsp::async_trait]
@@ -990,6 +1092,101 @@ mod tests {
             snapshot_after.source
         );
 
+        drain.abort();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn package_file_open_uses_project_analysis_for_dependency_imports() {
+        let (mut service, mut socket) = LspService::new(KyokaraLanguageServer::new);
+        let drain = tokio::spawn(async move { while socket.next().await.is_some() {} });
+
+        initialize(&mut service).await;
+
+        let temp_root = std::env::temp_dir().join(format!(
+            "kyokara-lsp-phase3-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ));
+        let source = "import deps.json\nfn main() -> Int { json.parse(\"abc\") }\n";
+
+        let app_manifest = temp_root.join("app").join("kyokara.toml");
+        let app_main = temp_root.join("app").join("src").join("main.ky");
+        let json_manifest = temp_root.join("json").join("kyokara.toml");
+        let json_lib = temp_root.join("json").join("src").join("lib.ky");
+
+        std::fs::create_dir_all(app_main.parent().expect("app src dir")).expect("create app src");
+        std::fs::create_dir_all(json_lib.parent().expect("json src dir")).expect("create json src");
+        std::fs::write(
+            &app_manifest,
+            "[package]\nname = \"app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"../json\" }\n",
+        )
+        .expect("write app manifest");
+        std::fs::write(&app_main, source).expect("write app main");
+        std::fs::write(
+            &json_manifest,
+            "[package]\nname = \"json\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .expect("write json manifest");
+        std::fs::write(&json_lib, "pub fn parse(s: String) -> Int { s.len() }\n")
+            .expect("write json lib");
+
+        let uri = Url::from_file_path(&app_main).expect("file uri");
+        call_notification(
+            &mut service,
+            "textDocument/didOpen",
+            json!({
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": "kyokara",
+                    "version": 1,
+                    "text": source
+                }
+            }),
+        )
+        .await;
+
+        let snapshot = service
+            .inner()
+            .document_snapshot(&uri)
+            .await
+            .expect("expected document snapshot");
+        let diags = crate::diagnostics::to_lsp_diagnostics(&snapshot, &snapshot.source);
+        assert!(
+            !diags
+                .iter()
+                .any(|diag| diag.message.contains("unresolved import")),
+            "did not expect unresolved import diagnostics, got: {diags:?}"
+        );
+
+        let parse_col = source
+            .lines()
+            .nth(1)
+            .and_then(|line| line.find("parse"))
+            .expect("parse offset") as u32;
+        let completion = call_request(
+            &mut service,
+            "textDocument/completion",
+            99,
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": parse_col }
+            }),
+        )
+        .await;
+        assert!(
+            completion.is_ok(),
+            "completion should succeed: {completion:?}"
+        );
+        let labels = completion_labels(&completion);
+        assert!(
+            labels.iter().any(|label| label == "parse"),
+            "expected dependency member completion, got labels: {labels:?}"
+        );
+
+        std::fs::remove_dir_all(&temp_root).expect("cleanup temp root");
         drain.abort();
     }
 }
