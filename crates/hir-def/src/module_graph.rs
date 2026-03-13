@@ -35,6 +35,37 @@ impl ModulePath {
     }
 }
 
+/// Interner-free module path used during project/package discovery.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct OwnedModulePath(pub Vec<String>);
+
+impl OwnedModulePath {
+    pub fn root() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn single(name: impl Into<String>) -> Self {
+        Self(vec![name.into()])
+    }
+
+    pub fn is_root(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn last(&self) -> Option<&str> {
+        self.0.last().map(String::as_str)
+    }
+
+    pub fn to_module_path(&self, interner: &mut kyokara_intern::Interner) -> ModulePath {
+        ModulePath(
+            self.0
+                .iter()
+                .map(|segment| Name::new(interner, segment))
+                .collect(),
+        )
+    }
+}
+
 /// Information about a single module in the project.
 pub struct ModuleInfo {
     pub file_id: FileId,
@@ -118,17 +149,13 @@ impl ModuleGraph {
 /// - `<root>/math/utils.ky` → `ModulePath(["math", "utils"])`
 /// - The entry file (passed as `entry`) is mapped to `ModulePath::root()`
 ///
-/// Returns `(ModulePath, PathBuf)` pairs for each discovered file.
-pub fn discover_modules(
-    _root: &Path,
-    entry: &Path,
-    interner: &mut kyokara_intern::Interner,
-) -> Vec<(ModulePath, PathBuf)> {
+/// Returns `(OwnedModulePath, PathBuf)` pairs for each discovered file.
+pub fn discover_module_files(_root: &Path, entry: &Path) -> Vec<(OwnedModulePath, PathBuf)> {
     let mut result = Vec::new();
 
     // The entry file is the root module.
     if entry.exists() {
-        result.push((ModulePath::root(), entry.to_path_buf()));
+        result.push((OwnedModulePath::root(), entry.to_path_buf()));
     }
 
     // Discover sibling .ky files and subdirectory .ky files relative to the entry's parent.
@@ -149,12 +176,11 @@ pub fn discover_modules(
             if path.extension().is_some_and(|ext| ext == "ky") {
                 // Sibling file: math.ky → ["math"]
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    let name = Name::new(interner, stem);
-                    result.push((ModulePath::single(name), path));
+                    result.push((OwnedModulePath::single(stem), path));
                 }
             } else if path.is_dir() {
                 // Subdirectory: scan for .ky files
-                discover_subdir(&path, &[], base_dir, interner, &mut result);
+                discover_subdir_owned(&path, &[], &mut result);
             }
         }
     }
@@ -162,16 +188,26 @@ pub fn discover_modules(
     result
 }
 
-#[allow(clippy::only_used_in_recursion)]
-fn discover_subdir(
-    dir: &Path,
-    prefix: &[Name],
-    base_dir: &Path,
+/// Discover `.ky` source files and convert their module paths into interned names.
+pub fn discover_modules(
+    root: &Path,
+    entry: &Path,
     interner: &mut kyokara_intern::Interner,
-    result: &mut Vec<(ModulePath, PathBuf)>,
+) -> Vec<(ModulePath, PathBuf)> {
+    discover_module_files(root, entry)
+        .into_iter()
+        .map(|(path, file)| (path.to_module_path(interner), file))
+        .collect()
+}
+
+#[allow(clippy::only_used_in_recursion)]
+fn discover_subdir_owned(
+    dir: &Path,
+    prefix: &[String],
+    result: &mut Vec<(OwnedModulePath, PathBuf)>,
 ) {
     let dir_name = match dir.file_name().and_then(|s| s.to_str()) {
-        Some(n) => Name::new(interner, n),
+        Some(n) => n.to_owned(),
         None => return,
     };
 
@@ -187,13 +223,12 @@ fn discover_subdir(
 
             if path.extension().is_some_and(|ext| ext == "ky") {
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    let name = Name::new(interner, stem);
                     let mut mod_segments = segments.clone();
-                    mod_segments.push(name);
-                    result.push((ModulePath(mod_segments), path));
+                    mod_segments.push(stem.to_owned());
+                    result.push((OwnedModulePath(mod_segments), path));
                 }
             } else if path.is_dir() {
-                discover_subdir(&path, &segments, base_dir, interner, result);
+                discover_subdir_owned(&path, &segments, result);
             }
         }
     }

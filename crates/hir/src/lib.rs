@@ -6,6 +6,8 @@
 //!
 //! When salsa lands (v0.3), the incremental database will live here.
 
+mod project;
+
 pub use kyokara_hir_def::body::Body;
 pub use kyokara_hir_def::builtins::activate_synthetic_imports;
 pub use kyokara_hir_def::builtins::activate_type_member_imports;
@@ -21,7 +23,9 @@ pub use kyokara_hir_def::item_tree::{
     EffectItem, FnItem, FnParam, ImportKind, ImportMemberItem, ItemTree, PropertyItem,
     PropertyItemIdx, TraitItem, TypeDefKind, TypeItem, VariantDef,
 };
-pub use kyokara_hir_def::module_graph::{ModuleGraph, ModuleInfo, ModulePath, discover_modules};
+pub use kyokara_hir_def::module_graph::{
+    ModuleGraph, ModuleInfo, ModulePath, OwnedModulePath, discover_module_files, discover_modules,
+};
 pub use kyokara_hir_def::name::Name;
 pub use kyokara_hir_def::path::Path;
 pub use kyokara_hir_def::resolver::ModuleScope;
@@ -31,6 +35,7 @@ pub use kyokara_hir_ty::holes::HoleInfo;
 pub use kyokara_hir_ty::infer::InferenceResult;
 pub use kyokara_hir_ty::ty::{Ty, display_ty, display_ty_with_tree};
 pub use kyokara_hir_ty::{TypeCheckResult, check_module};
+pub use project::{PackageLoadPlan, ProjectLoadPlan, discover_project_load_plan};
 
 use std::collections::HashMap;
 
@@ -207,6 +212,12 @@ pub struct ProjectCheckResult {
 /// files in the same directory (and subdirectories) are discovered and
 /// treated as importable modules.
 pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
+    let plan = discover_project_load_plan(entry_file);
+    check_project_from_plan(&plan)
+}
+
+/// Parse, lower, and type-check a project from an explicit discovery plan.
+pub fn check_project_from_plan(plan: &ProjectLoadPlan) -> ProjectCheckResult {
     let mut interner = Interner::new();
     let mut file_map = FileMap::new();
     let mut module_graph = ModuleGraph::new();
@@ -215,10 +226,11 @@ pub fn check_project(entry_file: &std::path::Path) -> ProjectCheckResult {
     let mut parse_error_ranges_by_module: HashMap<ModulePath, Vec<TextRange>> = HashMap::new();
     let mut cst_roots: Vec<(ModulePath, SyntaxNode)> = Vec::new();
 
-    let root = entry_file.parent().unwrap_or(std::path::Path::new("."));
-
     // 1. Discover modules.
-    let discovered = discover_modules(root, entry_file, &mut interner);
+    let discovered: Vec<(ModulePath, std::path::PathBuf)> = plan
+        .iter_modules()
+        .map(|(mod_path, file_path)| (mod_path.to_module_path(&mut interner), file_path.clone()))
+        .collect();
 
     // 2. Parse each file and build item trees.
     for (mod_path, file_path) in &discovered {
@@ -922,6 +934,90 @@ mod tests {
             }
         }
         panic!("failed to allocate unique temp dir");
+    }
+
+    #[test]
+    fn project_load_plan_uses_entry_parent_as_legacy_source_root() {
+        let dir = make_temp_dir();
+        let nested = dir.join("math");
+        std::fs::create_dir(&nested).expect("nested dir should be creatable");
+
+        let main_path = dir.join("main.ky");
+        let math_path = dir.join("math.ky");
+        let util_path = nested.join("utils.ky");
+
+        std::fs::write(&main_path, "fn main() -> Int { 0 }\n")
+            .expect("main file should be writable");
+        std::fs::write(&math_path, "pub fn add(a: Int, b: Int) -> Int { a + b }\n")
+            .expect("math file should be writable");
+        std::fs::write(&util_path, "pub fn forty_two() -> Int { 42 }\n")
+            .expect("util file should be writable");
+
+        let plan = discover_project_load_plan(&main_path);
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert_eq!(plan.entry_package, 0);
+        assert_eq!(plan.packages.len(), 1);
+        let package = &plan.packages[0];
+        assert_eq!(package.package_root, None);
+        assert_eq!(package.source_root, dir);
+
+        let discovered_paths: Vec<_> = package
+            .modules
+            .iter()
+            .map(|(path, _)| path.0.clone())
+            .collect();
+        assert!(discovered_paths.contains(&Vec::<String>::new()));
+        assert!(discovered_paths.contains(&vec!["math".to_owned()]));
+        assert!(discovered_paths.contains(&vec!["math".to_owned(), "utils".to_owned()]));
+    }
+
+    #[test]
+    fn check_project_from_plan_preserves_current_single_package_behavior() {
+        let dir = make_temp_dir();
+        let main_path = dir.join("main.ky");
+        let math_path = dir.join("math.ky");
+
+        std::fs::write(
+            &main_path,
+            "import math\nfn main() -> Int { math.add(20, 22) }\n",
+        )
+        .expect("main file should be writable");
+        std::fs::write(&math_path, "pub fn add(a: Int, b: Int) -> Int { a + b }\n")
+            .expect("math file should be writable");
+
+        let plan = discover_project_load_plan(&main_path);
+        let result = check_project_from_plan(&plan);
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            result.parse_errors.is_empty(),
+            "expected no parse errors, got: {:?}",
+            result.parse_errors
+        );
+        assert!(
+            result.lowering_diagnostics.is_empty(),
+            "expected no lowering diagnostics, got: {:?}",
+            result
+                .lowering_diagnostics
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            result
+                .type_checks
+                .iter()
+                .all(|(_, tc)| tc.diagnostics.is_empty()),
+            "expected no type diagnostics, got: {:?}",
+            result
+                .type_checks
+                .iter()
+                .flat_map(|(_, tc)| tc.diagnostics.iter().map(|d| d.message.clone()))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
