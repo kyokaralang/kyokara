@@ -533,9 +533,10 @@ fn has_sibling_ky_files(entry: &std::path::Path, dir: &std::path::Path) -> bool 
 
 /// Determine if the given file should be treated as a multi-file project.
 ///
-/// Auto-detection requires BOTH:
-/// 1. The entry file is named `main.ky` (the convention-based entry point).
-/// 2. There are sibling `.ky` files in the same directory.
+/// Auto-detection requires EITHER:
+/// 1. A package-style entry (`src/main.ky` or `src/lib.ky`) with a nearby
+///    `kyokara.toml`, or
+/// 2. A legacy `main.ky` entry with sibling `.ky` files.
 ///
 /// Use the `--project` flag to force project mode whenever the entry path
 /// exists, without relying on sibling-file heuristics.
@@ -545,9 +546,16 @@ fn should_use_project_mode(path: &std::path::Path, force_project: bool) -> bool 
         return path.is_file();
     }
 
-    // Auto-detect: only if entry is main.ky and has siblings.
-    path.is_file()
-        && path.file_name().is_some_and(|name| name == "main.ky")
+    if !path.is_file() {
+        return false;
+    }
+
+    if kyokara_hir::has_package_manifest_candidate(path) {
+        return true;
+    }
+
+    // Legacy auto-detect: main.ky with siblings.
+    path.file_name().is_some_and(|name| name == "main.ky")
         && path
             .parent()
             .is_some_and(|dir| has_sibling_ky_files(path, dir))
@@ -773,6 +781,71 @@ mod tests {
         assert!(
             should_use_project_mode(&main_path, true),
             "--project should force project mode for subdir-only module layouts"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn auto_detect_package_root_for_bin_entry_without_siblings() {
+        let dir = std::env::temp_dir().join("kyokara_autodetect_test_package_bin");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+
+        let manifest_path = dir.join("kyokara.toml");
+        let main_path = dir.join("src").join("main.ky");
+        std::fs::write(
+            &manifest_path,
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .unwrap();
+        std::fs::write(&main_path, "fn main() -> Int { 1 }").unwrap();
+
+        assert!(
+            should_use_project_mode(&main_path, false),
+            "package main entry should auto-detect as project even without sibling modules"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn auto_detect_package_root_for_lib_entry() {
+        let dir = std::env::temp_dir().join("kyokara_autodetect_test_package_lib");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+
+        let manifest_path = dir.join("kyokara.toml");
+        let lib_path = dir.join("src").join("lib.ky");
+        std::fs::write(
+            &manifest_path,
+            "[package]\nname = \"acme/lib\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .unwrap();
+        std::fs::write(&lib_path, "pub fn answer() -> Int { 42 }").unwrap();
+
+        assert!(
+            should_use_project_mode(&lib_path, false),
+            "package lib entry should auto-detect as project"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn auto_detect_invalid_package_manifest_still_uses_project_mode() {
+        let dir = std::env::temp_dir().join("kyokara_autodetect_test_package_invalid");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+
+        let manifest_path = dir.join("kyokara.toml");
+        let main_path = dir.join("src").join("main.ky");
+        std::fs::write(&manifest_path, "[package]\nname = 123\nkind = \"bin\"\n").unwrap();
+        std::fs::write(&main_path, "fn main() -> Int { 1 }").unwrap();
+
+        assert!(
+            should_use_project_mode(&main_path, false),
+            "package-style entry should stay in project mode so invalid manifests surface diagnostics"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

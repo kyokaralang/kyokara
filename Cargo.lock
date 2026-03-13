@@ -1131,6 +1131,7 @@ dependencies = [
  "kyokara-stdx",
  "kyokara-syntax",
  "rowan",
+ "toml",
 ]
 
 [[package]]

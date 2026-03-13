@@ -150,7 +150,7 @@ impl ModuleGraph {
 /// - The entry file (passed as `entry`) is mapped to `ModulePath::root()`
 ///
 /// Returns `(OwnedModulePath, PathBuf)` pairs for each discovered file.
-pub fn discover_module_files(_root: &Path, entry: &Path) -> Vec<(OwnedModulePath, PathBuf)> {
+pub fn discover_module_files(root: &Path, entry: &Path) -> Vec<(OwnedModulePath, PathBuf)> {
     let mut result = Vec::new();
 
     // The entry file is the root module.
@@ -158,8 +158,8 @@ pub fn discover_module_files(_root: &Path, entry: &Path) -> Vec<(OwnedModulePath
         result.push((OwnedModulePath::root(), entry.to_path_buf()));
     }
 
-    // Discover sibling .ky files and subdirectory .ky files relative to the entry's parent.
-    let base_dir = entry.parent().unwrap_or(Path::new("."));
+    // Discover sibling .ky files and subdirectory .ky files relative to the source root.
+    let base_dir = root;
 
     if let Ok(entries) = std::fs::read_dir(base_dir) {
         for entry_result in entries {

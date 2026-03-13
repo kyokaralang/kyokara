@@ -71,6 +71,7 @@ salsa = "0.26"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-std", "macros"] }
 parking_lot = "0.12"
 md5 = { package = "md-5", version = "0.10" }
+toml = "0.8"
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

@@ -35,7 +35,10 @@ pub use kyokara_hir_ty::holes::HoleInfo;
 pub use kyokara_hir_ty::infer::InferenceResult;
 pub use kyokara_hir_ty::ty::{Ty, display_ty, display_ty_with_tree};
 pub use kyokara_hir_ty::{TypeCheckResult, check_module};
-pub use project::{PackageLoadPlan, ProjectLoadPlan, discover_project_load_plan};
+pub use project::{
+    PackageLoadPlan, ProjectDiscoveryDiagnostic, ProjectLoadPlan, discover_project_load_plan,
+    has_package_manifest_candidate,
+};
 
 use std::collections::HashMap;
 
@@ -225,6 +228,17 @@ pub fn check_project_from_plan(plan: &ProjectLoadPlan) -> ProjectCheckResult {
     let mut all_lowering_diagnostics = Vec::new();
     let mut parse_error_ranges_by_module: HashMap<ModulePath, Vec<TextRange>> = HashMap::new();
     let mut cst_roots: Vec<(ModulePath, SyntaxNode)> = Vec::new();
+
+    for diag in &plan.discovery_diagnostics {
+        let file_id = file_map.insert(diag.path.clone());
+        all_lowering_diagnostics.push(kyokara_diagnostics::Diagnostic::error(
+            diag.message.clone(),
+            kyokara_span::Span {
+                file: file_id,
+                range: kyokara_span::TextRange::default(),
+            },
+        ));
+    }
 
     // 1. Discover modules.
     let discovered: Vec<(ModulePath, std::path::PathBuf)> = plan
@@ -1016,6 +1030,157 @@ mod tests {
                 .type_checks
                 .iter()
                 .flat_map(|(_, tc)| tc.diagnostics.iter().map(|d| d.message.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn project_load_plan_detects_bin_package_root_from_manifest() {
+        let dir = make_temp_dir();
+        let src_dir = dir.join("src");
+        std::fs::create_dir(&src_dir).expect("src dir should be creatable");
+
+        let manifest_path = dir.join("kyokara.toml");
+        let main_path = src_dir.join("main.ky");
+        let math_path = src_dir.join("math.ky");
+
+        std::fs::write(
+            &manifest_path,
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .expect("manifest should be writable");
+        std::fs::write(
+            &main_path,
+            "import math\nfn main() -> Int { math.answer() }\n",
+        )
+        .expect("main file should be writable");
+        std::fs::write(&math_path, "pub fn answer() -> Int { 42 }\n")
+            .expect("math file should be writable");
+
+        let plan = discover_project_load_plan(&main_path);
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert_eq!(plan.packages.len(), 1);
+        let package = &plan.packages[0];
+        assert_eq!(package.package_root, Some(dir.clone()));
+        assert_eq!(package.source_root, src_dir);
+        assert!(plan.discovery_diagnostics.is_empty());
+
+        let discovered_paths: Vec<_> = package
+            .modules
+            .iter()
+            .map(|(path, _)| path.0.clone())
+            .collect();
+        assert!(discovered_paths.contains(&Vec::<String>::new()));
+        assert!(discovered_paths.contains(&vec!["math".to_owned()]));
+    }
+
+    #[test]
+    fn project_load_plan_detects_lib_package_root_from_manifest() {
+        let dir = make_temp_dir();
+        let src_dir = dir.join("src");
+        std::fs::create_dir(&src_dir).expect("src dir should be creatable");
+
+        let manifest_path = dir.join("kyokara.toml");
+        let lib_path = src_dir.join("lib.ky");
+        let slug_path = src_dir.join("slug.ky");
+
+        std::fs::write(
+            &manifest_path,
+            "[package]\nname = \"acme/slug\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .expect("manifest should be writable");
+        std::fs::write(
+            &lib_path,
+            "import slug\npub fn normalize() -> Int { slug.size() }\n",
+        )
+        .expect("lib file should be writable");
+        std::fs::write(&slug_path, "pub fn size() -> Int { 4 }\n")
+            .expect("module file should be writable");
+
+        let plan = discover_project_load_plan(&lib_path);
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert_eq!(plan.packages.len(), 1);
+        let package = &plan.packages[0];
+        assert_eq!(package.package_root, Some(dir));
+        assert_eq!(package.source_root, src_dir);
+        assert!(plan.discovery_diagnostics.is_empty());
+    }
+
+    #[test]
+    fn check_project_supports_package_src_roots() {
+        let dir = make_temp_dir();
+        let src_dir = dir.join("src");
+        std::fs::create_dir(&src_dir).expect("src dir should be creatable");
+
+        let manifest_path = dir.join("kyokara.toml");
+        let main_path = src_dir.join("main.ky");
+        let math_path = src_dir.join("math.ky");
+
+        std::fs::write(
+            &manifest_path,
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .expect("manifest should be writable");
+        std::fs::write(
+            &main_path,
+            "import math\nfn main() -> Int { math.answer() }\n",
+        )
+        .expect("main file should be writable");
+        std::fs::write(&math_path, "pub fn answer() -> Int { 42 }\n")
+            .expect("math file should be writable");
+
+        let result = check_project(&main_path);
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            result.parse_errors.is_empty(),
+            "expected no parse errors, got: {:?}",
+            result.parse_errors
+        );
+        assert!(
+            result.lowering_diagnostics.is_empty(),
+            "expected no lowering diagnostics, got: {:?}",
+            result
+                .lowering_diagnostics
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn check_project_reports_invalid_package_manifest() {
+        let dir = make_temp_dir();
+        let src_dir = dir.join("src");
+        std::fs::create_dir(&src_dir).expect("src dir should be creatable");
+
+        let manifest_path = dir.join("kyokara.toml");
+        let main_path = src_dir.join("main.ky");
+
+        std::fs::write(&manifest_path, "[package]\nname = 123\nkind = \"bin\"\n")
+            .expect("manifest should be writable");
+        std::fs::write(&main_path, "fn main() -> Int { 1 }\n")
+            .expect("main file should be writable");
+
+        let result = check_project(&main_path);
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            result
+                .lowering_diagnostics
+                .iter()
+                .any(|d| d.message.contains("invalid package manifest")),
+            "expected invalid package manifest diagnostic, got: {:?}",
+            result
+                .lowering_diagnostics
+                .iter()
+                .map(|d| d.message.as_str())
                 .collect::<Vec<_>>()
         );
     }
