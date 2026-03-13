@@ -16,6 +16,7 @@ pub struct PackageLoadPlan {
     pub package_root: Option<PathBuf>,
     pub source_root: PathBuf,
     pub entry_file: PathBuf,
+    pub module_prefix: OwnedModulePath,
     pub modules: Vec<(OwnedModulePath, PathBuf)>,
 }
 
@@ -35,16 +36,31 @@ impl ProjectLoadPlan {
     pub fn from_entry_file(entry_file: &Path) -> Self {
         match detect_package_layout(entry_file) {
             Ok(Some(layout)) => {
-                let modules = discover_module_files(&layout.source_root, entry_file);
+                let mut discovery_diagnostics =
+                    reserved_deps_namespace_diagnostics(&layout.modules);
+                let mut packages = vec![PackageLoadPlan {
+                    package_root: Some(layout.package_root.clone()),
+                    source_root: layout.source_root.clone(),
+                    entry_file: entry_file.to_path_buf(),
+                    module_prefix: OwnedModulePath::root(),
+                    modules: layout.modules,
+                }];
+
+                for dependency in &layout.manifest.dependencies {
+                    match discover_path_dependency_package(&layout.package_root, dependency) {
+                        Ok(package) => {
+                            discovery_diagnostics
+                                .extend(reserved_deps_namespace_diagnostics(&package.modules));
+                            packages.push(package);
+                        }
+                        Err(diag) => discovery_diagnostics.push(diag),
+                    }
+                }
+
                 Self {
                     entry_package: 0,
-                    packages: vec![PackageLoadPlan {
-                        package_root: Some(layout.package_root),
-                        source_root: layout.source_root,
-                        entry_file: entry_file.to_path_buf(),
-                        modules,
-                    }],
-                    discovery_diagnostics: Vec::new(),
+                    packages,
+                    discovery_diagnostics,
                 }
             }
             Ok(None) => Self::legacy_single_package(entry_file, Vec::new()),
@@ -65,16 +81,20 @@ impl ProjectLoadPlan {
                 package_root: None,
                 source_root,
                 entry_file: entry_file.to_path_buf(),
+                module_prefix: OwnedModulePath::root(),
                 modules,
             }],
             discovery_diagnostics,
         }
     }
 
-    pub fn iter_modules(&self) -> impl Iterator<Item = (&OwnedModulePath, &PathBuf)> {
-        self.packages
-            .iter()
-            .flat_map(|package| package.modules.iter().map(|(path, file)| (path, file)))
+    pub fn iter_modules(&self) -> impl Iterator<Item = (OwnedModulePath, &PathBuf)> {
+        self.packages.iter().flat_map(|package| {
+            package
+                .modules
+                .iter()
+                .map(|(path, file)| (path.prefixed(&package.module_prefix), file))
+        })
     }
 }
 
@@ -125,9 +145,23 @@ impl PackageKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct PathDependencySpec {
+    alias: String,
+    path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PackageManifest {
+    kind: PackageKind,
+    dependencies: Vec<PathDependencySpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct DetectedPackageLayout {
     package_root: PathBuf,
     source_root: PathBuf,
+    modules: Vec<(OwnedModulePath, PathBuf)>,
+    manifest: PackageManifest,
 }
 
 fn detect_package_layout(
@@ -145,15 +179,15 @@ fn detect_package_layout(
     })?;
     let expected_kind = PackageKind::from_entry_file(entry_file)
         .expect("package manifest paths are only built for main.ky/lib.ky entries");
-    let manifest_kind = parse_package_kind(&manifest_path, &manifest_source)?;
+    let manifest = parse_package_manifest(&manifest_path, &manifest_source)?;
 
-    if manifest_kind != expected_kind {
+    if manifest.kind != expected_kind {
         return Err(invalid_manifest(
             &manifest_path,
             format!(
                 "package kind `{}` expects entry file `{}`",
-                manifest_kind.as_str(),
-                manifest_kind.entry_file_name()
+                manifest.kind.as_str(),
+                manifest.kind.entry_file_name()
             ),
         ));
     }
@@ -162,9 +196,12 @@ fn detect_package_layout(
         .parent()
         .expect("manifest file should have a parent directory")
         .to_path_buf();
+    let source_root = package_root.join("src");
     Ok(Some(DetectedPackageLayout {
-        source_root: package_root.join("src"),
+        modules: discover_module_files(&source_root, entry_file),
+        source_root,
         package_root,
+        manifest,
     }))
 }
 
@@ -182,10 +219,10 @@ fn package_manifest_path(entry_file: &Path) -> Option<PathBuf> {
     Some(source_root.parent()?.join(PACKAGE_MANIFEST))
 }
 
-fn parse_package_kind(
+fn parse_package_manifest(
     manifest_path: &Path,
     manifest_source: &str,
-) -> Result<PackageKind, ProjectDiscoveryDiagnostic> {
+) -> Result<PackageManifest, ProjectDiscoveryDiagnostic> {
     let manifest = manifest_source
         .parse::<toml::Value>()
         .map_err(|err| invalid_manifest(manifest_path, format!("failed to parse TOML: {err}")))?;
@@ -212,7 +249,155 @@ fn parse_package_kind(
         .and_then(toml::Value::as_str)
         .and_then(PackageKind::parse)
         .ok_or_else(|| invalid_manifest(manifest_path, "package.kind must be `bin` or `lib`"))?;
-    Ok(kind)
+    let dependencies = parse_path_dependencies(manifest_path, &manifest)?;
+
+    Ok(PackageManifest { kind, dependencies })
+}
+
+fn parse_path_dependencies(
+    manifest_path: &Path,
+    manifest: &toml::Value,
+) -> Result<Vec<PathDependencySpec>, ProjectDiscoveryDiagnostic> {
+    let Some(dependencies) = manifest.get("dependencies") else {
+        return Ok(Vec::new());
+    };
+    let deps_table = dependencies.as_table().ok_or_else(|| {
+        invalid_manifest(
+            manifest_path,
+            "[dependencies] must be a TOML table of alias = { path = \"...\" } entries",
+        )
+    })?;
+
+    let mut parsed = Vec::with_capacity(deps_table.len());
+    for (alias, spec) in deps_table {
+        if !is_identifier(alias) {
+            return Err(invalid_manifest(
+                manifest_path,
+                format!("dependency alias `{alias}` must be a valid identifier"),
+            ));
+        }
+        let spec_table = spec.as_table().ok_or_else(|| {
+            invalid_manifest(
+                manifest_path,
+                format!("dependency `{alias}` must use inline table syntax"),
+            )
+        })?;
+        let path = spec_table
+            .get("path")
+            .and_then(toml::Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                invalid_manifest(
+                    manifest_path,
+                    format!("dependency `{alias}` must declare a non-empty path"),
+                )
+            })?;
+        let unsupported_keys: Vec<_> = spec_table
+            .keys()
+            .filter(|key| key.as_str() != "path")
+            .cloned()
+            .collect();
+        if !unsupported_keys.is_empty() {
+            return Err(invalid_manifest(
+                manifest_path,
+                format!(
+                    "dependency `{alias}` uses unsupported keys: {}",
+                    unsupported_keys.join(", ")
+                ),
+            ));
+        }
+        parsed.push(PathDependencySpec {
+            alias: alias.clone(),
+            path: PathBuf::from(path),
+        });
+    }
+
+    Ok(parsed)
+}
+
+fn discover_path_dependency_package(
+    importing_package_root: &Path,
+    dependency: &PathDependencySpec,
+) -> Result<PackageLoadPlan, ProjectDiscoveryDiagnostic> {
+    let package_root = importing_package_root.join(&dependency.path);
+    let manifest_path = package_root.join(PACKAGE_MANIFEST);
+    if !manifest_path.is_file() {
+        return Err(ProjectDiscoveryDiagnostic {
+            path: manifest_path,
+            message: format!(
+                "invalid package manifest `{}`: dependency `{}` is missing kyokara.toml",
+                package_root.join(PACKAGE_MANIFEST).display(),
+                dependency.alias
+            ),
+        });
+    }
+
+    let manifest_source = std::fs::read_to_string(&manifest_path).map_err(|err| {
+        invalid_manifest(&manifest_path, format!("failed to read manifest: {err}"))
+    })?;
+    let manifest = parse_package_manifest(&manifest_path, &manifest_source)?;
+    if manifest.kind != PackageKind::Lib {
+        return Err(ProjectDiscoveryDiagnostic {
+            path: manifest_path.clone(),
+            message: format!(
+                "invalid package manifest `{}`: dependencies must be lib packages",
+                manifest_path.display()
+            ),
+        });
+    }
+
+    let source_root = package_root.join("src");
+    let entry_file = source_root.join("lib.ky");
+    if !entry_file.is_file() {
+        return Err(ProjectDiscoveryDiagnostic {
+            path: entry_file.clone(),
+            message: format!(
+                "invalid package manifest `{}`: dependency `{}` is missing src/lib.ky",
+                manifest_path.display(),
+                dependency.alias
+            ),
+        });
+    }
+
+    Ok(PackageLoadPlan {
+        package_root: Some(package_root.clone()),
+        source_root: source_root.clone(),
+        entry_file: entry_file.clone(),
+        module_prefix: OwnedModulePath(vec!["deps".to_owned(), dependency.alias.clone()]),
+        modules: discover_module_files(&source_root, &entry_file),
+    })
+}
+
+fn reserved_deps_namespace_diagnostics(
+    modules: &[(OwnedModulePath, PathBuf)],
+) -> Vec<ProjectDiscoveryDiagnostic> {
+    modules
+        .iter()
+        .filter_map(|(path, file)| {
+            (path.0.first().map(String::as_str) == Some("deps")).then(|| {
+                ProjectDiscoveryDiagnostic {
+                    path: file.clone(),
+                    message: format!(
+                        "module path `{}` is reserved for dependency imports",
+                        if path.0.is_empty() {
+                            "deps".to_string()
+                        } else {
+                            path.0.join(".")
+                        }
+                    ),
+                }
+            })
+        })
+        .collect()
+}
+
+fn is_identifier(raw: &str) -> bool {
+    let mut chars = raw.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
 fn invalid_manifest(manifest_path: &Path, detail: impl Into<String>) -> ProjectDiscoveryDiagnostic {

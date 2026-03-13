@@ -64,6 +64,12 @@ impl OwnedModulePath {
                 .collect(),
         )
     }
+
+    pub fn prefixed(&self, prefix: &OwnedModulePath) -> Self {
+        let mut segments = prefix.0.clone();
+        segments.extend(self.0.iter().cloned());
+        Self(segments)
+    }
 }
 
 /// Information about a single module in the project.

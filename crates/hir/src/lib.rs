@@ -411,17 +411,6 @@ fn resolve_project_imports(
     }
 
     let mut to_resolve: Vec<PendingImport> = Vec::new();
-    let mut single_segment_index: HashMap<Name, Vec<ModulePath>> = HashMap::new();
-
-    for (mod_path, _) in graph.iter() {
-        if let Some(last) = mod_path.last() {
-            single_segment_index
-                .entry(last)
-                .or_default()
-                .push(mod_path.clone());
-        }
-    }
-
     for (mod_path, info) in graph.iter() {
         for imp in &info.item_tree.imports {
             // Resolve by the actual import path, not alias.
@@ -457,18 +446,9 @@ fn resolve_project_imports(
                 .collect::<Vec<_>>()
                 .join(".");
             let candidates: Vec<ModulePath> = if import_path.segments.len() > 1 {
-                let target_path = ModulePath(import_path.segments.clone());
-                if graph.get(&target_path).is_some() {
-                    vec![target_path]
-                } else {
-                    Vec::new()
-                }
+                resolve_package_import(graph, &importing_mod, &import_path, interner)
             } else {
-                let resolve_name = import_path.segments[0];
-                single_segment_index
-                    .get(&resolve_name)
-                    .cloned()
-                    .unwrap_or_default()
+                resolve_package_import(graph, &importing_mod, &import_path, interner)
             };
 
             if candidates.is_empty() {
@@ -599,6 +579,61 @@ fn resolve_project_imports(
         }
     }
     diagnostics
+}
+
+fn resolve_package_import(
+    graph: &ModuleGraph,
+    importing_mod: &ModulePath,
+    import_path: &Path,
+    interner: &Interner,
+) -> Vec<ModulePath> {
+    if import_path.segments.is_empty() {
+        return Vec::new();
+    }
+
+    let is_dependency_import = import_path
+        .segments
+        .first()
+        .is_some_and(|seg| seg.resolve(interner) == "deps");
+    if is_dependency_import {
+        if import_path.segments.len() < 2 {
+            return Vec::new();
+        }
+        let target_path = ModulePath(import_path.segments.clone());
+        return graph
+            .get(&target_path)
+            .map(|_| vec![target_path])
+            .unwrap_or_default();
+    }
+
+    let importing_prefix = package_prefix(importing_mod, interner);
+    if import_path.segments.len() > 1 {
+        let mut target_segments = importing_prefix.to_vec();
+        target_segments.extend(import_path.segments.iter().copied());
+        let target_path = ModulePath(target_segments);
+        return graph
+            .get(&target_path)
+            .map(|_| vec![target_path])
+            .unwrap_or_default();
+    }
+
+    let resolve_name = import_path.segments[0];
+    graph
+        .iter()
+        .filter_map(|(candidate_path, _)| {
+            (package_prefix(candidate_path, interner) == importing_prefix
+                && candidate_path.last() == Some(resolve_name))
+            .then(|| candidate_path.clone())
+        })
+        .collect()
+}
+
+fn package_prefix<'a>(module_path: &'a ModulePath, interner: &Interner) -> &'a [Name] {
+    if module_path.0.len() >= 2 && module_path.0[0].resolve(interner) == "deps" {
+        &module_path.0[..2]
+    } else {
+        &[]
+    }
 }
 
 #[derive(Clone)]
@@ -1177,6 +1212,342 @@ mod tests {
                 .iter()
                 .any(|d| d.message.contains("invalid package manifest")),
             "expected invalid package manifest diagnostic, got: {:?}",
+            result
+                .lowering_diagnostics
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn project_load_plan_includes_local_path_dependency_modules_under_deps_alias() {
+        let dir = make_temp_dir();
+        let app_dir = dir.join("app");
+        let app_src = app_dir.join("src");
+        let json_dir = dir.join("json-pkg");
+        let json_src = json_dir.join("src");
+        std::fs::create_dir_all(&app_src).expect("app src dir should be creatable");
+        std::fs::create_dir_all(&json_src).expect("dep src dir should be creatable");
+
+        std::fs::write(
+            app_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"../json-pkg\" }\n",
+        )
+        .expect("app manifest should be writable");
+        std::fs::write(app_src.join("main.ky"), "fn main() -> Int { 0 }\n")
+            .expect("app entry should be writable");
+
+        std::fs::write(
+            json_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/json\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .expect("dep manifest should be writable");
+        std::fs::write(json_src.join("lib.ky"), "pub fn version() -> Int { 1 }\n")
+            .expect("dep root should be writable");
+        std::fs::write(
+            json_src.join("encode.ky"),
+            "pub fn answer() -> Int { 42 }\n",
+        )
+        .expect("dep module should be writable");
+
+        let plan = discover_project_load_plan(&app_src.join("main.ky"));
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert_eq!(plan.packages.len(), 2);
+        assert!(
+            plan.discovery_diagnostics.is_empty(),
+            "expected no discovery diagnostics, got: {:?}",
+            plan.discovery_diagnostics
+                .iter()
+                .map(|diag| diag.message.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        let discovered_paths: Vec<_> = plan
+            .iter_modules()
+            .map(|(path, _)| path.0.clone())
+            .collect();
+        assert!(discovered_paths.contains(&Vec::<String>::new()));
+        assert!(discovered_paths.contains(&vec!["deps".to_owned(), "json".to_owned()]));
+        assert!(discovered_paths.contains(&vec![
+            "deps".to_owned(),
+            "json".to_owned(),
+            "encode".to_owned()
+        ]));
+    }
+
+    #[test]
+    fn check_project_resolves_dependency_root_and_submodule_imports() {
+        let dir = make_temp_dir();
+        let app_dir = dir.join("app");
+        let app_src = app_dir.join("src");
+        let json_dir = dir.join("json-pkg");
+        let json_src = json_dir.join("src");
+        std::fs::create_dir_all(&app_src).expect("app src dir should be creatable");
+        std::fs::create_dir_all(&json_src).expect("dep src dir should be creatable");
+
+        std::fs::write(
+            app_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"../json-pkg\" }\n",
+        )
+        .expect("app manifest should be writable");
+        std::fs::write(
+            app_src.join("main.ky"),
+            "import deps.json\nimport deps.json.encode\nfn main() -> Int { json.version() + encode.answer() + 38 }\n",
+        )
+        .expect("app entry should be writable");
+
+        std::fs::write(
+            json_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/json\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .expect("dep manifest should be writable");
+        std::fs::write(
+            json_src.join("lib.ky"),
+            "import encode\npub fn version() -> Int { encode.answer() }\n",
+        )
+        .expect("dep root should be writable");
+        std::fs::write(json_src.join("encode.ky"), "pub fn answer() -> Int { 2 }\n")
+            .expect("dep module should be writable");
+
+        let result = check_project(&app_src.join("main.ky"));
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            result.parse_errors.is_empty(),
+            "expected no parse errors, got: {:?}",
+            result.parse_errors
+        );
+        assert!(
+            result.lowering_diagnostics.is_empty(),
+            "expected no lowering diagnostics, got: {:?}",
+            result
+                .lowering_diagnostics
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            result
+                .type_checks
+                .iter()
+                .all(|(_, tc)| tc.diagnostics.is_empty()),
+            "expected no type diagnostics, got: {:?}",
+            result
+                .type_checks
+                .iter()
+                .flat_map(|(_, tc)| tc.diagnostics.iter().map(|d| d.message.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn check_project_supports_member_imports_from_dependency_modules() {
+        let dir = make_temp_dir();
+        let app_dir = dir.join("app");
+        let app_src = app_dir.join("src");
+        let json_dir = dir.join("json-pkg");
+        let json_src = json_dir.join("src");
+        std::fs::create_dir_all(&app_src).expect("app src dir should be creatable");
+        std::fs::create_dir_all(&json_src).expect("dep src dir should be creatable");
+
+        std::fs::write(
+            app_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"../json-pkg\" }\n",
+        )
+        .expect("app manifest should be writable");
+        std::fs::write(
+            app_src.join("main.ky"),
+            "from deps.json.encode import answer\nfn main() -> Int { answer() }\n",
+        )
+        .expect("app entry should be writable");
+
+        std::fs::write(
+            json_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/json\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .expect("dep manifest should be writable");
+        std::fs::write(json_src.join("lib.ky"), "pub fn version() -> Int { 1 }\n")
+            .expect("dep root should be writable");
+        std::fs::write(
+            json_src.join("encode.ky"),
+            "pub fn answer() -> Int { 42 }\n",
+        )
+        .expect("dep module should be writable");
+
+        let result = check_project(&app_src.join("main.ky"));
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            result.parse_errors.is_empty(),
+            "expected no parse errors, got: {:?}",
+            result.parse_errors
+        );
+        assert!(
+            result.lowering_diagnostics.is_empty(),
+            "expected no lowering diagnostics, got: {:?}",
+            result
+                .lowering_diagnostics
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            result
+                .type_checks
+                .iter()
+                .all(|(_, tc)| tc.diagnostics.is_empty()),
+            "expected no type diagnostics, got: {:?}",
+            result
+                .type_checks
+                .iter()
+                .flat_map(|(_, tc)| tc.diagnostics.iter().map(|d| d.message.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn check_project_keeps_local_and_dependency_modules_separate() {
+        let dir = make_temp_dir();
+        let app_dir = dir.join("app");
+        let app_src = app_dir.join("src");
+        let json_dir = dir.join("json-pkg");
+        let json_src = json_dir.join("src");
+        std::fs::create_dir_all(&app_src).expect("app src dir should be creatable");
+        std::fs::create_dir_all(&json_src).expect("dep src dir should be creatable");
+
+        std::fs::write(
+            app_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"../json-pkg\" }\n",
+        )
+        .expect("app manifest should be writable");
+        std::fs::write(
+            app_src.join("main.ky"),
+            "import encode\nimport deps.json.encode as dep_encode\nfn main() -> Int { encode.local() + dep_encode.dep() }\n",
+        )
+        .expect("app entry should be writable");
+        std::fs::write(app_src.join("encode.ky"), "pub fn local() -> Int { 10 }\n")
+            .expect("local module should be writable");
+
+        std::fs::write(
+            json_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/json\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .expect("dep manifest should be writable");
+        std::fs::write(json_src.join("lib.ky"), "pub fn version() -> Int { 1 }\n")
+            .expect("dep root should be writable");
+        std::fs::write(json_src.join("encode.ky"), "pub fn dep() -> Int { 32 }\n")
+            .expect("dep module should be writable");
+
+        let result = check_project(&app_src.join("main.ky"));
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            result.parse_errors.is_empty(),
+            "expected no parse errors, got: {:?}",
+            result.parse_errors
+        );
+        assert!(
+            result.lowering_diagnostics.is_empty(),
+            "expected no lowering diagnostics, got: {:?}",
+            result
+                .lowering_diagnostics
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            result
+                .type_checks
+                .iter()
+                .all(|(_, tc)| tc.diagnostics.is_empty()),
+            "expected no type diagnostics, got: {:?}",
+            result
+                .type_checks
+                .iter()
+                .flat_map(|(_, tc)| tc.diagnostics.iter().map(|d| d.message.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn check_project_rejects_bin_dependency_packages() {
+        let dir = make_temp_dir();
+        let app_dir = dir.join("app");
+        let app_src = app_dir.join("src");
+        let tool_dir = dir.join("tool-pkg");
+        let tool_src = tool_dir.join("src");
+        std::fs::create_dir_all(&app_src).expect("app src dir should be creatable");
+        std::fs::create_dir_all(&tool_src).expect("dep src dir should be creatable");
+
+        std::fs::write(
+            app_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\ntool = { path = \"../tool-pkg\" }\n",
+        )
+        .expect("app manifest should be writable");
+        std::fs::write(app_src.join("main.ky"), "fn main() -> Int { 1 }\n")
+            .expect("app entry should be writable");
+
+        std::fs::write(
+            tool_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/tool\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .expect("dep manifest should be writable");
+        std::fs::write(tool_src.join("main.ky"), "fn main() -> Int { 2 }\n")
+            .expect("dep entry should be writable");
+
+        let result = check_project(&app_src.join("main.ky"));
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            result
+                .lowering_diagnostics
+                .iter()
+                .any(|diag| diag.message.contains("dependencies must be lib packages")),
+            "expected bin dependency diagnostic, got: {:?}",
+            result
+                .lowering_diagnostics
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn check_project_rejects_local_modules_under_reserved_deps_namespace() {
+        let dir = make_temp_dir();
+        let app_src = dir.join("src");
+        std::fs::create_dir_all(app_src.join("deps")).expect("deps dir should be creatable");
+
+        std::fs::write(
+            dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .expect("manifest should be writable");
+        std::fs::write(app_src.join("main.ky"), "fn main() -> Int { 1 }\n")
+            .expect("entry should be writable");
+        std::fs::write(
+            app_src.join("deps").join("json.ky"),
+            "pub fn answer() -> Int { 42 }\n",
+        )
+        .expect("reserved namespace module should be writable");
+
+        let result = check_project(&app_src.join("main.ky"));
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            result
+                .lowering_diagnostics
+                .iter()
+                .any(|diag| diag.message.contains("reserved for dependency imports")),
+            "expected reserved deps namespace diagnostic, got: {:?}",
             result
                 .lowering_diagnostics
                 .iter()
