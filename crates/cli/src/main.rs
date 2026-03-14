@@ -835,9 +835,18 @@ fn publish_package_to_registry(
             registry_root.display()
         ));
     }
-    copy_dir_recursive(package_root, &dest_root, |path| {
-        path.file_name().is_some_and(|name| name == ".kyokara") || path.starts_with(&dest_root)
-    })?;
+    std::fs::create_dir_all(&dest_root)
+        .map_err(|err| format!("cannot create `{}`: {err}", dest_root.display()))?;
+    std::fs::copy(&manifest_path, dest_root.join("kyokara.toml"))
+        .map(|_| ())
+        .map_err(|err| {
+            format!(
+                "cannot copy `{}` to `{}`: {err}",
+                manifest_path.display(),
+                dest_root.join("kyokara.toml").display()
+            )
+        })?;
+    copy_dir_recursive(&package_root.join("src"), &dest_root.join("src"), |_| false)?;
     Ok(())
 }
 
@@ -2549,6 +2558,8 @@ mod tests {
         let registry_root = dir.path().join("registry");
         let src_dir = dir.path().join("src");
         std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(dir.path().join("target").join("debug")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
 
         let lib_path = src_dir.join("lib.ky");
         std::fs::write(
@@ -2557,22 +2568,40 @@ mod tests {
         )
         .unwrap();
         std::fs::write(&lib_path, "pub fn answer() -> Int { 42 }\n").unwrap();
+        std::fs::write(
+            dir.path().join("target").join("debug").join("junk.txt"),
+            "artifact\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join(".DS_Store"), "note\n").unwrap();
+        std::fs::write(
+            dir.path().join(".git").join("HEAD"),
+            "ref: refs/heads/main\n",
+        )
+        .unwrap();
 
         publish_package_to_registry(&lib_path, &registry_root).expect("publish should succeed");
 
-        let published_manifest = registry_root
+        let published_root = registry_root
             .join("packages")
             .join("acme/json")
-            .join("1.2.0")
-            .join("kyokara.toml");
-        let published_lib = registry_root
-            .join("packages")
-            .join("acme/json")
-            .join("1.2.0")
-            .join("src")
-            .join("lib.ky");
+            .join("1.2.0");
+        let published_manifest = published_root.join("kyokara.toml");
+        let published_lib = published_root.join("src").join("lib.ky");
         assert!(published_manifest.is_file(), "expected published manifest");
         assert!(published_lib.is_file(), "expected published source");
+        assert!(
+            !published_root.join("target").exists(),
+            "target directory should not be published"
+        );
+        assert!(
+            !published_root.join(".DS_Store").exists(),
+            "dotfiles should not be published"
+        );
+        assert!(
+            !published_root.join(".git").exists(),
+            "git metadata should not be published"
+        );
 
         std::fs::write(
             dir.path().join("kyokara.toml"),
