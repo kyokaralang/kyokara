@@ -10,6 +10,7 @@ members = [
     "crates/hir-def",
     "crates/hir-ty",
     "crates/hir",
+    "crates/runtime",
     "crates/eval",
     "crates/fmt",
     "crates/refactor",
@@ -39,6 +40,7 @@ kyokara-syntax = { path = "crates/syntax" }
 kyokara-hir-def = { path = "crates/hir-def" }
 kyokara-hir-ty = { path = "crates/hir-ty" }
 kyokara-hir = { path = "crates/hir" }
+kyokara-runtime = { path = "crates/runtime" }
 kyokara-eval = { path = "crates/eval" }
 kyokara-fmt = { path = "crates/fmt" }
 kyokara-refactor = { path = "crates/refactor" }
@@ -71,6 +73,7 @@ salsa = "0.26"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-std", "macros"] }
 parking_lot = "0.12"
 md5 = { package = "md-5", version = "0.10" }
+sha2 = "0.10"
 toml = "0.8"
 semver = "1"
 

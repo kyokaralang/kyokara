@@ -30,6 +30,7 @@ use crate::env::Env;
 use crate::error::RuntimeError;
 use crate::intrinsics::{self, Args, IntrinsicFn};
 use crate::manifest::CapabilityManifest;
+use crate::runtime::{SharedRuntimeService, map_runtime_effect_error, new_live_runtime};
 use crate::value::{
     FnValue, MapKey, MapValue, MutableMapValue, MutablePriorityQueueValue, MutableSetValue,
     PriorityQueueDirection, PriorityQueueEntry, SeqPlan, SeqSource, SetValue, Value,
@@ -71,8 +72,8 @@ pub struct Interpreter {
     parse_error_invalid_int: Option<(TypeItemIdx, usize)>,
     /// Cached ParseError::InvalidFloat constructor (type_idx, variant_idx).
     parse_error_invalid_float: Option<(TypeItemIdx, usize)>,
-    /// Optional capability manifest for deny-by-default enforcement.
-    manifest: Option<CapabilityManifest>,
+    /// Shared runtime service for capability checks and host effects.
+    runtime: SharedRuntimeService,
     /// Shared environment used across all function calls to avoid per-call allocation.
     env: Env,
     /// Current user function being evaluated (used to select scope overrides).
@@ -376,8 +377,35 @@ impl Interpreter {
         let_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, Value>>,
         fn_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, Vec<FnItemIdx>>>,
         module_scope_overrides: FxHashMap<FnItemIdx, ModuleScope>,
-        mut interner: Interner,
+        interner: Interner,
         manifest: Option<CapabilityManifest>,
+    ) -> Self {
+        let runtime = new_live_runtime(manifest, None)
+            .expect("live runtime without replay log should construct");
+        Self::new_with_runtime(
+            item_tree,
+            module_scope,
+            fn_bodies,
+            let_bodies,
+            let_scope_overrides,
+            fn_scope_overrides,
+            module_scope_overrides,
+            interner,
+            runtime,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_runtime(
+        item_tree: ItemTree,
+        module_scope: ModuleScope,
+        fn_bodies: FxHashMap<FnItemIdx, Body>,
+        let_bodies: FxHashMap<LetItemIdx, Body>,
+        let_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, Value>>,
+        fn_scope_overrides: FxHashMap<FnItemIdx, FxHashMap<Name, Vec<FnItemIdx>>>,
+        module_scope_overrides: FxHashMap<FnItemIdx, ModuleScope>,
+        mut interner: Interner,
+        runtime: SharedRuntimeService,
     ) -> Self {
         let intrinsic_list = intrinsics::all_intrinsics(&mut interner);
         let intrinsics = intrinsic_list.into_iter().collect();
@@ -463,7 +491,7 @@ impl Interpreter {
             result_err,
             parse_error_invalid_int,
             parse_error_invalid_float,
-            manifest,
+            runtime,
             env: Env::new(),
             current_fn: None,
             current_body: None,
@@ -2330,12 +2358,14 @@ impl Interpreter {
             self.call_fn(fn_idx, args)
         } else {
             let fn_item = &self.item_tree.functions[fn_idx];
-            let Some(intr) = self.intrinsics.get(&fn_item.name) else {
+            let Some(&intr) = self.intrinsics.get(&fn_item.name) else {
                 return self.call_fn(fn_idx, args);
             };
-            self.check_intrinsic_cap(*intr)?;
+            self.check_intrinsic_cap(intr)?;
             if intr.needs_interpreter() {
-                self.call_complex_intrinsic(*intr, args)
+                self.call_complex_intrinsic(intr, args)
+            } else if self.is_runtime_effect_intrinsic(intr) {
+                self.call_runtime_intrinsic(intr, args)
             } else {
                 intr.call(args)
             }
@@ -2463,8 +2493,8 @@ impl Interpreter {
             .ok_or_else(|| RuntimeError::UnresolvedName("function body not found".into()))?;
         let actual = args.len();
         let fn_name = {
-            let fn_item = &self.item_tree.functions[fn_idx];
-            self.ensure_user_fn_caps_allowed(fn_item)?;
+            let fn_item = self.item_tree.functions[fn_idx].clone();
+            self.ensure_user_fn_caps_allowed(&fn_item)?;
             let expected = fn_item.params.len();
             if expected != actual {
                 return Err(RuntimeError::ArityMismatch {
@@ -4438,7 +4468,11 @@ impl Interpreter {
             }
             FnValue::Intrinsic(intr) => {
                 self.check_intrinsic_cap(*intr)?;
-                intr.call(args)
+                if self.is_runtime_effect_intrinsic(*intr) {
+                    self.call_runtime_intrinsic(*intr, args)
+                } else {
+                    intr.call(args)
+                }
             }
             FnValue::Lambda {
                 params,
@@ -4495,7 +4529,11 @@ impl Interpreter {
                 }
                 FnValue::Intrinsic(intr) => {
                     self.check_intrinsic_cap(intr)?;
-                    intr.call(args)
+                    if self.is_runtime_effect_intrinsic(intr) {
+                        self.call_runtime_intrinsic(intr, args)
+                    } else {
+                        intr.call(args)
+                    }
                 }
                 FnValue::Lambda {
                     params,
@@ -4541,13 +4579,9 @@ impl Interpreter {
     }
 
     fn ensure_user_fn_caps_allowed(
-        &self,
+        &mut self,
         fn_item: &kyokara_hir_def::item_tree::FnItem,
     ) -> Result<(), RuntimeError> {
-        let Some(manifest) = &self.manifest else {
-            return Ok(());
-        };
-
         if fn_item.with_effects.is_empty() {
             return Ok(());
         }
@@ -4557,12 +4591,14 @@ impl Interpreter {
                 && let Some(name) = path.last()
             {
                 let cap_str = name.resolve(&self.interner);
-                if !manifest.is_granted(cap_str) {
-                    return Err(RuntimeError::CapabilityDenied {
+                self.runtime
+                    .borrow_mut()
+                    .authorize(kyokara_runtime::service::CapabilityCheck {
                         capability: cap_str.to_string(),
-                        function: fn_item.name.resolve(&self.interner).to_string(),
-                    });
-                }
+                        required_by_kind: kyokara_runtime::replay::RequiredByKind::UserFn,
+                        required_by_name: fn_item.name.resolve(&self.interner).to_string(),
+                    })
+                    .map_err(map_runtime_effect_error)?;
             }
         }
 
@@ -5643,17 +5679,124 @@ impl Interpreter {
         Ok(out)
     }
 
-    fn check_intrinsic_cap(&self, intr: IntrinsicFn) -> Result<(), RuntimeError> {
-        if let Some(ref manifest) = self.manifest
-            && let Some(cap) = intr.required_capability()
-            && !manifest.is_granted(cap)
-        {
-            return Err(RuntimeError::CapabilityDenied {
-                capability: cap.to_string(),
-                function: format!("{intr:?}"),
-            });
+    fn check_intrinsic_cap(&mut self, intr: IntrinsicFn) -> Result<(), RuntimeError> {
+        let Some((capability, operation, _)) = self.runtime_effect_intrinsic_info(intr) else {
+            return Ok(());
+        };
+        self.runtime
+            .borrow_mut()
+            .authorize(kyokara_runtime::service::CapabilityCheck {
+                capability: capability.to_string(),
+                required_by_kind: kyokara_runtime::replay::RequiredByKind::Builtin,
+                required_by_name: operation.to_string(),
+            })
+            .map_err(map_runtime_effect_error)
+    }
+
+    fn is_runtime_effect_intrinsic(&self, intr: IntrinsicFn) -> bool {
+        self.runtime_effect_intrinsic_info(intr).is_some()
+    }
+
+    fn runtime_effect_intrinsic_info(
+        &self,
+        intr: IntrinsicFn,
+    ) -> Option<(
+        &'static str,
+        &'static str,
+        kyokara_runtime::replay::EffectKind,
+    )> {
+        use kyokara_runtime::replay::EffectKind::{Read, Write};
+        match intr {
+            IntrinsicFn::Print => Some(("io", "io.print", Write)),
+            IntrinsicFn::Println => Some(("io", "io.println", Write)),
+            IntrinsicFn::ReadLine => Some(("io", "io.read_line", Read)),
+            IntrinsicFn::ReadStdin => Some(("io", "io.read_stdin", Read)),
+            IntrinsicFn::ReadFile => Some(("fs", "fs.read_file", Read)),
+            _ => None,
         }
-        Ok(())
+    }
+
+    fn call_runtime_intrinsic(
+        &mut self,
+        intr: IntrinsicFn,
+        args: Args,
+    ) -> Result<Value, RuntimeError> {
+        use kyokara_runtime::service::{EffectRequest, EffectResponse};
+
+        let Some((capability, operation, effect_kind)) = self.runtime_effect_intrinsic_info(intr)
+        else {
+            return intr.call(args);
+        };
+
+        let request = match intr {
+            IntrinsicFn::Print | IntrinsicFn::Println => {
+                let Value::String(text) = &args[0] else {
+                    return Err(RuntimeError::TypeError(format!(
+                        "{} expects a String argument",
+                        if matches!(intr, IntrinsicFn::Print) {
+                            "print"
+                        } else {
+                            "println"
+                        }
+                    )));
+                };
+                EffectRequest {
+                    capability: capability.to_string(),
+                    operation: operation
+                        .strip_prefix("io.")
+                        .unwrap_or(operation)
+                        .to_string(),
+                    effect_kind,
+                    required_by_name: operation.to_string(),
+                    input: serde_json::json!({ "text": text }),
+                }
+            }
+            IntrinsicFn::ReadLine | IntrinsicFn::ReadStdin => EffectRequest {
+                capability: capability.to_string(),
+                operation: operation
+                    .strip_prefix("io.")
+                    .unwrap_or(operation)
+                    .to_string(),
+                effect_kind,
+                required_by_name: operation.to_string(),
+                input: serde_json::json!({}),
+            },
+            IntrinsicFn::ReadFile => {
+                let Value::String(path) = &args[0] else {
+                    return Err(RuntimeError::TypeError(
+                        "read_file expects a String argument".into(),
+                    ));
+                };
+                EffectRequest {
+                    capability: capability.to_string(),
+                    operation: "read_file".to_string(),
+                    effect_kind,
+                    required_by_name: operation.to_string(),
+                    input: serde_json::json!({ "path": path }),
+                }
+            }
+            _ => unreachable!("checked by runtime_effect_intrinsic_info"),
+        };
+
+        let EffectResponse { value } = self
+            .runtime
+            .borrow_mut()
+            .call(request)
+            .map_err(map_runtime_effect_error)?;
+
+        match intr {
+            IntrinsicFn::Print | IntrinsicFn::Println => Ok(Value::Unit),
+            IntrinsicFn::ReadLine | IntrinsicFn::ReadStdin | IntrinsicFn::ReadFile => {
+                let Some(text) = value.get("text").and_then(serde_json::Value::as_str) else {
+                    return Err(RuntimeError::TypeError(format!(
+                        "{} returned invalid runtime payload",
+                        operation
+                    )));
+                };
+                Ok(Value::String(text.to_string()))
+            }
+            _ => unreachable!("checked by runtime_effect_intrinsic_info"),
+        }
     }
 
     fn call_complex_intrinsic(

@@ -3,10 +3,12 @@
 
 use std::borrow::Cow;
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use kyokara_eval::manifest::CapabilityManifest;
 use kyokara_eval::value::Value;
+use kyokara_runtime::replay::{CapabilityOutcome, ReplayLogLine, RequiredByKind};
 
 const COLLECTION_TYPE_NAMES: &[&str] = &[
     "List",
@@ -163,6 +165,47 @@ fn run_with_manifest_err(source: &str, manifest: Option<CapabilityManifest>) -> 
 
 fn manifest_from_json(json: &str) -> CapabilityManifest {
     CapabilityManifest::from_json(json).unwrap()
+}
+
+fn run_file_with_options(
+    file: &Path,
+    manifest: Option<CapabilityManifest>,
+    replay_log: Option<&Path>,
+) -> Result<Value, String> {
+    let options = kyokara_eval::RunOptions {
+        manifest,
+        replay_log,
+    };
+    kyokara_eval::run_file_with_options(file, &options)
+        .map(|result| result.value)
+        .map_err(|err| err.to_string())
+}
+
+fn run_project_with_options(
+    entry_file: &Path,
+    manifest: Option<CapabilityManifest>,
+    replay_log: Option<&Path>,
+) -> Result<Value, String> {
+    let options = kyokara_eval::RunOptions {
+        manifest,
+        replay_log,
+    };
+    kyokara_eval::run_project_with_options(entry_file, &options)
+        .map(|result| result.value)
+        .map_err(|err| err.to_string())
+}
+
+fn write_temp_files(files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, source) in files {
+        let path = dir.path().join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, source).unwrap();
+    }
+    let main_path = dir.path().join("main.ky");
+    (dir, main_path)
 }
 
 fn run_project_with_files_err(files: &[(&str, &str)]) -> String {
@@ -3694,7 +3737,7 @@ fn capability_denied_error_message_format() {
     );
     // Should contain both the capability name and the function name.
     assert!(err.contains("io"));
-    assert!(err.contains("Println"));
+    assert!(err.contains("io.println"));
 }
 
 #[test]
@@ -6867,6 +6910,103 @@ fn eval_read_file_with_both_caps() {
     let manifest = manifest_from_json(r#"{"caps": {"io": {}, "fs": {}}}"#);
     let val = run_with_manifest_ok(&source, Some(manifest));
     assert_eq!(val, Value::String("both caps".to_string()));
+}
+
+#[test]
+fn run_file_with_replay_log_records_header_and_fs_effect() {
+    let dir = tempfile::tempdir().unwrap();
+    let input_path = dir.path().join("input.txt");
+    std::fs::write(&input_path, "hello replay").unwrap();
+    let source_path = dir.path().join("main.ky");
+    std::fs::write(
+        &source_path,
+        format!(
+            "import fs\nfn main() -> String {{ fs.read_file(\"{}\") }}",
+            input_path.display()
+        ),
+    )
+    .unwrap();
+    let log_path = dir.path().join("run.jsonl");
+    let manifest = manifest_from_json(r#"{"caps": {"fs": {}}}"#);
+
+    let value = run_file_with_options(&source_path, Some(manifest), Some(&log_path))
+        .expect("file run should succeed");
+    assert_eq!(value, Value::String("hello replay".to_string()));
+
+    let lines: Vec<ReplayLogLine> = std::fs::read_to_string(&log_path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<ReplayLogLine>(line).unwrap())
+        .collect();
+    assert!(matches!(lines[0], ReplayLogLine::Header(_)));
+    assert!(matches!(lines[1], ReplayLogLine::CapabilityCheck(_)));
+    assert!(matches!(lines[2], ReplayLogLine::EffectCall(_)));
+}
+
+#[test]
+fn run_file_with_replay_log_records_builtin_capability_denial() {
+    let dir = tempfile::tempdir().unwrap();
+    let source_path = dir.path().join("main.ky");
+    std::fs::write(
+        &source_path,
+        "import io\nfn main() -> Unit { io.println(\"blocked\") }\n",
+    )
+    .unwrap();
+    let log_path = dir.path().join("deny.jsonl");
+    let manifest = manifest_from_json(r#"{"caps": {}}"#);
+
+    let err = run_file_with_options(&source_path, Some(manifest), Some(&log_path))
+        .expect_err("run should fail");
+    assert!(err.contains("capability denied"), "got: {err}");
+
+    let lines: Vec<ReplayLogLine> = std::fs::read_to_string(&log_path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<ReplayLogLine>(line).unwrap())
+        .collect();
+    assert!(
+        lines.iter().any(|line| matches!(
+            line,
+            ReplayLogLine::CapabilityCheck(event)
+                if event.capability == "io" && event.outcome == CapabilityOutcome::Denied
+        )),
+        "expected denied io capability check: {lines:?}"
+    );
+}
+
+#[test]
+fn run_project_with_replay_log_records_user_capability_checks() {
+    let (_dir, main_path) = write_temp_files(&[
+        (
+            "main.ky",
+            "from worker import do_work\neffect Console\nfn main() -> Int with Console { do_work() }\n",
+        ),
+        (
+            "worker.ky",
+            "effect Console\npub fn do_work() -> Int with Console { 11 }\n",
+        ),
+    ]);
+    let log_path = main_path.parent().unwrap().join("project.jsonl");
+
+    let value = run_project_with_options(&main_path, None, Some(&log_path))
+        .expect("project run should succeed");
+    assert_eq!(value, Value::Int(11));
+
+    let lines: Vec<ReplayLogLine> = std::fs::read_to_string(&log_path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<ReplayLogLine>(line).unwrap())
+        .collect();
+    assert!(
+        lines.iter().any(|line| matches!(
+            line,
+            ReplayLogLine::CapabilityCheck(event)
+                if event.required_by_kind == RequiredByKind::UserFn
+                    && event.required_by_name == "do_work"
+                    && event.outcome == CapabilityOutcome::Allowed
+        )),
+        "expected allowed user capability check: {lines:?}"
+    );
 }
 
 // ── list_sort tests ─────────────────────────────────────────────────

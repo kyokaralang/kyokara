@@ -8,6 +8,7 @@ pub mod error;
 pub mod interpreter;
 pub mod intrinsics;
 pub mod manifest;
+mod runtime;
 pub mod value;
 
 use kyokara_hir::{
@@ -26,6 +27,7 @@ use kyokara_syntax::ast::nodes::SourceFile;
 use crate::error::RuntimeError;
 use crate::interpreter::Interpreter;
 use crate::manifest::CapabilityManifest;
+use crate::runtime::{build_replay_header, new_live_runtime};
 use crate::value::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +97,20 @@ pub struct RunResult {
     pub interner: Interner,
 }
 
+pub struct RunOptions<'a> {
+    pub manifest: Option<CapabilityManifest>,
+    pub replay_log: Option<&'a std::path::Path>,
+}
+
+impl Default for RunOptions<'_> {
+    fn default() -> Self {
+        Self {
+            manifest: None,
+            replay_log: None,
+        }
+    }
+}
+
 /// Parse, type-check, and evaluate a Kyokara source file.
 ///
 /// Injects builtin types (`Option`, `Result`) and intrinsic function
@@ -118,6 +134,39 @@ pub fn run_with_manifest(
         validate_manifest_constraints(m)?;
     }
 
+    let runtime = new_live_runtime(manifest.clone(), None)?;
+    run_single_source_with_runtime(source, runtime)
+}
+
+pub fn run_file_with_options(
+    entry_file: &std::path::Path,
+    options: &RunOptions<'_>,
+) -> Result<RunResult, RuntimeError> {
+    if let Some(ref m) = options.manifest {
+        validate_manifest_constraints(m)?;
+    }
+
+    let source = std::fs::read_to_string(entry_file).map_err(|err| {
+        RuntimeError::TypeError(format!("cannot read `{}`: {err}", entry_file.display()))
+    })?;
+
+    let replay = if let Some(path) = options.replay_log {
+        Some(crate::runtime::ReplayLogConfig {
+            path: path.to_path_buf(),
+            header: build_replay_header(entry_file, false, [entry_file.to_path_buf()])?,
+        })
+    } else {
+        None
+    };
+
+    let runtime = new_live_runtime(options.manifest.clone(), replay)?;
+    run_single_source_with_runtime(&source, runtime)
+}
+
+fn run_single_source_with_runtime(
+    source: &str,
+    runtime: crate::runtime::SharedRuntimeService,
+) -> Result<RunResult, RuntimeError> {
     let file_id = FileId(0);
 
     // 1. Parse.
@@ -192,7 +241,7 @@ pub fn run_with_manifest(
     }
 
     // 7. Interpret.
-    let mut interp = Interpreter::new(
+    let mut interp = Interpreter::new_with_runtime(
         item_result.tree,
         item_result.module_scope,
         type_check.fn_bodies,
@@ -201,7 +250,7 @@ pub fn run_with_manifest(
         FxHashMap::default(),
         FxHashMap::default(),
         interner,
-        manifest,
+        runtime,
     );
 
     let value = interp.run_main()?;
@@ -228,6 +277,25 @@ pub fn run_project_with_manifest(
         validate_manifest_constraints(m)?;
     }
 
+    run_project_internal(entry_file, manifest, None)
+}
+
+pub fn run_project_with_options(
+    entry_file: &std::path::Path,
+    options: &RunOptions<'_>,
+) -> Result<RunResult, RuntimeError> {
+    if let Some(ref m) = options.manifest {
+        validate_manifest_constraints(m)?;
+    }
+
+    run_project_internal(entry_file, options.manifest.clone(), options.replay_log)
+}
+
+fn run_project_internal(
+    entry_file: &std::path::Path,
+    manifest: Option<CapabilityManifest>,
+    replay_log: Option<&std::path::Path>,
+) -> Result<RunResult, RuntimeError> {
     let mut project = check_project(entry_file);
 
     if let Some(err) = collect_project_compile_errors(&project).into_runtime_error() {
@@ -345,6 +413,21 @@ pub fn run_project_with_manifest(
         kyokara_hir_def::item_tree::FnItemIdx,
         FxHashMap<kyokara_hir_def::name::Name, Value>,
     > = FxHashMap::default();
+
+    let replay = if let Some(path) = replay_log {
+        let files = project
+            .module_graph
+            .iter()
+            .map(|(_, info)| info.path.clone())
+            .collect::<Vec<_>>();
+        Some(crate::runtime::ReplayLogConfig {
+            path: path.to_path_buf(),
+            header: build_replay_header(entry_file, true, files)?,
+        })
+    } else {
+        None
+    };
+    let runtime = new_live_runtime(manifest.clone(), replay)?;
 
     let mut runtime_functions = Vec::new();
     for (mod_path, tc) in &project.type_checks {
@@ -498,7 +581,7 @@ pub fn run_project_with_manifest(
         if !tc.let_bodies.is_empty() {
             let module_interner =
                 std::mem::replace(&mut project.interner, kyokara_intern::Interner::new());
-            let mut let_interp = Interpreter::new(
+            let mut let_interp = Interpreter::new_with_runtime(
                 mod_item_tree.clone(),
                 module_scope_override.clone(),
                 augmented_module_fn_bodies(
@@ -514,7 +597,7 @@ pub fn run_project_with_manifest(
                 FxHashMap::default(),
                 FxHashMap::default(),
                 module_interner,
-                manifest.clone(),
+                runtime.clone(),
             );
             let module_let_values = let_interp.materialize_top_level_let_values()?;
             project.interner = let_interp.into_interner();
@@ -532,7 +615,7 @@ pub fn run_project_with_manifest(
         .module_graph
         .get(&entry_path)
         .ok_or(RuntimeError::TypeError("entry module not found".into()))?;
-    let mut interp = Interpreter::new(
+    let mut interp = Interpreter::new_with_runtime(
         entry_info.item_tree.clone(),
         entry_info.scope.clone(),
         fn_bodies,
@@ -541,7 +624,7 @@ pub fn run_project_with_manifest(
         fn_scope_overrides,
         module_scope_overrides,
         project.interner,
-        manifest,
+        runtime,
     );
 
     let value = interp.run_main()?;

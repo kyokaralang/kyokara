@@ -47,6 +47,9 @@ enum Command {
         /// Path to capability manifest (caps.json). Deny-by-default when set.
         #[arg(long)]
         caps: Option<String>,
+        /// Path to write a replay log (JSONL). No log is written unless set.
+        #[arg(long)]
+        replay_log: Option<String>,
     },
     /// Format a Kyokara source file.
     Fmt {
@@ -233,6 +236,7 @@ fn main() {
             file,
             project,
             caps,
+            replay_log,
         } => {
             let path = std::path::Path::new(&file);
             let is_multi_file = should_use_project_mode(path, project);
@@ -259,9 +263,13 @@ fn main() {
                     }
                 }
             });
+            let options = kyokara_eval::RunOptions {
+                manifest,
+                replay_log: replay_log.as_deref().map(std::path::Path::new),
+            };
 
             if is_multi_file {
-                match kyokara_eval::run_project_with_manifest(path, manifest) {
+                match kyokara_eval::run_project_with_options(path, &options) {
                     Ok(result) => {
                         if !matches!(result.value, kyokara_eval::value::Value::Unit) {
                             println!("{}", result.value.display(&result.interner));
@@ -273,15 +281,7 @@ fn main() {
                     }
                 }
             } else {
-                let source = match std::fs::read_to_string(&file) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        eprintln!("error: cannot read `{file}`: {e}");
-                        std::process::exit(1);
-                    }
-                };
-
-                match kyokara_eval::run_with_manifest(&source, manifest) {
+                match kyokara_eval::run_file_with_options(path, &options) {
                     Ok(result) => {
                         if !matches!(result.value, kyokara_eval::value::Value::Unit) {
                             println!("{}", result.value.display(&result.interner));

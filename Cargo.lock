@@ -1052,6 +1052,7 @@ dependencies = [
  "kyokara-lsp",
  "kyokara-pbt",
  "kyokara-refactor",
+ "kyokara-runtime",
  "kyokara-syntax",
  "semver",
  "serde_json",
@@ -1098,6 +1099,7 @@ dependencies = [
  "kyokara-hir",
  "kyokara-hir-def",
  "kyokara-intern",
+ "kyokara-runtime",
  "kyokara-span",
  "kyokara-stdx",
  "kyokara-syntax",
@@ -1264,6 +1266,16 @@ dependencies = [
  "rowan",
  "tempfile",
  "text-size",
+]
+
+[[package]]
+name = "kyokara-runtime"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
