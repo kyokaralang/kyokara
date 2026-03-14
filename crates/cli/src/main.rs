@@ -678,6 +678,9 @@ fn add_package_dependency(
 
     let manifest_before = std::fs::read_to_string(&manifest_path)
         .map_err(|err| format!("cannot read `{}`: {err}", manifest_path.display()))?;
+    let lockfile_path = package_lockfile_path(&manifest_path);
+    let lockfile_before = read_existing_file(&lockfile_path)
+        .map_err(|err| format!("cannot read `{}`: {err}", lockfile_path.display()))?;
     update_manifest_dependencies(&manifest_path, |dependencies| {
         dependencies.insert(alias.to_string(), dependency_source_to_toml_value(source));
         Ok(())
@@ -690,12 +693,12 @@ fn add_package_dependency(
                 manifest_path.display()
             )
         })?;
-        let _ = std::fs::remove_file(
-            manifest_path
-                .parent()
-                .expect("manifest path should have parent")
-                .join("kyokara.lock"),
-        );
+        restore_file(&lockfile_path, lockfile_before).map_err(|write_err| {
+            format!(
+                "{err}; additionally failed to restore `{}`: {write_err}",
+                lockfile_path.display()
+            )
+        })?;
         return Err(err);
     }
 
@@ -708,6 +711,9 @@ fn update_package_dependencies(
     registry_root: Option<&std::path::Path>,
 ) -> Result<(), String> {
     let manifest_path = package_manifest_path_for_entry(entry_file)?;
+    let lockfile_path = package_lockfile_path(&manifest_path);
+    let lockfile_before = read_existing_file(&lockfile_path)
+        .map_err(|err| format!("cannot read `{}`: {err}", lockfile_path.display()))?;
     if let Some(registry_root) = registry_root {
         let manifest = read_manifest_value(&manifest_path)?;
         if let Some(dependencies) = manifest.get("dependencies").and_then(toml::Value::as_table) {
@@ -730,13 +736,17 @@ fn update_package_dependencies(
         }
     }
 
-    let _ = std::fs::remove_file(
-        manifest_path
-            .parent()
-            .expect("manifest path should have parent")
-            .join("kyokara.lock"),
-    );
-    sync_project_lockfile_if_needed(entry_file, true)
+    let _ = std::fs::remove_file(&lockfile_path);
+    if let Err(err) = sync_project_lockfile_if_needed(entry_file, true) {
+        restore_file(&lockfile_path, lockfile_before).map_err(|write_err| {
+            format!(
+                "{err}; additionally failed to restore `{}`: {write_err}",
+                lockfile_path.display()
+            )
+        })?;
+        return Err(err);
+    }
+    Ok(())
 }
 
 fn publish_package_to_registry(
@@ -872,6 +882,32 @@ fn read_manifest_value(manifest_path: &std::path::Path) -> Result<toml::Value, S
             manifest_path.display()
         )
     })
+}
+
+fn package_lockfile_path(manifest_path: &std::path::Path) -> std::path::PathBuf {
+    manifest_path
+        .parent()
+        .expect("manifest path should have parent")
+        .join("kyokara.lock")
+}
+
+fn read_existing_file(path: &std::path::Path) -> Result<Option<String>, std::io::Error> {
+    match std::fs::read_to_string(path) {
+        Ok(source) => Ok(Some(source)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+fn restore_file(path: &std::path::Path, source: Option<String>) -> Result<(), std::io::Error> {
+    match source {
+        Some(source) => std::fs::write(path, source),
+        None => match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
+        },
+    }
 }
 
 fn update_manifest_dependencies(
@@ -1801,6 +1837,150 @@ mod tests {
         assert!(
             !lockfile_path.exists(),
             "failed add should not write a lockfile"
+        );
+    }
+
+    #[test]
+    fn add_package_dependency_preserves_existing_lockfile_on_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        let good_dir = dir.path().join("good");
+        let good_src = good_dir.join("src");
+        let registry_root = dir.path().join("registry");
+        let bad_dir = registry_root
+            .join("packages")
+            .join("core/bad")
+            .join("1.0.0");
+        let bad_src = bad_dir.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&good_src).unwrap();
+        std::fs::create_dir_all(&bad_src).unwrap();
+
+        std::fs::write(
+            dir.path().join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n[dependencies]\ngood = { path = \"good\" }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            good_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/good\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .unwrap();
+        std::fs::write(good_src.join("lib.ky"), "pub fn value() -> Int { 1 }\n").unwrap();
+
+        let main_path = src_dir.join("main.ky");
+        std::fs::write(
+            &main_path,
+            "import deps.good\nfn main() -> Int { good.value() }\n",
+        )
+        .unwrap();
+
+        sync_project_lockfile_if_needed(&main_path, true)
+            .expect("initial lockfile sync should succeed");
+        let lockfile_path = dir.path().join("kyokara.lock");
+        let lockfile_before = std::fs::read_to_string(&lockfile_path).unwrap();
+
+        std::fs::write(
+            bad_dir.join("kyokara.toml"),
+            "[package]\nname = \"core/bad\"\nversion = \"1.0.0\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .unwrap();
+        std::fs::write(bad_src.join("main.ky"), "fn main() -> Int { 1 }\n").unwrap();
+
+        let err = add_package_dependency(
+            &main_path,
+            DependencySource::Registry {
+                package: "core/bad".to_string(),
+                version: "^1.0.0".to_string(),
+            },
+            "bad",
+            Some(&registry_root),
+        )
+        .expect_err("registry add should reject non-lib dependency packages");
+
+        let manifest = std::fs::read_to_string(dir.path().join("kyokara.toml")).unwrap();
+        let lockfile_after = std::fs::read_to_string(&lockfile_path)
+            .expect("existing lockfile should survive failed add");
+
+        assert!(
+            err.contains("dependencies must be lib packages"),
+            "expected non-lib dependency rejection, got: {err}"
+        );
+        assert!(
+            !manifest.contains("core/bad"),
+            "manifest should stay unchanged on failed add: {manifest}"
+        );
+        assert_eq!(
+            lockfile_before, lockfile_after,
+            "failed add should preserve the prior lockfile"
+        );
+    }
+
+    #[test]
+    fn update_package_dependencies_preserves_existing_lockfile_on_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        let registry_root = dir.path().join("registry");
+        std::fs::create_dir_all(&src_dir).unwrap();
+
+        write_registry_package(
+            &registry_root,
+            "core/json",
+            "1.0.0",
+            "pub fn from_registry() -> Int { 35 }\n",
+        );
+
+        let main_path = src_dir.join("main.ky");
+        std::fs::write(
+            dir.path().join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &main_path,
+            "import deps.json\nfn main() -> Int { json.from_registry() }\n",
+        )
+        .unwrap();
+
+        add_package_dependency(
+            &main_path,
+            DependencySource::Registry {
+                package: "core/json".to_string(),
+                version: "^1.0.0".to_string(),
+            },
+            "json",
+            Some(&registry_root),
+        )
+        .expect("initial registry add should succeed");
+
+        let lockfile_path = dir.path().join("kyokara.lock");
+        let lockfile_before = std::fs::read_to_string(&lockfile_path).unwrap();
+
+        let bad_dir = registry_root
+            .join("packages")
+            .join("core/json")
+            .join("1.1.0");
+        let bad_src = bad_dir.join("src");
+        std::fs::create_dir_all(&bad_src).unwrap();
+        std::fs::write(
+            bad_dir.join("kyokara.toml"),
+            "[package]\nname = \"core/json\"\nversion = \"1.1.0\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .unwrap();
+        std::fs::write(bad_src.join("main.ky"), "fn main() -> Int { 1 }\n").unwrap();
+
+        let err = update_package_dependencies(&main_path, None, Some(&registry_root))
+            .expect_err("registry update should reject non-lib dependency packages");
+        let lockfile_after = std::fs::read_to_string(&lockfile_path)
+            .expect("existing lockfile should survive failed update");
+
+        assert!(
+            err.contains("dependencies must be lib packages"),
+            "expected non-lib dependency rejection, got: {err}"
+        );
+        assert_eq!(
+            lockfile_before, lockfile_after,
+            "failed update should preserve the prior lockfile"
         );
     }
 
