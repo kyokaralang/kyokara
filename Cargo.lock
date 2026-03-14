@@ -1053,6 +1053,7 @@ dependencies = [
  "kyokara-pbt",
  "kyokara-refactor",
  "kyokara-syntax",
+ "semver",
  "serde_json",
  "tempfile",
  "tokio",
