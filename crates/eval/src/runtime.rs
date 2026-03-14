@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -6,12 +7,14 @@ use std::rc::Rc;
 
 use kyokara_runtime::replay::{
     CapabilityCheckEvent, CapabilityOutcome, EffectCallEvent, EffectCallOutcome, EffectOutcomeKind,
-    ReplayHeader, ReplayWriter, fingerprint_files,
+    ReplayHeader, ReplayLogLine, ReplayReadError, ReplayReader, ReplayWriter, fingerprint_files,
+    verify_program_fingerprint,
 };
 use kyokara_runtime::service::{
     CapabilityCheck, EffectRequest, EffectResponse, RuntimeEffectError, RuntimeService,
 };
 
+use crate::ReplayMode;
 use crate::error::RuntimeError;
 use crate::manifest::CapabilityManifest;
 
@@ -23,6 +26,18 @@ pub(crate) fn new_live_runtime(
 ) -> Result<SharedRuntimeService, RuntimeError> {
     let runtime = LiveRuntime::new(Box::new(StdHostBackend), manifest, replay)?;
     Ok(Rc::new(RefCell::new(Box::new(runtime))))
+}
+
+pub(crate) fn new_replay_runtime(
+    log_path: &Path,
+    mode: ReplayMode,
+) -> Result<(SharedRuntimeService, ReplayHeader), RuntimeError> {
+    let reader = ReplayReader::from_path(log_path).map_err(map_replay_read_error)?;
+    verify_program_fingerprint(&reader.header().program_fingerprint)
+        .map_err(map_replay_read_error)?;
+    let (header, events) = reader.into_parts();
+    let runtime = ReplayRuntime::new(mode, events);
+    Ok((Rc::new(RefCell::new(Box::new(runtime))), header))
 }
 
 pub(crate) fn build_replay_header(
@@ -60,6 +75,10 @@ pub(crate) fn map_runtime_effect_error(err: RuntimeEffectError) -> RuntimeError 
             RuntimeError::TypeError(format!("replay log: {message}"))
         }
     }
+}
+
+fn map_replay_read_error(err: ReplayReadError) -> RuntimeError {
+    RuntimeError::TypeError(format!("replay log: {err}"))
 }
 
 pub(crate) struct ReplayLogConfig {
@@ -304,6 +323,150 @@ impl RuntimeService for LiveRuntime {
                     message,
                 })
             }
+        }
+    }
+}
+
+struct ReplayRuntime {
+    mode: ReplayMode,
+    events: VecDeque<ReplayLogLine>,
+    next_seq: u64,
+}
+
+impl ReplayRuntime {
+    fn new(mode: ReplayMode, events: VecDeque<ReplayLogLine>) -> Self {
+        Self {
+            mode,
+            events,
+            next_seq: 0,
+        }
+    }
+
+    fn next_line(&mut self, expected: &str) -> Result<ReplayLogLine, RuntimeEffectError> {
+        let Some(line) = self.events.pop_front() else {
+            return Err(RuntimeEffectError::ReplayLog(format!(
+                "missing replay event for {expected}"
+            )));
+        };
+        Ok(line)
+    }
+
+    fn check_seq(&mut self, seq: u64) -> Result<(), RuntimeEffectError> {
+        if seq != self.next_seq {
+            return Err(RuntimeEffectError::ReplayLog(format!(
+                "mismatch: expected seq {}, found {}",
+                self.next_seq, seq
+            )));
+        }
+        self.next_seq += 1;
+        Ok(())
+    }
+
+    fn check_capability_event(
+        &mut self,
+        check: &CapabilityCheck,
+        event: &CapabilityCheckEvent,
+    ) -> Result<(), RuntimeEffectError> {
+        self.check_seq(event.seq)?;
+        if event.capability != check.capability
+            || event.required_by_kind != check.required_by_kind
+            || event.required_by_name != check.required_by_name
+        {
+            return Err(RuntimeEffectError::ReplayLog(format!(
+                "mismatch: capability event did not match replay request for `{}`",
+                check.required_by_name
+            )));
+        }
+        Ok(())
+    }
+
+    fn check_effect_event(
+        &mut self,
+        request: &EffectRequest,
+        event: &EffectCallEvent,
+    ) -> Result<(), RuntimeEffectError> {
+        self.check_seq(event.seq)?;
+        if event.capability != request.capability
+            || event.operation != request.operation
+            || event.effect_kind != request.effect_kind
+            || event.required_by_name != request.required_by_name
+        {
+            return Err(RuntimeEffectError::ReplayLog(format!(
+                "mismatch: effect metadata did not match replay request for `{}`",
+                request.required_by_name
+            )));
+        }
+        if event.input != request.input {
+            return Err(RuntimeEffectError::ReplayLog(format!(
+                "mismatch: effect payload did not match replay request for `{}`",
+                request.required_by_name
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl RuntimeService for ReplayRuntime {
+    fn authorize(&mut self, check: CapabilityCheck) -> Result<(), RuntimeEffectError> {
+        let line = self.next_line(&check.required_by_name)?;
+        let ReplayLogLine::CapabilityCheck(event) = line else {
+            return Err(RuntimeEffectError::ReplayLog(format!(
+                "mismatch: expected capability_check event for `{}`",
+                check.required_by_name
+            )));
+        };
+        self.check_capability_event(&check, &event)?;
+        match event.outcome {
+            CapabilityOutcome::Allowed => Ok(()),
+            CapabilityOutcome::Denied => Err(RuntimeEffectError::CapabilityDenied {
+                capability: check.capability,
+                required_by_name: check.required_by_name,
+            }),
+        }
+    }
+
+    fn call(&mut self, request: EffectRequest) -> Result<EffectResponse, RuntimeEffectError> {
+        let line = self.next_line(&request.required_by_name)?;
+        let ReplayLogLine::EffectCall(event) = line else {
+            return Err(RuntimeEffectError::ReplayLog(format!(
+                "mismatch: expected effect_call event for `{}`",
+                request.required_by_name
+            )));
+        };
+        self.check_effect_event(&request, &event)?;
+
+        match event.outcome.kind {
+            EffectOutcomeKind::Ok => Ok(EffectResponse {
+                value: event.outcome.value,
+            }),
+            EffectOutcomeKind::CapabilityDenied => Err(RuntimeEffectError::CapabilityDenied {
+                capability: request.capability,
+                required_by_name: request.required_by_name,
+            }),
+            EffectOutcomeKind::RuntimeError => {
+                let mode_hint = match self.mode {
+                    ReplayMode::Replay => "replay",
+                    ReplayMode::Verify => "verify",
+                };
+                Err(RuntimeEffectError::OperationFailed {
+                    operation: request.operation,
+                    message: event
+                        .outcome
+                        .message
+                        .unwrap_or_else(|| format!("{mode_hint} runtime error")),
+                })
+            }
+        }
+    }
+
+    fn finalize(&mut self) -> Result<(), RuntimeEffectError> {
+        if self.events.is_empty() {
+            Ok(())
+        } else {
+            Err(RuntimeEffectError::ReplayLog(format!(
+                "unexpected extra replay events: {} remaining",
+                self.events.len()
+            )))
         }
     }
 }

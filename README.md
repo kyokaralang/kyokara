@@ -37,15 +37,15 @@ Current runtime scope:
 
 ### 2. Deterministic Replay
 
-Every effectful execution produces a replay log. The runtime executes effects through a single handler interface that records each request and response. Run the same log back and get identical behavior.
+Kyokara can record a replay log for effectful runs when you ask for one. The runtime executes effects through a single handler interface that records capability decisions plus each host request and response. Run the same log back and get identical behavior for the shipped replay surface.
 
 ```sh
-kyokara run job.ky --caps manifest.json    # produces run.log
+kyokara run job.ky --caps manifest.json --replay-log run.log
 kyokara replay run.log                     # exact reproduction
 kyokara replay run.log --mode=verify       # compare against live
 ```
 
-**Scope:** Determinism is guaranteed for the language runtime plus recorded effects under single-threaded execution, with captured inputs (time, network, database responses). Concurrency scheduling and external state outside the recorded boundary are not covered.
+**Current scope:** `io.print`, `io.println`, `io.read_line`, `io.read_stdin`, `fs.read_file`, and capability allow/deny decisions for built-in and user-declared effects. Replay is single-threaded, source-fingerprint checked, and read-only for writes by default. Concurrency scheduling and future effect modules remain out of scope.
 
 ### 3. Contracts as Code
 

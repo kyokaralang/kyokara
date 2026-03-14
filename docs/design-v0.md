@@ -545,23 +545,25 @@ Implementation: `CapabilityManifest` and `CapabilityGrant` types in `kyokara-eva
 
 ### 8.2 Deterministic replay
 
-Runtime logs all effectful interactions through a single effect handler interface:
-* network requests/responses
-* time reads
-* randomness
-* db reads/writes (results + commit decisions)
+Runtime logs supported effectful interactions through a single effect handler interface:
+* `io.print`
+* `io.println`
+* `io.read_line`
+* `io.read_stdin`
+* `fs.read_file`
+* capability allow/deny checks for built-in and user-declared effects
 
 Execution modes:
-* `kyokara run job.ky --caps caps.json` -> produces `run.log`
+* `kyokara run job.ky --caps caps.json --replay-log run.log` -> writes a replay log
 * `kyokara replay run.log` -> reproduces behavior deterministically
 
 Replay policy:
 * replay mode is **read-only by default** — all write effects become no-ops that return the logged result.
-* `--replay-mode=verify` compares what *would* have been written against the log and reports mismatches.
+* `kyokara replay run.log --mode verify` compares what *would* have been written against the log and reports mismatches.
 
 Determinism boundary:
-* determinism guarantee holds for **the language runtime + recorded effects** under **single-threaded execution**, with **captured inputs** (time, network responses, database results).
-* anything outside the recorded boundary (external state changes, concurrent processes) is not covered.
+* determinism guarantee holds for **the language runtime + recorded effects** under **single-threaded execution** with source fingerprint validation.
+* anything outside the recorded boundary (external state changes, future effect modules, concurrent processes) is not covered.
 * concurrency scheduling replay is deferred — v0 is single-threaded by design.
 
 ### 8.3 Sandboxed execution target
@@ -874,7 +876,7 @@ are maintained in one place.
 |---|---|---|---|---|
 | `D1` | Contracts as first-class syntax (`requires`/`ensures`/`old`) | Implemented + ongoing verification work | `80%` | [#9](https://github.com/kyokaralang/kyokara/issues/9), [#28](https://github.com/kyokaralang/kyokara/issues/28), [#30](https://github.com/kyokaralang/kyokara/issues/30) |
 | `D2` | Property-based testing integrated in language workflow | Implemented + expansion ongoing | `85%` | [#23](https://github.com/kyokaralang/kyokara/issues/23), [#200](https://github.com/kyokaralang/kyokara/issues/200), [#25](https://github.com/kyokaralang/kyokara/issues/25) |
-| `D3` | Deterministic replay logging/execution for auditability | In progress | `40%` | [#26](https://github.com/kyokaralang/kyokara/issues/26), [#27](https://github.com/kyokaralang/kyokara/issues/27) |
+| `D3` | Deterministic replay logging/execution for auditability | Implemented (interpreter runtime) | `85%` | [#26](https://github.com/kyokaralang/kyokara/issues/26), [#27](https://github.com/kyokaralang/kyokara/issues/27) |
 | `D4` | Refactor transactions with verify-before-apply behavior | Implemented | `90%` | [#32](https://github.com/kyokaralang/kyokara/issues/32), [#190](https://github.com/kyokaralang/kyokara/issues/190), [#191](https://github.com/kyokaralang/kyokara/issues/191) |
 | `D5` | Compiler-as-API outputs for AI loops (diagnostics/symbol graph/holes + optional typed AST) | Implemented with dual-mode contract (RFC 0007); schema versioning pending | `90%` | [#36](https://github.com/kyokaralang/kyokara/issues/36), [#38](https://github.com/kyokaralang/kyokara/issues/38), [#241](https://github.com/kyokaralang/kyokara/issues/241), [#235](https://github.com/kyokaralang/kyokara/issues/235) |
 | `D6` | LSP support for interactive coding loops | Implemented baseline, stronger incrementality pending | `70%` | [#33](https://github.com/kyokaralang/kyokara/issues/33), [#239](https://github.com/kyokaralang/kyokara/issues/239) |

@@ -40,4 +40,8 @@ pub enum RuntimeEffectError {
 pub trait RuntimeService {
     fn authorize(&mut self, check: CapabilityCheck) -> Result<(), RuntimeEffectError>;
     fn call(&mut self, request: EffectRequest) -> Result<EffectResponse, RuntimeEffectError>;
+
+    fn finalize(&mut self) -> Result<(), RuntimeEffectError> {
+        Ok(())
+    }
 }

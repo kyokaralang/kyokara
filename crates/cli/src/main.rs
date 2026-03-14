@@ -7,7 +7,7 @@
 //! - `kyokara refactor <file>` — apply semantic refactors (v0.2)
 //! - `kyokara lsp` — start the Language Server Protocol server (v0.2)
 //! - `kyokara test <file>` — property-based testing of contract functions (v0.3)
-//! - `kyokara replay <file>` — replay execution trace (planned v0.3)
+//! - `kyokara replay <file>` — replay execution trace (v0.3)
 
 use std::collections::HashSet;
 
@@ -50,6 +50,14 @@ enum Command {
         /// Path to write a replay log (JSONL). No log is written unless set.
         #[arg(long)]
         replay_log: Option<String>,
+    },
+    /// Replay a recorded Kyokara execution log.
+    Replay {
+        /// Path to the replay log written by `kyokara run --replay-log`.
+        file: String,
+        /// Replay mode: `replay` reuses recorded outcomes, `verify` also checks write intent.
+        #[arg(long, default_value = "replay", value_parser = ["replay", "verify"])]
+        mode: String,
     },
     /// Format a Kyokara source file.
     Fmt {
@@ -291,6 +299,24 @@ fn main() {
                         eprintln!("runtime error: {e}");
                         std::process::exit(1);
                     }
+                }
+            }
+        }
+        Command::Replay { file, mode } => {
+            let mode = match mode.as_str() {
+                "verify" => kyokara_eval::ReplayMode::Verify,
+                _ => kyokara_eval::ReplayMode::Replay,
+            };
+            let path = std::path::Path::new(&file);
+            match kyokara_eval::replay_from_log(path, mode) {
+                Ok(result) => {
+                    if !matches!(result.value, kyokara_eval::value::Value::Unit) {
+                        println!("{}", result.value.display(&result.interner));
+                    }
+                }
+                Err(e) => {
+                    eprintln!("runtime error: {e}");
+                    std::process::exit(1);
                 }
             }
         }

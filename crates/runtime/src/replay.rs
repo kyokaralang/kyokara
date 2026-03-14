@@ -1,8 +1,10 @@
+use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -135,4 +137,77 @@ pub fn fingerprint_file(path: &Path) -> io::Result<ProgramFingerprintEntry> {
         path: abs.display().to_string(),
         sha256: format!("{:x}", hasher.finalize()),
     })
+}
+
+#[derive(Debug, Error)]
+pub enum ReplayReadError {
+    #[error("replay log I/O error: {0}")]
+    Io(#[from] io::Error),
+    #[error("replay log parse error: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("replay log missing header")]
+    MissingHeader,
+    #[error("replay log contains multiple headers")]
+    MultipleHeaders,
+    #[error("replay fingerprint mismatch for `{path}`")]
+    FingerprintMismatch { path: String },
+}
+
+pub struct ReplayReader {
+    header: ReplayHeader,
+    events: VecDeque<ReplayLogLine>,
+}
+
+impl ReplayReader {
+    pub fn from_path(path: &Path) -> Result<Self, ReplayReadError> {
+        let contents = std::fs::read_to_string(path)?;
+        let mut lines = contents
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(serde_json::from_str::<ReplayLogLine>);
+
+        let Some(first) = lines.next() else {
+            return Err(ReplayReadError::MissingHeader);
+        };
+        let ReplayLogLine::Header(header) = first? else {
+            return Err(ReplayReadError::MissingHeader);
+        };
+
+        let mut events = VecDeque::new();
+        for line in lines {
+            let line = line?;
+            if matches!(line, ReplayLogLine::Header(_)) {
+                return Err(ReplayReadError::MultipleHeaders);
+            }
+            events.push_back(line);
+        }
+
+        Ok(Self { header, events })
+    }
+
+    pub fn header(&self) -> &ReplayHeader {
+        &self.header
+    }
+
+    pub fn next_event(&mut self) -> Result<Option<ReplayLogLine>, ReplayReadError> {
+        Ok(self.events.pop_front())
+    }
+
+    pub fn into_parts(self) -> (ReplayHeader, VecDeque<ReplayLogLine>) {
+        (self.header, self.events)
+    }
+}
+
+pub fn verify_program_fingerprint(
+    entries: &[ProgramFingerprintEntry],
+) -> Result<(), ReplayReadError> {
+    for entry in entries {
+        let actual = fingerprint_file(Path::new(&entry.path))?;
+        if actual.sha256 != entry.sha256 {
+            return Err(ReplayReadError::FingerprintMismatch {
+                path: entry.path.clone(),
+            });
+        }
+    }
+    Ok(())
 }

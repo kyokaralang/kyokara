@@ -27,7 +27,10 @@ use kyokara_syntax::ast::nodes::SourceFile;
 use crate::error::RuntimeError;
 use crate::interpreter::Interpreter;
 use crate::manifest::CapabilityManifest;
-use crate::runtime::{build_replay_header, new_live_runtime};
+use crate::runtime::{
+    SharedRuntimeService, build_replay_header, map_runtime_effect_error, new_live_runtime,
+    new_replay_runtime,
+};
 use crate::value::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +100,12 @@ pub struct RunResult {
     pub interner: Interner,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayMode {
+    Replay,
+    Verify,
+}
+
 pub struct RunOptions<'a> {
     pub manifest: Option<CapabilityManifest>,
     pub replay_log: Option<&'a std::path::Path>,
@@ -146,10 +155,6 @@ pub fn run_file_with_options(
         validate_manifest_constraints(m)?;
     }
 
-    let source = std::fs::read_to_string(entry_file).map_err(|err| {
-        RuntimeError::TypeError(format!("cannot read `{}`: {err}", entry_file.display()))
-    })?;
-
     let replay = if let Some(path) = options.replay_log {
         Some(crate::runtime::ReplayLogConfig {
             path: path.to_path_buf(),
@@ -160,12 +165,35 @@ pub fn run_file_with_options(
     };
 
     let runtime = new_live_runtime(options.manifest.clone(), replay)?;
+    run_file_with_runtime(entry_file, runtime)
+}
+
+pub fn replay_from_log(
+    log_path: &std::path::Path,
+    mode: ReplayMode,
+) -> Result<RunResult, RuntimeError> {
+    let (runtime, header) = new_replay_runtime(log_path, mode)?;
+    let entry_file = std::path::PathBuf::from(&header.entry_file);
+    if header.project_mode {
+        run_project_with_runtime(&entry_file, runtime)
+    } else {
+        run_file_with_runtime(&entry_file, runtime)
+    }
+}
+
+fn run_file_with_runtime(
+    entry_file: &std::path::Path,
+    runtime: SharedRuntimeService,
+) -> Result<RunResult, RuntimeError> {
+    let source = std::fs::read_to_string(entry_file).map_err(|err| {
+        RuntimeError::TypeError(format!("cannot read `{}`: {err}", entry_file.display()))
+    })?;
     run_single_source_with_runtime(&source, runtime)
 }
 
 fn run_single_source_with_runtime(
     source: &str,
-    runtime: crate::runtime::SharedRuntimeService,
+    runtime: SharedRuntimeService,
 ) -> Result<RunResult, RuntimeError> {
     let file_id = FileId(0);
 
@@ -250,12 +278,12 @@ fn run_single_source_with_runtime(
         FxHashMap::default(),
         FxHashMap::default(),
         interner,
-        runtime,
+        runtime.clone(),
     );
 
-    let value = interp.run_main()?;
+    let result = interp.run_main();
     let interner = interp.into_interner();
-    Ok(RunResult { value, interner })
+    finish_run_result(result, interner, &runtime)
 }
 
 /// Parse, type-check, and evaluate a multi-file Kyokara project.
@@ -295,6 +323,33 @@ fn run_project_internal(
     entry_file: &std::path::Path,
     manifest: Option<CapabilityManifest>,
     replay_log: Option<&std::path::Path>,
+) -> Result<RunResult, RuntimeError> {
+    let replay = if let Some(path) = replay_log {
+        Some(crate::runtime::ReplayLogConfig {
+            path: path.to_path_buf(),
+            header: {
+                let project = check_project(entry_file);
+                if let Some(err) = collect_project_compile_errors(&project).into_runtime_error() {
+                    return Err(err);
+                }
+                let files = project
+                    .module_graph
+                    .iter()
+                    .map(|(_, info)| info.path.clone())
+                    .collect::<Vec<_>>();
+                build_replay_header(entry_file, true, files)?
+            },
+        })
+    } else {
+        None
+    };
+    let runtime = new_live_runtime(manifest.clone(), replay)?;
+    run_project_with_runtime(entry_file, runtime)
+}
+
+fn run_project_with_runtime(
+    entry_file: &std::path::Path,
+    runtime: SharedRuntimeService,
 ) -> Result<RunResult, RuntimeError> {
     let mut project = check_project(entry_file);
 
@@ -413,21 +468,6 @@ fn run_project_internal(
         kyokara_hir_def::item_tree::FnItemIdx,
         FxHashMap<kyokara_hir_def::name::Name, Value>,
     > = FxHashMap::default();
-
-    let replay = if let Some(path) = replay_log {
-        let files = project
-            .module_graph
-            .iter()
-            .map(|(_, info)| info.path.clone())
-            .collect::<Vec<_>>();
-        Some(crate::runtime::ReplayLogConfig {
-            path: path.to_path_buf(),
-            header: build_replay_header(entry_file, true, files)?,
-        })
-    } else {
-        None
-    };
-    let runtime = new_live_runtime(manifest.clone(), replay)?;
 
     let mut runtime_functions = Vec::new();
     for (mod_path, tc) in &project.type_checks {
@@ -624,12 +664,32 @@ fn run_project_internal(
         fn_scope_overrides,
         module_scope_overrides,
         project.interner,
-        runtime,
+        runtime.clone(),
     );
 
-    let value = interp.run_main()?;
+    let result = interp.run_main();
     let interner = interp.into_interner();
-    Ok(RunResult { value, interner })
+    finish_run_result(result, interner, &runtime)
+}
+
+fn finalize_runtime(runtime: &SharedRuntimeService) -> Result<(), RuntimeError> {
+    runtime
+        .borrow_mut()
+        .finalize()
+        .map_err(map_runtime_effect_error)
+}
+
+fn finish_run_result(
+    result: Result<Value, RuntimeError>,
+    interner: Interner,
+    runtime: &SharedRuntimeService,
+) -> Result<RunResult, RuntimeError> {
+    let finalize = finalize_runtime(runtime);
+    match (result, finalize) {
+        (Ok(value), Ok(())) => Ok(RunResult { value, interner }),
+        (Err(err), Ok(())) => Err(err),
+        (_, Err(err)) => Err(err),
+    }
 }
 
 struct ProjectRuntimeFunction {
