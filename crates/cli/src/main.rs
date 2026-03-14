@@ -978,13 +978,14 @@ fn copy_selected_registry_dependency_closure_into_local_store(
     version_req: &str,
 ) -> Result<(), String> {
     let mut visited = HashSet::new();
-    copy_selected_registry_dependency_closure_into_local_store_inner(
+    let _ = copy_selected_registry_dependency_closure_into_local_store_inner(
         manifest_path,
         registry_root,
         package,
         version_req,
         &mut visited,
-    )
+    )?;
+    Ok(())
 }
 
 fn copy_selected_registry_dependency_closure_into_local_store_inner(
@@ -993,7 +994,7 @@ fn copy_selected_registry_dependency_closure_into_local_store_inner(
     package: &str,
     version_req: &str,
     visited: &mut HashSet<(String, String)>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let version = resolve_registry_version_from_source_registry(
         manifest_path,
         registry_root,
@@ -1001,37 +1002,78 @@ fn copy_selected_registry_dependency_closure_into_local_store_inner(
         version_req,
     )?;
     if !visited.insert((package.to_string(), version.clone())) {
-        return Ok(());
+        return Ok(version);
+    }
+
+    let source_manifest_path =
+        registry_package_version_root(registry_root, package, &version).join("kyokara.toml");
+    let source_manifest = read_manifest_value(&source_manifest_path)?;
+    let mut pinned_transitives = Vec::new();
+    if let Some(dependencies) = source_manifest
+        .get("dependencies")
+        .and_then(toml::Value::as_table)
+    {
+        for (alias, spec) in dependencies {
+            let Some(spec_table) = spec.as_table() else {
+                continue;
+            };
+            let Some(package) = spec_table.get("package").and_then(toml::Value::as_str) else {
+                continue;
+            };
+            let Some(version_req) = spec_table.get("version").and_then(toml::Value::as_str) else {
+                continue;
+            };
+            let selected_version =
+                copy_selected_registry_dependency_closure_into_local_store_inner(
+                    manifest_path,
+                    registry_root,
+                    package,
+                    version_req,
+                    visited,
+                )?;
+            pinned_transitives.push((alias.clone(), selected_version));
+        }
     }
 
     copy_registry_version_into_local_store(manifest_path, registry_root, package, &version)?;
 
-    let manifest = read_manifest_value(
-        &registry_package_version_root(registry_root, package, &version).join("kyokara.toml"),
-    )?;
-    let Some(dependencies) = manifest.get("dependencies").and_then(toml::Value::as_table) else {
-        return Ok(());
-    };
-    for spec in dependencies.values() {
-        let Some(spec_table) = spec.as_table() else {
-            continue;
-        };
-        let Some(package) = spec_table.get("package").and_then(toml::Value::as_str) else {
-            continue;
-        };
-        let Some(version_req) = spec_table.get("version").and_then(toml::Value::as_str) else {
-            continue;
-        };
-        copy_selected_registry_dependency_closure_into_local_store_inner(
-            manifest_path,
-            registry_root,
-            package,
-            version_req,
-            visited,
+    if !pinned_transitives.is_empty() {
+        pin_vendored_registry_dependency_versions(
+            &package_local_registry_manifest_path(manifest_path, package, &version),
+            &pinned_transitives,
         )?;
     }
 
-    Ok(())
+    Ok(version)
+}
+
+fn pin_vendored_registry_dependency_versions(
+    manifest_path: &std::path::Path,
+    pinned_versions: &[(String, String)],
+) -> Result<(), String> {
+    let mut manifest = read_manifest_value(manifest_path)?;
+    let Some(dependencies) = manifest
+        .as_table_mut()
+        .and_then(|table| table.get_mut("dependencies"))
+        .and_then(toml::Value::as_table_mut)
+    else {
+        return Ok(());
+    };
+    for (alias, version) in pinned_versions {
+        let Some(spec_table) = dependencies
+            .get_mut(alias)
+            .and_then(toml::Value::as_table_mut)
+        else {
+            continue;
+        };
+        if spec_table.contains_key("package") {
+            spec_table.insert(
+                "version".to_string(),
+                toml::Value::String(format!("={version}")),
+            );
+        }
+    }
+    write_manifest_value(manifest_path, &manifest)
 }
 
 fn resolve_registry_version_from_source_registry(
@@ -1084,6 +1126,32 @@ fn registry_package_version_root(
     version: &str,
 ) -> std::path::PathBuf {
     registry_root.join("packages").join(package).join(version)
+}
+
+fn package_local_registry_manifest_path(
+    manifest_path: &std::path::Path,
+    package: &str,
+    version: &str,
+) -> std::path::PathBuf {
+    manifest_path
+        .parent()
+        .expect("manifest path should have parent")
+        .join(".kyokara")
+        .join("registry")
+        .join("packages")
+        .join(package)
+        .join(version)
+        .join("kyokara.toml")
+}
+
+fn write_manifest_value(
+    manifest_path: &std::path::Path,
+    manifest: &toml::Value,
+) -> Result<(), String> {
+    let rendered =
+        toml::to_string(manifest).map_err(|err| format!("cannot render manifest: {err}"))?;
+    std::fs::write(manifest_path, rendered)
+        .map_err(|err| format!("cannot write `{}`: {err}", manifest_path.display()))
 }
 
 fn copy_dir_recursive(
@@ -1926,6 +1994,250 @@ mod tests {
         assert!(
             !local_util_v2_manifest.exists(),
             "unselected registry versions should not be copied into the local store"
+        );
+    }
+
+    #[test]
+    fn add_package_dependency_pins_vendored_registry_transitives_to_selected_versions() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        let registry_root = dir.path().join("registry");
+        let stale_json_dir = dir
+            .path()
+            .join(".kyokara")
+            .join("registry")
+            .join("packages")
+            .join("core/json")
+            .join("1.5.0")
+            .join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&stale_json_dir).unwrap();
+
+        std::fs::write(
+            stale_json_dir
+                .parent()
+                .expect("stale version dir")
+                .join("kyokara.toml"),
+            "[package]\nname = \"core/json\"\nversion = \"1.5.0\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            stale_json_dir.join("lib.ky"),
+            "pub fn from_registry() -> Int { 15 }\n",
+        )
+        .unwrap();
+
+        write_registry_package(
+            &registry_root,
+            "core/json",
+            "1.2.0",
+            "pub fn from_registry() -> Int { 12 }\n",
+        );
+        let util_dir = registry_root
+            .join("packages")
+            .join("core/util")
+            .join("1.0.0");
+        let util_src = util_dir.join("src");
+        std::fs::create_dir_all(&util_src).unwrap();
+        std::fs::write(
+            util_dir.join("kyokara.toml"),
+            "[package]\nname = \"core/util\"\nversion = \"1.0.0\"\nedition = \"2026\"\nkind = \"lib\"\n\n[dependencies]\njson = { package = \"core/json\", version = \"^1.0.0\" }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            util_src.join("lib.ky"),
+            "import deps.json\npub fn value() -> Int { json.from_registry() }\n",
+        )
+        .unwrap();
+
+        let main_path = src_dir.join("main.ky");
+        std::fs::write(
+            dir.path().join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &main_path,
+            "import deps.util\nfn main() -> Int { util.value() }\n",
+        )
+        .unwrap();
+
+        add_package_dependency(
+            &main_path,
+            DependencySource::Registry {
+                package: "core/util".to_string(),
+                version: "=1.0.0".to_string(),
+            },
+            "util",
+            Some(&registry_root),
+        )
+        .expect("registry add should succeed");
+
+        let vendored_util_manifest = std::fs::read_to_string(
+            dir.path()
+                .join(".kyokara")
+                .join("registry")
+                .join("packages")
+                .join("core/util")
+                .join("1.0.0")
+                .join("kyokara.toml"),
+        )
+        .unwrap();
+        let result = kyokara_eval::run_project(&main_path).expect("project run should succeed");
+
+        let vendored_util_manifest = vendored_util_manifest.parse::<toml::Value>().unwrap();
+        let vendored_json_dep = vendored_util_manifest
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .and_then(|deps| deps.get("json"))
+            .and_then(toml::Value::as_table)
+            .unwrap();
+        assert!(
+            vendored_json_dep
+                .get("version")
+                .and_then(toml::Value::as_str)
+                .is_some_and(|value| value == "=1.2.0"),
+            "expected vendored manifest to pin selected transitive version, got: {vendored_util_manifest}"
+        );
+        assert_eq!(
+            result.value,
+            kyokara_eval::value::Value::Int(12),
+            "expected runtime to use selected source-registry transitive version"
+        );
+    }
+
+    #[test]
+    fn update_package_dependencies_repins_vendored_registry_transitives() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        let registry_root = dir.path().join("registry");
+        let stale_json_dir = dir
+            .path()
+            .join(".kyokara")
+            .join("registry")
+            .join("packages")
+            .join("core/json")
+            .join("1.5.0")
+            .join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&stale_json_dir).unwrap();
+
+        std::fs::write(
+            stale_json_dir
+                .parent()
+                .expect("stale version dir")
+                .join("kyokara.toml"),
+            "[package]\nname = \"core/json\"\nversion = \"1.5.0\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            stale_json_dir.join("lib.ky"),
+            "pub fn from_registry() -> Int { 15 }\n",
+        )
+        .unwrap();
+
+        write_registry_package(
+            &registry_root,
+            "core/json",
+            "1.2.0",
+            "pub fn from_registry() -> Int { 12 }\n",
+        );
+        let util_v1_dir = registry_root
+            .join("packages")
+            .join("core/util")
+            .join("1.0.0");
+        let util_v1_src = util_v1_dir.join("src");
+        std::fs::create_dir_all(&util_v1_src).unwrap();
+        std::fs::write(
+            util_v1_dir.join("kyokara.toml"),
+            "[package]\nname = \"core/util\"\nversion = \"1.0.0\"\nedition = \"2026\"\nkind = \"lib\"\n\n[dependencies]\njson = { package = \"core/json\", version = \"^1.0.0\" }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            util_v1_src.join("lib.ky"),
+            "import deps.json\npub fn value() -> Int { json.from_registry() }\n",
+        )
+        .unwrap();
+
+        let main_path = src_dir.join("main.ky");
+        std::fs::write(
+            dir.path().join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &main_path,
+            "import deps.util\nfn main() -> Int { util.value() }\n",
+        )
+        .unwrap();
+
+        add_package_dependency(
+            &main_path,
+            DependencySource::Registry {
+                package: "core/util".to_string(),
+                version: "^1.0.0".to_string(),
+            },
+            "util",
+            Some(&registry_root),
+        )
+        .expect("initial registry add should succeed");
+
+        write_registry_package(
+            &registry_root,
+            "core/json",
+            "1.3.0",
+            "pub fn from_registry() -> Int { 13 }\n",
+        );
+        let util_v2_dir = registry_root
+            .join("packages")
+            .join("core/util")
+            .join("1.1.0");
+        let util_v2_src = util_v2_dir.join("src");
+        std::fs::create_dir_all(&util_v2_src).unwrap();
+        std::fs::write(
+            util_v2_dir.join("kyokara.toml"),
+            "[package]\nname = \"core/util\"\nversion = \"1.1.0\"\nedition = \"2026\"\nkind = \"lib\"\n\n[dependencies]\njson = { package = \"core/json\", version = \"^1.0.0\" }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            util_v2_src.join("lib.ky"),
+            "import deps.json\npub fn value() -> Int { json.from_registry() + 100 }\n",
+        )
+        .unwrap();
+
+        update_package_dependencies(&main_path, None, Some(&registry_root))
+            .expect("registry update should succeed");
+
+        let vendored_util_manifest = std::fs::read_to_string(
+            dir.path()
+                .join(".kyokara")
+                .join("registry")
+                .join("packages")
+                .join("core/util")
+                .join("1.1.0")
+                .join("kyokara.toml"),
+        )
+        .unwrap();
+        let result = kyokara_eval::run_project(&main_path).expect("project run should succeed");
+
+        let vendored_util_manifest = vendored_util_manifest.parse::<toml::Value>().unwrap();
+        let vendored_json_dep = vendored_util_manifest
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .and_then(|deps| deps.get("json"))
+            .and_then(toml::Value::as_table)
+            .unwrap();
+        assert!(
+            vendored_json_dep
+                .get("version")
+                .and_then(toml::Value::as_str)
+                .is_some_and(|value| value == "=1.3.0"),
+            "expected updated vendored manifest to pin selected transitive version, got: {vendored_util_manifest}"
+        );
+        assert_eq!(
+            result.value,
+            kyokara_eval::value::Value::Int(113),
+            "expected runtime to use updated selected source-registry transitive version"
         );
     }
 
