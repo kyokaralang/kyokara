@@ -76,3 +76,37 @@ fn verify_program_fingerprint_rejects_source_drift() {
     let err = verify_program_fingerprint(&entries).expect_err("drift should fail fingerprint");
     assert!(err.to_string().contains("fingerprint"));
 }
+
+#[test]
+fn replay_reader_rejects_unknown_schema_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("run.jsonl");
+    fs::write(
+        &log_path,
+        r#"{"kind":"header","schema_version":99,"runtime":"interpreter","entry_file":"/tmp/main.ky","project_mode":false,"program_fingerprint":[]}"#,
+    )
+    .unwrap();
+
+    let err = match ReplayReader::from_path(&log_path) {
+        Ok(_) => panic!("schema version should be rejected"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("schema"));
+}
+
+#[test]
+fn replay_reader_rejects_non_interpreter_runtime() {
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("run.jsonl");
+    fs::write(
+        &log_path,
+        r#"{"kind":"header","schema_version":1,"runtime":"wasm","entry_file":"/tmp/main.ky","project_mode":false,"program_fingerprint":[]}"#,
+    )
+    .unwrap();
+
+    let err = match ReplayReader::from_path(&log_path) {
+        Ok(_) => panic!("runtime should be rejected"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("runtime"));
+}

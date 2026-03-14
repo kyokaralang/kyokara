@@ -111,6 +111,41 @@ fn replay_verify_detects_mutated_write_payload() {
 }
 
 #[test]
+fn replay_mode_tolerates_mutated_write_payloads() {
+    let dir = tempfile::tempdir().unwrap();
+    let main_path = dir.path().join("main.ky");
+    let log_path = dir.path().join("run.jsonl");
+    write_file(
+        &main_path,
+        "import io\nfn main() -> Unit { io.println(\"hello\") }\n",
+    );
+
+    let run = run_cli(&[
+        "run",
+        main_path.to_string_lossy().as_ref(),
+        "--replay-log",
+        log_path.to_string_lossy().as_ref(),
+    ]);
+    assert!(
+        run.status.success(),
+        "initial run failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    let log = fs::read_to_string(&log_path)
+        .unwrap()
+        .replace("\"hello\"", "\"goodbye\"");
+    fs::write(&log_path, log).unwrap();
+
+    let replay = run_cli(&["replay", log_path.to_string_lossy().as_ref()]);
+    assert!(
+        replay.status.success(),
+        "plain replay should trust recorded write outcomes: {}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+}
+
+#[test]
 fn replay_fails_on_source_fingerprint_drift() {
     let dir = tempfile::tempdir().unwrap();
     let main_path = dir.path().join("main.ky");
@@ -137,6 +172,78 @@ fn replay_fails_on_source_fingerprint_drift() {
     );
     assert!(
         String::from_utf8_lossy(&replay.stderr).contains("fingerprint"),
+        "stderr: {}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+}
+
+#[test]
+fn replay_rejects_unknown_schema_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let main_path = dir.path().join("main.ky");
+    let log_path = dir.path().join("run.jsonl");
+    write_file(&main_path, "fn main() -> Int { 1 }\n");
+
+    let run = run_cli(&[
+        "run",
+        main_path.to_string_lossy().as_ref(),
+        "--replay-log",
+        log_path.to_string_lossy().as_ref(),
+    ]);
+    assert!(
+        run.status.success(),
+        "initial run failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    let log = fs::read_to_string(&log_path)
+        .unwrap()
+        .replace("\"schema_version\":1", "\"schema_version\":99");
+    fs::write(&log_path, log).unwrap();
+
+    let replay = run_cli(&["replay", log_path.to_string_lossy().as_ref()]);
+    assert!(
+        !replay.status.success(),
+        "replay should fail on unsupported schema version"
+    );
+    assert!(
+        String::from_utf8_lossy(&replay.stderr).contains("schema"),
+        "stderr: {}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+}
+
+#[test]
+fn replay_rejects_non_interpreter_runtime_header() {
+    let dir = tempfile::tempdir().unwrap();
+    let main_path = dir.path().join("main.ky");
+    let log_path = dir.path().join("run.jsonl");
+    write_file(&main_path, "fn main() -> Int { 1 }\n");
+
+    let run = run_cli(&[
+        "run",
+        main_path.to_string_lossy().as_ref(),
+        "--replay-log",
+        log_path.to_string_lossy().as_ref(),
+    ]);
+    assert!(
+        run.status.success(),
+        "initial run failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    let log = fs::read_to_string(&log_path)
+        .unwrap()
+        .replace("\"runtime\":\"interpreter\"", "\"runtime\":\"wasm\"");
+    fs::write(&log_path, log).unwrap();
+
+    let replay = run_cli(&["replay", log_path.to_string_lossy().as_ref()]);
+    assert!(
+        !replay.status.success(),
+        "replay should fail on unsupported runtime header"
+    );
+    assert!(
+        String::from_utf8_lossy(&replay.stderr).contains("runtime"),
         "stderr: {}",
         String::from_utf8_lossy(&replay.stderr)
     );

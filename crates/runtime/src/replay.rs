@@ -149,6 +149,10 @@ pub enum ReplayReadError {
     MissingHeader,
     #[error("replay log contains multiple headers")]
     MultipleHeaders,
+    #[error("unsupported replay schema version `{0}`")]
+    UnsupportedSchemaVersion(u32),
+    #[error("unsupported replay runtime `{0}`")]
+    UnsupportedRuntime(String),
     #[error("replay fingerprint mismatch for `{path}`")]
     FingerprintMismatch { path: String },
 }
@@ -172,6 +176,14 @@ impl ReplayReader {
         let ReplayLogLine::Header(header) = first? else {
             return Err(ReplayReadError::MissingHeader);
         };
+        if header.schema_version != 1 {
+            return Err(ReplayReadError::UnsupportedSchemaVersion(
+                header.schema_version,
+            ));
+        }
+        if header.runtime != "interpreter" {
+            return Err(ReplayReadError::UnsupportedRuntime(header.runtime));
+        }
 
         let mut events = VecDeque::new();
         for line in lines {

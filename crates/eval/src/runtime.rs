@@ -396,7 +396,9 @@ impl ReplayRuntime {
                 request.required_by_name
             )));
         }
-        if event.input != request.input {
+        let should_verify_input = request.effect_kind == kyokara_runtime::replay::EffectKind::Read
+            || self.mode == ReplayMode::Verify;
+        if should_verify_input && event.input != request.input {
             return Err(RuntimeEffectError::ReplayLog(format!(
                 "mismatch: effect payload did not match replay request for `{}`",
                 request.required_by_name
