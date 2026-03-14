@@ -104,6 +104,20 @@ pub fn has_package_manifest_candidate(entry_file: &Path) -> bool {
 }
 
 pub fn sync_package_lockfile_for_entry(entry_file: &Path) -> io::Result<Option<PathBuf>> {
+    write_package_lockfile_for_entry(entry_file, None)
+}
+
+pub fn update_package_lockfile_for_entry(
+    entry_file: &Path,
+    alias: &str,
+) -> io::Result<Option<PathBuf>> {
+    write_package_lockfile_for_entry(entry_file, Some(alias))
+}
+
+fn write_package_lockfile_for_entry(
+    entry_file: &Path,
+    alias: Option<&str>,
+) -> io::Result<Option<PathBuf>> {
     let Some(manifest_path) = package_manifest_path(entry_file) else {
         return Ok(None);
     };
@@ -119,8 +133,16 @@ pub fn sync_package_lockfile_for_entry(entry_file: &Path) -> io::Result<Option<P
             .parent()
             .expect("manifest file should have a parent directory"),
     );
-    let dependencies = resolve_dependencies_for_manifest(&manifest_path, &manifest, &package_root)
-        .map_err(|diag| io::Error::other(diag.message))?;
+    let dependencies = match alias {
+        Some(alias) => refresh_lockfile_dependency_for_manifest(
+            &manifest_path,
+            &manifest,
+            &package_root,
+            alias,
+        ),
+        None => resolve_dependencies_for_manifest(&manifest_path, &manifest, &package_root),
+    }
+    .map_err(|diag| io::Error::other(diag.message))?;
     validate_dependency_graph(&package_root, &package_root, &dependencies)
         .map_err(|diag| io::Error::other(diag.message))?;
 
@@ -136,6 +158,51 @@ pub fn sync_package_lockfile_for_entry(entry_file: &Path) -> io::Result<Option<P
         std::fs::write(&lockfile_path, rendered)?;
     }
     Ok(Some(lockfile_path))
+}
+
+fn refresh_lockfile_dependency_for_manifest(
+    manifest_path: &Path,
+    manifest: &PackageManifest,
+    dependency_store_root: &Path,
+    alias: &str,
+) -> Result<Vec<LockedDependencySpec>, ProjectDiscoveryDiagnostic> {
+    let package_root = normalize_existing_path(
+        manifest_path
+            .parent()
+            .expect("manifest file should have a parent directory"),
+    );
+    let Some(target_dependency) = manifest
+        .dependencies
+        .iter()
+        .find(|dependency| dependency.alias() == alias)
+    else {
+        return Err(invalid_manifest(
+            manifest_path,
+            format!("dependency alias `{alias}` not found in package manifest"),
+        ));
+    };
+
+    let lockfile_path = manifest_path.with_file_name(PACKAGE_LOCKFILE);
+    let Some(lockfile_source) = std::fs::read_to_string(&lockfile_path).ok() else {
+        return resolve_dependencies_for_manifest(manifest_path, manifest, dependency_store_root);
+    };
+    let Ok(lockfile) = parse_package_lockfile(&lockfile_path, &lockfile_source) else {
+        return resolve_dependencies_for_manifest(manifest_path, manifest, dependency_store_root);
+    };
+    if !locked_dependencies_match_manifest(&lockfile.dependencies, &manifest.dependencies) {
+        return resolve_dependencies_for_manifest(manifest_path, manifest, dependency_store_root);
+    }
+
+    let mut dependencies = lockfile.dependencies;
+    let Some(index) = dependencies
+        .iter()
+        .position(|dependency| dependency.alias() == alias)
+    else {
+        return resolve_dependencies_for_manifest(manifest_path, manifest, dependency_store_root);
+    };
+    dependencies[index] =
+        resolve_manifest_dependency(&package_root, dependency_store_root, target_dependency)?;
+    Ok(dependencies)
 }
 
 pub fn package_entry_file_for_source(source_file: &Path) -> Option<PathBuf> {
@@ -539,7 +606,8 @@ fn render_package_lockfile(lockfile: &PackageLockfile) -> String {
     for dependency in dependencies {
         match dependency {
             LockedDependencySpec::Path { alias, path } => {
-                rendered.push_str(&format!("{alias} = {{ path = \"{}\" }}\n", path.display()));
+                let path = toml::Value::String(path.to_string_lossy().into_owned()).to_string();
+                rendered.push_str(&format!("{alias} = {{ path = {path} }}\n"));
             }
             LockedDependencySpec::Git {
                 alias,
@@ -547,20 +615,24 @@ fn render_package_lockfile(lockfile: &PackageLockfile) -> String {
                 rev,
                 commit,
             } => {
-                rendered.push_str(&format!(
-                    "{alias} = {{ git = \"{git}\", rev = \"{rev}\"{} }}\n",
-                    commit
-                        .map(|commit| format!(", commit = \"{commit}\""))
-                        .unwrap_or_default()
-                ));
+                let git = toml::Value::String(git).to_string();
+                let rev = toml::Value::String(rev).to_string();
+                rendered.push_str(&format!("{alias} = {{ git = {git}, rev = {rev}"));
+                if let Some(commit) = commit {
+                    let commit = toml::Value::String(commit).to_string();
+                    rendered.push_str(&format!(", commit = {commit}"));
+                }
+                rendered.push_str(" }\n");
             }
             LockedDependencySpec::Registry {
                 alias,
                 package,
                 version,
             } => {
+                let package = toml::Value::String(package).to_string();
+                let version = toml::Value::String(version).to_string();
                 rendered.push_str(&format!(
-                    "{alias} = {{ package = \"{package}\", version = \"{version}\" }}\n"
+                    "{alias} = {{ package = {package}, version = {version} }}\n"
                 ));
             }
         }
@@ -869,8 +941,12 @@ fn ensure_locked_dependency_source(
             commit,
         } => {
             let checkout_ref = commit.as_deref().unwrap_or(rev);
-            let checkout_root =
-                git_dependency_checkout_root(dependency_store_root, git, checkout_ref);
+            let checkout_root = git_dependency_checkout_root(
+                package_root,
+                dependency_store_root,
+                git,
+                checkout_ref,
+            );
             sync_git_dependency_checkout(package_root, alias, git, checkout_ref, &checkout_root)
         }
         LockedDependencySpec::Registry {
@@ -892,11 +968,17 @@ fn ensure_locked_dependency_source(
     }
 }
 
-fn git_dependency_checkout_root(package_root: &Path, git: &str, rev: &str) -> PathBuf {
-    package_root
+fn git_dependency_checkout_root(
+    package_root: &Path,
+    dependency_store_root: &Path,
+    git: &str,
+    rev: &str,
+) -> PathBuf {
+    let resolved_git = resolve_git_dependency_source(package_root, git);
+    dependency_store_root
         .join(".kyokara")
         .join("git")
-        .join(git_dependency_cache_key(git, rev))
+        .join(git_dependency_cache_key(&resolved_git, rev))
 }
 
 fn git_dependency_cache_key(git: &str, rev: &str) -> String {
@@ -914,6 +996,7 @@ fn resolve_and_cache_git_dependency(
     rev: &str,
     dependency_store_root: &Path,
 ) -> Result<String, ProjectDiscoveryDiagnostic> {
+    let resolved_git = resolve_git_dependency_source(package_root, git);
     let parent = dependency_store_root.join(".kyokara").join("git");
     std::fs::create_dir_all(&parent).map_err(|err| {
         invalid_manifest(
@@ -922,20 +1005,29 @@ fn resolve_and_cache_git_dependency(
         )
     })?;
 
-    let temp_root = parent.join(format!(".tmp-{}", git_dependency_cache_key(git, rev)));
+    let temp_root = parent.join(format!(
+        ".tmp-{}",
+        git_dependency_cache_key(&resolved_git, rev)
+    ));
     let _ = std::fs::remove_dir_all(&temp_root);
 
     let temp_root_str = temp_root.to_string_lossy().into_owned();
     run_git_command(
         &package_root.join(PACKAGE_MANIFEST),
-        &["clone", "--quiet", git, temp_root_str.as_str()],
+        &[
+            "clone",
+            "--quiet",
+            resolved_git.as_str(),
+            temp_root_str.as_str(),
+        ],
     )?;
     run_git_command(
         &package_root.join(PACKAGE_MANIFEST),
         &["-C", temp_root_str.as_str(), "checkout", "--quiet", rev],
     )?;
     let resolved_commit = git_head_commit(&package_root.join(PACKAGE_MANIFEST), &temp_root)?;
-    let checkout_root = git_dependency_checkout_root(dependency_store_root, git, &resolved_commit);
+    let checkout_root =
+        git_dependency_checkout_root(package_root, dependency_store_root, git, &resolved_commit);
     if checkout_root.join(PACKAGE_MANIFEST).is_file() {
         let _ = std::fs::remove_dir_all(&temp_root);
         return Ok(resolved_commit);
@@ -963,6 +1055,7 @@ fn sync_git_dependency_checkout(
         return Ok(());
     }
 
+    let resolved_git = resolve_git_dependency_source(package_root, git);
     let parent = checkout_root
         .parent()
         .expect("git checkout root should have a parent");
@@ -973,13 +1066,21 @@ fn sync_git_dependency_checkout(
         )
     })?;
 
-    let temp_root = parent.join(format!(".tmp-{}", git_dependency_cache_key(git, rev)));
+    let temp_root = parent.join(format!(
+        ".tmp-{}",
+        git_dependency_cache_key(&resolved_git, rev)
+    ));
     let _ = std::fs::remove_dir_all(&temp_root);
 
     let temp_root_str = temp_root.to_string_lossy().into_owned();
     run_git_command(
         &package_root.join(PACKAGE_MANIFEST),
-        &["clone", "--quiet", git, temp_root_str.as_str()],
+        &[
+            "clone",
+            "--quiet",
+            resolved_git.as_str(),
+            temp_root_str.as_str(),
+        ],
     )?;
     run_git_command(
         &package_root.join(PACKAGE_MANIFEST),
@@ -1169,6 +1270,7 @@ fn locked_dependency_package_root(
         LockedDependencySpec::Git {
             git, rev, commit, ..
         } => normalize_path(&git_dependency_checkout_root(
+            importing_package_root,
             dependency_store_root,
             git,
             commit.as_deref().unwrap_or(rev),
@@ -1181,6 +1283,20 @@ fn locked_dependency_package_root(
             version,
         )),
     }
+}
+
+fn resolve_git_dependency_source(package_root: &Path, git: &str) -> String {
+    if is_remote_git_source(git) {
+        git.to_string()
+    } else {
+        normalize_existing_path(&package_root.join(git))
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
+fn is_remote_git_source(git: &str) -> bool {
+    git.contains("://") || git.starts_with("git@")
 }
 
 fn registry_dependency_root(dependency_store_root: &Path, package: &str, version: &str) -> PathBuf {

@@ -38,6 +38,7 @@ pub use kyokara_hir_ty::{TypeCheckResult, check_module};
 pub use project::{
     PackageLoadPlan, ProjectDiscoveryDiagnostic, ProjectLoadPlan, discover_project_load_plan,
     has_package_manifest_candidate, package_entry_file_for_source, sync_package_lockfile_for_entry,
+    update_package_lockfile_for_entry,
 };
 
 use std::collections::HashMap;
@@ -2024,6 +2025,92 @@ mod tests {
         assert!(
             lockfile.contains(&format!("commit = \"{git_rev}\"")),
             "expected lockfile to record resolved commit, got: {lockfile}"
+        );
+    }
+
+    #[test]
+    fn sync_package_lockfile_resolves_relative_git_paths_from_manifest_root() {
+        let dir = make_temp_dir();
+        let app_src = dir.join("app").join("src");
+        let git_repo = dir.join("git-json");
+        std::fs::create_dir_all(&app_src).expect("src dir should be creatable");
+
+        let git_rev = init_git_package_repo(
+            &git_repo,
+            "acme/git-json",
+            "0.2.0",
+            "pub fn from_git() -> Int { 7 }\n",
+        );
+
+        let main_path = app_src.join("main.ky");
+        std::fs::write(
+            dir.join("app").join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\ngit_json = { git = \"../git-json\", rev = \"main\" }\n",
+        )
+        .expect("manifest should be writable");
+        std::fs::write(&main_path, "fn main() -> Int { 0 }\n").expect("entry should be writable");
+
+        let lockfile_path = sync_package_lockfile_for_entry(&main_path)
+            .expect("lockfile sync should succeed for relative git path")
+            .expect("package entry should produce a lockfile path");
+        let lockfile = std::fs::read_to_string(&lockfile_path).expect("lockfile should exist");
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            lockfile.contains("git = \"../git-json\""),
+            "expected lockfile to preserve relative git path, got: {lockfile}"
+        );
+        assert!(
+            lockfile.contains(&format!("commit = \"{git_rev}\"")),
+            "expected lockfile to resolve the relative git path to a real commit, got: {lockfile}"
+        );
+    }
+
+    #[test]
+    fn sync_package_lockfile_renders_toml_escaped_dependency_strings() {
+        let dir = make_temp_dir();
+        let app_src = dir.join("src");
+        let weird_dir = dir.join("json\\pkg");
+        let weird_src = weird_dir.join("src");
+        std::fs::create_dir_all(&app_src).expect("src dir should be creatable");
+        std::fs::create_dir_all(&weird_src).expect("weird dep src dir should be creatable");
+
+        let main_path = app_src.join("main.ky");
+        std::fs::write(
+            weird_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/json\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .expect("weird manifest should be writable");
+        std::fs::write(weird_src.join("lib.ky"), "pub fn answer() -> Int { 41 }\n")
+            .expect("weird source should be writable");
+        std::fs::write(
+            dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"json\\\\pkg\" }\n",
+        )
+        .expect("manifest should be writable");
+        std::fs::write(&main_path, "fn main() -> Int { 0 }\n").expect("entry should be writable");
+
+        let lockfile_path = sync_package_lockfile_for_entry(&main_path)
+            .expect("lockfile sync should succeed")
+            .expect("package entry should produce a lockfile path");
+        let lockfile = std::fs::read_to_string(&lockfile_path).expect("lockfile should exist");
+        let lockfile_toml = lockfile
+            .parse::<toml::Value>()
+            .expect("rendered lockfile should remain valid TOML");
+        let json_dep = lockfile_toml
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .and_then(|deps| deps.get("json"))
+            .and_then(toml::Value::as_table)
+            .expect("json lockfile dependency should exist");
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert_eq!(
+            json_dep.get("path").and_then(toml::Value::as_str),
+            Some("json\\pkg"),
+            "expected lockfile to preserve a literal backslash in the dependency path, got: {lockfile}"
         );
     }
 

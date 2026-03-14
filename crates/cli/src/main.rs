@@ -743,8 +743,20 @@ fn update_package_dependencies(
         }
     }
 
-    let _ = std::fs::remove_file(&lockfile_path);
-    if let Err(err) = sync_project_lockfile_if_needed(entry_file, true) {
+    let update_result = if let Some(alias) = alias {
+        kyokara_hir::update_package_lockfile_for_entry(entry_file, alias)
+            .map(|_| ())
+            .map_err(|err| {
+                format!(
+                    "cannot write package lockfile for `{}`: {err}",
+                    entry_file.display()
+                )
+            })
+    } else {
+        let _ = std::fs::remove_file(&lockfile_path);
+        sync_project_lockfile_if_needed(entry_file, true)
+    };
+    if let Err(err) = update_result {
         restore_file(&lockfile_path, lockfile_before).map_err(|write_err| {
             format!(
                 "{err}; additionally failed to restore `{}`: {write_err}",
@@ -1812,6 +1824,92 @@ mod tests {
         assert!(
             !lockfile.contains(&format!("commit = \"{first_rev}\"")),
             "stale resolved commit should not remain after update: {lockfile}"
+        );
+    }
+
+    #[test]
+    fn update_package_dependencies_only_refreshes_requested_alias() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        let one_repo = dir.path().join("one");
+        let two_repo = dir.path().join("two");
+        std::fs::create_dir_all(&src_dir).unwrap();
+
+        let _first_one_rev = init_git_package_repo(
+            &one_repo,
+            "acme/one",
+            "0.1.0",
+            "pub fn value() -> Int { 1 }\n",
+        );
+        let first_two_rev = init_git_package_repo(
+            &two_repo,
+            "acme/two",
+            "0.1.0",
+            "pub fn value() -> Int { 10 }\n",
+        );
+
+        let main_path = src_dir.join("main.ky");
+        std::fs::write(
+            dir.path().join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .unwrap();
+        std::fs::write(&main_path, "fn main() -> Int { 0 }\n").unwrap();
+
+        add_package_dependency(
+            &main_path,
+            DependencySource::Git {
+                git: one_repo.display().to_string(),
+                rev: "main".to_string(),
+            },
+            "one",
+            None,
+        )
+        .expect("first git add should succeed");
+        add_package_dependency(
+            &main_path,
+            DependencySource::Git {
+                git: two_repo.display().to_string(),
+                rev: "main".to_string(),
+            },
+            "two",
+            None,
+        )
+        .expect("second git add should succeed");
+
+        let second_one_rev =
+            commit_git_package_repo_change(&one_repo, "pub fn value() -> Int { 2 }\n");
+        let second_two_rev =
+            commit_git_package_repo_change(&two_repo, "pub fn value() -> Int { 20 }\n");
+
+        update_package_dependencies(&main_path, Some("one"), None)
+            .expect("alias-scoped git update should succeed");
+
+        let lockfile = std::fs::read_to_string(dir.path().join("kyokara.lock")).unwrap();
+        let lockfile = lockfile.parse::<toml::Value>().unwrap();
+        let dependencies = lockfile
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .unwrap();
+        let one = dependencies
+            .get("one")
+            .and_then(toml::Value::as_table)
+            .unwrap();
+        let two = dependencies
+            .get("two")
+            .and_then(toml::Value::as_table)
+            .unwrap();
+        assert!(
+            one.get("commit").and_then(toml::Value::as_str) == Some(second_one_rev.as_str()),
+            "requested alias should refresh to its new commit, got: {lockfile}"
+        );
+        assert!(
+            two.get("commit").and_then(toml::Value::as_str) == Some(first_two_rev.as_str()),
+            "unrequested alias should keep its previous commit, got: {lockfile}"
+        );
+        assert!(
+            two.get("commit").and_then(toml::Value::as_str) != Some(second_two_rev.as_str()),
+            "unrequested alias should not refresh, got: {lockfile}"
         );
     }
 

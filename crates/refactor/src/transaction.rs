@@ -339,9 +339,20 @@ fn project_copy_root(plan: &kyokara_hir::ProjectLoadPlan, entry_file: &Path) -> 
         .unwrap_or_else(|| entry_file.parent().unwrap_or(Path::new(".")).to_path_buf())
 }
 
-fn project_relative_path<'a>(root: &Path, path: &'a Path) -> &'a Path {
-    path.strip_prefix(root)
-        .unwrap_or_else(|_| path.file_name().map(Path::new).unwrap_or(path))
+fn project_relative_path(root: &Path, path: &Path) -> PathBuf {
+    if let Ok(relative) = path.strip_prefix(root) {
+        return relative.to_path_buf();
+    }
+
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if let Ok(relative) = canonical_path.strip_prefix(&canonical_root) {
+        return relative.to_path_buf();
+    }
+
+    path.file_name()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| path.to_path_buf())
 }
 
 fn common_ancestor(paths: &[&Path]) -> Option<PathBuf> {
