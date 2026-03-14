@@ -12,6 +12,7 @@
 use std::collections::HashSet;
 
 use clap::{Parser, Subcommand};
+use semver::{Version, VersionReq};
 
 #[derive(Parser)]
 #[command(name = "kyokara", version, about = "The Kyokara compiler")]
@@ -666,13 +667,14 @@ fn add_package_dependency(
     }
 
     let manifest_path = package_manifest_path_for_entry(entry_file)?;
-    if let DependencySource::Registry { package, .. } = &source
+    if let DependencySource::Registry { package, version } = &source
         && let Some(registry_root) = registry_root
     {
-        copy_registry_family_with_transitive_deps_into_local_store(
+        copy_selected_registry_dependency_closure_into_local_store(
             &manifest_path,
             registry_root,
             package,
+            version,
         )?;
     }
 
@@ -727,10 +729,15 @@ fn update_package_dependencies(
                 let Some(package) = spec_table.get("package").and_then(toml::Value::as_str) else {
                     continue;
                 };
-                copy_registry_family_with_transitive_deps_into_local_store(
+                let Some(version_req) = spec_table.get("version").and_then(toml::Value::as_str)
+                else {
+                    continue;
+                };
+                copy_selected_registry_dependency_closure_into_local_store(
                     &manifest_path,
                     registry_root,
                     package,
+                    version_req,
                 )?;
             }
         }
@@ -939,16 +946,17 @@ fn update_manifest_dependencies(
         .map_err(|err| format!("cannot write `{}`: {err}", manifest_path.display()))
 }
 
-fn copy_registry_family_into_local_store(
+fn copy_registry_version_into_local_store(
     manifest_path: &std::path::Path,
     registry_root: &std::path::Path,
     package: &str,
+    version: &str,
 ) -> Result<(), String> {
-    let source_root = registry_root.join("packages").join(package);
+    let source_root = registry_package_version_root(registry_root, package, version);
     if !source_root.is_dir() {
         return Err(format!(
-            "registry package `{package}` not found in `{}`",
-            registry_root.display()
+            "registry package `{package}` version `{version}` not found in `{}`",
+            registry_root.display(),
         ));
     }
     let package_root = manifest_path
@@ -958,68 +966,124 @@ fn copy_registry_family_into_local_store(
         .join(".kyokara")
         .join("registry")
         .join("packages")
-        .join(package);
+        .join(package)
+        .join(version);
     copy_dir_recursive(&source_root, &dest_root, |_| false)
 }
 
-fn copy_registry_family_with_transitive_deps_into_local_store(
+fn copy_selected_registry_dependency_closure_into_local_store(
     manifest_path: &std::path::Path,
     registry_root: &std::path::Path,
     package: &str,
+    version_req: &str,
 ) -> Result<(), String> {
     let mut visited = HashSet::new();
-    copy_registry_family_with_transitive_deps_into_local_store_inner(
+    copy_selected_registry_dependency_closure_into_local_store_inner(
         manifest_path,
         registry_root,
         package,
+        version_req,
         &mut visited,
     )
 }
 
-fn copy_registry_family_with_transitive_deps_into_local_store_inner(
+fn copy_selected_registry_dependency_closure_into_local_store_inner(
     manifest_path: &std::path::Path,
     registry_root: &std::path::Path,
     package: &str,
-    visited: &mut HashSet<String>,
+    version_req: &str,
+    visited: &mut HashSet<(String, String)>,
 ) -> Result<(), String> {
-    if !visited.insert(package.to_string()) {
+    let version = resolve_registry_version_from_source_registry(
+        manifest_path,
+        registry_root,
+        package,
+        version_req,
+    )?;
+    if !visited.insert((package.to_string(), version.clone())) {
         return Ok(());
     }
 
-    copy_registry_family_into_local_store(manifest_path, registry_root, package)?;
+    copy_registry_version_into_local_store(manifest_path, registry_root, package, &version)?;
 
-    let source_root = registry_root.join("packages").join(package);
-    for entry in std::fs::read_dir(&source_root)
-        .map_err(|err| format!("cannot read `{}`: {err}", source_root.display()))?
-    {
-        let entry =
-            entry.map_err(|err| format!("cannot read `{}`: {err}", source_root.display()))?;
-        let version_root = entry.path();
-        if !version_root.is_dir() {
-            continue;
-        }
-        let manifest = read_manifest_value(&version_root.join("kyokara.toml"))?;
-        let Some(dependencies) = manifest.get("dependencies").and_then(toml::Value::as_table)
-        else {
+    let manifest = read_manifest_value(
+        &registry_package_version_root(registry_root, package, &version).join("kyokara.toml"),
+    )?;
+    let Some(dependencies) = manifest.get("dependencies").and_then(toml::Value::as_table) else {
+        return Ok(());
+    };
+    for spec in dependencies.values() {
+        let Some(spec_table) = spec.as_table() else {
             continue;
         };
-        for spec in dependencies.values() {
-            let Some(spec_table) = spec.as_table() else {
-                continue;
-            };
-            let Some(package) = spec_table.get("package").and_then(toml::Value::as_str) else {
-                continue;
-            };
-            copy_registry_family_with_transitive_deps_into_local_store_inner(
-                manifest_path,
-                registry_root,
-                package,
-                visited,
-            )?;
-        }
+        let Some(package) = spec_table.get("package").and_then(toml::Value::as_str) else {
+            continue;
+        };
+        let Some(version_req) = spec_table.get("version").and_then(toml::Value::as_str) else {
+            continue;
+        };
+        copy_selected_registry_dependency_closure_into_local_store_inner(
+            manifest_path,
+            registry_root,
+            package,
+            version_req,
+            visited,
+        )?;
     }
 
     Ok(())
+}
+
+fn resolve_registry_version_from_source_registry(
+    manifest_path: &std::path::Path,
+    registry_root: &std::path::Path,
+    package: &str,
+    version_req: &str,
+) -> Result<String, String> {
+    let req = VersionReq::parse(version_req).map_err(|err| {
+        format!(
+            "invalid package manifest `{}`: dependency on `{package}` has invalid version requirement `{version_req}`: {err}",
+            manifest_path.display()
+        )
+    })?;
+    let package_root = registry_root.join("packages").join(package);
+    let entries = std::fs::read_dir(&package_root).map_err(|err| {
+        format!(
+            "registry package `{package}` not found in `{}`: {err}",
+            registry_root.display()
+        )
+    })?;
+
+    let mut candidates = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|err| format!("cannot read `{}`: {err}", package_root.display()))?;
+        let raw_version = entry.file_name().to_string_lossy().to_string();
+        let Ok(version) = Version::parse(&raw_version) else {
+            continue;
+        };
+        if req.matches(&version) {
+            candidates.push(version);
+        }
+    }
+    candidates.sort();
+    candidates
+        .pop()
+        .map(|version| version.to_string())
+        .ok_or_else(|| {
+            format!(
+                "registry package `{package}` could not resolve version requirement `{version_req}` in `{}`",
+                registry_root.display()
+            )
+        })
+}
+
+fn registry_package_version_root(
+    registry_root: &std::path::Path,
+    package: &str,
+    version: &str,
+) -> std::path::PathBuf {
+    registry_root.join("packages").join(package).join(version)
 }
 
 fn copy_dir_recursive(
@@ -1781,6 +1845,87 @@ mod tests {
         assert!(
             local_json_manifest.is_file(),
             "expected transitive registry package to be copied locally"
+        );
+    }
+
+    #[test]
+    fn add_package_dependency_only_copies_selected_registry_version_closure() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        let registry_root = dir.path().join("registry");
+        let util_v2_dir = registry_root
+            .join("packages")
+            .join("core/util")
+            .join("2.0.0");
+        let util_v2_src = util_v2_dir.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&util_v2_src).unwrap();
+
+        write_registry_package(
+            &registry_root,
+            "core/util",
+            "1.0.0",
+            "pub fn value() -> Int { 1 }\n",
+        );
+        std::fs::write(
+            util_v2_dir.join("kyokara.toml"),
+            "[package]\nname = \"core/util\"\nversion = \"2.0.0\"\nedition = \"2026\"\nkind = \"lib\"\n[dependencies]\nmissing = { package = \"core/missing\", version = \"=9.9.9\" }\n",
+        )
+        .unwrap();
+        std::fs::write(util_v2_src.join("lib.ky"), "pub fn value() -> Int { 2 }\n").unwrap();
+
+        let main_path = src_dir.join("main.ky");
+        std::fs::write(
+            dir.path().join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &main_path,
+            "import deps.util\nfn main() -> Int { util.value() }\n",
+        )
+        .unwrap();
+
+        add_package_dependency(
+            &main_path,
+            DependencySource::Registry {
+                package: "core/util".to_string(),
+                version: "=1.0.0".to_string(),
+            },
+            "util",
+            Some(&registry_root),
+        )
+        .expect("registry add should succeed for the selected valid version");
+
+        let lockfile = std::fs::read_to_string(dir.path().join("kyokara.lock")).unwrap();
+        let local_util_v1_manifest = dir
+            .path()
+            .join(".kyokara")
+            .join("registry")
+            .join("packages")
+            .join("core/util")
+            .join("1.0.0")
+            .join("kyokara.toml");
+        let local_util_v2_manifest = dir
+            .path()
+            .join(".kyokara")
+            .join("registry")
+            .join("packages")
+            .join("core/util")
+            .join("2.0.0")
+            .join("kyokara.toml");
+
+        assert!(
+            lockfile.contains("util = { package = \"core/util\", version = \"1.0.0\" }"),
+            "expected selected registry version in lockfile, got: {lockfile}"
+        );
+        assert!(
+            local_util_v1_manifest.is_file(),
+            "expected selected registry version to be copied locally"
+        );
+        assert!(
+            !local_util_v2_manifest.exists(),
+            "unselected registry versions should not be copied into the local store"
         );
     }
 
