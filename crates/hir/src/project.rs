@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, hash_map::DefaultHasher};
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -802,7 +803,7 @@ fn resolve_manifest_dependency(
             path: path.clone(),
         }),
         ManifestDependencySpec::Git { alias, git, rev } => {
-            let checkout_root = git_dependency_checkout_root(dependency_store_root, alias, rev);
+            let checkout_root = git_dependency_checkout_root(dependency_store_root, git, rev);
             sync_git_dependency_checkout(package_root, alias, git, rev, &checkout_root)?;
             Ok(LockedDependencySpec::Git {
                 alias: alias.clone(),
@@ -839,7 +840,7 @@ fn ensure_locked_dependency_source(
     match dependency {
         LockedDependencySpec::Path { .. } => Ok(()),
         LockedDependencySpec::Git { alias, git, rev } => {
-            let checkout_root = git_dependency_checkout_root(dependency_store_root, alias, rev);
+            let checkout_root = git_dependency_checkout_root(dependency_store_root, git, rev);
             sync_git_dependency_checkout(package_root, alias, git, rev, &checkout_root)
         }
         LockedDependencySpec::Registry {
@@ -861,12 +862,19 @@ fn ensure_locked_dependency_source(
     }
 }
 
-fn git_dependency_checkout_root(package_root: &Path, alias: &str, rev: &str) -> PathBuf {
+fn git_dependency_checkout_root(package_root: &Path, git: &str, rev: &str) -> PathBuf {
     package_root
         .join(".kyokara")
         .join("git")
-        .join(alias)
-        .join(rev)
+        .join(git_dependency_cache_key(git, rev))
+}
+
+fn git_dependency_cache_key(git: &str, rev: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    git.hash(&mut hasher);
+    "\0".hash(&mut hasher);
+    rev.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 fn sync_git_dependency_checkout(
@@ -890,7 +898,7 @@ fn sync_git_dependency_checkout(
         )
     })?;
 
-    let temp_root = parent.join(format!(".tmp-{alias}-{rev}"));
+    let temp_root = parent.join(format!(".tmp-{}", git_dependency_cache_key(git, rev)));
     let _ = std::fs::remove_dir_all(&temp_root);
 
     let temp_root_str = temp_root.to_string_lossy().into_owned();
@@ -1057,8 +1065,8 @@ fn locked_dependency_package_root(
         LockedDependencySpec::Path { path, .. } => {
             normalize_path(&importing_package_root.join(path))
         }
-        LockedDependencySpec::Git { alias, rev, .. } => normalize_path(
-            &git_dependency_checkout_root(dependency_store_root, alias, rev),
+        LockedDependencySpec::Git { git, rev, .. } => normalize_path(
+            &git_dependency_checkout_root(dependency_store_root, git, rev),
         ),
         LockedDependencySpec::Registry {
             package, version, ..

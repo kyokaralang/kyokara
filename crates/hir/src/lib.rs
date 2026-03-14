@@ -2026,6 +2026,104 @@ mod tests {
     }
 
     #[test]
+    fn check_project_allows_distinct_git_dependencies_with_same_alias_and_rev() {
+        let dir = make_temp_dir();
+        let app_src = dir.join("src");
+        let a_root = dir.join("a");
+        let b_root = dir.join("b");
+        let a_src = a_root.join("src");
+        let b_src = b_root.join("src");
+        let git_one = dir.join("git-one");
+        let git_two = dir.join("git-two");
+        std::fs::create_dir_all(&app_src).expect("app src dir should be creatable");
+        std::fs::create_dir_all(&a_src).expect("a src dir should be creatable");
+        std::fs::create_dir_all(&b_src).expect("b src dir should be creatable");
+
+        init_git_package_repo(
+            &git_one,
+            "acme/common-one",
+            "0.1.0",
+            "pub fn one() -> Int { 1 }\n",
+        );
+        init_git_package_repo(
+            &git_two,
+            "acme/common-two",
+            "0.1.0",
+            "pub fn two() -> Int { 2 }\n",
+        );
+
+        let main_path = app_src.join("main.ky");
+        std::fs::write(
+            dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\na = { path = \"a\" }\nb = { path = \"b\" }\n",
+        )
+        .expect("app manifest should be writable");
+        std::fs::write(
+            a_root.join("kyokara.toml"),
+            format!(
+                "[package]\nname = \"acme/a\"\nedition = \"2026\"\nkind = \"lib\"\n\n[dependencies]\ncommon = {{ git = \"{}\", rev = \"HEAD\" }}\n",
+                git_one.display()
+            ),
+        )
+        .expect("a manifest should be writable");
+        std::fs::write(
+            b_root.join("kyokara.toml"),
+            format!(
+                "[package]\nname = \"acme/b\"\nedition = \"2026\"\nkind = \"lib\"\n\n[dependencies]\ncommon = {{ git = \"{}\", rev = \"HEAD\" }}\n",
+                git_two.display()
+            ),
+        )
+        .expect("b manifest should be writable");
+        std::fs::write(
+            a_src.join("lib.ky"),
+            "import deps.common\npub fn value() -> Int { common.one() }\n",
+        )
+        .expect("a lib should be writable");
+        std::fs::write(
+            b_src.join("lib.ky"),
+            "import deps.common\npub fn value() -> Int { common.two() }\n",
+        )
+        .expect("b lib should be writable");
+        std::fs::write(
+            &main_path,
+            "import deps.a\nimport deps.b\nfn main() -> Int { a.value() + b.value() }\n",
+        )
+        .expect("main source should be writable");
+
+        sync_package_lockfile_for_entry(&main_path).expect("lockfile sync should succeed");
+        let result = check_project(&main_path);
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            result.parse_errors.is_empty(),
+            "expected no parse errors, got: {:?}",
+            result.parse_errors
+        );
+        assert!(
+            result.lowering_diagnostics.is_empty(),
+            "expected no lowering diagnostics, got: {:?}",
+            result
+                .lowering_diagnostics
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            result
+                .type_checks
+                .iter()
+                .all(|(_, tc)| tc.diagnostics.is_empty()),
+            "expected no type diagnostics, got: {:?}",
+            result
+                .type_checks
+                .iter()
+                .flat_map(|(_, tc)| tc.diagnostics.iter().map(|diag| diag.message.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn check_project_resolves_transitive_registry_dependencies_after_lockfile_sync() {
         let dir = make_temp_dir();
         let app_src = dir.join("src");
