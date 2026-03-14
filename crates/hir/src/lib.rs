@@ -1174,13 +1174,17 @@ mod tests {
             .expect("math file should be writable");
 
         let plan = discover_project_load_plan(&main_path);
+        let expected_root = dir
+            .canonicalize()
+            .expect("package root should canonicalize");
+        let expected_src_root = expected_root.join("src");
 
         std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
 
         assert_eq!(plan.packages.len(), 1);
         let package = &plan.packages[0];
-        assert_eq!(package.package_root, Some(dir.clone()));
-        assert_eq!(package.source_root, src_dir);
+        assert_eq!(package.package_root, Some(expected_root));
+        assert_eq!(package.source_root, expected_src_root);
         assert!(plan.discovery_diagnostics.is_empty());
 
         let discovered_paths: Vec<_> = package
@@ -1216,13 +1220,17 @@ mod tests {
             .expect("module file should be writable");
 
         let plan = discover_project_load_plan(&lib_path);
+        let expected_root = dir
+            .canonicalize()
+            .expect("package root should canonicalize");
+        let expected_src_root = expected_root.join("src");
 
         std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
 
         assert_eq!(plan.packages.len(), 1);
         let package = &plan.packages[0];
-        assert_eq!(package.package_root, Some(dir));
-        assert_eq!(package.source_root, src_dir);
+        assert_eq!(package.package_root, Some(expected_root));
+        assert_eq!(package.source_root, expected_src_root);
         assert!(plan.discovery_diagnostics.is_empty());
     }
 
@@ -1788,13 +1796,33 @@ mod tests {
     fn sync_package_lockfile_writes_path_dependency_snapshot() {
         let dir = make_temp_dir();
         let app_src = dir.join("src");
+        let json_dir = dir.join("json-pkg");
+        let json_src = json_dir.join("src");
+        let util_dir = dir.join("util-pkg");
+        let util_src = util_dir.join("src");
         std::fs::create_dir_all(&app_src).expect("src dir should be creatable");
+        std::fs::create_dir_all(&json_src).expect("json src dir should be creatable");
+        std::fs::create_dir_all(&util_src).expect("util src dir should be creatable");
 
         let main_path = app_src.join("main.ky");
         let manifest_path = dir.join("kyokara.toml");
         std::fs::write(
+            json_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/json\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .expect("json manifest should be writable");
+        std::fs::write(json_src.join("lib.ky"), "pub fn answer() -> Int { 41 }\n")
+            .expect("json source should be writable");
+        std::fs::write(
+            util_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/util\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .expect("util manifest should be writable");
+        std::fs::write(util_src.join("lib.ky"), "pub fn value() -> Int { 42 }\n")
+            .expect("util source should be writable");
+        std::fs::write(
             &manifest_path,
-            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"../json-pkg\" }\nutil = { path = \"../util-pkg\" }\n",
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"json-pkg\" }\nutil = { path = \"util-pkg\" }\n",
         )
         .expect("manifest should be writable");
         std::fs::write(&main_path, "fn main() -> Int { 0 }\n").expect("entry should be writable");
@@ -1808,7 +1836,7 @@ mod tests {
 
         assert_eq!(
             lockfile,
-            "version = 1\n\n[dependencies]\njson = { path = \"../json-pkg\" }\nutil = { path = \"../util-pkg\" }\n"
+            "version = 1\n\n[dependencies]\njson = { path = \"json-pkg\" }\nutil = { path = \"util-pkg\" }\n"
         );
     }
 
@@ -1816,13 +1844,33 @@ mod tests {
     fn sync_package_lockfile_updates_after_manifest_dependency_edit() {
         let dir = make_temp_dir();
         let app_src = dir.join("src");
+        let json_dir = dir.join("json-pkg");
+        let json_src = json_dir.join("src");
+        let json_v2_dir = dir.join("json-v2");
+        let json_v2_src = json_v2_dir.join("src");
         std::fs::create_dir_all(&app_src).expect("src dir should be creatable");
+        std::fs::create_dir_all(&json_src).expect("json src dir should be creatable");
+        std::fs::create_dir_all(&json_v2_src).expect("json-v2 src dir should be creatable");
 
         let main_path = app_src.join("main.ky");
         let manifest_path = dir.join("kyokara.toml");
         std::fs::write(
+            json_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/json\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .expect("json manifest should be writable");
+        std::fs::write(json_src.join("lib.ky"), "pub fn answer() -> Int { 1 }\n")
+            .expect("json source should be writable");
+        std::fs::write(
+            json_v2_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/json-v2\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .expect("json-v2 manifest should be writable");
+        std::fs::write(json_v2_src.join("lib.ky"), "pub fn answer() -> Int { 2 }\n")
+            .expect("json-v2 source should be writable");
+        std::fs::write(
             &manifest_path,
-            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"../json-pkg\" }\n",
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"json-pkg\" }\n",
         )
         .expect("manifest should be writable");
         std::fs::write(&main_path, "fn main() -> Int { 0 }\n").expect("entry should be writable");
@@ -1830,7 +1878,7 @@ mod tests {
         sync_package_lockfile_for_entry(&main_path).expect("initial lockfile sync should succeed");
         std::fs::write(
             &manifest_path,
-            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"../json-v2\" }\n",
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"json-v2\" }\n",
         )
         .expect("updated manifest should be writable");
 
@@ -1842,11 +1890,11 @@ mod tests {
         std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
 
         assert!(
-            lockfile.contains("../json-v2"),
+            lockfile.contains("json-v2"),
             "expected updated dependency path in lockfile, got: {lockfile}"
         );
         assert!(
-            !lockfile.contains("../json-pkg"),
+            !lockfile.contains("json-pkg"),
             "stale dependency path should not remain in lockfile: {lockfile}"
         );
     }
@@ -1974,6 +2022,171 @@ mod tests {
                 .iter()
                 .flat_map(|(_, tc)| tc.diagnostics.iter().map(|d| d.message.clone()))
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn check_project_resolves_transitive_registry_dependencies_after_lockfile_sync() {
+        let dir = make_temp_dir();
+        let app_src = dir.join("src");
+        let registry_root = dir.join(".kyokara").join("registry");
+        std::fs::create_dir_all(&app_src).expect("src dir should be creatable");
+
+        write_registry_package(
+            &registry_root,
+            "core/json",
+            "1.2.0",
+            "pub fn answer() -> Int { 41 }\n",
+        );
+        let util_dir = registry_root
+            .join("packages")
+            .join("core/util")
+            .join("1.0.0");
+        let util_src = util_dir.join("src");
+        std::fs::create_dir_all(&util_src).expect("util registry src dir should be creatable");
+        std::fs::write(
+            util_dir.join("kyokara.toml"),
+            "[package]\nname = \"core/util\"\nversion = \"1.0.0\"\nedition = \"2026\"\nkind = \"lib\"\n\n[dependencies]\njson = { package = \"core/json\", version = \"^1.2.0\" }\n",
+        )
+        .expect("util registry manifest should be writable");
+        std::fs::write(
+            util_src.join("lib.ky"),
+            "import deps.json\npub fn value() -> Int { json.answer() + 1 }\n",
+        )
+        .expect("util registry source should be writable");
+
+        let main_path = app_src.join("main.ky");
+        std::fs::write(
+            dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\nutil = { package = \"core/util\", version = \"^1.0.0\" }\n",
+        )
+        .expect("manifest should be writable");
+        std::fs::write(
+            &main_path,
+            "import deps.util\nfn main() -> Int { util.value() }\n",
+        )
+        .expect("entry should be writable");
+
+        sync_package_lockfile_for_entry(&main_path).expect("lockfile sync should succeed");
+        let result = check_project(&main_path);
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            result.parse_errors.is_empty(),
+            "expected no parse errors, got: {:?}",
+            result.parse_errors
+        );
+        assert!(
+            result.lowering_diagnostics.is_empty(),
+            "expected no lowering diagnostics, got: {:?}",
+            result
+                .lowering_diagnostics
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            result
+                .type_checks
+                .iter()
+                .all(|(_, tc)| tc.diagnostics.is_empty()),
+            "expected no type diagnostics, got: {:?}",
+            result
+                .type_checks
+                .iter()
+                .flat_map(|(_, tc)| tc.diagnostics.iter().map(|d| d.message.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn check_project_reports_cyclic_path_dependency_roots() {
+        let dir = make_temp_dir();
+        let a_dir = dir.join("a");
+        let a_src = a_dir.join("src");
+        let b_dir = dir.join("b");
+        let b_src = b_dir.join("src");
+        std::fs::create_dir_all(&a_src).expect("a src dir should be creatable");
+        std::fs::create_dir_all(&b_src).expect("b src dir should be creatable");
+
+        std::fs::write(
+            a_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/a\"\nedition = \"2026\"\nkind = \"lib\"\n\n[dependencies]\nb = { path = \"../b\" }\n",
+        )
+        .expect("a manifest should be writable");
+        std::fs::write(a_src.join("lib.ky"), "pub fn a() -> Int { 1 }\n")
+            .expect("a source should be writable");
+
+        std::fs::write(
+            b_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/b\"\nedition = \"2026\"\nkind = \"lib\"\n\n[dependencies]\na = { path = \"../a/./\" }\n",
+        )
+        .expect("b manifest should be writable");
+        std::fs::write(b_src.join("lib.ky"), "pub fn b() -> Int { 2 }\n")
+            .expect("b source should be writable");
+
+        let result = check_project(&a_src.join("lib.ky"));
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        let lowering_messages: Vec<_> = result
+            .lowering_diagnostics
+            .iter()
+            .map(|diag| diag.message.as_str())
+            .collect();
+        assert!(
+            lowering_messages
+                .iter()
+                .any(|message| message.contains("cyclic dependency")),
+            "expected cyclic dependency diagnostic, got: {lowering_messages:?}"
+        );
+        assert!(
+            lowering_messages
+                .iter()
+                .all(|message| !message.contains("missing kyokara.toml")),
+            "cycle should not degrade into a missing-manifest diagnostic: {lowering_messages:?}"
+        );
+    }
+
+    #[test]
+    fn sync_package_lockfile_rejects_non_lib_registry_dependency_packages() {
+        let dir = make_temp_dir();
+        let app_src = dir.join("src");
+        let registry_root = dir.join(".kyokara").join("registry");
+        let bad_dir = registry_root
+            .join("packages")
+            .join("core/bad")
+            .join("1.0.0");
+        let bad_src = bad_dir.join("src");
+        std::fs::create_dir_all(&app_src).expect("src dir should be creatable");
+        std::fs::create_dir_all(&bad_src).expect("bad registry src dir should be creatable");
+
+        std::fs::write(
+            bad_dir.join("kyokara.toml"),
+            "[package]\nname = \"core/bad\"\nversion = \"1.0.0\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .expect("bad registry manifest should be writable");
+        std::fs::write(bad_src.join("main.ky"), "fn main() -> Int { 1 }\n")
+            .expect("bad registry source should be writable");
+
+        let main_path = app_src.join("main.ky");
+        std::fs::write(
+            dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\nbad = { package = \"core/bad\", version = \"^1.0.0\" }\n",
+        )
+        .expect("manifest should be writable");
+        std::fs::write(&main_path, "fn main() -> Int { 0 }\n").expect("entry should be writable");
+
+        let err = sync_package_lockfile_for_entry(&main_path)
+            .expect_err("lockfile sync should reject non-lib dependency packages");
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            err.to_string()
+                .contains("dependencies must be lib packages"),
+            "expected non-lib dependency rejection, got: {err}"
         );
     }
 

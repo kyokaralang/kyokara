@@ -159,8 +159,10 @@ fn build_package_file_analysis(
     current_file: &Path,
     current_text: &str,
 ) -> Option<FileAnalysis> {
-    let plan = kyokara_hir::discover_project_load_plan(entry_file);
-    let copy_root = project_copy_root(&plan, entry_file);
+    let entry_file = canonical_project_path(entry_file);
+    let current_file = canonical_project_path(current_file);
+    let plan = kyokara_hir::discover_project_load_plan(&entry_file);
+    let copy_root = project_copy_root(&plan, &entry_file);
     let temp_dir = tempfile::tempdir().ok()?;
 
     for package in &plan.packages {
@@ -188,7 +190,7 @@ fn build_package_file_analysis(
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).ok()?;
         }
-        let source = if file_path == current_file {
+        let source = if file_path == &current_file {
             current_text.to_string()
         } else {
             std::fs::read_to_string(file_path).ok()?
@@ -198,12 +200,16 @@ fn build_package_file_analysis(
 
     let temp_entry = temp_dir
         .path()
-        .join(project_relative_path(&copy_root, entry_file));
+        .join(project_relative_path(&copy_root, &entry_file));
     let temp_current = temp_dir
         .path()
-        .join(project_relative_path(&copy_root, current_file));
+        .join(project_relative_path(&copy_root, &current_file));
     let result = kyokara_hir::check_project(&temp_entry);
     FileAnalysis::from_project_check_result_for_path(result, &temp_current)
+}
+
+fn canonical_project_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn project_copy_root(plan: &kyokara_hir::ProjectLoadPlan, entry_file: &Path) -> PathBuf {

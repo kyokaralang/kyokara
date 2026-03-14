@@ -113,7 +113,14 @@ pub fn sync_package_lockfile_for_entry(entry_file: &Path) -> io::Result<Option<P
     let manifest_source = std::fs::read_to_string(&manifest_path)?;
     let manifest = parse_package_manifest(&manifest_path, &manifest_source)
         .map_err(|diag| io::Error::other(diag.message))?;
-    let dependencies = resolve_dependencies_for_manifest(&manifest_path, &manifest)
+    let package_root = normalize_existing_path(
+        manifest_path
+            .parent()
+            .expect("manifest file should have a parent directory"),
+    );
+    let dependencies = resolve_dependencies_for_manifest(&manifest_path, &manifest, &package_root)
+        .map_err(|diag| io::Error::other(diag.message))?;
+    validate_dependency_graph(&package_root, &package_root, &dependencies)
         .map_err(|diag| io::Error::other(diag.message))?;
 
     let lockfile_path = manifest_path.with_file_name(PACKAGE_LOCKFILE);
@@ -256,6 +263,7 @@ struct PackageLockfile {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DetectedPackageLayout {
     package_root: PathBuf,
+    dependency_store_root: PathBuf,
     source_root: PathBuf,
     modules: Vec<(OwnedModulePath, PathBuf)>,
     manifest: PackageManifest,
@@ -270,20 +278,14 @@ fn collect_dependency_packages(
     active_package_roots: &mut HashSet<PathBuf>,
 ) {
     if !active_package_roots.insert(layout.package_root.clone()) {
-        discovery_diagnostics.push(ProjectDiscoveryDiagnostic {
-            path: layout.package_root.join(PACKAGE_MANIFEST),
-            message: format!(
-                "invalid package manifest `{}`: cyclic dependency on `{}`",
-                layout.package_root.join(PACKAGE_MANIFEST).display(),
-                layout.package_root.display()
-            ),
-        });
+        discovery_diagnostics.push(cyclic_dependency_diagnostic(&layout.package_root));
         return;
     }
 
     discovery_diagnostics.extend(reserved_deps_namespace_diagnostics(&layout.modules));
 
     let package_root = layout.package_root.clone();
+    let dependency_store_root = layout.dependency_store_root.clone();
     let source_root = layout.source_root.clone();
     let entry_file = source_root.join(layout.manifest.kind.entry_file_name());
     let dependencies = layout.dependencies.clone();
@@ -298,7 +300,7 @@ fn collect_dependency_packages(
     });
 
     for dependency in &dependencies {
-        match discover_locked_dependency_layout(&package_root, dependency) {
+        match discover_locked_dependency_layout(&package_root, &dependency_store_root, dependency) {
             Ok(layout) => collect_dependency_packages(
                 layout,
                 dependency_module_prefix(&module_prefix, dependency.alias()),
@@ -311,6 +313,60 @@ fn collect_dependency_packages(
     }
 
     active_package_roots.remove(&package_root);
+}
+
+fn validate_dependency_graph(
+    package_root: &Path,
+    dependency_store_root: &Path,
+    dependencies: &[LockedDependencySpec],
+) -> Result<(), ProjectDiscoveryDiagnostic> {
+    let mut active_package_roots = HashSet::from([normalize_existing_path(package_root)]);
+    for dependency in dependencies {
+        validate_dependency_graph_inner(
+            package_root,
+            dependency_store_root,
+            dependency,
+            &mut active_package_roots,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_dependency_graph_inner(
+    importing_package_root: &Path,
+    dependency_store_root: &Path,
+    dependency: &LockedDependencySpec,
+    active_package_roots: &mut HashSet<PathBuf>,
+) -> Result<(), ProjectDiscoveryDiagnostic> {
+    let layout = discover_locked_dependency_layout(
+        importing_package_root,
+        dependency_store_root,
+        dependency,
+    )?;
+    if !active_package_roots.insert(layout.package_root.clone()) {
+        return Err(cyclic_dependency_diagnostic(&layout.package_root));
+    }
+    for dependency in &layout.dependencies {
+        validate_dependency_graph_inner(
+            &layout.package_root,
+            dependency_store_root,
+            dependency,
+            active_package_roots,
+        )?;
+    }
+    active_package_roots.remove(&layout.package_root);
+    Ok(())
+}
+
+fn cyclic_dependency_diagnostic(package_root: &Path) -> ProjectDiscoveryDiagnostic {
+    ProjectDiscoveryDiagnostic {
+        path: package_root.join(PACKAGE_MANIFEST),
+        message: format!(
+            "invalid package manifest `{}`: cyclic dependency on `{}`",
+            package_root.join(PACKAGE_MANIFEST).display(),
+            package_root.display()
+        ),
+    }
 }
 
 fn dependency_module_prefix(parent_prefix: &OwnedModulePath, alias: &str) -> OwnedModulePath {
@@ -333,7 +389,12 @@ fn detect_package_layout(
     let expected_kind = PackageKind::from_entry_file(entry_file)
         .expect("package manifest paths are only built for main.ky/lib.ky entries");
     let manifest = parse_package_manifest(&manifest_path, &manifest_source)?;
-    let dependencies = resolve_dependencies_for_manifest(&manifest_path, &manifest)?;
+    let package_root = normalize_existing_path(
+        manifest_path
+            .parent()
+            .expect("manifest file should have a parent directory"),
+    );
+    let dependencies = resolve_dependencies_for_manifest(&manifest_path, &manifest, &package_root)?;
 
     if manifest.kind != expected_kind {
         return Err(invalid_manifest(
@@ -346,14 +407,11 @@ fn detect_package_layout(
         ));
     }
 
-    let package_root = manifest_path
-        .parent()
-        .expect("manifest file should have a parent directory")
-        .to_path_buf();
     let source_root = package_root.join("src");
     Ok(Some(DetectedPackageLayout {
         modules: discover_module_files(&source_root, entry_file),
         source_root,
+        dependency_store_root: package_root.clone(),
         package_root,
         manifest,
         dependencies,
@@ -421,10 +479,13 @@ fn parse_package_manifest(
 fn resolve_dependencies_for_manifest(
     manifest_path: &Path,
     manifest: &PackageManifest,
+    dependency_store_root: &Path,
 ) -> Result<Vec<LockedDependencySpec>, ProjectDiscoveryDiagnostic> {
-    let package_root = manifest_path
-        .parent()
-        .expect("manifest file should have a parent directory");
+    let package_root = normalize_existing_path(
+        manifest_path
+            .parent()
+            .expect("manifest file should have a parent directory"),
+    );
     let lockfile_path = manifest_path.with_file_name(PACKAGE_LOCKFILE);
     if lockfile_path.is_file()
         && let Ok(lockfile_source) = std::fs::read_to_string(&lockfile_path)
@@ -432,7 +493,7 @@ fn resolve_dependencies_for_manifest(
         && locked_dependencies_match_manifest(&lockfile.dependencies, &manifest.dependencies)
     {
         for dependency in &lockfile.dependencies {
-            ensure_locked_dependency_source(package_root, dependency)?;
+            ensure_locked_dependency_source(&package_root, dependency_store_root, dependency)?;
         }
         return Ok(lockfile.dependencies);
     }
@@ -440,7 +501,9 @@ fn resolve_dependencies_for_manifest(
     manifest
         .dependencies
         .iter()
-        .map(|dependency| resolve_manifest_dependency(package_root, dependency))
+        .map(|dependency| {
+            resolve_manifest_dependency(&package_root, dependency_store_root, dependency)
+        })
         .collect()
 }
 
@@ -730,6 +793,7 @@ fn parse_locked_dependencies(
 
 fn resolve_manifest_dependency(
     package_root: &Path,
+    dependency_store_root: &Path,
     dependency: &ManifestDependencySpec,
 ) -> Result<LockedDependencySpec, ProjectDiscoveryDiagnostic> {
     match dependency {
@@ -738,7 +802,7 @@ fn resolve_manifest_dependency(
             path: path.clone(),
         }),
         ManifestDependencySpec::Git { alias, git, rev } => {
-            let checkout_root = git_dependency_checkout_root(package_root, alias, rev);
+            let checkout_root = git_dependency_checkout_root(dependency_store_root, alias, rev);
             sync_git_dependency_checkout(package_root, alias, git, rev, &checkout_root)?;
             Ok(LockedDependencySpec::Git {
                 alias: alias.clone(),
@@ -751,8 +815,13 @@ fn resolve_manifest_dependency(
             package,
             version_req,
         } => {
-            let version =
-                resolve_registry_dependency_version(package_root, alias, package, version_req)?;
+            let version = resolve_registry_dependency_version(
+                dependency_store_root,
+                package_root,
+                alias,
+                package,
+                version_req,
+            )?;
             Ok(LockedDependencySpec::Registry {
                 alias: alias.clone(),
                 package: package.clone(),
@@ -764,12 +833,13 @@ fn resolve_manifest_dependency(
 
 fn ensure_locked_dependency_source(
     package_root: &Path,
+    dependency_store_root: &Path,
     dependency: &LockedDependencySpec,
 ) -> Result<(), ProjectDiscoveryDiagnostic> {
     match dependency {
         LockedDependencySpec::Path { .. } => Ok(()),
         LockedDependencySpec::Git { alias, git, rev } => {
-            let checkout_root = git_dependency_checkout_root(package_root, alias, rev);
+            let checkout_root = git_dependency_checkout_root(dependency_store_root, alias, rev);
             sync_git_dependency_checkout(package_root, alias, git, rev, &checkout_root)
         }
         LockedDependencySpec::Registry {
@@ -777,7 +847,7 @@ fn ensure_locked_dependency_source(
             package,
             version,
         } => {
-            let package_root = registry_dependency_root(package_root, package, version);
+            let package_root = registry_dependency_root(dependency_store_root, package, version);
             if !package_root.join(PACKAGE_MANIFEST).is_file() {
                 return Err(invalid_manifest(
                     &package_root.join(PACKAGE_MANIFEST),
@@ -866,25 +936,26 @@ fn run_git_command(manifest_path: &Path, args: &[&str]) -> Result<(), ProjectDis
 }
 
 fn resolve_registry_dependency_version(
-    package_root: &Path,
+    dependency_store_root: &Path,
+    manifest_package_root: &Path,
     alias: &str,
     package: &str,
     version_req: &str,
 ) -> Result<String, ProjectDiscoveryDiagnostic> {
     let req = VersionReq::parse(version_req).map_err(|err| {
         invalid_manifest(
-            &package_root.join(PACKAGE_MANIFEST),
+            &manifest_package_root.join(PACKAGE_MANIFEST),
             format!("dependency `{alias}` has invalid version requirement `{version_req}`: {err}"),
         )
     })?;
-    let package_dir = package_root
+    let package_dir = dependency_store_root
         .join(".kyokara")
         .join("registry")
         .join("packages")
         .join(package);
     let entries = std::fs::read_dir(&package_dir).map_err(|err| {
         invalid_manifest(
-            &package_root.join(PACKAGE_MANIFEST),
+            &manifest_package_root.join(PACKAGE_MANIFEST),
             format!("dependency `{alias}` could not find registry package `{package}`: {err}"),
         )
     })?;
@@ -893,7 +964,7 @@ fn resolve_registry_dependency_version(
     for entry in entries {
         let entry = entry.map_err(|err| {
             invalid_manifest(
-                &package_root.join(PACKAGE_MANIFEST),
+                &manifest_package_root.join(PACKAGE_MANIFEST),
                 format!("failed to read registry package `{package}`: {err}"),
             )
         })?;
@@ -908,7 +979,7 @@ fn resolve_registry_dependency_version(
     candidates.sort();
     let Some(version) = candidates.pop() else {
         return Err(invalid_manifest(
-            &package_root.join(PACKAGE_MANIFEST),
+            &manifest_package_root.join(PACKAGE_MANIFEST),
             format!(
                 "dependency `{alias}` could not resolve `{package}` for version requirement `{version_req}`"
             ),
@@ -919,10 +990,12 @@ fn resolve_registry_dependency_version(
 
 fn discover_locked_dependency_layout(
     importing_package_root: &Path,
+    dependency_store_root: &Path,
     dependency: &LockedDependencySpec,
 ) -> Result<DetectedPackageLayout, ProjectDiscoveryDiagnostic> {
-    ensure_locked_dependency_source(importing_package_root, dependency)?;
-    let package_root = locked_dependency_package_root(importing_package_root, dependency);
+    ensure_locked_dependency_source(importing_package_root, dependency_store_root, dependency)?;
+    let package_root =
+        locked_dependency_package_root(importing_package_root, dependency_store_root, dependency);
     let manifest_path = package_root.join(PACKAGE_MANIFEST);
     if !manifest_path.is_file() {
         return Err(ProjectDiscoveryDiagnostic {
@@ -962,10 +1035,12 @@ fn discover_locked_dependency_layout(
         });
     }
 
-    let dependencies = resolve_dependencies_for_manifest(&manifest_path, &manifest)?;
+    let dependencies =
+        resolve_dependencies_for_manifest(&manifest_path, &manifest, dependency_store_root)?;
 
     Ok(DetectedPackageLayout {
         package_root,
+        dependency_store_root: dependency_store_root.to_path_buf(),
         source_root: source_root.clone(),
         modules: discover_module_files(&source_root, &entry_file),
         manifest,
@@ -975,30 +1050,53 @@ fn discover_locked_dependency_layout(
 
 fn locked_dependency_package_root(
     importing_package_root: &Path,
+    dependency_store_root: &Path,
     dependency: &LockedDependencySpec,
 ) -> PathBuf {
     match dependency {
-        LockedDependencySpec::Path { path, .. } => importing_package_root.join(path),
-        LockedDependencySpec::Git { alias, rev, .. } => {
-            git_dependency_checkout_root(importing_package_root, alias, rev)
+        LockedDependencySpec::Path { path, .. } => {
+            normalize_path(&importing_package_root.join(path))
         }
+        LockedDependencySpec::Git { alias, rev, .. } => normalize_path(
+            &git_dependency_checkout_root(dependency_store_root, alias, rev),
+        ),
         LockedDependencySpec::Registry {
             package, version, ..
-        } => registry_dependency_root(importing_package_root, package, version),
+        } => normalize_path(&registry_dependency_root(
+            dependency_store_root,
+            package,
+            version,
+        )),
     }
 }
 
-fn registry_dependency_root(
-    importing_package_root: &Path,
-    package: &str,
-    version: &str,
-) -> PathBuf {
-    importing_package_root
+fn registry_dependency_root(dependency_store_root: &Path, package: &str, version: &str) -> PathBuf {
+    dependency_store_root
         .join(".kyokara")
         .join("registry")
         .join("packages")
         .join(package)
         .join(version)
+}
+
+fn normalize_existing_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| normalize_path(path))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn reserved_deps_namespace_diagnostics(

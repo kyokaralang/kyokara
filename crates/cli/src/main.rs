@@ -9,6 +9,8 @@
 //! - `kyokara test <file>` — property-based testing of contract functions (v0.3)
 //! - `kyokara replay <file>` — replay execution trace (planned v0.3)
 
+use std::collections::HashSet;
+
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -667,15 +669,37 @@ fn add_package_dependency(
     if let DependencySource::Registry { package, .. } = &source
         && let Some(registry_root) = registry_root
     {
-        copy_registry_family_into_local_store(&manifest_path, registry_root, package)?;
+        copy_registry_family_with_transitive_deps_into_local_store(
+            &manifest_path,
+            registry_root,
+            package,
+        )?;
     }
 
+    let manifest_before = std::fs::read_to_string(&manifest_path)
+        .map_err(|err| format!("cannot read `{}`: {err}", manifest_path.display()))?;
     update_manifest_dependencies(&manifest_path, |dependencies| {
         dependencies.insert(alias.to_string(), dependency_source_to_toml_value(source));
         Ok(())
     })?;
 
-    sync_project_lockfile_if_needed(entry_file, true)
+    if let Err(err) = sync_project_lockfile_if_needed(entry_file, true) {
+        std::fs::write(&manifest_path, manifest_before).map_err(|write_err| {
+            format!(
+                "{err}; additionally failed to restore `{}`: {write_err}",
+                manifest_path.display()
+            )
+        })?;
+        let _ = std::fs::remove_file(
+            manifest_path
+                .parent()
+                .expect("manifest path should have parent")
+                .join("kyokara.lock"),
+        );
+        return Err(err);
+    }
+
+    Ok(())
 }
 
 fn update_package_dependencies(
@@ -697,7 +721,11 @@ fn update_package_dependencies(
                 let Some(package) = spec_table.get("package").and_then(toml::Value::as_str) else {
                     continue;
                 };
-                copy_registry_family_into_local_store(&manifest_path, registry_root, package)?;
+                copy_registry_family_with_transitive_deps_into_local_store(
+                    &manifest_path,
+                    registry_root,
+                    package,
+                )?;
             }
         }
     }
@@ -896,6 +924,66 @@ fn copy_registry_family_into_local_store(
         .join("packages")
         .join(package);
     copy_dir_recursive(&source_root, &dest_root, |_| false)
+}
+
+fn copy_registry_family_with_transitive_deps_into_local_store(
+    manifest_path: &std::path::Path,
+    registry_root: &std::path::Path,
+    package: &str,
+) -> Result<(), String> {
+    let mut visited = HashSet::new();
+    copy_registry_family_with_transitive_deps_into_local_store_inner(
+        manifest_path,
+        registry_root,
+        package,
+        &mut visited,
+    )
+}
+
+fn copy_registry_family_with_transitive_deps_into_local_store_inner(
+    manifest_path: &std::path::Path,
+    registry_root: &std::path::Path,
+    package: &str,
+    visited: &mut HashSet<String>,
+) -> Result<(), String> {
+    if !visited.insert(package.to_string()) {
+        return Ok(());
+    }
+
+    copy_registry_family_into_local_store(manifest_path, registry_root, package)?;
+
+    let source_root = registry_root.join("packages").join(package);
+    for entry in std::fs::read_dir(&source_root)
+        .map_err(|err| format!("cannot read `{}`: {err}", source_root.display()))?
+    {
+        let entry =
+            entry.map_err(|err| format!("cannot read `{}`: {err}", source_root.display()))?;
+        let version_root = entry.path();
+        if !version_root.is_dir() {
+            continue;
+        }
+        let manifest = read_manifest_value(&version_root.join("kyokara.toml"))?;
+        let Some(dependencies) = manifest.get("dependencies").and_then(toml::Value::as_table)
+        else {
+            continue;
+        };
+        for spec in dependencies.values() {
+            let Some(spec_table) = spec.as_table() else {
+                continue;
+            };
+            let Some(package) = spec_table.get("package").and_then(toml::Value::as_str) else {
+                continue;
+            };
+            copy_registry_family_with_transitive_deps_into_local_store_inner(
+                manifest_path,
+                registry_root,
+                package,
+                visited,
+            )?;
+        }
+    }
+
+    Ok(())
 }
 
 fn copy_dir_recursive(
@@ -1353,12 +1441,21 @@ mod tests {
     fn sync_project_lockfile_if_needed_writes_lockfile_for_package_entry() {
         let dir = tempfile::tempdir().unwrap();
         let src_dir = dir.path().join("src");
+        let json_dir = dir.path().join("json-pkg");
+        let json_src = json_dir.join("src");
         std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&json_src).unwrap();
 
         let main_path = src_dir.join("main.ky");
         std::fs::write(
+            json_dir.join("kyokara.toml"),
+            "[package]\nname = \"acme/json\"\nedition = \"2026\"\nkind = \"lib\"\n",
+        )
+        .unwrap();
+        std::fs::write(json_src.join("lib.ky"), "pub fn answer() -> Int { 42 }\n").unwrap();
+        std::fs::write(
             dir.path().join("kyokara.toml"),
-            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"../json-pkg\" }\n",
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\njson = { path = \"json-pkg\" }\n",
         )
         .unwrap();
         std::fs::write(&main_path, "fn main() -> Int { 0 }\n").unwrap();
@@ -1368,7 +1465,7 @@ mod tests {
         let lockfile = std::fs::read_to_string(dir.path().join("kyokara.lock"))
             .expect("lockfile should be written");
         assert!(
-            lockfile.contains("json = { path = \"../json-pkg\" }"),
+            lockfile.contains("json = { path = \"json-pkg\" }"),
             "expected lockfile to include dependency snapshot, got: {lockfile}"
         );
     }
@@ -1558,6 +1655,152 @@ mod tests {
         assert!(
             lockfile.contains("json = { package = \"core/json\", version = \"1.5.0\" }"),
             "expected updated registry version in lockfile, got: {lockfile}"
+        );
+    }
+
+    #[test]
+    fn add_package_dependency_supports_transitive_registry_dependencies() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        let registry_root = dir.path().join("registry");
+        std::fs::create_dir_all(&src_dir).unwrap();
+
+        write_registry_package(
+            &registry_root,
+            "core/json",
+            "1.2.0",
+            "pub fn answer() -> Int { 41 }\n",
+        );
+        let util_dir = registry_root
+            .join("packages")
+            .join("core/util")
+            .join("1.0.0");
+        let util_src = util_dir.join("src");
+        std::fs::create_dir_all(&util_src).unwrap();
+        std::fs::write(
+            util_dir.join("kyokara.toml"),
+            "[package]\nname = \"core/util\"\nversion = \"1.0.0\"\nedition = \"2026\"\nkind = \"lib\"\n\n[dependencies]\njson = { package = \"core/json\", version = \"^1.2.0\" }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            util_src.join("lib.ky"),
+            "import deps.json\npub fn value() -> Int { json.answer() + 1 }\n",
+        )
+        .unwrap();
+
+        let main_path = src_dir.join("main.ky");
+        std::fs::write(
+            dir.path().join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &main_path,
+            "import deps.util\nfn main() -> Int { util.value() }\n",
+        )
+        .unwrap();
+
+        add_package_dependency(
+            &main_path,
+            DependencySource::Registry {
+                package: "core/util".to_string(),
+                version: "^1.0.0".to_string(),
+            },
+            "util",
+            Some(&registry_root),
+        )
+        .expect("registry add should succeed");
+
+        let result = kyokara_hir::check_project(&main_path);
+        let local_json_manifest = dir
+            .path()
+            .join(".kyokara")
+            .join("registry")
+            .join("packages")
+            .join("core/json")
+            .join("1.2.0")
+            .join("kyokara.toml");
+
+        assert!(
+            result.lowering_diagnostics.is_empty(),
+            "expected no lowering diagnostics, got: {:?}",
+            result
+                .lowering_diagnostics
+                .iter()
+                .map(|diag| diag.message.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            result
+                .type_checks
+                .iter()
+                .all(|(_, tc)| tc.diagnostics.is_empty()),
+            "expected no type diagnostics, got: {:?}",
+            result
+                .type_checks
+                .iter()
+                .flat_map(|(_, tc)| tc.diagnostics.iter().map(|diag| diag.message.clone()))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            local_json_manifest.is_file(),
+            "expected transitive registry package to be copied locally"
+        );
+    }
+
+    #[test]
+    fn add_package_dependency_rejects_non_lib_registry_packages() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        let registry_root = dir.path().join("registry");
+        let bad_dir = registry_root
+            .join("packages")
+            .join("core/bad")
+            .join("1.0.0");
+        let bad_src = bad_dir.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&bad_src).unwrap();
+
+        std::fs::write(
+            bad_dir.join("kyokara.toml"),
+            "[package]\nname = \"core/bad\"\nversion = \"1.0.0\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .unwrap();
+        std::fs::write(bad_src.join("main.ky"), "fn main() -> Int { 1 }\n").unwrap();
+
+        let main_path = src_dir.join("main.ky");
+        std::fs::write(
+            dir.path().join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .unwrap();
+        std::fs::write(&main_path, "fn main() -> Int { 0 }\n").unwrap();
+
+        let err = add_package_dependency(
+            &main_path,
+            DependencySource::Registry {
+                package: "core/bad".to_string(),
+                version: "^1.0.0".to_string(),
+            },
+            "bad",
+            Some(&registry_root),
+        )
+        .expect_err("registry add should reject non-lib dependency packages");
+
+        let manifest = std::fs::read_to_string(dir.path().join("kyokara.toml")).unwrap();
+        let lockfile_path = dir.path().join("kyokara.lock");
+
+        assert!(
+            err.contains("dependencies must be lib packages"),
+            "expected non-lib dependency rejection, got: {err}"
+        );
+        assert!(
+            !manifest.contains("core/bad"),
+            "manifest should stay unchanged on failed add: {manifest}"
+        );
+        assert!(
+            !lockfile_path.exists(),
+            "failed add should not write a lockfile"
         );
     }
 
