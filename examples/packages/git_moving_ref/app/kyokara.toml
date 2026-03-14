@@ -1,0 +1,8 @@
+[package]
+name = "examples/git-moving-ref-app"
+edition = "2026"
+kind = "bin"
+
+[dependencies]
+git_json = { git = "../git-json", rev = "main" }
+

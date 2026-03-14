@@ -1,0 +1,6 @@
+[package]
+name = "core/json"
+version = "1.5.0"
+edition = "2026"
+kind = "lib"
+

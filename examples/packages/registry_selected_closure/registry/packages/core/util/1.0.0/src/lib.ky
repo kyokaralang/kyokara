@@ -1,0 +1,6 @@
+import deps.json
+
+pub fn value() -> Int {
+  json.from_registry()
+}
+

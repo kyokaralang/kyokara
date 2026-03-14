@@ -1,0 +1,9 @@
+[package]
+name = "core/util"
+version = "1.0.0"
+edition = "2026"
+kind = "lib"
+
+[dependencies]
+json = { package = "core/json", version = "^1.0.0" }
+

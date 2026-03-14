@@ -1,0 +1,4 @@
+pub fn from_registry() -> Int {
+  12
+}
+

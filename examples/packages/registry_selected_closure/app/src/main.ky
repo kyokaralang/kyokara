@@ -1,0 +1,6 @@
+import deps.util
+
+fn main() -> Int {
+  util.value()
+}
+

@@ -1,0 +1,6 @@
+import deps.git_json
+
+fn main() -> Int {
+  git_json.from_git()
+}
+
