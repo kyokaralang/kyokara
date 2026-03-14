@@ -1294,11 +1294,41 @@ mod tests {
             );
         };
 
-        run(&["init", "-q"]);
+        run(&["init", "-q", "-b", "main"]);
         run(&["config", "user.name", "Kyokara Tests"]);
         run(&["config", "user.email", "tests@kyokara.invalid"]);
         run(&["add", "."]);
         run(&["commit", "-qm", "init"]);
+
+        let output = ProcessCommand::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo_dir)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    fn commit_git_package_repo_change(repo_dir: &std::path::Path, lib_source: &str) -> String {
+        std::fs::write(repo_dir.join("src").join("lib.ky"), lib_source).unwrap();
+
+        let run = |args: &[&str]| {
+            let output = ProcessCommand::new("git")
+                .args(args)
+                .current_dir(repo_dir)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {:?} should succeed\nstdout:\n{}\nstderr:\n{}",
+                args,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+
+        run(&["add", "."]);
+        run(&["commit", "-qm", "update"]);
 
         let output = ProcessCommand::new("git")
             .args(["rev-parse", "HEAD"])
@@ -1697,10 +1727,82 @@ mod tests {
         );
         assert!(
             lockfile.contains(&format!(
-                "git_json = {{ git = \"{}\", rev = \"{git_rev}\" }}",
+                "git_json = {{ git = \"{}\", rev = \"{git_rev}\", commit = \"{git_rev}\" }}",
                 git_repo.display()
             )),
             "expected git dependency in lockfile, got: {lockfile}"
+        );
+    }
+
+    #[test]
+    fn update_package_dependencies_refreshes_moving_git_refs() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        let git_repo = dir.path().join("git-json");
+        std::fs::create_dir_all(&src_dir).unwrap();
+
+        let first_rev = init_git_package_repo(
+            &git_repo,
+            "acme/git-json",
+            "0.2.0",
+            "pub fn from_git() -> Int { 7 }\n",
+        );
+
+        let main_path = src_dir.join("main.ky");
+        std::fs::write(
+            dir.path().join("kyokara.toml"),
+            "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &main_path,
+            "import deps.git_json\nfn main() -> Int { git_json.from_git() }\n",
+        )
+        .unwrap();
+
+        add_package_dependency(
+            &main_path,
+            DependencySource::Git {
+                git: git_repo.display().to_string(),
+                rev: "main".to_string(),
+            },
+            "git_json",
+            None,
+        )
+        .expect("initial git add should succeed");
+
+        let first_run =
+            kyokara_eval::run_project(&main_path).expect("initial project run should succeed");
+        let second_rev =
+            commit_git_package_repo_change(&git_repo, "pub fn from_git() -> Int { 8 }\n");
+
+        update_package_dependencies(&main_path, None, None).expect("git update should succeed");
+
+        let lockfile = std::fs::read_to_string(dir.path().join("kyokara.lock")).unwrap();
+        let second_run =
+            kyokara_eval::run_project(&main_path).expect("updated project run should succeed");
+
+        assert_eq!(
+            first_run.value,
+            kyokara_eval::value::Value::Int(7),
+            "expected initial run to use the first commit"
+        );
+        assert_eq!(
+            second_run.value,
+            kyokara_eval::value::Value::Int(8),
+            "expected update to refresh the moving ref checkout"
+        );
+        assert!(
+            lockfile.contains("rev = \"main\""),
+            "expected lockfile to preserve the requested moving ref, got: {lockfile}"
+        );
+        assert!(
+            lockfile.contains(&format!("commit = \"{second_rev}\"")),
+            "expected lockfile to refresh to the latest resolved commit, got: {lockfile}"
+        );
+        assert!(
+            !lockfile.contains(&format!("commit = \"{first_rev}\"")),
+            "stale resolved commit should not remain after update: {lockfile}"
         );
     }
 

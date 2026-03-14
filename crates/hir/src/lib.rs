@@ -1023,7 +1023,7 @@ mod tests {
             );
         };
 
-        run(&["init", "-q"]);
+        run(&["init", "-q", "-b", "main"]);
         run(&["config", "user.name", "Kyokara Tests"]);
         run(&["config", "user.email", "tests@kyokara.invalid"]);
         run(&["add", "."]);
@@ -1040,6 +1040,37 @@ mod tests {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    fn commit_git_package_repo_change(repo_dir: &std::path::Path, lib_source: &str) -> String {
+        std::fs::write(repo_dir.join("src").join("lib.ky"), lib_source)
+            .expect("git package lib source should be writable");
+
+        let run = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(repo_dir)
+                .output()
+                .expect("git command should run");
+            assert!(
+                output.status.success(),
+                "git {:?} should succeed\nstdout:\n{}\nstderr:\n{}",
+                args,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+
+        run(&["add", "."]);
+        run(&["commit", "-qm", "update"]);
+
+        let output = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo_dir)
+            .output()
+            .expect("git rev-parse should run");
+        assert!(output.status.success());
         String::from_utf8_lossy(&output.stdout).trim().to_owned()
     }
 
@@ -1951,6 +1982,114 @@ mod tests {
         assert!(
             lockfile.contains("json = { package = \"core/json\", version = \"1.4.2\" }"),
             "expected exact registry version in lockfile, got: {lockfile}"
+        );
+    }
+
+    #[test]
+    fn sync_package_lockfile_records_resolved_commit_for_moving_git_refs() {
+        let dir = make_temp_dir();
+        let app_src = dir.join("src");
+        let git_repo = dir.join("git-json");
+        std::fs::create_dir_all(&app_src).expect("src dir should be creatable");
+
+        let git_rev = init_git_package_repo(
+            &git_repo,
+            "acme/git-json",
+            "0.2.0",
+            "pub fn from_git() -> Int { 7 }\n",
+        );
+
+        let main_path = app_src.join("main.ky");
+        std::fs::write(
+            dir.join("kyokara.toml"),
+            format!(
+                "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\ngit_json = {{ git = \"{}\", rev = \"main\" }}\n",
+                git_repo.display()
+            ),
+        )
+        .expect("manifest should be writable");
+        std::fs::write(&main_path, "fn main() -> Int { 0 }\n").expect("entry should be writable");
+
+        let lockfile_path = sync_package_lockfile_for_entry(&main_path)
+            .expect("lockfile sync should succeed")
+            .expect("package entry should produce a lockfile path");
+        let lockfile = std::fs::read_to_string(&lockfile_path).expect("lockfile should exist");
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            lockfile.contains("rev = \"main\""),
+            "expected lockfile to preserve requested ref, got: {lockfile}"
+        );
+        assert!(
+            lockfile.contains(&format!("commit = \"{git_rev}\"")),
+            "expected lockfile to record resolved commit, got: {lockfile}"
+        );
+    }
+
+    #[test]
+    fn sync_package_lockfile_refreshes_moving_git_refs_after_lockfile_reset() {
+        let dir = make_temp_dir();
+        let app_src = dir.join("src");
+        let git_repo = dir.join("git-json");
+        std::fs::create_dir_all(&app_src).expect("src dir should be creatable");
+
+        let first_rev = init_git_package_repo(
+            &git_repo,
+            "acme/git-json",
+            "0.2.0",
+            "pub fn from_git() -> Int { 7 }\n",
+        );
+
+        let main_path = app_src.join("main.ky");
+        let lockfile_path = dir.join("kyokara.lock");
+        std::fs::write(
+            dir.join("kyokara.toml"),
+            format!(
+                "[package]\nname = \"acme/app\"\nedition = \"2026\"\nkind = \"bin\"\n\n[dependencies]\ngit_json = {{ git = \"{}\", rev = \"main\" }}\n",
+                git_repo.display()
+            ),
+        )
+        .expect("manifest should be writable");
+        std::fs::write(
+            &main_path,
+            "import deps.git_json\nfn main() -> Int { git_json.from_git() }\n",
+        )
+        .expect("entry should be writable");
+
+        sync_package_lockfile_for_entry(&main_path).expect("initial lockfile sync should succeed");
+        let second_rev =
+            commit_git_package_repo_change(&git_repo, "pub fn from_git() -> Int { 8 }\n");
+        std::fs::remove_file(&lockfile_path).expect("old lockfile should be removable");
+
+        let refreshed_lockfile_path = sync_package_lockfile_for_entry(&main_path)
+            .expect("refreshed lockfile sync should succeed")
+            .expect("package entry should produce a lockfile path");
+        let lockfile =
+            std::fs::read_to_string(&refreshed_lockfile_path).expect("lockfile should exist");
+        let result = check_project(&main_path);
+
+        std::fs::remove_dir_all(&dir).expect("temp dir should be removable");
+
+        assert!(
+            lockfile.contains(&format!("commit = \"{second_rev}\"")),
+            "expected refreshed lockfile to record new resolved commit, got: {lockfile}"
+        );
+        assert!(
+            !lockfile.contains(&format!("commit = \"{first_rev}\"")),
+            "stale commit should not remain in refreshed lockfile: {lockfile}"
+        );
+        assert!(
+            result
+                .type_checks
+                .iter()
+                .all(|(_, tc)| tc.diagnostics.is_empty()),
+            "expected no type diagnostics after refresh, got: {:?}",
+            result
+                .type_checks
+                .iter()
+                .flat_map(|(_, tc)| tc.diagnostics.iter().map(|d| d.message.clone()))
+                .collect::<Vec<_>>()
         );
     }
 

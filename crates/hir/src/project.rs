@@ -230,6 +230,7 @@ enum LockedDependencySpec {
         alias: String,
         git: String,
         rev: String,
+        commit: Option<String>,
     },
     Registry {
         alias: String,
@@ -540,9 +541,17 @@ fn render_package_lockfile(lockfile: &PackageLockfile) -> String {
             LockedDependencySpec::Path { alias, path } => {
                 rendered.push_str(&format!("{alias} = {{ path = \"{}\" }}\n", path.display()));
             }
-            LockedDependencySpec::Git { alias, git, rev } => {
+            LockedDependencySpec::Git {
+                alias,
+                git,
+                rev,
+                commit,
+            } => {
                 rendered.push_str(&format!(
-                    "{alias} = {{ git = \"{git}\", rev = \"{rev}\" }}\n"
+                    "{alias} = {{ git = \"{git}\", rev = \"{rev}\"{} }}\n",
+                    commit
+                        .map(|commit| format!(", commit = \"{commit}\""))
+                        .unwrap_or_default()
                 ));
             }
             LockedDependencySpec::Registry {
@@ -603,6 +612,7 @@ fn manifest_dependency_matches_locked(
                 alias: locked_alias,
                 git: locked_git,
                 rev: locked_rev,
+                ..
             },
         ) => manifest_alias == locked_alias && git == locked_git && rev == locked_rev,
         (
@@ -752,6 +762,10 @@ fn parse_locked_dependencies(
             .get("rev")
             .and_then(toml::Value::as_str)
             .filter(|value| !value.is_empty());
+        let commit = spec_table
+            .get("commit")
+            .and_then(toml::Value::as_str)
+            .filter(|value| !value.is_empty());
         let package = spec_table
             .get("package")
             .and_then(toml::Value::as_str)
@@ -761,21 +775,24 @@ fn parse_locked_dependencies(
             .and_then(toml::Value::as_str)
             .filter(|value| !value.is_empty());
 
-        let dependency = match (path, git, rev, package, version) {
-            (Some(path), None, None, None, None) => LockedDependencySpec::Path {
+        let dependency = match (path, git, rev, commit, package, version) {
+            (Some(path), None, None, None, None, None) => LockedDependencySpec::Path {
                 alias: alias.clone(),
                 path: PathBuf::from(path),
             },
-            (None, Some(git), Some(rev), None, None) => LockedDependencySpec::Git {
+            (None, Some(git), Some(rev), commit, None, None) => LockedDependencySpec::Git {
                 alias: alias.clone(),
                 git: git.to_owned(),
                 rev: rev.to_owned(),
+                commit: commit.map(str::to_owned),
             },
-            (None, None, None, Some(package), Some(version)) => LockedDependencySpec::Registry {
-                alias: alias.clone(),
-                package: package.to_owned(),
-                version: version.to_owned(),
-            },
+            (None, None, None, None, Some(package), Some(version)) => {
+                LockedDependencySpec::Registry {
+                    alias: alias.clone(),
+                    package: package.to_owned(),
+                    version: version.to_owned(),
+                }
+            }
             _ => {
                 return Err(invalid_manifest(
                     manifest_path,
@@ -803,12 +820,18 @@ fn resolve_manifest_dependency(
             path: path.clone(),
         }),
         ManifestDependencySpec::Git { alias, git, rev } => {
-            let checkout_root = git_dependency_checkout_root(dependency_store_root, git, rev);
-            sync_git_dependency_checkout(package_root, alias, git, rev, &checkout_root)?;
+            let commit = resolve_and_cache_git_dependency(
+                package_root,
+                alias,
+                git,
+                rev,
+                dependency_store_root,
+            )?;
             Ok(LockedDependencySpec::Git {
                 alias: alias.clone(),
                 git: git.clone(),
                 rev: rev.clone(),
+                commit: Some(commit),
             })
         }
         ManifestDependencySpec::Registry {
@@ -839,9 +862,16 @@ fn ensure_locked_dependency_source(
 ) -> Result<(), ProjectDiscoveryDiagnostic> {
     match dependency {
         LockedDependencySpec::Path { .. } => Ok(()),
-        LockedDependencySpec::Git { alias, git, rev } => {
-            let checkout_root = git_dependency_checkout_root(dependency_store_root, git, rev);
-            sync_git_dependency_checkout(package_root, alias, git, rev, &checkout_root)
+        LockedDependencySpec::Git {
+            alias,
+            git,
+            rev,
+            commit,
+        } => {
+            let checkout_ref = commit.as_deref().unwrap_or(rev);
+            let checkout_root =
+                git_dependency_checkout_root(dependency_store_root, git, checkout_ref);
+            sync_git_dependency_checkout(package_root, alias, git, checkout_ref, &checkout_root)
         }
         LockedDependencySpec::Registry {
             alias,
@@ -875,6 +905,51 @@ fn git_dependency_cache_key(git: &str, rev: &str) -> String {
     "\0".hash(&mut hasher);
     rev.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+fn resolve_and_cache_git_dependency(
+    package_root: &Path,
+    alias: &str,
+    git: &str,
+    rev: &str,
+    dependency_store_root: &Path,
+) -> Result<String, ProjectDiscoveryDiagnostic> {
+    let parent = dependency_store_root.join(".kyokara").join("git");
+    std::fs::create_dir_all(&parent).map_err(|err| {
+        invalid_manifest(
+            &package_root.join(PACKAGE_MANIFEST),
+            format!("failed to prepare git dependency `{alias}` cache: {err}"),
+        )
+    })?;
+
+    let temp_root = parent.join(format!(".tmp-{}", git_dependency_cache_key(git, rev)));
+    let _ = std::fs::remove_dir_all(&temp_root);
+
+    let temp_root_str = temp_root.to_string_lossy().into_owned();
+    run_git_command(
+        &package_root.join(PACKAGE_MANIFEST),
+        &["clone", "--quiet", git, temp_root_str.as_str()],
+    )?;
+    run_git_command(
+        &package_root.join(PACKAGE_MANIFEST),
+        &["-C", temp_root_str.as_str(), "checkout", "--quiet", rev],
+    )?;
+    let resolved_commit = git_head_commit(&package_root.join(PACKAGE_MANIFEST), &temp_root)?;
+    let checkout_root = git_dependency_checkout_root(dependency_store_root, git, &resolved_commit);
+    if checkout_root.join(PACKAGE_MANIFEST).is_file() {
+        let _ = std::fs::remove_dir_all(&temp_root);
+        return Ok(resolved_commit);
+    }
+
+    let _ = std::fs::remove_dir_all(temp_root.join(".git"));
+    let _ = std::fs::remove_dir_all(&checkout_root);
+    std::fs::rename(&temp_root, &checkout_root).map_err(|err| {
+        invalid_manifest(
+            &package_root.join(PACKAGE_MANIFEST),
+            format!("failed to finalize git dependency `{alias}` checkout: {err}"),
+        )
+    })?;
+    Ok(resolved_commit)
 }
 
 fn sync_git_dependency_checkout(
@@ -921,6 +996,32 @@ fn sync_git_dependency_checkout(
     })?;
 
     Ok(())
+}
+
+fn git_head_commit(
+    manifest_path: &Path,
+    checkout_root: &Path,
+) -> Result<String, ProjectDiscoveryDiagnostic> {
+    let output = Command::new("git")
+        .args(["-C", &checkout_root.to_string_lossy(), "rev-parse", "HEAD"])
+        .output()
+        .map_err(|err| {
+            invalid_manifest(
+                manifest_path,
+                format!("failed to read git dependency commit: {err}"),
+            )
+        })?;
+    if !output.status.success() {
+        return Err(invalid_manifest(
+            manifest_path,
+            format!(
+                "git command `-C {} rev-parse HEAD` failed: {}",
+                checkout_root.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 fn run_git_command(manifest_path: &Path, args: &[&str]) -> Result<(), ProjectDiscoveryDiagnostic> {
@@ -1065,9 +1166,13 @@ fn locked_dependency_package_root(
         LockedDependencySpec::Path { path, .. } => {
             normalize_path(&importing_package_root.join(path))
         }
-        LockedDependencySpec::Git { git, rev, .. } => normalize_path(
-            &git_dependency_checkout_root(dependency_store_root, git, rev),
-        ),
+        LockedDependencySpec::Git {
+            git, rev, commit, ..
+        } => normalize_path(&git_dependency_checkout_root(
+            dependency_store_root,
+            git,
+            commit.as_deref().unwrap_or(rev),
+        )),
         LockedDependencySpec::Registry {
             package, version, ..
         } => normalize_path(&registry_dependency_root(
