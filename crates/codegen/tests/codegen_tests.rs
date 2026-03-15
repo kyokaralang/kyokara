@@ -1,16 +1,7 @@
 //! End-to-end tests: source → parse → check → KIR → WASM → wasmtime → assert.
 #![allow(clippy::unwrap_used)]
 
-use kyokara_hir::ItemTree;
 use kyokara_hir::check_file;
-use kyokara_hir_def::name::Name;
-use kyokara_hir_ty::effects::EffectSet;
-use kyokara_hir_ty::ty::Ty;
-use kyokara_intern::Interner;
-use kyokara_kir::KirModule;
-use kyokara_kir::build::KirBuilder;
-use kyokara_kir::function::KirContracts;
-use kyokara_kir::inst::Constant;
 use kyokara_kir::lower::lower_module;
 
 fn instantiate_main(source: &str) -> kyokara_wasm_runtime::WasmProgram {
@@ -34,38 +25,6 @@ fn instantiate_main(source: &str) -> kyokara_wasm_runtime::WasmProgram {
     kyokara_wasm_runtime::WasmProgram::instantiate(&wasm_bytes).expect("instantiation failed")
 }
 
-fn compile_kir_error(module: &KirModule, item_tree: &ItemTree, interner: &Interner) -> String {
-    kyokara_codegen::compile(module, item_tree, interner)
-        .expect_err("codegen should fail")
-        .to_string()
-}
-
-fn compile_invalid_const_kir_error(constant: Constant) -> String {
-    let mut interner = Interner::new();
-    let main_name = Name::new(&mut interner, "main");
-
-    let mut builder = KirBuilder::new();
-    let entry = builder.new_block(None);
-    builder.switch_to(entry);
-    let value = builder.push_const(constant, Ty::Unit);
-    builder.set_return(value);
-
-    let func = builder.build(
-        main_name,
-        Vec::new(),
-        Ty::Unit,
-        EffectSet::default(),
-        entry,
-        KirContracts::default(),
-    );
-
-    let mut module = KirModule::new();
-    let fn_id = module.functions.alloc(func);
-    module.entry = Some(fn_id);
-
-    compile_kir_error(&module, &ItemTree::default(), &interner)
-}
-
 /// Compile source to WASM, run `main()` via wasmtime, return the i64 result.
 fn run_main_i64(source: &str) -> i64 {
     instantiate_main(source)
@@ -85,6 +44,19 @@ fn run_main_i32(source: &str) -> i32 {
     instantiate_main(source)
         .call_main_i32()
         .expect("main trapped")
+}
+
+fn run_main_string(source: &str) -> String {
+    let mut program = instantiate_main(source);
+    let ptr = program.call_main_i32().expect("main trapped") as u32;
+    let header = program
+        .read_memory(ptr, 8)
+        .expect("string header should be readable");
+    let byte_len = u32::from_le_bytes(header[0..4].try_into().expect("4-byte len header"));
+    let bytes = program
+        .read_memory(ptr + 8, byte_len)
+        .expect("string bytes should be readable");
+    String::from_utf8(bytes).expect("guest string should be valid UTF-8")
 }
 
 fn assert_i64_cases(cases: &[(&str, i64)]) {
@@ -133,12 +105,14 @@ fn test_constants() {
 }
 
 #[test]
-fn test_string_constant_is_compile_time_unsupported_instruction() {
-    let err = compile_invalid_const_kir_error(Constant::String("hi".into()));
-    assert!(
-        err.contains("unsupported instruction: String constant (deferred)"),
-        "unexpected codegen error: {err}"
-    );
+fn test_string_constant_roundtrips_from_guest_memory() {
+    assert_eq!(run_main_string(r#"fn main() -> String { "hi" }"#), "hi");
+    assert_eq!(run_main_string(r#"fn main() -> String { "café" }"#), "café");
+}
+
+#[test]
+fn test_string_len_counts_unicode_scalars() {
+    assert_eq!(run_main_i64(r#"fn main() -> Int { "café".len() }"#), 4);
 }
 
 #[test]

@@ -1043,16 +1043,55 @@ impl<'a> FuncCodegen<'a> {
             Constant::Unit => {
                 func.instruction(&Instruction::I32Const(0));
             }
-            Constant::String(_) => {
-                return Err(CodegenError::UnsupportedInstruction(
-                    "String constant (deferred)".into(),
-                ));
+            Constant::String(s) => {
+                self.emit_string_const(func, s);
             }
             Constant::Char(c) => {
                 func.instruction(&Instruction::I32Const(*c as i32));
             }
         }
         Ok(())
+    }
+
+    fn emit_string_const(&self, func: &mut Function, s: &str) {
+        let bytes = s.as_bytes();
+        let byte_len = bytes.len() as i32;
+        let char_len = s.chars().count() as i32;
+        let total_size = 8_i32
+            .checked_add(byte_len)
+            .expect("string constant size should fit in i32");
+
+        func.instruction(&Instruction::I32Const(total_size));
+        func.instruction(&Instruction::Call(self.ctx.alloc_fn_index));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Const(byte_len));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Const(char_len));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 4,
+            align: 2,
+            memory_index: 0,
+        }));
+
+        for (idx, byte) in bytes.iter().enumerate() {
+            func.instruction(&Instruction::LocalGet(self.scratch_i32));
+            func.instruction(&Instruction::I32Const(i32::from(*byte)));
+            func.instruction(&Instruction::I32Store8(MemArg {
+                offset: 8 + idx as u64,
+                align: 0,
+                memory_index: 0,
+            }));
+        }
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
     }
 
     fn emit_trap_if_true(&self, func: &mut Function) {
@@ -1365,9 +1404,21 @@ impl<'a> FuncCodegen<'a> {
                 });
                 Ok(())
             }
-            CallTarget::Intrinsic(name) => Err(CodegenError::UnsupportedInstruction(format!(
-                "intrinsic {name} (deferred)"
-            ))),
+            CallTarget::Intrinsic(name) => match name.as_str() {
+                "string_len" => {
+                    self.emit_get(func, args[0]);
+                    func.instruction(&Instruction::I32Load(MemArg {
+                        offset: 4,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+                    func.instruction(&Instruction::I64ExtendI32U);
+                    Ok(())
+                }
+                _ => Err(CodegenError::UnsupportedInstruction(format!(
+                    "intrinsic {name} (deferred)"
+                ))),
+            },
         }
     }
 
