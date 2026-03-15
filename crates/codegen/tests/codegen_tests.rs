@@ -189,6 +189,22 @@ fn test_string_substring_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_trim_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_string(r#"fn main() -> String { "  hello world  ".trim() }"#),
+        "hello world"
+    );
+    assert_eq!(
+        run_main_string(r#"fn main() -> String { " héllo　".trim() }"#),
+        "héllo"
+    );
+    assert_eq!(
+        run_main_string(r#"fn main() -> String { "    ".trim() }"#),
+        ""
+    );
+}
+
+#[test]
 fn test_string_concat_roundtrips_from_guest_memory() {
     assert_eq!(
         run_main_string(r#"fn main() -> String { "foo".concat("bar") }"#),
