@@ -116,6 +116,22 @@ fn test_string_len_counts_unicode_scalars() {
 }
 
 #[test]
+fn test_string_equality_uses_value_semantics() {
+    assert_i32_cases(&[
+        (
+            r#"fn main() -> Bool { "foo".concat("bar") == "foobar" }"#,
+            1,
+        ),
+        (r#"fn main() -> Bool { "abc" != "abc".concat("d") }"#, 1),
+        (r#"fn main() -> Bool { "same" == "same" }"#, 1),
+        (
+            r#"fn main() -> Bool { "é".concat("clair") == "éclair" }"#,
+            1,
+        ),
+    ]);
+}
+
+#[test]
 fn test_string_concat_roundtrips_from_guest_memory() {
     assert_eq!(
         run_main_string(r#"fn main() -> String { "foo".concat("bar") }"#),
