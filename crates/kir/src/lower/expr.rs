@@ -23,7 +23,7 @@ use crate::function::KirContracts;
 use crate::inst::{CallTarget, Constant, Inst};
 use crate::value::ValueId;
 
-use super::{HiddenNames, Labels, LoweringCtx};
+use super::{CallableParamSpec, HiddenNames, Labels, LoweringCtx};
 
 impl<'a> LoweringCtx<'a> {
     /// Lower an HIR expression to a KIR value.
@@ -103,6 +103,49 @@ impl<'a> LoweringCtx<'a> {
         self.builder.push_const(c, ty)
     }
 
+    fn record_callable_param_spec(
+        &mut self,
+        value: ValueId,
+        param_spec: CallableParamSpec,
+    ) -> ValueId {
+        self.callable_param_specs.insert(value, param_spec);
+        value
+    }
+
+    fn callable_arg_values(&mut self, callee: ValueId, args: &[CallArg]) -> Vec<ValueId> {
+        if let Some(spec) = self.callable_param_specs.get(&callee).cloned() {
+            return self.lower_call_args_for_param_specs(
+                args,
+                &spec.param_names,
+                Some(&spec.param_named_only),
+            );
+        }
+        self.lower_call_args_source_order(args)
+    }
+
+    fn function_value_param_spec(
+        &self,
+        fn_idx: kyokara_hir_def::item_tree::FnItemIdx,
+    ) -> CallableParamSpec {
+        CallableParamSpec {
+            param_names: self.param_names_for_fn_idx(fn_idx),
+            param_named_only: self.param_named_only_for_fn_idx(fn_idx),
+        }
+    }
+
+    fn lambda_value_param_spec(
+        &self,
+        params: &[(kyokara_hir_def::expr::PatIdx, Option<TypeRef>)],
+    ) -> CallableParamSpec {
+        CallableParamSpec {
+            param_names: params
+                .iter()
+                .map(|(pat_idx, _)| self.lambda_param_name(*pat_idx))
+                .collect(),
+            param_named_only: vec![false; params.len()],
+        }
+    }
+
     fn lower_lambda(
         &mut self,
         lambda_expr: ExprIdx,
@@ -127,7 +170,8 @@ impl<'a> LoweringCtx<'a> {
             self.lambda_functions.push(lambda_fn);
         }
 
-        self.builder.push_fn_ref(lambda_name, ty)
+        let fn_ref = self.builder.push_fn_ref(lambda_name, ty);
+        self.record_callable_param_spec(fn_ref, self.lambda_value_param_spec(params))
     }
 
     fn build_lambda_function(
@@ -175,6 +219,7 @@ impl<'a> LoweringCtx<'a> {
                 current_fn_name: self.current_fn_name,
                 lambda_names: FxHashMap::default(),
                 lambda_functions: Vec::new(),
+                callable_param_specs: FxHashMap::default(),
             };
 
             let entry_block = child.builder.new_block(Some(child.labels.entry));
@@ -404,7 +449,9 @@ impl<'a> LoweringCtx<'a> {
             .map(|candidates| candidates.len() == 1)
             .unwrap_or(false)
         {
-            return self.builder.push_fn_ref(first, ty);
+            let fn_idx = self.module_scope.functions[&first][0];
+            let fn_ref = self.builder.push_fn_ref(first, ty);
+            return self.record_callable_param_spec(fn_ref, self.function_value_param_spec(fn_idx));
         }
 
         // Unknown — emit hole.
@@ -676,7 +723,7 @@ impl<'a> LoweringCtx<'a> {
 
             // 1. Local variable (indirect call) — locals shadow everything.
             if let Some(vid) = self.lookup_local(name) {
-                let arg_vals = self.lower_call_args_source_order(&args);
+                let arg_vals = self.callable_arg_values(vid, &args);
                 return self
                     .builder
                     .push_call(CallTarget::Indirect(vid), arg_vals, ty);
@@ -916,7 +963,7 @@ impl<'a> LoweringCtx<'a> {
 
         // Complex callee expression.
         let callee_val = self.lower_expr(callee);
-        let arg_vals = self.lower_call_args_source_order(&args);
+        let arg_vals = self.callable_arg_values(callee_val, &args);
         self.builder
             .push_call(CallTarget::Indirect(callee_val), arg_vals, ty)
     }

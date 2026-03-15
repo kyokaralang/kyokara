@@ -451,6 +451,45 @@ fn test_zero_arg_lambda_local_call() {
 }
 
 #[test]
+fn test_named_args_reordered_on_direct_lambda_call() {
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               (fn(x: Int, y: Int) => x - y)(y: 10, x: 3)\n\
+             }"
+        ),
+        -7
+    );
+}
+
+#[test]
+fn test_named_args_reordered_on_local_named_function_value() {
+    assert_eq!(
+        run_main_i64(
+            "fn sub(x: Int, y: Int) -> Int { x - y }\n\
+             fn main() -> Int {\n\
+               let f = sub\n\
+               f(y: 10, x: 3)\n\
+             }"
+        ),
+        -7
+    );
+}
+
+#[test]
+fn test_named_args_reordered_on_local_lambda_value() {
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               let f = fn(x: Int, y: Int) => x - y\n\
+               f(y: 10, x: 3)\n\
+             }"
+        ),
+        -7
+    );
+}
+
+#[test]
 fn test_recursive_like_chain() {
     assert_eq!(
         run_main_i64(

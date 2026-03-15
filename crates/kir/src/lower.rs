@@ -89,12 +89,20 @@ pub(crate) struct LoweringCtx<'a> {
     pub(crate) lambda_names: FxHashMap<ExprIdx, Name>,
     /// Synthetic functions generated for captureless lambdas in this body.
     pub(crate) lambda_functions: Vec<KirFunction>,
+    /// Param-name metadata for first-class callable values known at lowering time.
+    pub(crate) callable_param_specs: FxHashMap<ValueId, CallableParamSpec>,
 }
 
 pub(crate) struct LoopContext {
     pub(crate) continue_block: BlockId,
     pub(crate) break_block: BlockId,
     pub(crate) carried_names: Vec<Name>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CallableParamSpec {
+    pub(crate) param_names: Vec<Name>,
+    pub(crate) param_named_only: Vec<bool>,
 }
 
 impl<'a> LoweringCtx<'a> {
@@ -271,6 +279,7 @@ fn lower_function_bundle(
         current_fn_name: fn_item.name,
         lambda_names: FxHashMap::default(),
         lambda_functions: Vec::new(),
+        callable_param_specs: FxHashMap::default(),
     };
 
     // Create entry block.
