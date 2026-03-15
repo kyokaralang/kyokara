@@ -1,6 +1,6 @@
 //! Expression lowering: HIR `Expr` → KIR instructions.
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use kyokara_hir_def::call_family::{
     CallFamilySelection, bind_call_args_to_params, select_call_family_candidate,
@@ -14,13 +14,16 @@ use kyokara_hir_def::resolver::ResolvedName;
 use kyokara_hir_def::resolver::{PrimitiveType, ReceiverKey, StaticOwnerKey};
 use kyokara_hir_def::scope::ScopeDef;
 use kyokara_hir_def::type_ref::TypeRef;
+use kyokara_hir_ty::effects::EffectSet;
 use kyokara_hir_ty::ty::Ty;
 
 use crate::block::{BranchTarget, SwitchCase, Terminator};
+use crate::build::KirBuilder;
+use crate::function::KirContracts;
 use crate::inst::{CallTarget, Constant, Inst};
 use crate::value::ValueId;
 
-use super::LoweringCtx;
+use super::{HiddenNames, Labels, LoweringCtx};
 
 impl<'a> LoweringCtx<'a> {
     /// Lower an HIR expression to a KIR value.
@@ -77,10 +80,7 @@ impl<'a> LoweringCtx<'a> {
             Expr::Block { stmts, tail } => self.lower_block(stmts, tail, ty),
             Expr::Return(val) => self.lower_return(val),
             Expr::RecordLit { path, fields } => self.lower_record_lit(path, fields, ty),
-            Expr::Lambda { .. } => {
-                let id = self.next_hole_id();
-                self.builder.push_hole(id, vec![], ty)
-            }
+            Expr::Lambda { params, body } => self.lower_lambda(expr_idx, &params, body, ty),
             Expr::Old(inner) => self.lower_expr_in_old_scope(inner),
             Expr::Hole => {
                 let id = self.next_hole_id();
@@ -101,6 +101,267 @@ impl<'a> LoweringCtx<'a> {
             Literal::Bool(b) => Constant::Bool(b),
         };
         self.builder.push_const(c, ty)
+    }
+
+    fn lower_lambda(
+        &mut self,
+        lambda_expr: ExprIdx,
+        params: &[(kyokara_hir_def::expr::PatIdx, Option<TypeRef>)],
+        body_expr: ExprIdx,
+        ty: Ty,
+    ) -> ValueId {
+        if self.lambda_uses_outer_local_capture(body_expr) {
+            let id = self.next_hole_id();
+            return self.builder.push_hole(id, vec![], ty);
+        }
+
+        let lambda_name = self.lambda_name_for_expr(lambda_expr);
+        if !self
+            .lambda_functions
+            .iter()
+            .any(|func| func.name == lambda_name)
+        {
+            let (lambda_fn, nested_lambdas) =
+                self.build_lambda_function(lambda_name, params, body_expr, &ty);
+            self.lambda_functions.extend(nested_lambdas);
+            self.lambda_functions.push(lambda_fn);
+        }
+
+        self.builder.push_fn_ref(lambda_name, ty)
+    }
+
+    fn build_lambda_function(
+        &mut self,
+        lambda_name: Name,
+        params: &[(kyokara_hir_def::expr::PatIdx, Option<TypeRef>)],
+        body_expr: ExprIdx,
+        lambda_ty: &Ty,
+    ) -> (
+        crate::function::KirFunction,
+        Vec<crate::function::KirFunction>,
+    ) {
+        let (param_tys, ret_ty) = match lambda_ty {
+            Ty::Fn { params, ret } => (params.clone(), (**ret).clone()),
+            _ => (
+                params
+                    .iter()
+                    .map(|(pat_idx, _)| self.pat_ty(*pat_idx))
+                    .collect(),
+                self.expr_ty(body_expr),
+            ),
+        };
+
+        let (lambda_fn, nested_lambdas) = {
+            let interner = &mut *self.interner;
+            let labels = Labels::new(interner);
+            let hidden = HiddenNames::new(interner);
+            let mut child = LoweringCtx {
+                builder: KirBuilder::new(),
+                body: self.body,
+                infer: self.infer,
+                item_tree: self.item_tree,
+                module_scope: self.module_scope,
+                interner,
+                locals: Vec::new(),
+                intrinsics: self.intrinsics.clone(),
+                hole_counter: 0,
+                labels,
+                hidden,
+                ensures_exprs: Vec::new(),
+                result_name: None,
+                ensures_vids: Vec::new(),
+                old_scope: FxHashMap::default(),
+                loop_stack: Vec::new(),
+                current_fn_name: self.current_fn_name,
+                lambda_names: FxHashMap::default(),
+                lambda_functions: Vec::new(),
+            };
+
+            let entry_block = child.builder.new_block(Some(child.labels.entry));
+            child.builder.switch_to(entry_block);
+            child.push_scope();
+
+            let lowered_params: Vec<(Name, Ty)> = params
+                .iter()
+                .enumerate()
+                .map(|(index, (pat_idx, _))| {
+                    let param_name = child.lambda_param_name(*pat_idx);
+                    let param_ty = param_tys.get(index).cloned().unwrap_or(Ty::Error);
+                    let vid = child.builder.alloc_value(
+                        param_ty.clone(),
+                        Inst::FnParam {
+                            index: index as u32,
+                        },
+                    );
+                    child.define_local(param_name, vid);
+                    child.old_scope.insert(param_name, vid);
+                    (param_name, param_ty)
+                })
+                .collect();
+
+            let root_val = child.lower_expr(body_expr);
+            if !child.block_has_terminator() {
+                child.builder.set_return(root_val);
+            }
+            child.pop_scope();
+
+            let nested_lambdas = std::mem::take(&mut child.lambda_functions);
+            let lambda_fn = child.builder.build(
+                lambda_name,
+                lowered_params,
+                ret_ty,
+                EffectSet::default(),
+                entry_block,
+                KirContracts::default(),
+            );
+            (lambda_fn, nested_lambdas)
+        };
+
+        (lambda_fn, nested_lambdas)
+    }
+
+    fn lambda_param_name(&self, pat_idx: kyokara_hir_def::expr::PatIdx) -> Name {
+        match &self.body.pats[pat_idx] {
+            Pat::Bind { name } => *name,
+            _ => unreachable!("lambda parameters lower as binding patterns"),
+        }
+    }
+
+    fn lambda_name_for_expr(&mut self, expr_idx: ExprIdx) -> Name {
+        if let Some(name) = self.lambda_names.get(&expr_idx).copied() {
+            return name;
+        }
+
+        let owner = self.current_fn_name.resolve(self.interner).to_owned();
+        let name = Name::new(
+            self.interner,
+            &format!("$lambda${owner}${}", expr_idx.into_raw().into_u32()),
+        );
+        self.lambda_names.insert(expr_idx, name);
+        name
+    }
+
+    fn lambda_uses_outer_local_capture(&self, body_expr: ExprIdx) -> bool {
+        let Some(lambda_scope) = self.body.expr_scopes.get(body_expr).copied() else {
+            return false;
+        };
+        self.expr_uses_outer_local_capture(body_expr, lambda_scope)
+    }
+
+    fn expr_uses_outer_local_capture(
+        &self,
+        expr_idx: ExprIdx,
+        lambda_scope: kyokara_hir_def::scope::ScopeIdx,
+    ) -> bool {
+        match &self.body.exprs[expr_idx] {
+            Expr::Path(path) if path.is_single() => {
+                let name = path.segments[0];
+                let Some(resolved) = self.body.resolve_name_at(self.module_scope, expr_idx, name)
+                else {
+                    return false;
+                };
+                match resolved.resolved {
+                    ResolvedName::Local(ScopeDef::Local(_)) => resolved
+                        .local_binding
+                        .map(|(_, meta)| !self.scope_is_within(meta.scope, lambda_scope))
+                        .unwrap_or(false),
+                    ResolvedName::Local(ScopeDef::Param(_)) => self
+                        .body
+                        .scopes
+                        .root
+                        .map(|root| !self.scope_is_within(root, lambda_scope))
+                        .unwrap_or(false),
+                    _ => false,
+                }
+            }
+            Expr::Binary { lhs, rhs, .. } => {
+                self.expr_uses_outer_local_capture(*lhs, lambda_scope)
+                    || self.expr_uses_outer_local_capture(*rhs, lambda_scope)
+            }
+            Expr::Unary { operand, .. } => {
+                self.expr_uses_outer_local_capture(*operand, lambda_scope)
+            }
+            Expr::Call { callee, args } => {
+                self.expr_uses_outer_local_capture(*callee, lambda_scope)
+                    || args.iter().any(|arg| {
+                        let arg_expr = match arg {
+                            CallArg::Positional(idx) => *idx,
+                            CallArg::Named { value, .. } => *value,
+                        };
+                        self.expr_uses_outer_local_capture(arg_expr, lambda_scope)
+                    })
+            }
+            Expr::Field { base, .. } => self.expr_uses_outer_local_capture(*base, lambda_scope),
+            Expr::Index { base, index } => {
+                self.expr_uses_outer_local_capture(*base, lambda_scope)
+                    || self.expr_uses_outer_local_capture(*index, lambda_scope)
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.expr_uses_outer_local_capture(*condition, lambda_scope)
+                    || self.expr_uses_outer_local_capture(*then_branch, lambda_scope)
+                    || else_branch
+                        .map(|idx| self.expr_uses_outer_local_capture(idx, lambda_scope))
+                        .unwrap_or(false)
+            }
+            Expr::Match { scrutinee, arms } => {
+                self.expr_uses_outer_local_capture(*scrutinee, lambda_scope)
+                    || arms
+                        .iter()
+                        .any(|arm| self.expr_uses_outer_local_capture(arm.body, lambda_scope))
+            }
+            Expr::Block { stmts, tail } => {
+                stmts.iter().any(|stmt| match stmt {
+                    Stmt::Let { init, .. } => {
+                        self.expr_uses_outer_local_capture(*init, lambda_scope)
+                    }
+                    Stmt::Assign { target, value } => {
+                        self.expr_uses_outer_local_capture(*target, lambda_scope)
+                            || self.expr_uses_outer_local_capture(*value, lambda_scope)
+                    }
+                    Stmt::While { condition, body } => {
+                        self.expr_uses_outer_local_capture(*condition, lambda_scope)
+                            || self.expr_uses_outer_local_capture(*body, lambda_scope)
+                    }
+                    Stmt::For { source, body, .. } => {
+                        self.expr_uses_outer_local_capture(*source, lambda_scope)
+                            || self.expr_uses_outer_local_capture(*body, lambda_scope)
+                    }
+                    Stmt::Expr(idx) => self.expr_uses_outer_local_capture(*idx, lambda_scope),
+                    Stmt::Break | Stmt::Continue => false,
+                }) || tail
+                    .map(|idx| self.expr_uses_outer_local_capture(idx, lambda_scope))
+                    .unwrap_or(false)
+            }
+            Expr::Return(value) => value
+                .map(|idx| self.expr_uses_outer_local_capture(idx, lambda_scope))
+                .unwrap_or(false),
+            Expr::RecordLit { fields, .. } => fields
+                .iter()
+                .any(|(_, value)| self.expr_uses_outer_local_capture(*value, lambda_scope)),
+            Expr::Old(inner) => self.expr_uses_outer_local_capture(*inner, lambda_scope),
+            Expr::Lambda { .. } | Expr::Missing | Expr::Hole | Expr::Literal(_) => false,
+            Expr::Path(_) => false,
+        }
+    }
+
+    fn scope_is_within(
+        &self,
+        mut scope: kyokara_hir_def::scope::ScopeIdx,
+        ancestor: kyokara_hir_def::scope::ScopeIdx,
+    ) -> bool {
+        loop {
+            if scope == ancestor {
+                return true;
+            }
+            let Some(parent) = self.body.scopes.scopes[scope].parent else {
+                return false;
+            };
+            scope = parent;
+        }
     }
 
     // ── Path ─────────────────────────────────────────────────────

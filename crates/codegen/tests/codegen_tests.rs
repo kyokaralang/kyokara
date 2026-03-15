@@ -414,6 +414,43 @@ fn test_named_function_ref_passed_to_higher_order_fn() {
 }
 
 #[test]
+fn test_non_capturing_lambda_local_indirect_call() {
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               let f = fn(x: Int) => x + 1\n\
+               f(5)\n\
+             }"
+        ),
+        6
+    );
+}
+
+#[test]
+fn test_non_capturing_lambda_passed_to_higher_order_fn() {
+    assert_eq!(
+        run_main_i64(
+            "fn apply(f: fn(Int) -> Int, x: Int) -> Int { f(x) }\n\
+             fn main() -> Int { apply(fn(x: Int) => x * 3, 7) }"
+        ),
+        21
+    );
+}
+
+#[test]
+fn test_zero_arg_lambda_local_call() {
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               let f = fn() => 9\n\
+               f()\n\
+             }"
+        ),
+        9
+    );
+}
+
+#[test]
 fn test_recursive_like_chain() {
     assert_eq!(
         run_main_i64(

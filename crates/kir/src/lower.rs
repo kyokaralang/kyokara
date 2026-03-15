@@ -67,7 +67,7 @@ pub(crate) struct LoweringCtx<'a> {
     pub(crate) infer: &'a InferenceResult,
     pub(crate) item_tree: &'a ItemTree,
     pub(crate) module_scope: &'a ModuleScope,
-    pub(crate) interner: &'a Interner,
+    pub(crate) interner: &'a mut Interner,
     pub(crate) locals: Vec<FxHashMap<Name, ValueId>>,
     pub(crate) intrinsics: FxHashSet<Name>,
     pub(crate) hole_counter: u32,
@@ -83,6 +83,12 @@ pub(crate) struct LoweringCtx<'a> {
     pub(crate) old_scope: FxHashMap<Name, ValueId>,
     /// Active loop targets for lowering `break` / `continue`.
     pub(crate) loop_stack: Vec<LoopContext>,
+    /// Top-level function currently being lowered. Used to derive hidden lambda names.
+    pub(crate) current_fn_name: Name,
+    /// Stable hidden names for lambda expressions within the current body.
+    pub(crate) lambda_names: FxHashMap<ExprIdx, Name>,
+    /// Synthetic functions generated for captureless lambdas in this body.
+    pub(crate) lambda_functions: Vec<KirFunction>,
 }
 
 pub(crate) struct LoopContext {
@@ -182,11 +188,15 @@ pub fn lower_module(
             continue;
         };
 
-        let func = lower_function(fn_idx, body, infer, item_tree, module_scope, interner);
-        let fid = module.functions.alloc(func);
+        let lowered = lower_function_bundle(fn_idx, body, infer, item_tree, module_scope, interner);
+        let fid = module.functions.alloc(lowered.primary);
 
         if fn_item.name == main_name {
             module.entry = Some(fid);
+        }
+
+        for lambda_fn in lowered.synthetic {
+            module.functions.alloc(lambda_fn);
         }
     }
 
@@ -202,6 +212,22 @@ pub fn lower_function(
     module_scope: &ModuleScope,
     interner: &mut Interner,
 ) -> KirFunction {
+    lower_function_bundle(fn_idx, body, infer, item_tree, module_scope, interner).primary
+}
+
+struct LoweredFunctionBundle {
+    primary: KirFunction,
+    synthetic: Vec<KirFunction>,
+}
+
+fn lower_function_bundle(
+    fn_idx: FnItemIdx,
+    body: &Body,
+    infer: &InferenceResult,
+    item_tree: &ItemTree,
+    module_scope: &ModuleScope,
+    interner: &mut Interner,
+) -> LoweredFunctionBundle {
     let labels = Labels::new(interner);
     let hidden = HiddenNames::new(interner);
     let fn_item = &item_tree.functions[fn_idx];
@@ -231,7 +257,7 @@ pub fn lower_function(
         infer,
         item_tree,
         module_scope,
-        interner: &*interner,
+        interner,
         locals: Vec::new(),
         intrinsics,
         hole_counter: 0,
@@ -242,6 +268,9 @@ pub fn lower_function(
         ensures_vids: Vec::new(),
         old_scope: FxHashMap::default(),
         loop_stack: Vec::new(),
+        current_fn_name: fn_item.name,
+        lambda_names: FxHashMap::default(),
+        lambda_functions: Vec::new(),
     };
 
     // Create entry block.
@@ -299,7 +328,7 @@ pub fn lower_function(
     // (which would be Never for explicit `return` expressions).
     let ret_ty = infer.ret_ty.clone();
 
-    ctx.builder.build(
+    let primary = ctx.builder.build(
         fn_item.name,
         fn_item
             .params
@@ -314,7 +343,12 @@ pub fn lower_function(
             requires: requires_vids,
             ensures: ctx.ensures_vids,
         },
-    )
+    );
+
+    LoweredFunctionBundle {
+        primary,
+        synthetic: ctx.lambda_functions,
+    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
