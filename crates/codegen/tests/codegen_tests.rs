@@ -389,6 +389,56 @@ fn test_for_range_source_is_evaluated_once() {
 }
 
 #[test]
+fn test_while_loop_match_can_update_mutable_state() {
+    assert_eq!(
+        run_main_i64(
+            "type Step = Keep | Skip\n\
+             fn step(i: Int) -> Step {\n\
+               if ((i % 2) == 0) { Step.Skip } else { Step.Keep }\n\
+             }\n\
+             fn main() -> Int {\n\
+               var i = 0\n\
+               var acc = 0\n\
+               while (i < 8) {\n\
+                 i = i + 1\n\
+                 let ignored = match (step(i)) {\n\
+                   Step.Keep => { acc = acc + i\n 0 }\n\
+                   Step.Skip => { 0 }\n\
+                 }\n\
+                 ignored\n\
+               }\n\
+               acc\n\
+             }"
+        ),
+        16
+    );
+}
+
+#[test]
+fn test_for_range_loop_match_can_update_mutable_state() {
+    assert_eq!(
+        run_main_i64(
+            "type Step = Keep | Skip\n\
+             fn step(i: Int) -> Step {\n\
+               if ((i % 2) == 0) { Step.Skip } else { Step.Keep }\n\
+             }\n\
+             fn main() -> Int {\n\
+               var acc = 0\n\
+               for (x in 0..<6) {\n\
+                 let ignored = match (step(x)) {\n\
+                   Step.Keep => { acc = acc + x\n 0 }\n\
+                   Step.Skip => { 0 }\n\
+                 }\n\
+                 ignored\n\
+               }\n\
+               acc\n\
+             }"
+        ),
+        9
+    );
+}
+
+#[test]
 fn test_if_branch_reassignment_updates_mutable_local() {
     assert_eq!(
         run_main_i64(

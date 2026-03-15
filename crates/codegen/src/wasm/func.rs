@@ -428,9 +428,25 @@ impl<'a> FuncCodegen<'a> {
                 )?;
             }
             Terminator::Switch { .. } => {
-                return Err(CodegenError::UnsupportedInstruction(
-                    "loop-local switch codegen (deferred)".into(),
-                ));
+                if let Terminator::Switch {
+                    scrutinee,
+                    cases,
+                    default,
+                } = term
+                {
+                    self.emit_loop_switch(
+                        func,
+                        *scrutinee,
+                        cases,
+                        default.as_ref(),
+                        block_id,
+                        header,
+                        exit,
+                        continue_depth,
+                        break_depth,
+                        emitted,
+                    )?;
+                }
             }
         }
 
@@ -519,6 +535,53 @@ impl<'a> FuncCodegen<'a> {
             .map(|(block, _, _)| block)
     }
 
+    fn find_loop_switch_merge(
+        &self,
+        cases: &[kyokara_kir::block::SwitchCase],
+        default: Option<&kyokara_kir::block::BranchTarget>,
+        current_block: BlockId,
+        header: BlockId,
+        exit: BlockId,
+    ) -> Option<BlockId> {
+        let mut excluded = FxHashSet::default();
+        excluded.insert(current_block);
+        excluded.insert(header);
+        excluded.insert(exit);
+        for case in cases {
+            excluded.insert(case.target.block);
+        }
+        if let Some(default) = default {
+            excluded.insert(default.block);
+        }
+
+        let mut reachable_sets: Vec<FxHashMap<BlockId, usize>> = cases
+            .iter()
+            .map(|case| self.reachable_block_distances(case.target.block))
+            .collect();
+        if let Some(default) = default {
+            reachable_sets.push(self.reachable_block_distances(default.block));
+        }
+
+        let first = reachable_sets.first()?;
+        first
+            .iter()
+            .filter_map(|(block, first_dist)| {
+                if excluded.contains(block) {
+                    return None;
+                }
+                let mut total = *first_dist;
+                let mut max_side = *first_dist;
+                for reachable in reachable_sets.iter().skip(1) {
+                    let dist = *reachable.get(block)?;
+                    total += dist;
+                    max_side = max_side.max(dist);
+                }
+                Some((*block, total, max_side))
+            })
+            .min_by_key(|(block, total, max_side)| (*total, *max_side, block.into_raw().into_u32()))
+            .map(|(block, _, _)| block)
+    }
+
     fn emit_loop_branch_arm(
         &self,
         func: &mut Function,
@@ -545,6 +608,137 @@ impl<'a> FuncCodegen<'a> {
             break_depth,
             emitted,
         )
+    }
+
+    fn emit_loop_switch(
+        &self,
+        func: &mut Function,
+        scrutinee: ValueId,
+        cases: &[kyokara_kir::block::SwitchCase],
+        default: Option<&kyokara_kir::block::BranchTarget>,
+        current_block: BlockId,
+        header: BlockId,
+        exit: BlockId,
+        continue_depth: u32,
+        break_depth: u32,
+        emitted: &mut FxHashMap<BlockId, ()>,
+    ) -> Result<(), CodegenError> {
+        let scrutinee_ty = self.value_ty(scrutinee);
+        let adt_layout = match scrutinee_ty {
+            Ty::Adt { def, .. } => self
+                .ctx
+                .adt_layouts
+                .get(def)
+                .ok_or(CodegenError::MissingAdtDef)?,
+            _ => return Err(CodegenError::UnsupportedType("switch on non-ADT".into())),
+        };
+
+        let merge_block_id =
+            self.find_loop_switch_merge(cases, default, current_block, header, exit);
+        let max_tag = adt_layout.tag_map.values().copied().max().unwrap_or(0);
+        let num_cases = cases.len();
+        let has_default = default.is_some();
+        let total_blocks = num_cases + usize::from(has_default);
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        for _ in 0..total_blocks {
+            func.instruction(&Instruction::Block(BlockType::Empty));
+        }
+
+        self.emit_get(func, scrutinee);
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+
+        let mut tag_to_case: FxHashMap<u32, usize> = FxHashMap::default();
+        for (case_idx, case) in cases.iter().enumerate() {
+            if let Some(&tag) = adt_layout.tag_map.get(&case.variant) {
+                tag_to_case.insert(tag, case_idx);
+            }
+        }
+
+        let default_depth = if has_default { num_cases } else { 0 };
+        let targets: Vec<u32> = (0..=max_tag)
+            .map(|tag| {
+                if let Some(&case_idx) = tag_to_case.get(&tag) {
+                    case_idx as u32
+                } else {
+                    default_depth as u32
+                }
+            })
+            .collect();
+        func.instruction(&Instruction::BrTable(targets.into(), default_depth as u32));
+
+        for (case_idx, case) in cases.iter().enumerate() {
+            func.instruction(&Instruction::End);
+            let depth_to_merge = (num_cases - 1 - case_idx) as u32 + u32::from(has_default);
+            self.emit_block_param_stores(func, &case.target)?;
+
+            let case_block = &self.kir_func.blocks[case.target.block];
+            emitted.insert(case.target.block, ());
+            for &vid in &case_block.body {
+                self.emit_inst(func, vid)?;
+            }
+
+            if let Some(term) = &case_block.terminator {
+                self.emit_loop_switch_arm_terminator(
+                    func,
+                    term,
+                    depth_to_merge,
+                    merge_block_id,
+                    header,
+                    exit,
+                    continue_depth,
+                    break_depth,
+                    emitted,
+                )?;
+            }
+        }
+
+        if let Some(def_target) = default {
+            func.instruction(&Instruction::End);
+            self.emit_block_param_stores(func, def_target)?;
+
+            let def_block = &self.kir_func.blocks[def_target.block];
+            emitted.insert(def_target.block, ());
+            for &vid in &def_block.body {
+                self.emit_inst(func, vid)?;
+            }
+
+            if let Some(term) = &def_block.terminator {
+                self.emit_loop_switch_arm_terminator(
+                    func,
+                    term,
+                    0,
+                    merge_block_id,
+                    header,
+                    exit,
+                    continue_depth,
+                    break_depth,
+                    emitted,
+                )?;
+            }
+        }
+
+        func.instruction(&Instruction::End);
+
+        if let Some(merge_id) = merge_block_id {
+            self.emit_loop_block_chain(
+                func,
+                merge_id,
+                header,
+                exit,
+                continue_depth,
+                break_depth,
+                emitted,
+            )?;
+        } else {
+            func.instruction(&Instruction::Unreachable);
+        }
+
+        Ok(())
     }
 
     fn emit_branch(
@@ -942,6 +1136,75 @@ impl<'a> FuncCodegen<'a> {
                 func.instruction(&Instruction::Br(depth_to_merge));
             }
         }
+        Ok(())
+    }
+
+    fn emit_loop_switch_arm_terminator(
+        &self,
+        func: &mut Function,
+        term: &Terminator,
+        depth_to_merge: u32,
+        switch_merge: Option<BlockId>,
+        header: BlockId,
+        exit: BlockId,
+        continue_depth: u32,
+        break_depth: u32,
+        emitted: &mut FxHashMap<BlockId, ()>,
+    ) -> Result<(), CodegenError> {
+        match term {
+            Terminator::Return(val) => {
+                self.emit_get(func, *val);
+                func.instruction(&Instruction::Return);
+            }
+            Terminator::Unreachable => {
+                func.instruction(&Instruction::Unreachable);
+            }
+            Terminator::Jump(target) => {
+                self.emit_block_param_stores(func, target)?;
+                if Some(target.block) == switch_merge {
+                    func.instruction(&Instruction::Br(depth_to_merge));
+                } else if target.block == header || target.block == exit {
+                    return Err(CodegenError::UnsupportedInstruction(
+                        "loop-local switch break/continue in arm (deferred)".into(),
+                    ));
+                } else {
+                    self.emit_block_chain(func, target.block, switch_merge, emitted)?;
+                    func.instruction(&Instruction::Br(depth_to_merge));
+                }
+            }
+            Terminator::Branch {
+                condition,
+                then_target,
+                else_target,
+            } => {
+                self.emit_branch(
+                    func,
+                    *condition,
+                    then_target,
+                    else_target,
+                    switch_merge,
+                    emitted,
+                )?;
+                func.instruction(&Instruction::Br(depth_to_merge));
+            }
+            Terminator::Switch {
+                scrutinee,
+                cases,
+                default,
+            } => {
+                self.emit_switch(
+                    func,
+                    *scrutinee,
+                    cases,
+                    default.as_ref(),
+                    switch_merge,
+                    emitted,
+                )?;
+                func.instruction(&Instruction::Br(depth_to_merge));
+            }
+        }
+
+        let _ = (continue_depth, break_depth);
         Ok(())
     }
 

@@ -224,6 +224,35 @@ fn test_for_range_break_continue_lower_without_placeholder_holes() {
     assert!(out.contains("jump "), "output:\n{out}");
 }
 
+#[test]
+fn test_match_inside_while_carries_mutable_locals_to_merge() {
+    let out = lower_and_display(
+        "type Step = Keep | Skip\n\
+         fn step(i: Int) -> Step {\n\
+           if ((i % 2) == 0) { Step.Skip } else { Step.Keep }\n\
+         }\n\
+         fn f() -> Int {\n\
+           var i = 0\n\
+           var acc = 0\n\
+           while (i < 8) {\n\
+             i = i + 1\n\
+             let ignored = match (step(i)) {\n\
+               Step.Keep => { acc = acc + i\n 0 }\n\
+               Step.Skip => { 0 }\n\
+             }\n\
+             ignored\n\
+         }\n\
+           acc\n\
+         }",
+    );
+    assert!(
+        out.lines()
+            .any(|line| line.trim_start().starts_with("merge(") && line.contains("acc: Int")),
+        "match merge should carry mutable local state. output:\n{out}"
+    );
+    assert!(!out.contains("hole"), "output:\n{out}");
+}
+
 // ── Unary ops ────────────────────────────────────────────────────
 
 #[test]

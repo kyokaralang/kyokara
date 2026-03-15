@@ -1167,6 +1167,24 @@ impl<'a> LoweringCtx<'a> {
     }
 
     fn lower_match_adt(&mut self, scr: ValueId, arms: &[MatchArm], ty: Ty) -> ValueId {
+        let mut seen = FxHashSet::default();
+        let mut carried_names = Vec::new();
+        for arm in arms {
+            self.collect_assigned_outer_locals_in_expr(
+                arm.body,
+                arm.body,
+                &mut seen,
+                &mut carried_names,
+            );
+        }
+        let carried: Vec<(Name, Ty)> = carried_names
+            .iter()
+            .filter_map(|name| {
+                self.lookup_local(*name)
+                    .map(|vid| (*name, self.builder_value_ty(vid)))
+            })
+            .collect();
+        let saved_locals = self.locals.clone();
         let merge_blk = self.builder.new_block(Some(self.labels.merge));
         #[allow(clippy::unwrap_used)] // lowering always starts with an entry block
         let switch_blk = self.builder.current_block().unwrap();
@@ -1249,6 +1267,7 @@ impl<'a> LoweringCtx<'a> {
         // Second pass: lower each arm's body.
         let mut all_terminated = true;
         for info in arm_infos {
+            self.locals = saved_locals.clone();
             self.builder.switch_to(info.block);
             self.push_scope();
 
@@ -1300,9 +1319,11 @@ impl<'a> LoweringCtx<'a> {
 
             let body_val = self.lower_expr(info.body);
             if !self.block_has_terminator() {
+                let mut args = vec![body_val];
+                args.extend(self.current_loop_args(&carried_names));
                 self.builder.set_jump(BranchTarget {
                     block: merge_blk,
-                    args: vec![body_val],
+                    args,
                 });
                 all_terminated = false;
             }
@@ -1318,7 +1339,18 @@ impl<'a> LoweringCtx<'a> {
         }
 
         let result = self.builder.add_block_param(merge_blk, None, ty);
+        let carried_params: Vec<_> = carried
+            .iter()
+            .map(|(name, ty)| {
+                self.builder
+                    .add_block_param(merge_blk, Some(*name), ty.clone())
+            })
+            .collect();
+        self.locals = saved_locals;
         self.builder.switch_to(merge_blk);
+        for ((name, _), param) in carried.iter().zip(carried_params.iter()) {
+            let _ = self.rebind_local(*name, *param);
+        }
         if all_terminated {
             self.builder.set_unreachable();
         }
@@ -1326,10 +1358,29 @@ impl<'a> LoweringCtx<'a> {
     }
 
     fn lower_match_sequential(&mut self, scr: ValueId, arms: &[MatchArm], ty: Ty) -> ValueId {
+        let mut seen = FxHashSet::default();
+        let mut carried_names = Vec::new();
+        for arm in arms {
+            self.collect_assigned_outer_locals_in_expr(
+                arm.body,
+                arm.body,
+                &mut seen,
+                &mut carried_names,
+            );
+        }
+        let carried: Vec<(Name, Ty)> = carried_names
+            .iter()
+            .filter_map(|name| {
+                self.lookup_local(*name)
+                    .map(|vid| (*name, self.builder_value_ty(vid)))
+            })
+            .collect();
+        let saved_locals = self.locals.clone();
         let merge_blk = self.builder.new_block(Some(self.labels.merge));
         let mut all_terminated = true;
 
         for (i, arm) in arms.iter().enumerate() {
+            self.locals = saved_locals.clone();
             let pat = self.body.pats[arm.pat].clone();
             let is_last = i == arms.len() - 1;
 
@@ -1385,9 +1436,11 @@ impl<'a> LoweringCtx<'a> {
                     self.push_scope();
                     let body_val = self.lower_expr(arm.body);
                     if !self.block_has_terminator() {
+                        let mut args = vec![body_val];
+                        args.extend(self.current_loop_args(&carried_names));
                         self.builder.set_jump(BranchTarget {
                             block: merge_blk,
-                            args: vec![body_val],
+                            args,
                         });
                         all_terminated = false;
                     }
@@ -1402,9 +1455,11 @@ impl<'a> LoweringCtx<'a> {
                     self.push_scope();
                     let body_val = self.lower_expr(arm.body);
                     if !self.block_has_terminator() {
+                        let mut args = vec![body_val];
+                        args.extend(self.current_loop_args(&carried_names));
                         self.builder.set_jump(BranchTarget {
                             block: merge_blk,
-                            args: vec![body_val],
+                            args,
                         });
                         all_terminated = false;
                     }
@@ -1416,9 +1471,11 @@ impl<'a> LoweringCtx<'a> {
                     self.define_local(*name, scr);
                     let body_val = self.lower_expr(arm.body);
                     if !self.block_has_terminator() {
+                        let mut args = vec![body_val];
+                        args.extend(self.current_loop_args(&carried_names));
                         self.builder.set_jump(BranchTarget {
                             block: merge_blk,
-                            args: vec![body_val],
+                            args,
                         });
                         all_terminated = false;
                     }
@@ -1430,9 +1487,11 @@ impl<'a> LoweringCtx<'a> {
                     self.bind_pattern(arm.pat, scr);
                     let body_val = self.lower_expr(arm.body);
                     if !self.block_has_terminator() {
+                        let mut args = vec![body_val];
+                        args.extend(self.current_loop_args(&carried_names));
                         self.builder.set_jump(BranchTarget {
                             block: merge_blk,
-                            args: vec![body_val],
+                            args,
                         });
                         all_terminated = false;
                     }
@@ -1443,7 +1502,18 @@ impl<'a> LoweringCtx<'a> {
         }
 
         let result = self.builder.add_block_param(merge_blk, None, ty);
+        let carried_params: Vec<_> = carried
+            .iter()
+            .map(|(name, ty)| {
+                self.builder
+                    .add_block_param(merge_blk, Some(*name), ty.clone())
+            })
+            .collect();
+        self.locals = saved_locals;
         self.builder.switch_to(merge_blk);
+        for ((name, _), param) in carried.iter().zip(carried_params.iter()) {
+            let _ = self.rebind_local(*name, *param);
+        }
         if all_terminated {
             self.builder.set_unreachable();
         }
