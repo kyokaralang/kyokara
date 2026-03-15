@@ -116,6 +116,42 @@ fn test_string_len_counts_unicode_scalars() {
 }
 
 #[test]
+fn test_string_concat_roundtrips_from_guest_memory() {
+    assert_eq!(
+        run_main_string(r#"fn main() -> String { "foo".concat("bar") }"#),
+        "foobar"
+    );
+    assert_eq!(
+        run_main_string(r#"fn main() -> String { "é".concat("clair") }"#),
+        "éclair"
+    );
+}
+
+#[test]
+fn test_int_to_string_roundtrips_from_guest_memory() {
+    assert_eq!(
+        run_main_string("fn main() -> String { 42.to_string() }"),
+        "42"
+    );
+    assert_eq!(
+        run_main_string("fn main() -> String { (-1200).to_string() }"),
+        "-1200"
+    );
+}
+
+#[test]
+fn test_char_to_string_roundtrips_from_guest_memory() {
+    assert_eq!(
+        run_main_string("fn main() -> String { 'x'.to_string() }"),
+        "x"
+    );
+    assert_eq!(
+        run_main_string("fn main() -> String { 'é'.to_string() }"),
+        "é"
+    );
+}
+
+#[test]
 fn test_char_constant_roundtrips_as_i32_scalar() {
     assert_eq!(run_main_i32("fn main() -> Char { 'x' }"), 'x' as i32);
 }
