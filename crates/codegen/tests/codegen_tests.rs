@@ -142,12 +142,17 @@ fn test_string_constant_is_compile_time_unsupported_instruction() {
 }
 
 #[test]
-fn test_char_constant_is_compile_time_unsupported_instruction() {
-    let err = compile_invalid_const_kir_error(Constant::Char('x'));
-    assert!(
-        err.contains("unsupported instruction: Char constant (deferred)"),
-        "unexpected codegen error: {err}"
-    );
+fn test_char_constant_roundtrips_as_i32_scalar() {
+    assert_eq!(run_main_i32("fn main() -> Char { 'x' }"), 'x' as i32);
+}
+
+#[test]
+fn test_char_equality_comparisons() {
+    assert_i32_cases(&[
+        ("fn main() -> Bool { 'a' == 'a' }", 1),
+        ("fn main() -> Bool { 'a' != 'b' }", 1),
+        ("fn main() -> Bool { 'é' == 'é' }", 1),
+    ]);
 }
 
 // ── Arithmetic ────────────────────────────────────────────────────

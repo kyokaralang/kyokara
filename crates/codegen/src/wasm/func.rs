@@ -107,7 +107,9 @@ impl<'a> FuncCodegen<'a> {
         match inst {
             Inst::Const(Constant::Int(_)) => ValType::I64,
             Inst::Const(Constant::Float(_)) => ValType::F64,
-            Inst::Const(Constant::Bool(_)) | Inst::Const(Constant::Unit) => ValType::I32,
+            Inst::Const(Constant::Bool(_))
+            | Inst::Const(Constant::Unit)
+            | Inst::Const(Constant::Char(_)) => ValType::I32,
             Inst::Binary { op, .. } => {
                 if op.returns_bool() {
                     ValType::I32
@@ -1041,10 +1043,8 @@ impl<'a> FuncCodegen<'a> {
                     "String constant (deferred)".into(),
                 ));
             }
-            Constant::Char(_) => {
-                return Err(CodegenError::UnsupportedInstruction(
-                    "Char constant (deferred)".into(),
-                ));
+            Constant::Char(c) => {
+                func.instruction(&Instruction::I32Const(*c as i32));
             }
         }
         Ok(())
@@ -1256,6 +1256,13 @@ impl<'a> FuncCodegen<'a> {
             (BinaryOp::NotEq, Ty::Bool) => func.instruction(&Instruction::I32Ne),
             (BinaryOp::And, Ty::Bool) => func.instruction(&Instruction::I32And),
             (BinaryOp::Or, Ty::Bool) => func.instruction(&Instruction::I32Or),
+
+            (BinaryOp::Eq, Ty::Char) => func.instruction(&Instruction::I32Eq),
+            (BinaryOp::NotEq, Ty::Char) => func.instruction(&Instruction::I32Ne),
+            (BinaryOp::Lt, Ty::Char) => func.instruction(&Instruction::I32LtU),
+            (BinaryOp::Gt, Ty::Char) => func.instruction(&Instruction::I32GtU),
+            (BinaryOp::LtEq, Ty::Char) => func.instruction(&Instruction::I32LeU),
+            (BinaryOp::GtEq, Ty::Char) => func.instruction(&Instruction::I32GeU),
 
             _ => {
                 return Err(CodegenError::UnsupportedInstruction(format!(
