@@ -132,6 +132,17 @@ fn test_string_equality_uses_value_semantics() {
 }
 
 #[test]
+fn test_string_predicates_match_interpreter_semantics() {
+    assert_i32_cases(&[
+        (r#"fn main() -> Bool { "bananas".contains("ana") }"#, 1),
+        (r#"fn main() -> Bool { "bananas".contains("xyz") }"#, 0),
+        (r#"fn main() -> Bool { "éclair".starts_with("é") }"#, 1),
+        (r#"fn main() -> Bool { "éclair".ends_with("clair") }"#, 1),
+        (r#"fn main() -> Bool { "éclair".ends_with("é") }"#, 0),
+    ]);
+}
+
+#[test]
 fn test_string_concat_roundtrips_from_guest_memory() {
     assert_eq!(
         run_main_string(r#"fn main() -> String { "foo".concat("bar") }"#),
