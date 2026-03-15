@@ -2,9 +2,13 @@
 
 use std::collections::VecDeque;
 
-use kyokara_hir_def::expr::{BinaryOp, UnaryOp};
 use kyokara_hir_def::name::Name;
-use kyokara_hir_ty::ty::Ty;
+use kyokara_hir_def::{
+    expr::{BinaryOp, UnaryOp},
+    item_tree::TypeDefKind,
+    type_ref::TypeRef,
+};
+use kyokara_hir_ty::ty::{Ty, resolve_builtin};
 use kyokara_kir::block::{BlockId, Terminator};
 use kyokara_kir::function::KirFunction;
 use kyokara_kir::inst::{CallTarget, Constant, Inst};
@@ -1045,10 +1049,9 @@ impl<'a> FuncCodegen<'a> {
                 func.instruction(&Instruction::LocalSet(local_idx));
             }
 
-            Inst::RecordUpdate { .. } => {
-                return Err(CodegenError::UnsupportedInstruction(
-                    "RecordUpdate (deferred)".into(),
-                ));
+            Inst::RecordUpdate { base, updates } => {
+                self.emit_record_update(func, *base, updates, &vdef.ty)?;
+                func.instruction(&Instruction::LocalSet(local_idx));
             }
 
             Inst::Hole { .. } => {
@@ -2855,6 +2858,43 @@ impl<'a> FuncCodegen<'a> {
         Ok(())
     }
 
+    fn emit_record_update(
+        &self,
+        func: &mut Function,
+        base: ValueId,
+        updates: &[(Name, ValueId)],
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let sorted_fields = self.resolve_record_fields(result_ty)?;
+        let field_count = sorted_fields.len() as u32;
+        let size = layout::record_size(field_count);
+
+        func.instruction(&Instruction::I32Const(size as i32));
+        func.instruction(&Instruction::Call(self.ctx.alloc_fn_index));
+        func.instruction(&Instruction::Drop);
+
+        let derive_ptr = |func: &mut Function, size: u32| {
+            func.instruction(&Instruction::GlobalGet(0));
+            func.instruction(&Instruction::I32Const(size as i32));
+            func.instruction(&Instruction::I32Sub);
+        };
+
+        for (i, (field_name, field_ty)) in sorted_fields.iter().enumerate() {
+            let offset = u64::from(layout::record_field_offset(i as u32));
+            derive_ptr(func, size);
+            if let Some((_, update_vid)) = updates.iter().find(|(name, _)| *name == *field_name) {
+                self.emit_typed_store(func, *update_vid, self.value_ty(*update_vid), offset);
+            } else {
+                self.emit_get(func, base);
+                self.emit_typed_load(func, field_ty, offset);
+                self.emit_typed_store_stack(func, field_ty, offset);
+            }
+        }
+
+        derive_ptr(func, size);
+        Ok(())
+    }
+
     // ── Record field get ──────────────────────────────────────────
 
     fn emit_field_get(
@@ -2921,6 +2961,52 @@ impl<'a> FuncCodegen<'a> {
             })
     }
 
+    fn resolve_record_fields(&self, record_ty: &Ty) -> Result<Vec<(Name, Ty)>, CodegenError> {
+        let mut fields: Vec<(Name, Ty)> = match record_ty {
+            Ty::Record { fields } => fields.clone(),
+            Ty::Adt { def, .. } => {
+                let type_item = &self.ctx.item_tree.types[*def];
+                match &type_item.kind {
+                    TypeDefKind::Record { fields } => fields
+                        .iter()
+                        .map(|(name, ty_ref)| (*name, self.resolve_record_field_storage_ty(ty_ref)))
+                        .collect(),
+                    TypeDefKind::Alias(TypeRef::Record { fields }) => fields
+                        .iter()
+                        .map(|(name, ty_ref)| (*name, self.resolve_record_field_storage_ty(ty_ref)))
+                        .collect(),
+                    _ => {
+                        return Err(CodegenError::UnsupportedType(
+                            "record update on non-record ADT".into(),
+                        ));
+                    }
+                }
+            }
+            _ => {
+                return Err(CodegenError::UnsupportedType(
+                    "record update on non-record".into(),
+                ));
+            }
+        };
+
+        fields.sort_by(|a, b| {
+            let a_str = a.0.resolve(self.ctx.interner);
+            let b_str = b.0.resolve(self.ctx.interner);
+            a_str.cmp(b_str)
+        });
+        Ok(fields)
+    }
+
+    fn resolve_record_field_storage_ty(&self, type_ref: &TypeRef) -> Ty {
+        match type_ref {
+            TypeRef::Path { path, args } if path.is_single() && args.is_empty() => {
+                let name = path.segments[0].resolve(self.ctx.interner);
+                resolve_builtin(name).unwrap_or(Ty::Error)
+            }
+            _ => Ty::Error,
+        }
+    }
+
     // ── Assert ────────────────────────────────────────────────────
 
     fn emit_assert(&self, func: &mut Function, condition: ValueId) {
@@ -2948,6 +3034,10 @@ impl<'a> FuncCodegen<'a> {
     /// to keep the layout uniform.
     fn emit_typed_store(&self, func: &mut Function, vid: ValueId, ty: &Ty, offset: u64) {
         self.emit_get(func, vid);
+        self.emit_typed_store_stack(func, ty, offset);
+    }
+
+    fn emit_typed_store_stack(&self, func: &mut Function, ty: &Ty, offset: u64) {
         match ty {
             Ty::Float => {
                 func.instruction(&Instruction::F64Store(MemArg {

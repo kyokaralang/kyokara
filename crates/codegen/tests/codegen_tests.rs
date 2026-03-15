@@ -2,7 +2,12 @@
 #![allow(clippy::unwrap_used)]
 
 use kyokara_hir::check_file;
-use kyokara_kir::lower::lower_module;
+use kyokara_hir_def::{expr::BinaryOp, item_tree::ItemTree, name::Name};
+use kyokara_hir_ty::{effects::EffectSet, ty::Ty};
+use kyokara_intern::Interner;
+use kyokara_kir::{
+    KirModule, build::KirBuilder, function::KirContracts, inst::Constant, lower::lower_module,
+};
 
 fn instantiate_main(source: &str) -> kyokara_wasm_runtime::WasmProgram {
     let result = check_file(source);
@@ -22,6 +27,15 @@ fn instantiate_main(source: &str) -> kyokara_wasm_runtime::WasmProgram {
 
     let wasm_bytes =
         kyokara_codegen::compile(&module, &result.item_tree, &interner).expect("codegen failed");
+    kyokara_wasm_runtime::WasmProgram::instantiate(&wasm_bytes).expect("instantiation failed")
+}
+
+fn instantiate_manual_module(
+    module: &KirModule,
+    item_tree: &ItemTree,
+    interner: &Interner,
+) -> kyokara_wasm_runtime::WasmProgram {
+    let wasm_bytes = kyokara_codegen::compile(module, item_tree, interner).expect("codegen failed");
     kyokara_wasm_runtime::WasmProgram::instantiate(&wasm_bytes).expect("instantiation failed")
 }
 
@@ -650,6 +664,57 @@ fn test_record_single_field() {
         ),
         42
     );
+}
+
+#[test]
+fn test_record_update_preserves_unchanged_fields() {
+    let mut interner = Interner::default();
+    let main_name = Name::new(&mut interner, "main");
+    let entry_name = Name::new(&mut interner, "entry");
+    let x_field = Name::new(&mut interner, "x");
+    let y_field = Name::new(&mut interner, "y");
+
+    let record_ty = Ty::Record {
+        fields: vec![(x_field, Ty::Int), (y_field, Ty::Int)],
+    };
+
+    let mut builder = KirBuilder::new();
+    let entry = builder.new_block(Some(entry_name));
+    builder.switch_to(entry);
+
+    let one = builder.push_const(Constant::Int(1), Ty::Int);
+    let two = builder.push_const(Constant::Int(2), Ty::Int);
+    let ten = builder.push_const(Constant::Int(10), Ty::Int);
+    let hundred = builder.push_const(Constant::Int(100), Ty::Int);
+    let ten_scale = builder.push_const(Constant::Int(10), Ty::Int);
+
+    let base = builder.push_record_create(vec![(x_field, one), (y_field, two)], record_ty.clone());
+    let updated = builder.push_record_update(base, vec![(x_field, ten)], record_ty.clone());
+
+    let updated_x = builder.push_field_get(updated, x_field, Ty::Int);
+    let updated_y = builder.push_field_get(updated, y_field, Ty::Int);
+    let base_x = builder.push_field_get(base, x_field, Ty::Int);
+    let updated_x_scaled = builder.push_binary(BinaryOp::Mul, updated_x, hundred, Ty::Int);
+    let updated_y_scaled = builder.push_binary(BinaryOp::Mul, updated_y, ten_scale, Ty::Int);
+    let partial = builder.push_binary(BinaryOp::Add, updated_x_scaled, updated_y_scaled, Ty::Int);
+    let result = builder.push_binary(BinaryOp::Add, partial, base_x, Ty::Int);
+    builder.set_return(result);
+
+    let function = builder.build(
+        main_name,
+        vec![],
+        Ty::Int,
+        EffectSet::default(),
+        entry,
+        KirContracts::default(),
+    );
+
+    let mut module = KirModule::default();
+    let fn_id = module.functions.alloc(function);
+    module.entry = Some(fn_id);
+
+    let mut program = instantiate_manual_module(&module, &ItemTree::default(), &interner);
+    assert_eq!(program.call_main_i64().expect("main trapped"), 1021);
 }
 
 // ── Contracts (requires) ──────────────────────────────────────────
