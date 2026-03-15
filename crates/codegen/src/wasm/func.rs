@@ -556,10 +556,13 @@ impl<'a> FuncCodegen<'a> {
 
         let mut reachable_sets: Vec<FxHashMap<BlockId, usize>> = cases
             .iter()
+            .filter(|case| !self.loop_switch_target_exits_directly(case.target.block, header, exit))
             .map(|case| self.reachable_block_distances(case.target.block))
             .collect();
         if let Some(default) = default {
-            reachable_sets.push(self.reachable_block_distances(default.block));
+            if !self.loop_switch_target_exits_directly(default.block, header, exit) {
+                reachable_sets.push(self.reachable_block_distances(default.block));
+            }
         }
 
         let first = reachable_sets.first()?;
@@ -580,6 +583,22 @@ impl<'a> FuncCodegen<'a> {
             })
             .min_by_key(|(block, total, max_side)| (*total, *max_side, block.into_raw().into_u32()))
             .map(|(block, _, _)| block)
+    }
+
+    fn loop_switch_target_exits_directly(
+        &self,
+        block_id: BlockId,
+        header: BlockId,
+        exit: BlockId,
+    ) -> bool {
+        let Some(term) = self.kir_func.blocks[block_id].terminator.as_ref() else {
+            return false;
+        };
+        match term {
+            Terminator::Jump(target) => target.block == header || target.block == exit,
+            Terminator::Return(_) | Terminator::Unreachable => true,
+            _ => false,
+        }
     }
 
     fn emit_loop_branch_arm(
@@ -1163,10 +1182,10 @@ impl<'a> FuncCodegen<'a> {
                 self.emit_block_param_stores(func, target)?;
                 if Some(target.block) == switch_merge {
                     func.instruction(&Instruction::Br(depth_to_merge));
-                } else if target.block == header || target.block == exit {
-                    return Err(CodegenError::UnsupportedInstruction(
-                        "loop-local switch break/continue in arm (deferred)".into(),
-                    ));
+                } else if target.block == header {
+                    func.instruction(&Instruction::Br(continue_depth + depth_to_merge + 1));
+                } else if target.block == exit {
+                    func.instruction(&Instruction::Br(break_depth + depth_to_merge + 1));
                 } else {
                     self.emit_block_chain(func, target.block, switch_merge, emitted)?;
                     func.instruction(&Instruction::Br(depth_to_merge));

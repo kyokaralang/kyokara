@@ -455,6 +455,56 @@ fn test_for_range_loop_match_can_update_mutable_state() {
 }
 
 #[test]
+fn test_while_loop_match_can_break_and_continue() {
+    assert_eq!(
+        run_main_i64(
+            "type Step = Keep | Skip | Stop\n\
+             fn step(i: Int) -> Step {\n\
+               if (i == 7) { Step.Stop } else { if ((i % 2) == 0) { Step.Skip } else { Step.Keep } }\n\
+             }\n\
+             fn main() -> Int {\n\
+               var i = 0\n\
+               var acc = 0\n\
+               while (i < 10) {\n\
+                 i = i + 1\n\
+                 match (step(i)) {\n\
+                   Step.Keep => { acc = acc + i }\n\
+                   Step.Skip => { continue }\n\
+                   Step.Stop => { break }\n\
+                 }\n\
+               }\n\
+               acc\n\
+             }"
+        ),
+        9
+    );
+}
+
+#[test]
+fn test_for_range_loop_match_can_break_and_continue() {
+    assert_eq!(
+        run_main_i64(
+            "type Step = Keep | Skip | Stop\n\
+             fn step(i: Int) -> Step {\n\
+               if (i == 7) { Step.Stop } else { if ((i % 2) == 0) { Step.Skip } else { Step.Keep } }\n\
+             }\n\
+             fn main() -> Int {\n\
+               var acc = 0\n\
+               for (x in 0..<10) {\n\
+                 match (step(x)) {\n\
+                   Step.Keep => { acc = acc + x }\n\
+                   Step.Skip => { continue }\n\
+                   Step.Stop => { break }\n\
+                 }\n\
+               }\n\
+               acc\n\
+             }"
+        ),
+        9
+    );
+}
+
+#[test]
 fn test_if_branch_reassignment_updates_mutable_local() {
     assert_eq!(
         run_main_i64(
