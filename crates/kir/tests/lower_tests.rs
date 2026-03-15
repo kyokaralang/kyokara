@@ -1621,6 +1621,21 @@ fn test_fn_ref_emitted_for_function_value() {
 }
 
 #[test]
+fn test_capturing_lambda_does_not_lower_to_placeholder_hole() {
+    let out = lower_and_display(
+        "fn f() -> Int {\n\
+           let base = 5\n\
+           let g = fn(x: Int) => x + base\n\
+           g(7)\n\
+         }",
+    );
+    assert!(
+        !out.contains("hole #"),
+        "capturing lambdas should lower without placeholder holes. output:\n{out}"
+    );
+}
+
+#[test]
 fn test_fn_ref_guard_hole_stays_hole() {
     // Guard: typed holes should still emit hole instructions, not fn_ref.
     let out = lower_and_display("fn f(x: Int) -> Int { x + _ }");

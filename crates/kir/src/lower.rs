@@ -91,6 +91,8 @@ pub(crate) struct LoweringCtx<'a> {
     pub(crate) lambda_functions: Vec<KirFunction>,
     /// Param-name metadata for first-class callable values known at lowering time.
     pub(crate) callable_param_specs: FxHashMap<ValueId, CallableParamSpec>,
+    /// Scoped metadata for lambda-lifted locals that capture immutable outer values.
+    pub(crate) captured_lambda_locals: Vec<FxHashMap<Name, CapturedLambdaLocal>>,
 }
 
 pub(crate) struct LoopContext {
@@ -105,15 +107,24 @@ pub(crate) struct CallableParamSpec {
     pub(crate) param_named_only: Vec<bool>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct CapturedLambdaLocal {
+    pub(crate) lambda_name: Name,
+    pub(crate) capture_values: Vec<ValueId>,
+    pub(crate) param_spec: CallableParamSpec,
+}
+
 impl<'a> LoweringCtx<'a> {
     // ── Scope management ─────────────────────────────────────────
 
     pub(crate) fn push_scope(&mut self) {
         self.locals.push(FxHashMap::default());
+        self.captured_lambda_locals.push(FxHashMap::default());
     }
 
     pub(crate) fn pop_scope(&mut self) {
         self.locals.pop();
+        self.captured_lambda_locals.pop();
     }
 
     pub(crate) fn define_local(&mut self, name: Name, vid: ValueId) {
@@ -136,6 +147,33 @@ impl<'a> LoweringCtx<'a> {
         for scope in self.locals.iter().rev() {
             if let Some(&vid) = scope.get(&name) {
                 return Some(vid);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn define_captured_lambda_local(
+        &mut self,
+        name: Name,
+        captured: CapturedLambdaLocal,
+    ) {
+        if let Some(scope) = self.captured_lambda_locals.last_mut() {
+            scope.insert(name, captured);
+        }
+    }
+
+    pub(crate) fn remove_captured_lambda_local(&mut self, name: Name) {
+        for scope in self.captured_lambda_locals.iter_mut().rev() {
+            if scope.remove(&name).is_some() {
+                return;
+            }
+        }
+    }
+
+    pub(crate) fn lookup_captured_lambda_local(&self, name: Name) -> Option<&CapturedLambdaLocal> {
+        for scope in self.captured_lambda_locals.iter().rev() {
+            if let Some(captured) = scope.get(&name) {
+                return Some(captured);
             }
         }
         None
@@ -280,6 +318,7 @@ fn lower_function_bundle(
         lambda_names: FxHashMap::default(),
         lambda_functions: Vec::new(),
         callable_param_specs: FxHashMap::default(),
+        captured_lambda_locals: Vec::new(),
     };
 
     // Create entry block.

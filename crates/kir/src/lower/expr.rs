@@ -154,8 +154,25 @@ impl<'a> LoweringCtx<'a> {
         ty: Ty,
     ) -> ValueId {
         if self.lambda_uses_outer_local_capture(body_expr) {
-            let id = self.next_hole_id();
-            return self.builder.push_hole(id, vec![], ty);
+            let captures = self.lambda_captured_outer_locals(body_expr);
+            if captures.is_empty() {
+                let id = self.next_hole_id();
+                return self.builder.push_hole(id, vec![], ty);
+            }
+            let lambda_name = self.lambda_name_for_expr(lambda_expr);
+            if !self
+                .lambda_functions
+                .iter()
+                .any(|func| func.name == lambda_name)
+            {
+                let (lambda_fn, nested_lambdas) =
+                    self.build_lambda_function(lambda_name, params, body_expr, &ty, &captures);
+                self.lambda_functions.extend(nested_lambdas);
+                self.lambda_functions.push(lambda_fn);
+            }
+
+            let fn_ref = self.builder.push_fn_ref(lambda_name, ty);
+            return self.record_callable_param_spec(fn_ref, self.lambda_value_param_spec(params));
         }
 
         let lambda_name = self.lambda_name_for_expr(lambda_expr);
@@ -165,7 +182,7 @@ impl<'a> LoweringCtx<'a> {
             .any(|func| func.name == lambda_name)
         {
             let (lambda_fn, nested_lambdas) =
-                self.build_lambda_function(lambda_name, params, body_expr, &ty);
+                self.build_lambda_function(lambda_name, params, body_expr, &ty, &[]);
             self.lambda_functions.extend(nested_lambdas);
             self.lambda_functions.push(lambda_fn);
         }
@@ -180,6 +197,7 @@ impl<'a> LoweringCtx<'a> {
         params: &[(kyokara_hir_def::expr::PatIdx, Option<TypeRef>)],
         body_expr: ExprIdx,
         lambda_ty: &Ty,
+        captures: &[Name],
     ) -> (
         crate::function::KirFunction,
         Vec<crate::function::KirFunction>,
@@ -194,6 +212,14 @@ impl<'a> LoweringCtx<'a> {
                 self.expr_ty(body_expr),
             ),
         };
+        let capture_tys: Vec<Ty> = captures
+            .iter()
+            .map(|name| {
+                self.lookup_local(*name)
+                    .map(|vid| self.builder_value_ty(vid))
+                    .unwrap_or(Ty::Error)
+            })
+            .collect();
 
         let (lambda_fn, nested_lambdas) = {
             let interner = &mut *self.interner;
@@ -220,6 +246,7 @@ impl<'a> LoweringCtx<'a> {
                 lambda_names: FxHashMap::default(),
                 lambda_functions: Vec::new(),
                 callable_param_specs: FxHashMap::default(),
+                captured_lambda_locals: Vec::new(),
             };
 
             let entry_block = child.builder.new_block(Some(child.labels.entry));
@@ -243,6 +270,25 @@ impl<'a> LoweringCtx<'a> {
                     (param_name, param_ty)
                 })
                 .collect();
+            let capture_offset = lowered_params.len();
+            let lowered_captures: Vec<(Name, Ty)> = captures
+                .iter()
+                .enumerate()
+                .map(|(index, name)| {
+                    let capture_ty = capture_tys.get(index).cloned().unwrap_or(Ty::Error);
+                    let vid = child.builder.alloc_value(
+                        capture_ty.clone(),
+                        Inst::FnParam {
+                            index: (capture_offset + index) as u32,
+                        },
+                    );
+                    child.define_local(*name, vid);
+                    child.old_scope.insert(*name, vid);
+                    (*name, capture_ty)
+                })
+                .collect();
+            let mut lowered_params = lowered_params;
+            lowered_params.extend(lowered_captures);
 
             let root_val = child.lower_expr(body_expr);
             if !child.block_has_terminator() {
@@ -291,6 +337,142 @@ impl<'a> LoweringCtx<'a> {
             return false;
         };
         self.expr_uses_outer_local_capture(body_expr, lambda_scope)
+    }
+
+    fn lambda_captured_outer_locals(&self, body_expr: ExprIdx) -> Vec<Name> {
+        let Some(lambda_scope) = self.body.expr_scopes.get(body_expr).copied() else {
+            return Vec::new();
+        };
+        let mut seen = FxHashSet::default();
+        let mut out = Vec::new();
+        self.collect_expr_outer_local_captures(body_expr, lambda_scope, &mut seen, &mut out);
+        out
+    }
+
+    fn collect_expr_outer_local_captures(
+        &self,
+        expr_idx: ExprIdx,
+        lambda_scope: kyokara_hir_def::scope::ScopeIdx,
+        seen: &mut FxHashSet<Name>,
+        out: &mut Vec<Name>,
+    ) {
+        match &self.body.exprs[expr_idx] {
+            Expr::Path(path) if path.is_single() => {
+                let name = path.segments[0];
+                let Some(resolved) = self.body.resolve_name_at(self.module_scope, expr_idx, name)
+                else {
+                    return;
+                };
+                let captured = match resolved.resolved {
+                    ResolvedName::Local(ScopeDef::Local(_)) => resolved
+                        .local_binding
+                        .map(|(_, meta)| !self.scope_is_within(meta.scope, lambda_scope))
+                        .unwrap_or(false),
+                    ResolvedName::Local(ScopeDef::Param(_)) => self
+                        .body
+                        .scopes
+                        .root
+                        .map(|root| !self.scope_is_within(root, lambda_scope))
+                        .unwrap_or(false),
+                    _ => false,
+                };
+                if captured && seen.insert(name) {
+                    out.push(name);
+                }
+            }
+            Expr::Path(_) => {}
+            Expr::Binary { lhs, rhs, .. } => {
+                self.collect_expr_outer_local_captures(*lhs, lambda_scope, seen, out);
+                self.collect_expr_outer_local_captures(*rhs, lambda_scope, seen, out);
+            }
+            Expr::Unary { operand, .. } | Expr::Old(operand) | Expr::Return(Some(operand)) => {
+                self.collect_expr_outer_local_captures(*operand, lambda_scope, seen, out);
+            }
+            Expr::Return(None) | Expr::Missing | Expr::Hole | Expr::Literal(_) => {}
+            Expr::Call { callee, args } => {
+                self.collect_expr_outer_local_captures(*callee, lambda_scope, seen, out);
+                for arg in args {
+                    let arg_expr = match arg {
+                        CallArg::Positional(idx) => *idx,
+                        CallArg::Named { value, .. } => *value,
+                    };
+                    self.collect_expr_outer_local_captures(arg_expr, lambda_scope, seen, out);
+                }
+            }
+            Expr::Field { base, .. } => {
+                self.collect_expr_outer_local_captures(*base, lambda_scope, seen, out);
+            }
+            Expr::Index { base, index } => {
+                self.collect_expr_outer_local_captures(*base, lambda_scope, seen, out);
+                self.collect_expr_outer_local_captures(*index, lambda_scope, seen, out);
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.collect_expr_outer_local_captures(*condition, lambda_scope, seen, out);
+                self.collect_expr_outer_local_captures(*then_branch, lambda_scope, seen, out);
+                if let Some(else_branch) = else_branch {
+                    self.collect_expr_outer_local_captures(*else_branch, lambda_scope, seen, out);
+                }
+            }
+            Expr::Match { scrutinee, arms } => {
+                self.collect_expr_outer_local_captures(*scrutinee, lambda_scope, seen, out);
+                for arm in arms {
+                    self.collect_expr_outer_local_captures(arm.body, lambda_scope, seen, out);
+                }
+            }
+            Expr::Block { stmts, tail } => {
+                for stmt in stmts {
+                    match stmt {
+                        Stmt::Let { init, .. } => {
+                            self.collect_expr_outer_local_captures(*init, lambda_scope, seen, out);
+                        }
+                        Stmt::Assign { target, value } => {
+                            self.collect_expr_outer_local_captures(
+                                *target,
+                                lambda_scope,
+                                seen,
+                                out,
+                            );
+                            self.collect_expr_outer_local_captures(*value, lambda_scope, seen, out);
+                        }
+                        Stmt::While { condition, body } => {
+                            self.collect_expr_outer_local_captures(
+                                *condition,
+                                lambda_scope,
+                                seen,
+                                out,
+                            );
+                            self.collect_expr_outer_local_captures(*body, lambda_scope, seen, out);
+                        }
+                        Stmt::For { source, body, .. } => {
+                            self.collect_expr_outer_local_captures(
+                                *source,
+                                lambda_scope,
+                                seen,
+                                out,
+                            );
+                            self.collect_expr_outer_local_captures(*body, lambda_scope, seen, out);
+                        }
+                        Stmt::Break | Stmt::Continue => {}
+                        Stmt::Expr(expr) => {
+                            self.collect_expr_outer_local_captures(*expr, lambda_scope, seen, out);
+                        }
+                    }
+                }
+                if let Some(tail) = tail {
+                    self.collect_expr_outer_local_captures(*tail, lambda_scope, seen, out);
+                }
+            }
+            Expr::RecordLit { fields, .. } => {
+                for (_, value) in fields {
+                    self.collect_expr_outer_local_captures(*value, lambda_scope, seen, out);
+                }
+            }
+            Expr::Lambda { .. } => {}
+        }
     }
 
     fn expr_uses_outer_local_capture(
@@ -722,6 +904,19 @@ impl<'a> LoweringCtx<'a> {
             let name = path.segments[0];
 
             // 1. Local variable (indirect call) — locals shadow everything.
+            if let Some(captured) = self.lookup_captured_lambda_local(name).cloned() {
+                let mut arg_vals = self.lower_call_args_for_param_specs(
+                    &args,
+                    &captured.param_spec.param_names,
+                    Some(&captured.param_spec.param_named_only),
+                );
+                arg_vals.extend(captured.capture_values);
+                return self.builder.push_call(
+                    CallTarget::Direct(captured.lambda_name),
+                    arg_vals,
+                    ty,
+                );
+            }
             if let Some(vid) = self.lookup_local(name) {
                 let arg_vals = self.callable_arg_values(vid, &args);
                 return self
@@ -1669,12 +1864,57 @@ impl<'a> LoweringCtx<'a> {
     fn lower_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Let { pat, init, .. } => {
+                if let Pat::Bind { name } = self.body.pats[*pat]
+                    && let Expr::Lambda { params, body } = &self.body.exprs[*init]
+                    && self.lambda_uses_outer_local_capture(*body)
+                {
+                    let captures = self.lambda_captured_outer_locals(*body);
+                    let capture_values: Vec<_> = captures
+                        .iter()
+                        .filter_map(|capture| self.lookup_local(*capture))
+                        .collect();
+                    if !captures.is_empty() && captures.len() == capture_values.len() {
+                        let lambda_name = self.lambda_name_for_expr(*init);
+                        if !self
+                            .lambda_functions
+                            .iter()
+                            .any(|func| func.name == lambda_name)
+                        {
+                            let (lambda_fn, nested_lambdas) = self.build_lambda_function(
+                                lambda_name,
+                                params,
+                                *body,
+                                &self.expr_ty(*init),
+                                &captures,
+                            );
+                            self.lambda_functions.extend(nested_lambdas);
+                            self.lambda_functions.push(lambda_fn);
+                        }
+                        let fn_ref = self.builder.push_fn_ref(lambda_name, self.expr_ty(*init));
+                        let param_spec = self.lambda_value_param_spec(params);
+                        let callable = self.record_callable_param_spec(fn_ref, param_spec.clone());
+                        self.bind_pattern(*pat, callable);
+                        self.define_captured_lambda_local(
+                            name,
+                            crate::lower::CapturedLambdaLocal {
+                                lambda_name,
+                                capture_values,
+                                param_spec,
+                            },
+                        );
+                        return;
+                    }
+                }
                 let init_val = self.lower_expr(*init);
+                if let Pat::Bind { name } = self.body.pats[*pat] {
+                    self.remove_captured_lambda_local(name);
+                }
                 self.bind_pattern(*pat, init_val);
             }
             Stmt::Assign { target, value } => {
                 let value = self.lower_expr(*value);
                 if let Some(name) = self.assignment_target_name(*target) {
+                    self.remove_captured_lambda_local(name);
                     let _ = self.rebind_local(name, value);
                 }
             }

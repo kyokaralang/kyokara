@@ -571,6 +571,20 @@ fn test_non_capturing_lambda_passed_to_higher_order_fn() {
 }
 
 #[test]
+fn test_capturing_lambda_local_indirect_call() {
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               let base = 5\n\
+               let f = fn(x: Int) => x + base\n\
+               f(7)\n\
+             }"
+        ),
+        12
+    );
+}
+
+#[test]
 fn test_zero_arg_lambda_local_call() {
     assert_eq!(
         run_main_i64(
