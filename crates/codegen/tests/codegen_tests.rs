@@ -137,6 +137,18 @@ fn test_string_predicates_match_interpreter_semantics() {
         (r#"fn main() -> Bool { "bananas".contains("ana") }"#, 1),
         (r#"fn main() -> Bool { "bananas".contains("xyz") }"#, 0),
         (r#"fn main() -> Bool { "éclair".starts_with("é") }"#, 1),
+        (
+            r#"fn main() -> Bool { "hello world".starts_with("lo", start: 3) }"#,
+            1,
+        ),
+        (
+            r#"fn main() -> Bool { "hello".starts_with("he", start: 99) }"#,
+            0,
+        ),
+        (
+            r#"fn main() -> Bool { "hello".starts_with("he", start: -1) }"#,
+            0,
+        ),
         (r#"fn main() -> Bool { "éclair".ends_with("clair") }"#, 1),
         (r#"fn main() -> Bool { "éclair".ends_with("é") }"#, 0),
     ]);
