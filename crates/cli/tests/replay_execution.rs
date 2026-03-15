@@ -234,7 +234,7 @@ fn replay_rejects_non_interpreter_runtime_header() {
 
     let log = fs::read_to_string(&log_path)
         .unwrap()
-        .replace("\"runtime\":\"interpreter\"", "\"runtime\":\"wasm\"");
+        .replace("\"runtime\":\"interpreter\"", "\"runtime\":\"jit\"");
     fs::write(&log_path, log).unwrap();
 
     let replay = run_cli(&["replay", log_path.to_string_lossy().as_ref()]);

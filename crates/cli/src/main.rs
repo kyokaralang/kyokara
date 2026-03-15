@@ -44,6 +44,9 @@ enum Command {
         /// Force multi-file project mode (auto-detected for main.ky).
         #[arg(long)]
         project: bool,
+        /// Execution backend: interpreter (default) or wasm.
+        #[arg(long, default_value = "interpreter", value_parser = ["interpreter", "wasm"])]
+        backend: String,
         /// Path to capability manifest (caps.json). Deny-by-default when set.
         #[arg(long)]
         caps: Option<String>,
@@ -243,6 +246,7 @@ fn main() {
         Command::Run {
             file,
             project,
+            backend,
             caps,
             replay_log,
         } => {
@@ -276,28 +280,50 @@ fn main() {
                 replay_log: replay_log.as_deref().map(std::path::Path::new),
             };
 
-            if is_multi_file {
-                match kyokara_eval::run_project_with_options(path, &options) {
-                    Ok(result) => {
-                        if !matches!(result.value, kyokara_eval::value::Value::Unit) {
-                            println!("{}", result.value.display(&result.interner));
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("runtime error: {e}");
+            match backend.as_str() {
+                "wasm" => {
+                    if is_multi_file {
+                        eprintln!("runtime error: wasm backend does not yet support project mode");
                         std::process::exit(1);
+                    }
+                    match run_single_file_with_wasm_backend(
+                        path,
+                        options.manifest.clone(),
+                        options.replay_log,
+                    ) {
+                        Ok(Some(output)) => println!("{output}"),
+                        Ok(None) => {}
+                        Err(message) => {
+                            eprintln!("runtime error: {message}");
+                            std::process::exit(1);
+                        }
                     }
                 }
-            } else {
-                match kyokara_eval::run_file_with_options(path, &options) {
-                    Ok(result) => {
-                        if !matches!(result.value, kyokara_eval::value::Value::Unit) {
-                            println!("{}", result.value.display(&result.interner));
+                _ => {
+                    if is_multi_file {
+                        match kyokara_eval::run_project_with_options(path, &options) {
+                            Ok(result) => {
+                                if !matches!(result.value, kyokara_eval::value::Value::Unit) {
+                                    println!("{}", result.value.display(&result.interner));
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("runtime error: {e}");
+                                std::process::exit(1);
+                            }
                         }
-                    }
-                    Err(e) => {
-                        eprintln!("runtime error: {e}");
-                        std::process::exit(1);
+                    } else {
+                        match kyokara_eval::run_file_with_options(path, &options) {
+                            Ok(result) => {
+                                if !matches!(result.value, kyokara_eval::value::Value::Unit) {
+                                    println!("{}", result.value.display(&result.interner));
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("runtime error: {e}");
+                                std::process::exit(1);
+                            }
+                        }
                     }
                 }
             }
@@ -308,16 +334,35 @@ fn main() {
                 _ => kyokara_eval::ReplayMode::Replay,
             };
             let path = std::path::Path::new(&file);
-            match kyokara_eval::replay_from_log(path, mode) {
-                Ok(result) => {
-                    if !matches!(result.value, kyokara_eval::value::Value::Unit) {
-                        println!("{}", result.value.display(&result.interner));
-                    }
-                }
+            let header = match kyokara_runtime::replay::ReplayReader::from_path(path) {
+                Ok(reader) => reader.header().clone(),
                 Err(e) => {
                     eprintln!("runtime error: {e}");
                     std::process::exit(1);
                 }
+            };
+            match header.runtime.as_str() {
+                kyokara_runtime::replay::WASM_RUNTIME => {
+                    match replay_single_file_with_wasm_backend(path, mode) {
+                        Ok(Some(output)) => println!("{output}"),
+                        Ok(None) => {}
+                        Err(message) => {
+                            eprintln!("runtime error: {message}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                _ => match kyokara_eval::replay_from_log(path, mode) {
+                    Ok(result) => {
+                        if !matches!(result.value, kyokara_eval::value::Value::Unit) {
+                            println!("{}", result.value.display(&result.interner));
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("runtime error: {e}");
+                        std::process::exit(1);
+                    }
+                },
             }
         }
         Command::Test {
@@ -1290,6 +1335,191 @@ fn should_use_project_mode(path: &std::path::Path, force_project: bool) -> bool 
         && path
             .parent()
             .is_some_and(|dir| has_sibling_ky_files(path, dir))
+}
+
+fn run_single_file_with_wasm_backend(
+    entry_file: &std::path::Path,
+    manifest: Option<kyokara_eval::manifest::CapabilityManifest>,
+    replay_log: Option<&std::path::Path>,
+) -> Result<Option<String>, String> {
+    validate_manifest_constraints_for_wasm(&manifest)?;
+    let (wasm_bytes, ret_ty) = compile_single_file_to_wasm(entry_file)?;
+    let replay = if let Some(path) = replay_log {
+        Some(kyokara_runtime::replay::ReplayLogConfig {
+            path: path.to_path_buf(),
+            header: kyokara_runtime::service::build_replay_header(
+                entry_file,
+                false,
+                [entry_file.to_path_buf()],
+                kyokara_runtime::replay::WASM_RUNTIME,
+            )
+            .map_err(|err| err.to_string())?,
+        })
+    } else {
+        None
+    };
+    let mut program = instantiate_wasm_program(&wasm_bytes, manifest, replay)?;
+    decode_wasm_main_output(&mut program, &ret_ty)
+}
+
+fn replay_single_file_with_wasm_backend(
+    log_path: &std::path::Path,
+    mode: kyokara_eval::ReplayMode,
+) -> Result<Option<String>, String> {
+    let reader = kyokara_runtime::replay::ReplayReader::from_path(log_path)
+        .map_err(|err| err.to_string())?;
+    let header = reader.header().clone();
+    if header.project_mode {
+        return Err("wasm replay does not yet support project mode".into());
+    }
+    let entry_file = std::path::PathBuf::from(&header.entry_file);
+    let (wasm_bytes, ret_ty) = compile_single_file_to_wasm(&entry_file)?;
+    let (mut program, _) =
+        kyokara_wasm_runtime::WasmProgram::instantiate_with_replay_log(&wasm_bytes, log_path, mode)
+            .map_err(|err| err.to_string())?;
+    decode_wasm_main_output(&mut program, &ret_ty)
+}
+
+fn instantiate_wasm_program(
+    wasm_bytes: &[u8],
+    manifest: Option<kyokara_eval::manifest::CapabilityManifest>,
+    replay: Option<kyokara_runtime::replay::ReplayLogConfig>,
+) -> Result<kyokara_wasm_runtime::WasmProgram, String> {
+    let manifest_for_auth = manifest.clone();
+    let runtime = kyokara_runtime::service::LiveRuntime::new(
+        Box::new(kyokara_runtime::service::StdHostBackend),
+        Box::new(move |capability| match &manifest_for_auth {
+            Some(manifest) => manifest.is_granted(capability),
+            None => true,
+        }),
+        replay,
+    )
+    .map_err(|err| err.to_string())?;
+    kyokara_wasm_runtime::WasmProgram::instantiate_with_runtime(wasm_bytes, Box::new(runtime))
+        .map_err(|err| err.to_string())
+}
+
+fn decode_wasm_main_output(
+    program: &mut kyokara_wasm_runtime::WasmProgram,
+    ret_ty: &kyokara_hir_ty::ty::Ty,
+) -> Result<Option<String>, String> {
+    use kyokara_hir_ty::ty::Ty;
+
+    match ret_ty {
+        Ty::Int => program
+            .call_main_i64()
+            .map(|value| Some(value.to_string()))
+            .map_err(|err| format_wasm_runtime_error(program, err)),
+        Ty::Float => program
+            .call_main_f64()
+            .map(|value| Some(value.to_string()))
+            .map_err(|err| format_wasm_runtime_error(program, err)),
+        Ty::Bool => program
+            .call_main_i32()
+            .map(|value| Some((value != 0).to_string()))
+            .map_err(|err| format_wasm_runtime_error(program, err)),
+        Ty::Unit => program
+            .call_main_i32()
+            .map(|_| None)
+            .map_err(|err| format_wasm_runtime_error(program, err)),
+        Ty::Char => {
+            let value = program
+                .call_main_i32()
+                .map_err(|err| format_wasm_runtime_error(program, err))?;
+            let ch = char::from_u32(value as u32)
+                .ok_or_else(|| format!("invalid char scalar returned from wasm main: {value}"))?;
+            Ok(Some(ch.to_string()))
+        }
+        Ty::String => {
+            let ptr = program
+                .call_main_i32()
+                .map_err(|err| format_wasm_runtime_error(program, err))?;
+            let text = read_guest_string(program, ptr as u32)?;
+            Ok(Some(text))
+        }
+        other => Err(format!(
+            "wasm backend cannot yet display main return type `{other:?}`"
+        )),
+    }
+}
+
+fn read_guest_string(
+    program: &mut kyokara_wasm_runtime::WasmProgram,
+    ptr: u32,
+) -> Result<String, String> {
+    let header = program.read_memory(ptr, 8).map_err(|err| err.to_string())?;
+    let byte_len = u32::from_le_bytes(
+        header[0..4]
+            .try_into()
+            .map_err(|_| "guest string header missing byte length".to_string())?,
+    );
+    let bytes = program
+        .read_memory(ptr + 8, byte_len)
+        .map_err(|err| err.to_string())?;
+    String::from_utf8(bytes).map_err(|err| err.to_string())
+}
+
+fn format_wasm_runtime_error(
+    program: &kyokara_wasm_runtime::WasmProgram,
+    err: kyokara_wasm_runtime::WasmRuntimeError,
+) -> String {
+    if let Some(host) = program.last_host_error() {
+        host.to_owned()
+    } else {
+        err.to_string()
+    }
+}
+
+fn validate_manifest_constraints_for_wasm(
+    manifest: &Option<kyokara_eval::manifest::CapabilityManifest>,
+) -> Result<(), String> {
+    let Some(manifest) = manifest else {
+        return Ok(());
+    };
+    if let Some((capability, field)) = manifest.first_unsupported_constraint() {
+        return Err(format!(
+            "unsupported manifest constraint: capability `{capability}` uses `{field}`"
+        ));
+    }
+    Ok(())
+}
+
+fn compile_single_file_to_wasm(
+    entry_file: &std::path::Path,
+) -> Result<(Vec<u8>, kyokara_hir_ty::ty::Ty), String> {
+    let source = std::fs::read_to_string(entry_file)
+        .map_err(|err| format!("cannot read `{}`: {err}", entry_file.display()))?;
+    let path_label = entry_file.display().to_string();
+    let check_output = kyokara_api::check_with_options(
+        &source,
+        &path_label,
+        &kyokara_api::CheckOptions::default(),
+    );
+    let errors = check_output
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.severity == "error")
+        .map(|diag| format!("{}: {}", diag.code, diag.message))
+        .collect::<Vec<_>>();
+    if !errors.is_empty() {
+        return Err(format!("compile errors: {}", errors.join("; ")));
+    }
+
+    let check = kyokara_hir::check_file(&source);
+    let mut interner = check.interner;
+    let module = kyokara_kir::lower::lower_module(
+        &check.item_tree,
+        &check.module_scope,
+        &check.type_check,
+        &mut interner,
+    );
+    let entry_fn = module
+        .entry
+        .ok_or_else(|| "no main function found for wasm backend".to_string())?;
+    let ret_ty = module.functions[entry_fn].ret_ty.clone();
+    let wasm_bytes = kyokara_codegen::compile(&module, &check.item_tree, &interner)
+        .map_err(|err| err.to_string())?;
+    Ok((wasm_bytes, ret_ty))
 }
 
 #[cfg(test)]
