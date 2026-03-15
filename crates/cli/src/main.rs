@@ -3,6 +3,7 @@
 //! Commands:
 //! - `kyokara check <file>` — type-check a `.ky` file (v0.0)
 //! - `kyokara run <file>` — interpret a `.ky` file (v0.1)
+//! - `kyokara build <file>` — build a Kyokara artifact (v0.3)
 //! - `kyokara fmt <file>` — format a `.ky` file (v0.1)
 //! - `kyokara refactor <file>` — apply semantic refactors (v0.2)
 //! - `kyokara lsp` — start the Language Server Protocol server (v0.2)
@@ -36,6 +37,20 @@ enum Command {
         /// Force multi-file project mode (auto-detected for main.ky).
         #[arg(long)]
         project: bool,
+    },
+    /// Build a Kyokara artifact.
+    Build {
+        /// Path to the .ky source file.
+        file: String,
+        /// Force multi-file project mode (auto-detected for main.ky).
+        #[arg(long)]
+        project: bool,
+        /// Build target. Currently only `wasm` is supported.
+        #[arg(long, value_parser = ["wasm"])]
+        target: String,
+        /// Output artifact path.
+        #[arg(long)]
+        out: String,
     },
     /// Run a Kyokara source file.
     Run {
@@ -326,6 +341,36 @@ fn main() {
                         }
                     }
                 }
+            }
+        }
+        Command::Build {
+            file,
+            project,
+            target,
+            out,
+        } => {
+            let path = std::path::Path::new(&file);
+            let is_multi_file = should_use_project_mode(path, project);
+
+            if let Err(message) = sync_project_lockfile_if_needed(path, is_multi_file) {
+                eprintln!("error: {message}");
+                std::process::exit(1);
+            }
+
+            match target.as_str() {
+                "wasm" => {
+                    if is_multi_file {
+                        eprintln!("error: wasm build does not yet support project mode");
+                        std::process::exit(1);
+                    }
+                    if let Err(message) =
+                        build_single_file_wasm_artifact(path, std::path::Path::new(&out))
+                    {
+                        eprintln!("error: {message}");
+                        std::process::exit(1);
+                    }
+                }
+                _ => unreachable!("clap constrains target"),
             }
         }
         Command::Replay { file, mode } => {
@@ -1520,6 +1565,21 @@ fn compile_single_file_to_wasm(
     let wasm_bytes = kyokara_codegen::compile(&module, &check.item_tree, &interner)
         .map_err(|err| err.to_string())?;
     Ok((wasm_bytes, ret_ty))
+}
+
+fn build_single_file_wasm_artifact(
+    entry_file: &std::path::Path,
+    out_path: &std::path::Path,
+) -> Result<(), String> {
+    let (wasm_bytes, _) = compile_single_file_to_wasm(entry_file)?;
+    if let Some(parent) = out_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("cannot create `{}`: {err}", parent.display()))?;
+    }
+    std::fs::write(out_path, wasm_bytes)
+        .map_err(|err| format!("cannot write `{}`: {err}", out_path.display()))
 }
 
 #[cfg(test)]
