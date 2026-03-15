@@ -13,7 +13,7 @@ use kyokara_kir::function::KirContracts;
 use kyokara_kir::inst::Constant;
 use kyokara_kir::lower::lower_module;
 
-fn instantiate_main(source: &str) -> (wasmtime::Store<()>, wasmtime::Instance) {
+fn instantiate_main(source: &str) -> kyokara_wasm_runtime::WasmProgram {
     let result = check_file(source);
     assert!(
         result.type_check.raw_diagnostics.is_empty(),
@@ -31,13 +31,7 @@ fn instantiate_main(source: &str) -> (wasmtime::Store<()>, wasmtime::Instance) {
 
     let wasm_bytes =
         kyokara_codegen::compile(&module, &result.item_tree, &interner).expect("codegen failed");
-
-    let engine = wasmtime::Engine::default();
-    let wasm_module = wasmtime::Module::new(&engine, &wasm_bytes).expect("invalid WASM module");
-    let mut store = wasmtime::Store::new(&engine, ());
-    let instance =
-        wasmtime::Instance::new(&mut store, &wasm_module, &[]).expect("instantiation failed");
-    (store, instance)
+    kyokara_wasm_runtime::WasmProgram::instantiate(&wasm_bytes).expect("instantiation failed")
 }
 
 fn compile_kir_error(module: &KirModule, item_tree: &ItemTree, interner: &Interner) -> String {
@@ -74,29 +68,23 @@ fn compile_invalid_const_kir_error(constant: Constant) -> String {
 
 /// Compile source to WASM, run `main()` via wasmtime, return the i64 result.
 fn run_main_i64(source: &str) -> i64 {
-    let (mut store, instance) = instantiate_main(source);
-    let main_fn = instance
-        .get_typed_func::<(), i64>(&mut store, "main")
-        .expect("main function not found");
-    main_fn.call(&mut store, ()).expect("main trapped")
+    instantiate_main(source)
+        .call_main_i64()
+        .expect("main trapped")
 }
 
 /// Compile source to WASM, run `main()` via wasmtime, return the f64 result.
 fn run_main_f64(source: &str) -> f64 {
-    let (mut store, instance) = instantiate_main(source);
-    let main_fn = instance
-        .get_typed_func::<(), f64>(&mut store, "main")
-        .expect("main function not found");
-    main_fn.call(&mut store, ()).expect("main trapped")
+    instantiate_main(source)
+        .call_main_f64()
+        .expect("main trapped")
 }
 
 /// Compile source to WASM, run `main()` via wasmtime, return the i32 result.
 fn run_main_i32(source: &str) -> i32 {
-    let (mut store, instance) = instantiate_main(source);
-    let main_fn = instance
-        .get_typed_func::<(), i32>(&mut store, "main")
-        .expect("main function not found");
-    main_fn.call(&mut store, ()).expect("main trapped")
+    instantiate_main(source)
+        .call_main_i32()
+        .expect("main trapped")
 }
 
 fn assert_i64_cases(cases: &[(&str, i64)]) {

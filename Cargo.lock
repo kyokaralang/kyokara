@@ -1074,6 +1074,7 @@ dependencies = [
  "kyokara-kir",
  "kyokara-span",
  "kyokara-stdx",
+ "kyokara-wasm-runtime",
  "la-arena",
  "rustc-hash 2.1.1",
  "thiserror 2.0.18",
@@ -1306,6 +1307,21 @@ dependencies = [
  "logos",
  "rowan",
  "smol_str",
+]
+
+[[package]]
+name = "kyokara-wasm-runtime"
+version = "0.0.0"
+dependencies = [
+ "kyokara-codegen",
+ "kyokara-eval",
+ "kyokara-hir",
+ "kyokara-hir-def",
+ "kyokara-hir-ty",
+ "kyokara-intern",
+ "kyokara-kir",
+ "thiserror 2.0.18",
+ "wasmtime",
 ]
 
 [[package]]

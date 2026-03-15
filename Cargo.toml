@@ -18,6 +18,7 @@ members = [
     "crates/cli",
     "crates/kir",
     "crates/codegen",
+    "crates/wasm-runtime",
     "crates/lsp",
     "crates/pbt",
     "xtask",
@@ -47,6 +48,7 @@ kyokara-refactor = { path = "crates/refactor" }
 kyokara-api = { path = "crates/api" }
 kyokara-kir = { path = "crates/kir" }
 kyokara-codegen = { path = "crates/codegen" }
+kyokara-wasm-runtime = { path = "crates/wasm-runtime" }
 kyokara-lsp = { path = "crates/lsp" }
 kyokara-pbt = { path = "crates/pbt" }
 

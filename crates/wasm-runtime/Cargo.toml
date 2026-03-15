@@ -1,0 +1,21 @@
+[package]
+name = "kyokara-wasm-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+wasmtime.workspace = true
+
+[dev-dependencies]
+kyokara-hir.workspace = true
+kyokara-intern.workspace = true
+kyokara-hir-def.workspace = true
+kyokara-hir-ty.workspace = true
+kyokara-kir.workspace = true
+kyokara-codegen.workspace = true
+kyokara-eval.workspace = true
+
+[lints]
+workspace = true
