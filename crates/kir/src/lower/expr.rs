@@ -1288,6 +1288,61 @@ impl<'a> LoweringCtx<'a> {
             .collect()
     }
 
+    fn lower_stmt(&mut self, stmt: &Stmt) {
+        match stmt {
+            Stmt::Let { pat, init, .. } => {
+                let init_val = self.lower_expr(*init);
+                self.bind_pattern(*pat, init_val);
+            }
+            Stmt::Assign { target, value } => {
+                let value = self.lower_expr(*value);
+                if let Some(name) = self.assignment_target_name(*target) {
+                    let _ = self.rebind_local(name, value);
+                }
+            }
+            Stmt::While {
+                condition,
+                body: loop_body,
+            } => {
+                self.lower_while_stmt(*condition, *loop_body);
+            }
+            Stmt::For {
+                pat,
+                source,
+                body: loop_body,
+            } => {
+                if !self.try_lower_for_range_stmt(*pat, *source, *loop_body) {
+                    // RFC 0006 phase-1 compatibility fallback for non-range
+                    // traversal sources that still lower via seq intrinsics.
+                    self.lower_expr(*source);
+                    self.push_scope();
+                    let hole = self.next_hole_id();
+                    let elem = self.builder.push_hole(hole, vec![], self.pat_ty(*pat));
+                    self.bind_pattern(*pat, elem);
+                    self.lower_expr(*loop_body);
+                    self.pop_scope();
+                }
+            }
+            Stmt::Break | Stmt::Continue => {
+                if let Some(loop_ctx) = self.loop_stack.last() {
+                    let target_block = match stmt {
+                        Stmt::Break => loop_ctx.break_block,
+                        Stmt::Continue => loop_ctx.continue_block,
+                        _ => unreachable!(),
+                    };
+                    let carried_names = loop_ctx.carried_names.clone();
+                    self.lower_loop_jump(target_block, &carried_names);
+                } else {
+                    let hole = self.next_hole_id();
+                    self.builder.push_hole(hole, vec![], Ty::Unit);
+                }
+            }
+            Stmt::Expr(expr) => {
+                self.lower_expr(*expr);
+            }
+        }
+    }
+
     fn lower_loop_jump(&mut self, block: crate::block::BlockId, carried_names: &[Name]) {
         self.builder.set_jump(BranchTarget {
             block,
@@ -1371,6 +1426,141 @@ impl<'a> LoweringCtx<'a> {
         }
     }
 
+    fn try_lower_range_bounds(&mut self, expr_idx: ExprIdx) -> Option<(ValueId, ValueId)> {
+        match self.body.exprs[expr_idx].clone() {
+            Expr::Binary {
+                op: BinaryOp::RangeUntil,
+                lhs,
+                rhs,
+            } => {
+                let start = self.lower_expr(lhs);
+                let end = self.lower_expr(rhs);
+                Some((start, end))
+            }
+            Expr::Block { stmts, tail } => {
+                let tail = tail?;
+                self.push_scope();
+                for stmt in &stmts {
+                    if self.block_has_terminator() {
+                        self.pop_scope();
+                        return None;
+                    }
+                    self.lower_stmt(stmt);
+                }
+                let bounds = if self.block_has_terminator() {
+                    None
+                } else {
+                    self.try_lower_range_bounds(tail)
+                };
+                self.pop_scope();
+                bounds
+            }
+            _ => None,
+        }
+    }
+
+    fn try_lower_for_range_stmt(
+        &mut self,
+        pat: kyokara_hir_def::expr::PatIdx,
+        source: ExprIdx,
+        loop_body: ExprIdx,
+    ) -> bool {
+        let Some((start, end)) = self.try_lower_range_bounds(source) else {
+            return false;
+        };
+
+        self.push_scope();
+        self.define_local(self.hidden.for_current, start);
+
+        let mut loop_state_names = vec![self.hidden.for_current];
+        loop_state_names.extend(self.collect_loop_carried_locals(loop_body));
+        let loop_state: Vec<(Name, Ty)> = loop_state_names
+            .iter()
+            .filter_map(|name| {
+                self.lookup_local(*name)
+                    .map(|vid| (*name, self.builder_value_ty(vid)))
+            })
+            .collect();
+
+        let cond_blk = self.builder.new_block(None);
+        let body_blk = self.builder.new_block(None);
+        let exit_blk = self.builder.new_block(None);
+
+        self.builder.set_jump(BranchTarget {
+            block: cond_blk,
+            args: self.current_loop_args(&loop_state_names),
+        });
+
+        let cond_params: Vec<_> = loop_state
+            .iter()
+            .map(|(name, ty)| {
+                self.builder
+                    .add_block_param(cond_blk, Some(*name), ty.clone())
+            })
+            .collect();
+        self.builder.switch_to(cond_blk);
+        for ((name, _), param) in loop_state.iter().zip(cond_params.iter()) {
+            let _ = self.rebind_local(*name, *param);
+        }
+
+        let current = self
+            .lookup_local(self.hidden.for_current)
+            .expect("for loop current must be in scope");
+        let cond_val = self
+            .builder
+            .push_binary(BinaryOp::Lt, current, end, Ty::Bool);
+        if !self.block_has_terminator() {
+            self.builder.set_branch(
+                cond_val,
+                BranchTarget {
+                    block: body_blk,
+                    args: vec![],
+                },
+                BranchTarget {
+                    block: exit_blk,
+                    args: self.current_loop_args(&loop_state_names),
+                },
+            );
+        }
+
+        self.builder.switch_to(body_blk);
+        self.loop_stack.push(super::LoopContext {
+            continue_block: cond_blk,
+            break_block: exit_blk,
+            carried_names: loop_state_names.clone(),
+        });
+        self.push_scope();
+        self.bind_pattern(pat, current);
+        let one = self.builder.push_const(Constant::Int(1), Ty::Int);
+        let next = self
+            .builder
+            .push_binary(BinaryOp::Add, current, one, Ty::Int);
+        let _ = self.rebind_local(self.hidden.for_current, next);
+        self.lower_expr(loop_body);
+        self.pop_scope();
+        self.loop_stack.pop();
+        if !self.block_has_terminator() {
+            self.builder.set_jump(BranchTarget {
+                block: cond_blk,
+                args: self.current_loop_args(&loop_state_names),
+            });
+        }
+
+        let exit_params: Vec<_> = loop_state
+            .iter()
+            .map(|(name, ty)| {
+                self.builder
+                    .add_block_param(exit_blk, Some(*name), ty.clone())
+            })
+            .collect();
+        self.builder.switch_to(exit_blk);
+        for ((name, _), param) in loop_state.iter().zip(exit_params.iter()) {
+            let _ = self.rebind_local(*name, *param);
+        }
+        self.pop_scope();
+        true
+    }
+
     // ── Block ────────────────────────────────────────────────────
 
     fn lower_block(&mut self, stmts: Vec<Stmt>, tail: Option<ExprIdx>, _ty: Ty) -> ValueId {
@@ -1380,56 +1570,7 @@ impl<'a> LoweringCtx<'a> {
             if self.block_has_terminator() {
                 break; // dead code after return
             }
-            match stmt {
-                Stmt::Let { pat, init, .. } => {
-                    let init_val = self.lower_expr(*init);
-                    self.bind_pattern(*pat, init_val);
-                }
-                Stmt::Assign { target, value } => {
-                    let value = self.lower_expr(*value);
-                    if let Some(name) = self.assignment_target_name(*target) {
-                        let _ = self.rebind_local(name, value);
-                    }
-                }
-                Stmt::While {
-                    condition,
-                    body: loop_body,
-                } => {
-                    self.lower_while_stmt(*condition, *loop_body);
-                }
-                Stmt::For {
-                    pat,
-                    source,
-                    body: loop_body,
-                } => {
-                    // RFC 0006 phase-1 compatibility: lower source/body and
-                    // seed pattern locals with a typed placeholder.
-                    self.lower_expr(*source);
-                    self.push_scope();
-                    let hole = self.next_hole_id();
-                    let elem = self.builder.push_hole(hole, vec![], self.pat_ty(*pat));
-                    self.bind_pattern(*pat, elem);
-                    self.lower_expr(*loop_body);
-                    self.pop_scope();
-                }
-                Stmt::Break | Stmt::Continue => {
-                    if let Some(loop_ctx) = self.loop_stack.last() {
-                        let target_block = match stmt {
-                            Stmt::Break => loop_ctx.break_block,
-                            Stmt::Continue => loop_ctx.continue_block,
-                            _ => unreachable!(),
-                        };
-                        let carried_names = loop_ctx.carried_names.clone();
-                        self.lower_loop_jump(target_block, &carried_names);
-                    } else {
-                        let hole = self.next_hole_id();
-                        self.builder.push_hole(hole, vec![], Ty::Unit);
-                    }
-                }
-                Stmt::Expr(expr) => {
-                    self.lower_expr(*expr);
-                }
-            }
+            self.lower_stmt(stmt);
         }
 
         let result = if self.block_has_terminator() {

@@ -48,6 +48,18 @@ impl Labels {
     }
 }
 
+pub(crate) struct HiddenNames {
+    for_current: Name,
+}
+
+impl HiddenNames {
+    fn new(interner: &mut Interner) -> Self {
+        Self {
+            for_current: Name::new(interner, "$for_cur"),
+        }
+    }
+}
+
 /// Per-function lowering context.
 pub(crate) struct LoweringCtx<'a> {
     pub(crate) builder: KirBuilder,
@@ -60,6 +72,7 @@ pub(crate) struct LoweringCtx<'a> {
     pub(crate) intrinsics: FxHashSet<Name>,
     pub(crate) hole_counter: u32,
     pub(crate) labels: Labels,
+    pub(crate) hidden: HiddenNames,
     /// Ensures expressions to emit before every return point.
     pub(crate) ensures_exprs: Vec<ExprIdx>,
     /// Pre-interned "result" name for binding the return value in ensures.
@@ -190,6 +203,7 @@ pub fn lower_function(
     interner: &mut Interner,
 ) -> KirFunction {
     let labels = Labels::new(interner);
+    let hidden = HiddenNames::new(interner);
     let fn_item = &item_tree.functions[fn_idx];
 
     // Build intrinsics set (functions without bodies).
@@ -222,6 +236,7 @@ pub fn lower_function(
         intrinsics,
         hole_counter: 0,
         labels,
+        hidden,
         ensures_exprs,
         result_name,
         ensures_vids: Vec::new(),

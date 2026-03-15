@@ -203,6 +203,27 @@ fn test_while_break_continue_lower_without_placeholder_holes() {
     assert!(out.contains("jump "), "output:\n{out}");
 }
 
+#[test]
+fn test_for_range_break_continue_lower_without_placeholder_holes() {
+    let out = lower_and_display(
+        "fn f() -> Int {\n\
+           var acc = 0\n\
+           for (x in 0..<8) {\n\
+             if (x == 6) { break }\n\
+             if ((x % 2) == 0) { continue }\n\
+             acc = acc + x\n\
+           }\n\
+           acc\n\
+         }",
+    );
+    assert!(
+        !out.contains("hole"),
+        "range for-loop lowering should not leave placeholder holes. output:\n{out}"
+    );
+    assert!(out.contains("branch "), "output:\n{out}");
+    assert!(out.contains("jump "), "output:\n{out}");
+}
+
 // ── Unary ops ────────────────────────────────────────────────────
 
 #[test]

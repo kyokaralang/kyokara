@@ -465,9 +465,7 @@ impl<'a> FuncCodegen<'a> {
                     )
                 })
             })
-            .min_by_key(|(block, total, max_side)| {
-                (*total, *max_side, block.into_raw().into_u32())
-            })
+            .min_by_key(|(block, total, max_side)| (*total, *max_side, block.into_raw().into_u32()))
             .map(|(block, _, _)| block)
     }
 

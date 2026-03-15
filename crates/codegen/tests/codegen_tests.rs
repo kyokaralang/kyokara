@@ -267,6 +267,40 @@ fn test_while_loop_break_and_continue() {
 }
 
 #[test]
+fn test_for_range_loop_break_and_continue() {
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               var acc = 0\n\
+               for (x in 0..<8) {\n\
+                 if (x == 6) { break }\n\
+                 if ((x % 2) == 0) { continue }\n\
+                 acc = acc + x\n\
+               }\n\
+               acc\n\
+             }"
+        ),
+        9
+    );
+}
+
+#[test]
+fn test_for_range_source_is_evaluated_once() {
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               var counter = 0\n\
+               for (x in { counter = counter + 1\n 0..<3 }) {\n\
+                 x\n\
+               }\n\
+               counter\n\
+             }"
+        ),
+        1
+    );
+}
+
+#[test]
 fn test_if_branch_reassignment_updates_mutable_local() {
     assert_eq!(
         run_main_i64(
