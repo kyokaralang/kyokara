@@ -143,6 +143,26 @@ fn test_string_predicates_match_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_substring_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_string(r#"fn main() -> String { "hello world".substring(0, 5) }"#),
+        "hello"
+    );
+    assert_eq!(
+        run_main_string(r#"fn main() -> String { "héllo".substring(1, 4) }"#),
+        "éll"
+    );
+    assert_eq!(
+        run_main_string(r#"fn main() -> String { "abc".substring(5, 9) }"#),
+        ""
+    );
+    assert_eq!(
+        run_main_string(r#"fn main() -> String { "abc".substring(2, 1) }"#),
+        ""
+    );
+}
+
+#[test]
 fn test_string_concat_roundtrips_from_guest_memory() {
     assert_eq!(
         run_main_string(r#"fn main() -> String { "foo".concat("bar") }"#),
