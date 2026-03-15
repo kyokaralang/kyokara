@@ -13,10 +13,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use wasm_encoder::{BlockType, Function, Instruction, MemArg, ValType};
 
 use crate::error::CodegenError;
-use crate::wasm::ModuleCtx;
 use crate::wasm::control::reverse_postorder;
 use crate::wasm::layout::{self, AdtLayout};
 use crate::wasm::ty::{is_i32_type, ty_to_valtype};
+use crate::wasm::{FnTypeKey, ModuleCtx};
 
 /// Per-function codegen state.
 pub struct FuncCodegen<'a> {
@@ -129,7 +129,8 @@ impl<'a> FuncCodegen<'a> {
                 ..
             } => ValType::I64,
             Inst::Assert { .. } => ValType::I32, // Unit
-            _ => ValType::I32,                   // default
+            Inst::FnRef { .. } => ValType::I32,
+            _ => ValType::I32, // default
         }
     }
 
@@ -1013,9 +1014,13 @@ impl<'a> FuncCodegen<'a> {
             }
 
             Inst::FnRef { .. } => {
-                return Err(CodegenError::UnsupportedInstruction(
-                    "FnRef (closures deferred)".into(),
-                ));
+                if let Inst::FnRef { name } = &vdef.inst {
+                    let slot = self.ctx.fn_table_map.get(name).ok_or_else(|| {
+                        CodegenError::MissingFunction(name.resolve(self.ctx.interner).to_owned())
+                    })?;
+                    func.instruction(&Instruction::I32Const(*slot as i32));
+                    func.instruction(&Instruction::LocalSet(local_idx));
+                }
             }
         }
 
@@ -1342,9 +1347,24 @@ impl<'a> FuncCodegen<'a> {
                 func.instruction(&Instruction::Call(*fn_idx));
                 Ok(())
             }
-            CallTarget::Indirect(_) => Err(CodegenError::UnsupportedInstruction(
-                "indirect calls (closures deferred)".into(),
-            )),
+            CallTarget::Indirect(callee) => {
+                for &arg in args {
+                    self.emit_get(func, arg);
+                }
+                self.emit_get(func, *callee);
+                let sig = FnTypeKey::from_ty(self.value_ty(*callee))?;
+                let type_index = self.ctx.fn_type_map.get(&sig).ok_or_else(|| {
+                    CodegenError::UnsupportedInstruction(format!(
+                        "missing wasm function type for indirect callee {:?}",
+                        self.value_ty(*callee)
+                    ))
+                })?;
+                func.instruction(&Instruction::CallIndirect {
+                    type_index: *type_index,
+                    table_index: 0,
+                });
+                Ok(())
+            }
             CallTarget::Intrinsic(name) => Err(CodegenError::UnsupportedInstruction(format!(
                 "intrinsic {name} (deferred)"
             ))),

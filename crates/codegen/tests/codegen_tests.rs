@@ -388,6 +388,32 @@ fn test_multi_function() {
 }
 
 #[test]
+fn test_named_function_ref_local_indirect_call() {
+    assert_eq!(
+        run_main_i64(
+            "fn double(x: Int) -> Int { x * 2 }\n\
+             fn main() -> Int {\n\
+               let f = double\n\
+               f(7)\n\
+             }"
+        ),
+        14
+    );
+}
+
+#[test]
+fn test_named_function_ref_passed_to_higher_order_fn() {
+    assert_eq!(
+        run_main_i64(
+            "fn apply(f: fn(Int) -> Int, x: Int) -> Int { f(x) }\n\
+             fn double(x: Int) -> Int { x * 2 }\n\
+             fn main() -> Int { apply(double, 7) }"
+        ),
+        14
+    );
+}
+
+#[test]
 fn test_recursive_like_chain() {
     assert_eq!(
         run_main_i64(

@@ -8,18 +8,42 @@ pub mod ty;
 
 use kyokara_hir_def::item_tree::{ItemTree, TypeItemIdx};
 use kyokara_hir_def::name::Name;
+use kyokara_hir_ty::ty::Ty;
 use kyokara_intern::Interner;
 use kyokara_kir::KirModule;
 use rustc_hash::FxHashMap;
 use wasm_encoder::{
-    CodeSection, ExportKind, ExportSection, FunctionSection, GlobalSection, GlobalType,
-    MemorySection, MemoryType, Module, TypeSection, ValType,
+    CodeSection, ElementSection, Elements, ExportKind, ExportSection, FunctionSection,
+    GlobalSection, GlobalType, MemorySection, MemoryType, Module, RefType, TableSection, TableType,
+    TypeSection, ValType,
 };
 
 use crate::error::CodegenError;
 use crate::wasm::func::FuncCodegen;
 use crate::wasm::layout::AdtLayout;
 use crate::wasm::ty::ty_to_valtype;
+use std::borrow::Cow;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FnTypeKey {
+    pub params: Vec<ValType>,
+    pub results: Vec<ValType>,
+}
+
+impl FnTypeKey {
+    pub fn from_ty(ty: &Ty) -> Result<Self, CodegenError> {
+        let Ty::Fn { params, ret } = ty else {
+            return Err(CodegenError::UnsupportedType(format!("{ty:?}")));
+        };
+        Ok(Self {
+            params: params
+                .iter()
+                .map(ty_to_valtype)
+                .collect::<Result<Vec<_>, _>>()?,
+            results: vec![ty_to_valtype(ret)?],
+        })
+    }
+}
 
 /// Shared state during module codegen.
 pub struct ModuleCtx<'a> {
@@ -27,6 +51,10 @@ pub struct ModuleCtx<'a> {
     pub interner: &'a Interner,
     /// KIR FnId (name) → WASM function index.
     pub fn_name_map: FxHashMap<Name, u32>,
+    /// KIR function name -> table slot for first-class function references.
+    pub fn_table_map: FxHashMap<Name, u32>,
+    /// Structural function signature -> type section index.
+    pub fn_type_map: FxHashMap<FnTypeKey, u32>,
     /// ADT type index → precomputed layout.
     pub adt_layouts: FxHashMap<TypeItemIdx, AdtLayout>,
     /// WASM function index of the $alloc builtin.
@@ -47,21 +75,17 @@ pub fn compile_module(
 
     // Build function name → index map.
     let mut fn_name_map = FxHashMap::default();
+    let mut fn_table_map = FxHashMap::default();
     let mut fn_order = Vec::new(); // (kir FnId, wasm index)
 
-    for (fn_id, kir_func) in kir.functions.iter() {
+    for (table_idx, (fn_id, kir_func)) in kir.functions.iter().enumerate() {
         fn_name_map.insert(kir_func.name, next_fn_index);
+        fn_table_map.insert(kir_func.name, table_idx as u32);
         fn_order.push((fn_id, next_fn_index));
         next_fn_index += 1;
     }
 
-    let ctx = ModuleCtx {
-        item_tree,
-        interner,
-        fn_name_map,
-        adt_layouts,
-        alloc_fn_index,
-    };
+    let mut fn_type_map = FxHashMap::default();
 
     // ── Type section ──────────────────────────────────────────────
 
@@ -70,7 +94,8 @@ pub fn compile_module(
     // Type 0: alloc(i32) -> i32
     types.ty().function([ValType::I32], [ValType::I32]);
 
-    // Build type index for each KIR function.
+    // Build type index for each KIR function, deduplicated by structural
+    // signature so indirect calls can reuse the same type index.
     let mut fn_type_indices = Vec::new();
     for (fn_id, _wasm_idx) in &fn_order {
         let kir_func = &kir.functions[*fn_id];
@@ -79,18 +104,31 @@ pub fn compile_module(
             .iter()
             .map(|(_, ty)| ty_to_valtype(ty))
             .collect::<Result<_, _>>()?;
-        let results: Vec<ValType> = if matches!(kir_func.ret_ty, kyokara_hir_ty::ty::Ty::Unit) {
-            // Unit-returning functions have no WASM return value... actually,
-            // we DO return i32(0) for Unit, so include it.
-            vec![ty_to_valtype(&kir_func.ret_ty)?]
-        } else {
-            vec![ty_to_valtype(&kir_func.ret_ty)?]
+        let results = vec![ty_to_valtype(&kir_func.ret_ty)?];
+        let key = FnTypeKey {
+            params: params.clone(),
+            results: results.clone(),
         };
-
-        let type_idx = types.len();
-        types.ty().function(params, results);
+        let type_idx = if let Some(&existing) = fn_type_map.get(&key) {
+            existing
+        } else {
+            let type_idx = types.len();
+            types.ty().function(params, results);
+            fn_type_map.insert(key, type_idx);
+            type_idx
+        };
         fn_type_indices.push(type_idx);
     }
+
+    let ctx = ModuleCtx {
+        item_tree,
+        interner,
+        fn_name_map,
+        fn_table_map,
+        fn_type_map,
+        adt_layouts,
+        alloc_fn_index,
+    };
 
     // ── Function section ──────────────────────────────────────────
 
@@ -102,6 +140,26 @@ pub fn compile_module(
     // User functions
     for &type_idx in &fn_type_indices {
         functions.function(type_idx);
+    }
+
+    // ── Table / element sections ─────────────────────────────────
+
+    let mut tables = TableSection::new();
+    let mut elements = ElementSection::new();
+    if !fn_order.is_empty() {
+        tables.table(TableType {
+            element_type: RefType::FUNCREF,
+            table64: false,
+            minimum: fn_order.len() as u64,
+            maximum: Some(fn_order.len() as u64),
+            shared: false,
+        });
+        let function_indices: Vec<u32> = fn_order.iter().map(|(_, wasm_idx)| *wasm_idx).collect();
+        elements.active(
+            None,
+            &wasm_encoder::ConstExpr::i32_const(0),
+            Elements::Functions(Cow::Owned(function_indices)),
+        );
     }
 
     // ── Memory section ────────────────────────────────────────────
@@ -162,9 +220,15 @@ pub fn compile_module(
     let mut module = Module::new();
     module.section(&types);
     module.section(&functions);
+    if !tables.is_empty() {
+        module.section(&tables);
+    }
     module.section(&memories);
     module.section(&globals);
     module.section(&exports);
+    if !elements.is_empty() {
+        module.section(&elements);
+    }
     module.section(&code);
 
     Ok(module.finish())
