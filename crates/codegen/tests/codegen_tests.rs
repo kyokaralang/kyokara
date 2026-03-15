@@ -220,6 +220,70 @@ fn test_let_chain() {
     );
 }
 
+#[test]
+fn test_mutable_local_reassignment() {
+    assert_eq!(
+        run_main_i64("fn main() -> Int { var x = 1\n x = x + 4\n x }"),
+        5
+    );
+}
+
+#[test]
+fn test_while_loop_accumulates_mutable_state() {
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               var i = 0\n\
+               var acc = 0\n\
+               while (i < 5) {\n\
+                 acc = acc + i\n\
+                 i = i + 1\n\
+               }\n\
+               acc\n\
+             }"
+        ),
+        10
+    );
+}
+
+#[test]
+fn test_while_loop_break_and_continue() {
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               var i = 0\n\
+               var acc = 0\n\
+               while (i < 8) {\n\
+                 i = i + 1\n\
+                 if (i == 7) { break }\n\
+                 if ((i % 2) == 0) { continue }\n\
+                 acc = acc + i\n\
+               }\n\
+               acc\n\
+             }"
+        ),
+        9
+    );
+}
+
+#[test]
+fn test_if_branch_reassignment_updates_mutable_local() {
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               var x = 0\n\
+               if (true) {\n\
+                 x = 5\n\
+               } else {\n\
+                 x = 9\n\
+               }\n\
+               x\n\
+             }"
+        ),
+        5
+    );
+}
+
 // ── If/else ───────────────────────────────────────────────────────
 
 #[test]

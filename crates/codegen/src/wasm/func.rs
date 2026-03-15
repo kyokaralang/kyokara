@@ -1,5 +1,7 @@
 //! Per-function WASM code generation.
 
+use std::collections::VecDeque;
+
 use kyokara_hir_def::expr::{BinaryOp, UnaryOp};
 use kyokara_hir_def::name::Name;
 use kyokara_hir_ty::ty::Ty;
@@ -175,15 +177,34 @@ impl<'a> FuncCodegen<'a> {
         emitted.insert(block_id, ());
 
         let block = &self.kir_func.blocks[block_id];
-
-        for &vid in &block.body {
-            self.emit_inst(func, vid)?;
-        }
-
         let term = block
             .terminator
             .as_ref()
             .ok_or_else(|| CodegenError::MissingTerminator("block has no terminator".into()))?;
+
+        if let Terminator::Branch {
+            condition,
+            then_target,
+            else_target,
+        } = term
+            && let Some((body_target, exit_target)) =
+                self.classify_loop_branch(block_id, then_target, else_target)
+        {
+            self.emit_loop(
+                func,
+                block_id,
+                *condition,
+                body_target,
+                exit_target,
+                stop_at,
+                emitted,
+            )?;
+            return Ok(());
+        }
+
+        for &vid in &block.body {
+            self.emit_inst(func, vid)?;
+        }
 
         match term {
             Terminator::Return(val) => {
@@ -214,6 +235,268 @@ impl<'a> FuncCodegen<'a> {
         }
 
         Ok(())
+    }
+
+    fn classify_loop_branch<'b>(
+        &self,
+        header: BlockId,
+        then_target: &'b kyokara_kir::block::BranchTarget,
+        else_target: &'b kyokara_kir::block::BranchTarget,
+    ) -> Option<(
+        &'b kyokara_kir::block::BranchTarget,
+        &'b kyokara_kir::block::BranchTarget,
+    )> {
+        if self.kir_func.blocks[header].params.is_empty() {
+            return None;
+        }
+        let then_reaches_header = self
+            .reachable_block_distances(then_target.block)
+            .contains_key(&header);
+        let else_reaches_header = self
+            .reachable_block_distances(else_target.block)
+            .contains_key(&header);
+        match (then_reaches_header, else_reaches_header) {
+            (true, false) => Some((then_target, else_target)),
+            (false, true) => Some((else_target, then_target)),
+            _ => None,
+        }
+    }
+
+    fn emit_loop(
+        &self,
+        func: &mut Function,
+        header: BlockId,
+        condition: ValueId,
+        body_target: &kyokara_kir::block::BranchTarget,
+        exit_target: &kyokara_kir::block::BranchTarget,
+        outer_stop: Option<BlockId>,
+        emitted: &mut FxHashMap<BlockId, ()>,
+    ) -> Result<(), CodegenError> {
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+
+        let header_block = &self.kir_func.blocks[header];
+        for &vid in &header_block.body {
+            self.emit_inst(func, vid)?;
+        }
+
+        self.emit_get(func, condition);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_block_param_stores(func, body_target)?;
+
+        let mut loop_emitted = emitted.clone();
+        self.emit_loop_block_chain(
+            func,
+            body_target.block,
+            header,
+            exit_target.block,
+            1,
+            2,
+            &mut loop_emitted,
+        )?;
+        func.instruction(&Instruction::Else);
+        self.emit_block_param_stores(func, exit_target)?;
+        func.instruction(&Instruction::Br(2));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        emitted.extend(loop_emitted);
+        self.emit_block_chain(func, exit_target.block, outer_stop, emitted)?;
+        Ok(())
+    }
+
+    fn emit_loop_block_chain(
+        &self,
+        func: &mut Function,
+        block_id: BlockId,
+        header: BlockId,
+        exit: BlockId,
+        continue_depth: u32,
+        break_depth: u32,
+        emitted: &mut FxHashMap<BlockId, ()>,
+    ) -> Result<(), CodegenError> {
+        if block_id == header {
+            func.instruction(&Instruction::Br(continue_depth));
+            return Ok(());
+        }
+        if block_id == exit {
+            func.instruction(&Instruction::Br(break_depth));
+            return Ok(());
+        }
+        if emitted.contains_key(&block_id) {
+            return Ok(());
+        }
+        emitted.insert(block_id, ());
+
+        let block = &self.kir_func.blocks[block_id];
+        for &vid in &block.body {
+            self.emit_inst(func, vid)?;
+        }
+
+        let term = block
+            .terminator
+            .as_ref()
+            .ok_or_else(|| CodegenError::MissingTerminator("block has no terminator".into()))?;
+
+        match term {
+            Terminator::Return(val) => {
+                self.emit_get(func, *val);
+                func.instruction(&Instruction::Return);
+            }
+            Terminator::Unreachable => {
+                func.instruction(&Instruction::Unreachable);
+            }
+            Terminator::Jump(target) => {
+                self.emit_block_param_stores(func, target)?;
+                self.emit_loop_block_chain(
+                    func,
+                    target.block,
+                    header,
+                    exit,
+                    continue_depth,
+                    break_depth,
+                    emitted,
+                )?;
+            }
+            Terminator::Branch {
+                condition,
+                then_target,
+                else_target,
+            } => {
+                self.emit_loop_branch(
+                    func,
+                    *condition,
+                    then_target,
+                    else_target,
+                    header,
+                    exit,
+                    continue_depth,
+                    break_depth,
+                    emitted,
+                )?;
+            }
+            Terminator::Switch { .. } => {
+                return Err(CodegenError::UnsupportedInstruction(
+                    "loop-local switch codegen (deferred)".into(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn emit_loop_branch(
+        &self,
+        func: &mut Function,
+        condition: ValueId,
+        then_target: &kyokara_kir::block::BranchTarget,
+        else_target: &kyokara_kir::block::BranchTarget,
+        header: BlockId,
+        exit: BlockId,
+        continue_depth: u32,
+        break_depth: u32,
+        emitted: &mut FxHashMap<BlockId, ()>,
+    ) -> Result<(), CodegenError> {
+        let merge_id = self.find_loop_branch_merge(then_target, else_target, header, exit);
+
+        self.emit_get(func, condition);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_loop_branch_arm(
+            func,
+            then_target,
+            merge_id,
+            header,
+            exit,
+            continue_depth + 1,
+            break_depth + 1,
+            emitted,
+        )?;
+        func.instruction(&Instruction::Else);
+        self.emit_loop_branch_arm(
+            func,
+            else_target,
+            merge_id,
+            header,
+            exit,
+            continue_depth + 1,
+            break_depth + 1,
+            emitted,
+        )?;
+        func.instruction(&Instruction::End);
+
+        if let Some(merge_id) = merge_id {
+            self.emit_loop_block_chain(
+                func,
+                merge_id,
+                header,
+                exit,
+                continue_depth,
+                break_depth,
+                emitted,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn find_loop_branch_merge(
+        &self,
+        then_target: &kyokara_kir::block::BranchTarget,
+        else_target: &kyokara_kir::block::BranchTarget,
+        header: BlockId,
+        exit: BlockId,
+    ) -> Option<BlockId> {
+        let then_reachable = self.reachable_block_distances(then_target.block);
+        let else_reachable = self.reachable_block_distances(else_target.block);
+
+        then_reachable
+            .iter()
+            .filter_map(|(block, then_dist)| {
+                if *block == header || *block == exit {
+                    return None;
+                }
+                else_reachable.get(block).map(|else_dist| {
+                    (
+                        *block,
+                        *then_dist + *else_dist,
+                        (*then_dist).max(*else_dist),
+                    )
+                })
+            })
+            .min_by_key(|(block, total, max_side)| {
+                (*total, *max_side, block.into_raw().into_u32())
+            })
+            .map(|(block, _, _)| block)
+    }
+
+    fn emit_loop_branch_arm(
+        &self,
+        func: &mut Function,
+        target: &kyokara_kir::block::BranchTarget,
+        merge_id: Option<BlockId>,
+        header: BlockId,
+        exit: BlockId,
+        continue_depth: u32,
+        break_depth: u32,
+        emitted: &mut FxHashMap<BlockId, ()>,
+    ) -> Result<(), CodegenError> {
+        if Some(target.block) == merge_id {
+            self.emit_block_param_stores(func, target)?;
+            return Ok(());
+        }
+
+        self.emit_block_param_stores(func, target)?;
+        self.emit_loop_block_chain(
+            func,
+            target.block,
+            header,
+            exit,
+            continue_depth,
+            break_depth,
+            emitted,
+        )
     }
 
     fn emit_branch(
@@ -333,12 +616,27 @@ impl<'a> FuncCodegen<'a> {
         let then_chain = self.follow_chain(then_target.block);
         let else_chain = self.follow_chain(else_target.block);
 
-        // Find the first block in then_chain that also appears in else_chain.
         then_chain.iter().find(|t| else_chain.contains(t)).copied()
     }
 
-    /// Follow a chain of blocks until we reach a Return/Unreachable/Branch.
-    /// Returns the ordered list of blocks visited via Jump terminators.
+    fn reachable_block_distances(&self, start: BlockId) -> FxHashMap<BlockId, usize> {
+        let mut distances = FxHashMap::default();
+        let mut queue = VecDeque::new();
+        distances.insert(start, 0);
+        queue.push_back(start);
+
+        while let Some(block_id) = queue.pop_front() {
+            let distance = distances[&block_id];
+            for succ in self.successor_blocks(block_id) {
+                if distances.insert(succ, distance + 1).is_none() {
+                    queue.push_back(succ);
+                }
+            }
+        }
+
+        distances
+    }
+
     fn follow_chain(&self, start: BlockId) -> Vec<BlockId> {
         let mut chain = Vec::new();
         let mut current = start;
@@ -358,7 +656,6 @@ impl<'a> FuncCodegen<'a> {
                     else_target,
                     ..
                 }) => {
-                    // Look through the branch to find its merge.
                     if let Some(merge) = self.find_branch_merge_deep(then_target, else_target) {
                         chain.push(merge);
                         current = merge;
@@ -367,7 +664,6 @@ impl<'a> FuncCodegen<'a> {
                     break;
                 }
                 Some(Terminator::Switch { cases, default, .. }) => {
-                    // Look through the switch to find its merge.
                     if let Some(merge) = self.find_switch_merge(cases, default.as_ref()) {
                         chain.push(merge);
                         current = merge;
@@ -379,6 +675,28 @@ impl<'a> FuncCodegen<'a> {
             }
         }
         chain
+    }
+
+    fn successor_blocks(&self, block_id: BlockId) -> Vec<BlockId> {
+        let Some(term) = self.kir_func.blocks[block_id].terminator.as_ref() else {
+            return Vec::new();
+        };
+        match term {
+            Terminator::Return(_) | Terminator::Unreachable => Vec::new(),
+            Terminator::Jump(target) => vec![target.block],
+            Terminator::Branch {
+                then_target,
+                else_target,
+                ..
+            } => vec![then_target.block, else_target.block],
+            Terminator::Switch { cases, default, .. } => {
+                let mut succs: Vec<_> = cases.iter().map(|case| case.target.block).collect();
+                if let Some(default) = default {
+                    succs.push(default.block);
+                }
+                succs
+            }
+        }
     }
 
     fn emit_switch(
@@ -597,8 +915,6 @@ impl<'a> FuncCodegen<'a> {
         }
 
         let first_chain = chains.first()?;
-
-        // Find the first block in the first chain that appears in all others.
         for block in first_chain {
             if chains[1..].iter().all(|c| c.contains(block)) {
                 return Some(*block);

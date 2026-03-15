@@ -161,6 +161,48 @@ fn test_loop_statements_lower_with_minimal_kir_compatibility_rfc_0006() {
     assert!(out.contains("@f"), "output:\n{out}");
 }
 
+#[test]
+fn test_mutable_reassignment_and_while_lower_without_placeholder_holes() {
+    let out = lower_and_display(
+        "fn f() -> Int {\n\
+           var acc = 0\n\
+           while (acc < 4) {\n\
+             acc = acc + 1\n\
+           }\n\
+           acc\n\
+         }",
+    );
+    assert!(
+        !out.contains("hole"),
+        "while/assignment lowering should not leave placeholder holes. output:\n{out}"
+    );
+    assert!(out.contains("branch "), "output:\n{out}");
+    assert!(out.contains("jump "), "output:\n{out}");
+}
+
+#[test]
+fn test_while_break_continue_lower_without_placeholder_holes() {
+    let out = lower_and_display(
+        "fn f() -> Int {\n\
+           var i = 0\n\
+           var acc = 0\n\
+           while (i < 8) {\n\
+             i = i + 1\n\
+             if (i == 6) { break }\n\
+             if ((i % 2) == 0) { continue }\n\
+             acc = acc + i\n\
+           }\n\
+           acc\n\
+         }",
+    );
+    assert!(
+        !out.contains("hole"),
+        "break/continue lowering should not leave placeholder holes. output:\n{out}"
+    );
+    assert!(out.contains("branch "), "output:\n{out}");
+    assert!(out.contains("jump "), "output:\n{out}");
+}
+
 // ── Unary ops ────────────────────────────────────────────────────
 
 #[test]

@@ -21,6 +21,7 @@ use kyokara_hir_ty::ty::Ty;
 use kyokara_intern::Interner;
 
 use crate::KirModule;
+use crate::block::BlockId;
 use crate::build::KirBuilder;
 use crate::function::{KirContracts, KirFunction};
 use crate::inst::Inst;
@@ -67,6 +68,14 @@ pub(crate) struct LoweringCtx<'a> {
     pub(crate) ensures_vids: Vec<ValueId>,
     /// Snapshot of param bindings at function entry, used for old() resolution.
     pub(crate) old_scope: FxHashMap<Name, ValueId>,
+    /// Active loop targets for lowering `break` / `continue`.
+    pub(crate) loop_stack: Vec<LoopContext>,
+}
+
+pub(crate) struct LoopContext {
+    pub(crate) continue_block: BlockId,
+    pub(crate) break_block: BlockId,
+    pub(crate) carried_names: Vec<Name>,
 }
 
 impl<'a> LoweringCtx<'a> {
@@ -84,6 +93,16 @@ impl<'a> LoweringCtx<'a> {
         if let Some(scope) = self.locals.last_mut() {
             scope.insert(name, vid);
         }
+    }
+
+    pub(crate) fn rebind_local(&mut self, name: Name, vid: ValueId) -> bool {
+        for scope in self.locals.iter_mut().rev() {
+            if let Some(slot) = scope.get_mut(&name) {
+                *slot = vid;
+                return true;
+            }
+        }
+        false
     }
 
     pub(crate) fn lookup_local(&self, name: Name) -> Option<ValueId> {
@@ -207,6 +226,7 @@ pub fn lower_function(
         result_name,
         ensures_vids: Vec::new(),
         old_scope: FxHashMap::default(),
+        loop_stack: Vec::new(),
     };
 
     // Create entry block.

@@ -10,7 +10,9 @@ use kyokara_hir_def::item_tree::TypeDefKind;
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::path::Path;
+use kyokara_hir_def::resolver::ResolvedName;
 use kyokara_hir_def::resolver::{PrimitiveType, ReceiverKey, StaticOwnerKey};
+use kyokara_hir_def::scope::ScopeDef;
 use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_hir_ty::ty::Ty;
 
@@ -738,6 +740,30 @@ impl<'a> LoweringCtx<'a> {
         else_branch: Option<ExprIdx>,
         ty: Ty,
     ) -> ValueId {
+        let mut seen = FxHashSet::default();
+        let mut carried_names = Vec::new();
+        self.collect_assigned_outer_locals_in_expr(
+            then_branch,
+            then_branch,
+            &mut seen,
+            &mut carried_names,
+        );
+        if let Some(else_branch) = else_branch {
+            self.collect_assigned_outer_locals_in_expr(
+                else_branch,
+                else_branch,
+                &mut seen,
+                &mut carried_names,
+            );
+        }
+        let carried: Vec<(Name, Ty)> = carried_names
+            .iter()
+            .filter_map(|name| {
+                self.lookup_local(*name)
+                    .map(|vid| (*name, self.builder_value_ty(vid)))
+            })
+            .collect();
+        let saved_locals = self.locals.clone();
         let cond_val = self.lower_expr(condition);
 
         let then_blk = self.builder.new_block(Some(self.labels.then_));
@@ -761,13 +787,16 @@ impl<'a> LoweringCtx<'a> {
         let then_val = self.lower_expr(then_branch);
         let then_term = self.block_has_terminator();
         if !then_term {
+            let mut args = vec![then_val];
+            args.extend(self.current_loop_args(&carried_names));
             self.builder.set_jump(BranchTarget {
                 block: merge_blk,
-                args: vec![then_val],
+                args,
             });
         }
 
         // Else branch.
+        self.locals = saved_locals.clone();
         self.builder.switch_to(else_blk);
         let else_val = match else_branch {
             Some(e) => self.lower_expr(e),
@@ -775,15 +804,28 @@ impl<'a> LoweringCtx<'a> {
         };
         let else_term = self.block_has_terminator();
         if !else_term {
+            let mut args = vec![else_val];
+            args.extend(self.current_loop_args(&carried_names));
             self.builder.set_jump(BranchTarget {
                 block: merge_blk,
-                args: vec![else_val],
+                args,
             });
         }
 
         // Merge block.
         let result = self.builder.add_block_param(merge_blk, None, ty);
+        let carried_params: Vec<_> = carried
+            .iter()
+            .map(|(name, ty)| {
+                self.builder
+                    .add_block_param(merge_blk, Some(*name), ty.clone())
+            })
+            .collect();
+        self.locals = saved_locals;
         self.builder.switch_to(merge_blk);
+        for ((name, _), param) in carried.iter().zip(carried_params.iter()) {
+            let _ = self.rebind_local(*name, *param);
+        }
         if then_term && else_term {
             self.builder.set_unreachable();
         }
@@ -1105,6 +1147,230 @@ impl<'a> LoweringCtx<'a> {
         self.builder.value_ty(vid).clone()
     }
 
+    fn assignment_target_name(&self, expr_idx: ExprIdx) -> Option<Name> {
+        let Expr::Path(path) = &self.body.exprs[expr_idx] else {
+            return None;
+        };
+        path.is_single().then_some(path.segments[0])
+    }
+
+    fn assignment_target_name_for_loop(
+        &self,
+        expr_idx: ExprIdx,
+        _loop_body: ExprIdx,
+    ) -> Option<Name> {
+        let name = self.assignment_target_name(expr_idx)?;
+        let resolved = self
+            .body
+            .resolve_name_at(self.module_scope, expr_idx, name)?;
+        match resolved.resolved {
+            ResolvedName::Local(ScopeDef::Local(_)) => {
+                let (_, meta) = resolved.local_binding?;
+                if !meta.mutable { None } else { Some(name) }
+            }
+            _ => None,
+        }
+    }
+
+    fn collect_loop_carried_locals(&self, loop_body: ExprIdx) -> Vec<Name> {
+        let mut seen = FxHashSet::default();
+        let mut names = Vec::new();
+        self.collect_assigned_outer_locals_in_expr(loop_body, loop_body, &mut seen, &mut names);
+        names
+    }
+
+    fn collect_assigned_outer_locals_in_expr(
+        &self,
+        expr_idx: ExprIdx,
+        loop_body: ExprIdx,
+        seen: &mut FxHashSet<Name>,
+        out: &mut Vec<Name>,
+    ) {
+        match &self.body.exprs[expr_idx] {
+            Expr::Literal(_) | Expr::Path(_) | Expr::Hole | Expr::Missing => {}
+            Expr::Binary { lhs, rhs, .. } => {
+                self.collect_assigned_outer_locals_in_expr(*lhs, loop_body, seen, out);
+                self.collect_assigned_outer_locals_in_expr(*rhs, loop_body, seen, out);
+            }
+            Expr::Unary { operand, .. } | Expr::Old(operand) | Expr::Return(Some(operand)) => {
+                self.collect_assigned_outer_locals_in_expr(*operand, loop_body, seen, out);
+            }
+            Expr::Return(None) => {}
+            Expr::Call { callee, args } => {
+                self.collect_assigned_outer_locals_in_expr(*callee, loop_body, seen, out);
+                for arg in args {
+                    let idx = match arg {
+                        CallArg::Positional(idx) => *idx,
+                        CallArg::Named { value, .. } => *value,
+                    };
+                    self.collect_assigned_outer_locals_in_expr(idx, loop_body, seen, out);
+                }
+            }
+            Expr::Field { base, .. } => {
+                self.collect_assigned_outer_locals_in_expr(*base, loop_body, seen, out);
+            }
+            Expr::Index { base, index } => {
+                self.collect_assigned_outer_locals_in_expr(*base, loop_body, seen, out);
+                self.collect_assigned_outer_locals_in_expr(*index, loop_body, seen, out);
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.collect_assigned_outer_locals_in_expr(*condition, loop_body, seen, out);
+                self.collect_assigned_outer_locals_in_expr(*then_branch, loop_body, seen, out);
+                if let Some(else_branch) = else_branch {
+                    self.collect_assigned_outer_locals_in_expr(*else_branch, loop_body, seen, out);
+                }
+            }
+            Expr::Match { scrutinee, arms } => {
+                self.collect_assigned_outer_locals_in_expr(*scrutinee, loop_body, seen, out);
+                for arm in arms {
+                    self.collect_assigned_outer_locals_in_expr(arm.body, loop_body, seen, out);
+                }
+            }
+            Expr::Block { stmts, tail } => {
+                self.collect_assigned_outer_locals_in_stmts(stmts, loop_body, seen, out);
+                if let Some(tail) = tail {
+                    self.collect_assigned_outer_locals_in_expr(*tail, loop_body, seen, out);
+                }
+            }
+            Expr::RecordLit { fields, .. } => {
+                for (_, value) in fields {
+                    self.collect_assigned_outer_locals_in_expr(*value, loop_body, seen, out);
+                }
+            }
+            Expr::Lambda { .. } => {}
+        }
+    }
+
+    fn collect_assigned_outer_locals_in_stmts(
+        &self,
+        stmts: &[Stmt],
+        loop_body: ExprIdx,
+        seen: &mut FxHashSet<Name>,
+        out: &mut Vec<Name>,
+    ) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Let { init, .. } => {
+                    self.collect_assigned_outer_locals_in_expr(*init, loop_body, seen, out);
+                }
+                Stmt::Assign { target, value } => {
+                    if let Some(name) = self.assignment_target_name_for_loop(*target, loop_body)
+                        && seen.insert(name)
+                    {
+                        out.push(name);
+                    }
+                    self.collect_assigned_outer_locals_in_expr(*value, loop_body, seen, out);
+                }
+                Stmt::While { condition, body } => {
+                    self.collect_assigned_outer_locals_in_expr(*condition, loop_body, seen, out);
+                    self.collect_assigned_outer_locals_in_expr(*body, loop_body, seen, out);
+                }
+                Stmt::For { source, body, .. } => {
+                    self.collect_assigned_outer_locals_in_expr(*source, loop_body, seen, out);
+                    self.collect_assigned_outer_locals_in_expr(*body, loop_body, seen, out);
+                }
+                Stmt::Break | Stmt::Continue => {}
+                Stmt::Expr(expr) => {
+                    self.collect_assigned_outer_locals_in_expr(*expr, loop_body, seen, out);
+                }
+            }
+        }
+    }
+
+    fn current_loop_args(&self, carried_names: &[Name]) -> Vec<ValueId> {
+        carried_names
+            .iter()
+            .filter_map(|name| self.lookup_local(*name))
+            .collect()
+    }
+
+    fn lower_loop_jump(&mut self, block: crate::block::BlockId, carried_names: &[Name]) {
+        self.builder.set_jump(BranchTarget {
+            block,
+            args: self.current_loop_args(carried_names),
+        });
+        let dead_blk = self.builder.new_block(None);
+        self.builder.switch_to(dead_blk);
+        self.builder.set_unreachable();
+    }
+
+    fn lower_while_stmt(&mut self, condition: ExprIdx, loop_body: ExprIdx) {
+        let carried_names = self.collect_loop_carried_locals(loop_body);
+        let carried: Vec<(Name, Ty)> = carried_names
+            .iter()
+            .filter_map(|name| {
+                self.lookup_local(*name)
+                    .map(|vid| (*name, self.builder_value_ty(vid)))
+            })
+            .collect();
+        let cond_blk = self.builder.new_block(None);
+        let body_blk = self.builder.new_block(None);
+        let exit_blk = self.builder.new_block(None);
+
+        self.builder.set_jump(BranchTarget {
+            block: cond_blk,
+            args: self.current_loop_args(&carried_names),
+        });
+
+        let cond_params: Vec<_> = carried
+            .iter()
+            .map(|(name, ty)| {
+                self.builder
+                    .add_block_param(cond_blk, Some(*name), ty.clone())
+            })
+            .collect();
+        self.builder.switch_to(cond_blk);
+        for ((name, _), param) in carried.iter().zip(cond_params.iter()) {
+            let _ = self.rebind_local(*name, *param);
+        }
+
+        let cond_val = self.lower_expr(condition);
+        if !self.block_has_terminator() {
+            self.builder.set_branch(
+                cond_val,
+                BranchTarget {
+                    block: body_blk,
+                    args: vec![],
+                },
+                BranchTarget {
+                    block: exit_blk,
+                    args: self.current_loop_args(&carried_names),
+                },
+            );
+        }
+
+        self.builder.switch_to(body_blk);
+        self.loop_stack.push(super::LoopContext {
+            continue_block: cond_blk,
+            break_block: exit_blk,
+            carried_names: carried_names.clone(),
+        });
+        self.lower_expr(loop_body);
+        self.loop_stack.pop();
+        if !self.block_has_terminator() {
+            self.builder.set_jump(BranchTarget {
+                block: cond_blk,
+                args: self.current_loop_args(&carried_names),
+            });
+        }
+
+        let exit_params: Vec<_> = carried
+            .iter()
+            .map(|(name, ty)| {
+                self.builder
+                    .add_block_param(exit_blk, Some(*name), ty.clone())
+            })
+            .collect();
+        self.builder.switch_to(exit_blk);
+        for ((name, _), param) in carried.iter().zip(exit_params.iter()) {
+            let _ = self.rebind_local(*name, *param);
+        }
+    }
+
     // ── Block ────────────────────────────────────────────────────
 
     fn lower_block(&mut self, stmts: Vec<Stmt>, tail: Option<ExprIdx>, _ty: Ty) -> ValueId {
@@ -1119,17 +1385,17 @@ impl<'a> LoweringCtx<'a> {
                     let init_val = self.lower_expr(*init);
                     self.bind_pattern(*pat, init_val);
                 }
-                Stmt::Assign { value, .. } => {
-                    self.lower_expr(*value);
+                Stmt::Assign { target, value } => {
+                    let value = self.lower_expr(*value);
+                    if let Some(name) = self.assignment_target_name(*target) {
+                        let _ = self.rebind_local(name, value);
+                    }
                 }
                 Stmt::While {
                     condition,
                     body: loop_body,
                 } => {
-                    // RFC 0006 phase-1 compatibility: keep KIR lowering exhaustive
-                    // without full loop CFG semantics yet.
-                    self.lower_expr(*condition);
-                    self.lower_expr(*loop_body);
+                    self.lower_while_stmt(*condition, *loop_body);
                 }
                 Stmt::For {
                     pat,
@@ -1147,11 +1413,18 @@ impl<'a> LoweringCtx<'a> {
                     self.pop_scope();
                 }
                 Stmt::Break | Stmt::Continue => {
-                    // RFC 0006 phase-1 compatibility: represent control-only
-                    // statements as typed holes in KIR until dedicated loop CFG
-                    // lowering lands.
-                    let hole = self.next_hole_id();
-                    self.builder.push_hole(hole, vec![], Ty::Unit);
+                    if let Some(loop_ctx) = self.loop_stack.last() {
+                        let target_block = match stmt {
+                            Stmt::Break => loop_ctx.break_block,
+                            Stmt::Continue => loop_ctx.continue_block,
+                            _ => unreachable!(),
+                        };
+                        let carried_names = loop_ctx.carried_names.clone();
+                        self.lower_loop_jump(target_block, &carried_names);
+                    } else {
+                        let hole = self.next_hole_id();
+                        self.builder.push_hole(hole, vec![], Ty::Unit);
+                    }
                 }
                 Stmt::Expr(expr) => {
                     self.lower_expr(*expr);
