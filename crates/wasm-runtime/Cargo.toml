@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+kyokara-runtime.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 wasmtime.workspace = true
 
@@ -16,6 +18,7 @@ kyokara-hir-ty.workspace = true
 kyokara-kir.workspace = true
 kyokara-codegen.workspace = true
 kyokara-eval.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

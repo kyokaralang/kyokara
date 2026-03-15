@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+pub const INTERPRETER_RUNTIME: &str = "interpreter";
+pub const WASM_RUNTIME: &str = "wasm";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequiredByKind {
@@ -48,6 +51,12 @@ pub struct ReplayHeader {
     pub entry_file: String,
     pub project_mode: bool,
     pub program_fingerprint: Vec<ProgramFingerprintEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReplayLogConfig {
+    pub path: PathBuf,
+    pub header: ReplayHeader,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,7 +190,7 @@ impl ReplayReader {
                 header.schema_version,
             ));
         }
-        if header.runtime != "interpreter" {
+        if !crate::service::is_supported_runtime_name(&header.runtime) {
             return Err(ReplayReadError::UnsupportedRuntime(header.runtime));
         }
 

@@ -5,7 +5,7 @@ use std::fs;
 use kyokara_runtime::replay::{
     CapabilityCheckEvent, CapabilityOutcome, EffectCallEvent, EffectCallOutcome, EffectKind,
     EffectOutcomeKind, ProgramFingerprintEntry, ReplayHeader, ReplayLogLine, ReplayReader,
-    ReplayWriter, RequiredByKind, verify_program_fingerprint,
+    ReplayWriter, RequiredByKind, WASM_RUNTIME, verify_program_fingerprint,
 };
 
 #[test]
@@ -95,18 +95,17 @@ fn replay_reader_rejects_unknown_schema_version() {
 }
 
 #[test]
-fn replay_reader_rejects_non_interpreter_runtime() {
+fn replay_reader_accepts_wasm_runtime_header() {
     let dir = tempfile::tempdir().unwrap();
     let log_path = dir.path().join("run.jsonl");
     fs::write(
         &log_path,
-        r#"{"kind":"header","schema_version":1,"runtime":"wasm","entry_file":"/tmp/main.ky","project_mode":false,"program_fingerprint":[]}"#,
+        format!(
+            r#"{{"kind":"header","schema_version":1,"runtime":"{WASM_RUNTIME}","entry_file":"/tmp/main.ky","project_mode":false,"program_fingerprint":[]}}"#
+        ),
     )
     .unwrap();
 
-    let err = match ReplayReader::from_path(&log_path) {
-        Ok(_) => panic!("runtime should be rejected"),
-        Err(err) => err,
-    };
-    assert!(err.to_string().contains("runtime"));
+    let reader = ReplayReader::from_path(&log_path).expect("wasm runtime should be accepted");
+    assert_eq!(reader.header().runtime, WASM_RUNTIME);
 }

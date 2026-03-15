@@ -1320,6 +1320,9 @@ dependencies = [
  "kyokara-hir-ty",
  "kyokara-intern",
  "kyokara-kir",
+ "kyokara-runtime",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "wasmtime",
 ]

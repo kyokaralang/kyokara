@@ -32,6 +32,7 @@ use crate::runtime::{
     new_replay_runtime,
 };
 use crate::value::Value;
+pub use kyokara_runtime::service::ReplayMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CompileErrorClass {
@@ -100,12 +101,6 @@ pub struct RunResult {
     pub interner: Interner,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReplayMode {
-    Replay,
-    Verify,
-}
-
 pub struct RunOptions<'a> {
     pub manifest: Option<CapabilityManifest>,
     pub replay_log: Option<&'a std::path::Path>,
@@ -156,7 +151,7 @@ pub fn run_file_with_options(
     }
 
     let replay = if let Some(path) = options.replay_log {
-        Some(crate::runtime::ReplayLogConfig {
+        Some(kyokara_runtime::replay::ReplayLogConfig {
             path: path.to_path_buf(),
             header: build_replay_header(entry_file, false, [entry_file.to_path_buf()])?,
         })
@@ -325,7 +320,7 @@ fn run_project_internal(
     replay_log: Option<&std::path::Path>,
 ) -> Result<RunResult, RuntimeError> {
     let replay = if let Some(path) = replay_log {
-        Some(crate::runtime::ReplayLogConfig {
+        Some(kyokara_runtime::replay::ReplayLogConfig {
             path: path.to_path_buf(),
             header: {
                 let project = check_project(entry_file);
