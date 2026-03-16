@@ -135,6 +135,10 @@ impl KirBuilder {
         self.push_value(ty, Inst::FnRef { name })
     }
 
+    pub fn push_closure_create(&mut self, name: Name, captures: Vec<ValueId>, ty: Ty) -> ValueId {
+        self.push_value(ty, Inst::ClosureCreate { name, captures })
+    }
+
     // ── Query helpers ─────────────────────────────────────────────
 
     pub fn current_block(&self) -> Option<BlockId> {
@@ -198,9 +202,31 @@ impl KirBuilder {
         entry_block: BlockId,
         contracts: KirContracts,
     ) -> KirFunction {
+        self.build_with_captures(
+            name,
+            params,
+            Vec::new(),
+            ret_ty,
+            effects,
+            entry_block,
+            contracts,
+        )
+    }
+
+    pub fn build_with_captures(
+        self,
+        name: Name,
+        params: Vec<(Name, Ty)>,
+        closure_capture_tys: Vec<Ty>,
+        ret_ty: Ty,
+        effects: EffectSet,
+        entry_block: BlockId,
+        contracts: KirContracts,
+    ) -> KirFunction {
         KirFunction {
             name,
             params,
+            closure_capture_tys,
             ret_ty,
             effects,
             blocks: self.blocks,

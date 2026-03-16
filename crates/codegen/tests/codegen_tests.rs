@@ -1189,6 +1189,37 @@ fn test_capturing_lambda_local_indirect_call() {
 }
 
 #[test]
+fn test_capturing_lambda_passed_to_higher_order_fn() {
+    assert_eq!(
+        run_main_i64(
+            "fn apply(f: fn(Int) -> Int, x: Int) -> Int { f(x) }\n\
+             fn main() -> Int {\n\
+               let base = 5\n\
+               let f = fn(x: Int) => x + base\n\
+               apply(f, 7)\n\
+             }"
+        ),
+        12
+    );
+}
+
+#[test]
+fn test_capturing_lambda_returned_from_function() {
+    assert_eq!(
+        run_main_i64(
+            "fn make_adder(base: Int) -> fn(Int) -> Int {\n\
+               fn(x: Int) => x + base\n\
+             }\n\
+             fn main() -> Int {\n\
+               let add5 = make_adder(5)\n\
+               add5(7)\n\
+             }"
+        ),
+        12
+    );
+}
+
+#[test]
 fn test_zero_arg_lambda_local_call() {
     assert_eq!(
         run_main_i64(

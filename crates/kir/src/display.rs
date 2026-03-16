@@ -303,6 +303,16 @@ fn display_instruction(
         Inst::FnRef { name } => {
             write!(out, "fn_ref @{}", name.resolve(ctx.interner))?;
         }
+        Inst::ClosureCreate { name, captures } => {
+            write!(out, "closure_create @{}(", name.resolve(ctx.interner))?;
+            for (index, capture) in captures.iter().enumerate() {
+                if index > 0 {
+                    write!(out, ", ")?;
+                }
+                write!(out, "{}", ctx.fmt_value(*capture, func))?;
+            }
+            write!(out, ")")?;
+        }
     }
 
     writeln!(out, " : {}", ty_str)?;

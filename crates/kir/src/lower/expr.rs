@@ -159,6 +159,14 @@ impl<'a> LoweringCtx<'a> {
                 let id = self.next_hole_id();
                 return self.builder.push_hole(id, vec![], ty);
             }
+            let capture_values: Vec<_> = captures
+                .iter()
+                .filter_map(|capture| self.lookup_local(*capture))
+                .collect();
+            if capture_values.len() != captures.len() {
+                let id = self.next_hole_id();
+                return self.builder.push_hole(id, vec![], ty);
+            }
             let lambda_name = self.lambda_name_for_expr(lambda_expr);
             if !self
                 .lambda_functions
@@ -171,8 +179,10 @@ impl<'a> LoweringCtx<'a> {
                 self.lambda_functions.push(lambda_fn);
             }
 
-            let fn_ref = self.builder.push_fn_ref(lambda_name, ty);
-            return self.record_callable_param_spec(fn_ref, self.lambda_value_param_spec(params));
+            let closure = self
+                .builder
+                .push_closure_create(lambda_name, capture_values, ty);
+            return self.record_callable_param_spec(closure, self.lambda_value_param_spec(params));
         }
 
         let lambda_name = self.lambda_name_for_expr(lambda_expr);
@@ -297,9 +307,10 @@ impl<'a> LoweringCtx<'a> {
             child.pop_scope();
 
             let nested_lambdas = std::mem::take(&mut child.lambda_functions);
-            let lambda_fn = child.builder.build(
+            let lambda_fn = child.builder.build_with_captures(
                 lambda_name,
                 lowered_params,
+                capture_tys,
                 ret_ty,
                 EffectSet::default(),
                 entry_block,
@@ -1890,9 +1901,13 @@ impl<'a> LoweringCtx<'a> {
                             self.lambda_functions.extend(nested_lambdas);
                             self.lambda_functions.push(lambda_fn);
                         }
-                        let fn_ref = self.builder.push_fn_ref(lambda_name, self.expr_ty(*init));
+                        let closure = self.builder.push_closure_create(
+                            lambda_name,
+                            capture_values.clone(),
+                            self.expr_ty(*init),
+                        );
                         let param_spec = self.lambda_value_param_spec(params);
-                        let callable = self.record_callable_param_spec(fn_ref, param_spec.clone());
+                        let callable = self.record_callable_param_spec(closure, param_spec.clone());
                         self.bind_pattern(*pat, callable);
                         self.define_captured_lambda_local(
                             name,

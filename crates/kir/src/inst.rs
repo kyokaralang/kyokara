@@ -100,4 +100,7 @@ pub enum Inst {
 
     /// Reference to a top-level function as a first-class value.
     FnRef { name: Name },
+
+    /// Create a closure value for a lifted function plus captured locals.
+    ClosureCreate { name: Name, captures: Vec<ValueId> },
 }

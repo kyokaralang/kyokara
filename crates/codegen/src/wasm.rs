@@ -11,11 +11,12 @@ use kyokara_hir_def::name::Name;
 use kyokara_hir_ty::ty::Ty;
 use kyokara_intern::Interner;
 use kyokara_kir::KirModule;
+use kyokara_kir::function::KirFunction;
 use rustc_hash::FxHashMap;
 use wasm_encoder::{
-    CodeSection, ElementSection, Elements, EntityType, ExportKind, ExportSection, FunctionSection,
-    GlobalSection, GlobalType, ImportSection, MemorySection, MemoryType, Module, RefType,
-    TableSection, TableType, TypeSection, ValType,
+    CodeSection, ElementSection, Elements, EntityType, ExportKind, ExportSection, Function,
+    FunctionSection, GlobalSection, GlobalType, ImportSection, Instruction, MemArg, MemorySection,
+    MemoryType, Module, RefType, TableSection, TableType, TypeSection, ValType,
 };
 
 use crate::error::CodegenError;
@@ -66,6 +67,99 @@ pub struct ModuleCtx<'a> {
     pub string_md5_fn_index: Option<u32>,
     pub parse_int_fn_index: Option<u32>,
     pub parse_float_fn_index: Option<u32>,
+    pub current_closure_global_index: u32,
+}
+
+pub const CURRENT_CLOSURE_GLOBAL_INDEX: u32 = 1;
+
+pub fn closure_object_size(capture_count: usize) -> i32 {
+    8 * (capture_count as i32 + 1)
+}
+
+pub fn closure_capture_offset(index: usize) -> u64 {
+    8 + (index as u64 * 8)
+}
+
+fn register_fn_type(
+    types: &mut TypeSection,
+    type_map: &mut FxHashMap<FnTypeKey, u32>,
+    params: Vec<ValType>,
+    results: Vec<ValType>,
+) -> u32 {
+    let key = FnTypeKey {
+        params: params.clone(),
+        results: results.clone(),
+    };
+    if let Some(&existing) = type_map.get(&key) {
+        existing
+    } else {
+        let type_idx = types.len();
+        types.ty().function(params, results);
+        type_map.insert(key, type_idx);
+        type_idx
+    }
+}
+
+fn emit_typed_load_static(func: &mut Function, ty: &Ty, offset: u64) {
+    match ty {
+        Ty::Float => {
+            func.instruction(&Instruction::F64Load(MemArg {
+                offset,
+                align: 3,
+                memory_index: 0,
+            }));
+        }
+        Ty::Bool
+        | Ty::Unit
+        | Ty::Char
+        | Ty::String
+        | Ty::Fn { .. }
+        | Ty::Adt { .. }
+        | Ty::Record { .. }
+        | Ty::Never
+        | Ty::Error => {
+            func.instruction(&Instruction::I64Load(MemArg {
+                offset,
+                align: 3,
+                memory_index: 0,
+            }));
+            func.instruction(&Instruction::I32WrapI64);
+        }
+        _ => {
+            func.instruction(&Instruction::I64Load(MemArg {
+                offset,
+                align: 3,
+                memory_index: 0,
+            }));
+        }
+    }
+}
+
+fn emit_wrapper_function(
+    kir_func: &KirFunction,
+    actual_fn_index: u32,
+    current_closure_global_index: u32,
+) -> Result<Function, CodegenError> {
+    let capture_count = kir_func.closure_capture_tys.len();
+    let wrapper_param_count = kir_func
+        .params
+        .len()
+        .checked_sub(capture_count)
+        .ok_or_else(|| {
+            CodegenError::UnsupportedInstruction("closure wrapper param underflow".into())
+        })?;
+
+    let mut func = Function::new(Vec::new());
+    for index in 0..wrapper_param_count {
+        func.instruction(&Instruction::LocalGet(index as u32));
+    }
+    for (index, capture_ty) in kir_func.closure_capture_tys.iter().enumerate() {
+        func.instruction(&Instruction::GlobalGet(current_closure_global_index));
+        emit_typed_load_static(&mut func, capture_ty, closure_capture_offset(index));
+    }
+    func.instruction(&Instruction::Call(actual_fn_index));
+    func.instruction(&Instruction::End);
+    Ok(func)
 }
 
 /// Compile a KIR module to a WASM binary.
@@ -176,13 +270,20 @@ pub fn compile_module(
     let mut fn_table_map = FxHashMap::default();
     let mut fn_order = Vec::new(); // (kir FnId, wasm index)
 
-    for (table_idx, (fn_id, kir_func)) in kir.functions.iter().enumerate() {
+    for (fn_id, kir_func) in kir.functions.iter() {
         fn_name_map.insert(kir_func.name, next_fn_index);
-        fn_table_map.insert(kir_func.name, table_idx as u32);
         fn_order.push((fn_id, next_fn_index));
         next_fn_index += 1;
     }
 
+    let mut wrapper_order = Vec::new(); // (kir FnId, wasm index)
+    for (table_idx, (fn_id, kir_func)) in kir.functions.iter().enumerate() {
+        fn_table_map.insert(kir_func.name, table_idx as u32);
+        wrapper_order.push((fn_id, next_fn_index));
+        next_fn_index += 1;
+    }
+
+    let mut all_type_map = FxHashMap::default();
     let mut fn_type_map = FxHashMap::default();
 
     // ── Type section ──────────────────────────────────────────────
@@ -204,6 +305,7 @@ pub fn compile_module(
     // Build type index for each KIR function, deduplicated by structural
     // signature so indirect calls can reuse the same type index.
     let mut fn_type_indices = Vec::new();
+    let mut wrapper_type_indices = Vec::new();
     for (fn_id, _wasm_idx) in &fn_order {
         let kir_func = &kir.functions[*fn_id];
         let params: Vec<ValType> = kir_func
@@ -212,19 +314,32 @@ pub fn compile_module(
             .map(|(_, ty)| ty_to_valtype(ty))
             .collect::<Result<_, _>>()?;
         let results = vec![ty_to_valtype(&kir_func.ret_ty)?];
-        let key = FnTypeKey {
-            params: params.clone(),
-            results: results.clone(),
-        };
-        let type_idx = if let Some(&existing) = fn_type_map.get(&key) {
-            existing
-        } else {
-            let type_idx = types.len();
-            types.ty().function(params, results);
-            fn_type_map.insert(key, type_idx);
-            type_idx
-        };
+        let type_idx = register_fn_type(&mut types, &mut all_type_map, params, results);
         fn_type_indices.push(type_idx);
+
+        let wrapper_param_count = kir_func
+            .params
+            .len()
+            .saturating_sub(kir_func.closure_capture_tys.len());
+        let wrapper_params: Vec<ValType> = kir_func.params[..wrapper_param_count]
+            .iter()
+            .map(|(_, ty)| ty_to_valtype(ty))
+            .collect::<Result<_, _>>()?;
+        let wrapper_results = vec![ty_to_valtype(&kir_func.ret_ty)?];
+        let wrapper_type_idx = register_fn_type(
+            &mut types,
+            &mut all_type_map,
+            wrapper_params.clone(),
+            wrapper_results.clone(),
+        );
+        wrapper_type_indices.push(wrapper_type_idx);
+        fn_type_map.insert(
+            FnTypeKey {
+                params: wrapper_params,
+                results: wrapper_results,
+            },
+            wrapper_type_idx,
+        );
     }
 
     let ctx = ModuleCtx {
@@ -240,6 +355,7 @@ pub fn compile_module(
         string_md5_fn_index,
         parse_int_fn_index,
         parse_float_fn_index,
+        current_closure_global_index: CURRENT_CLOSURE_GLOBAL_INDEX,
     };
 
     // ── Import section ────────────────────────────────────────────
@@ -272,20 +388,26 @@ pub fn compile_module(
     for &type_idx in &fn_type_indices {
         functions.function(type_idx);
     }
+    for &type_idx in &wrapper_type_indices {
+        functions.function(type_idx);
+    }
 
     // ── Table / element sections ─────────────────────────────────
 
     let mut tables = TableSection::new();
     let mut elements = ElementSection::new();
-    if !fn_order.is_empty() {
+    if !wrapper_order.is_empty() {
         tables.table(TableType {
             element_type: RefType::FUNCREF,
             table64: false,
-            minimum: fn_order.len() as u64,
-            maximum: Some(fn_order.len() as u64),
+            minimum: wrapper_order.len() as u64,
+            maximum: Some(wrapper_order.len() as u64),
             shared: false,
         });
-        let function_indices: Vec<u32> = fn_order.iter().map(|(_, wasm_idx)| *wasm_idx).collect();
+        let function_indices: Vec<u32> = wrapper_order
+            .iter()
+            .map(|(_, wasm_idx)| *wasm_idx)
+            .collect();
         elements.active(
             None,
             &wasm_encoder::ConstExpr::i32_const(0),
@@ -308,6 +430,15 @@ pub fn compile_module(
 
     let mut globals = GlobalSection::new();
     // Global 0: $heap_ptr (mutable i32, initial 0)
+    globals.global(
+        GlobalType {
+            val_type: ValType::I32,
+            mutable: true,
+            shared: false,
+        },
+        &wasm_encoder::ConstExpr::i32_const(0),
+    );
+    // Global 1: $current_closure_ptr (mutable i32, initial 0)
     globals.global(
         GlobalType {
             val_type: ValType::I32,
@@ -345,6 +476,14 @@ pub fn compile_module(
         let codegen = FuncCodegen::new(kir_func, &ctx);
         let wasm_func = codegen.emit()?;
         code.function(&wasm_func);
+    }
+    for ((fn_id, actual_fn_index), (_wrapper_fn_id, _wrapper_idx)) in
+        fn_order.iter().zip(wrapper_order.iter())
+    {
+        let kir_func = &kir.functions[*fn_id];
+        let wrapper_func =
+            emit_wrapper_function(kir_func, *actual_fn_index, CURRENT_CLOSURE_GLOBAL_INDEX)?;
+        code.function(&wrapper_func);
     }
 
     // ── Assemble module ───────────────────────────────────────────

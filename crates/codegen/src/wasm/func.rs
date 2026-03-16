@@ -20,7 +20,7 @@ use crate::error::CodegenError;
 use crate::wasm::control::reverse_postorder;
 use crate::wasm::layout::{self, AdtLayout};
 use crate::wasm::ty::{is_i32_type, ty_to_valtype};
-use crate::wasm::{FnTypeKey, ModuleCtx};
+use crate::wasm::{FnTypeKey, ModuleCtx, closure_capture_offset, closure_object_size};
 
 /// Per-function codegen state.
 pub struct FuncCodegen<'a> {
@@ -201,7 +201,7 @@ impl<'a> FuncCodegen<'a> {
                 ..
             } => ValType::I64,
             Inst::Assert { .. } => ValType::I32, // Unit
-            Inst::FnRef { .. } => ValType::I32,
+            Inst::FnRef { .. } | Inst::ClosureCreate { .. } => ValType::I32,
             _ => ValType::I32, // default
         }
     }
@@ -1366,14 +1366,14 @@ impl<'a> FuncCodegen<'a> {
                 func.instruction(&Instruction::Unreachable);
             }
 
-            Inst::FnRef { .. } => {
-                if let Inst::FnRef { name } = &vdef.inst {
-                    let slot = self.ctx.fn_table_map.get(name).ok_or_else(|| {
-                        CodegenError::MissingFunction(name.resolve(self.ctx.interner).to_owned())
-                    })?;
-                    func.instruction(&Instruction::I32Const(*slot as i32));
-                    func.instruction(&Instruction::LocalSet(local_idx));
-                }
+            Inst::FnRef { name } => {
+                self.emit_closure_create(func, *name, &[])?;
+                func.instruction(&Instruction::LocalSet(local_idx));
+            }
+
+            Inst::ClosureCreate { name, captures } => {
+                self.emit_closure_create(func, *name, captures)?;
+                func.instruction(&Instruction::LocalSet(local_idx));
             }
         }
 
@@ -3087,6 +3087,17 @@ impl<'a> FuncCodegen<'a> {
                     self.emit_get(func, arg);
                 }
                 self.emit_get(func, *callee);
+                func.instruction(&Instruction::LocalSet(self.scratch_i32));
+                func.instruction(&Instruction::LocalGet(self.scratch_i32));
+                func.instruction(&Instruction::GlobalSet(
+                    self.ctx.current_closure_global_index,
+                ));
+                func.instruction(&Instruction::LocalGet(self.scratch_i32));
+                func.instruction(&Instruction::I32Load(MemArg {
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
+                }));
                 let sig = FnTypeKey::from_ty(self.value_ty(*callee))?;
                 let type_index = self.ctx.fn_type_map.get(&sig).ok_or_else(|| {
                     CodegenError::UnsupportedInstruction(format!(
@@ -3882,6 +3893,17 @@ impl<'a> FuncCodegen<'a> {
         callee: ValueId,
     ) -> Result<(), CodegenError> {
         self.emit_get(func, callee);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::GlobalSet(
+            self.ctx.current_closure_global_index,
+        ));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
         let sig = FnTypeKey::from_ty(self.value_ty(callee))?;
         let type_index = self.ctx.fn_type_map.get(&sig).ok_or_else(|| {
             CodegenError::UnsupportedInstruction(format!(
@@ -3893,6 +3915,48 @@ impl<'a> FuncCodegen<'a> {
             type_index: *type_index,
             table_index: 0,
         });
+        Ok(())
+    }
+
+    fn emit_closure_create(
+        &self,
+        func: &mut Function,
+        name: Name,
+        captures: &[ValueId],
+    ) -> Result<(), CodegenError> {
+        let slot = self.ctx.fn_table_map.get(&name).ok_or_else(|| {
+            CodegenError::MissingFunction(name.resolve(self.ctx.interner).to_owned())
+        })?;
+        let size = closure_object_size(captures.len());
+
+        func.instruction(&Instruction::I32Const(size));
+        func.instruction(&Instruction::Call(self.ctx.alloc_fn_index));
+        func.instruction(&Instruction::Drop);
+
+        func.instruction(&Instruction::GlobalGet(0));
+        func.instruction(&Instruction::I32Const(size));
+        func.instruction(&Instruction::I32Sub);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Const(*slot as i32));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+
+        for (index, capture) in captures.iter().enumerate() {
+            func.instruction(&Instruction::LocalGet(self.scratch_i32));
+            self.emit_typed_store(
+                func,
+                *capture,
+                self.value_ty(*capture),
+                closure_capture_offset(index),
+            );
+        }
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
         Ok(())
     }
 

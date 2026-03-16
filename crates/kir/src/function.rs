@@ -24,6 +24,7 @@ pub struct KirContracts {
 pub struct KirFunction {
     pub name: Name,
     pub params: Vec<(Name, Ty)>,
+    pub closure_capture_tys: Vec<Ty>,
     pub ret_ty: Ty,
     pub effects: EffectSet,
     pub blocks: Arena<Block>,

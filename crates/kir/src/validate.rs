@@ -499,6 +499,18 @@ fn validate_inst_operands(
             }
         }
         Inst::FnRef { .. } => {}
+        Inst::ClosureCreate { captures, .. } => {
+            for capture in captures {
+                check_value_exists(
+                    *capture,
+                    func,
+                    block_label,
+                    fn_name,
+                    "closure_create capture",
+                    diags,
+                );
+            }
+        }
     }
 }
 
