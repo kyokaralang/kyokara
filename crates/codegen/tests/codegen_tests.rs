@@ -224,6 +224,31 @@ fn test_string_chars_all_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_chars_find_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               let target = 'é'\n\
+               \"café\".chars().find(fn(ch: Char) => ch == target).unwrap_or('!').code()\n\
+             }"
+        ),
+        233
+    );
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int { "abc".chars().find(fn(ch: Char) => ch == 'z').unwrap_or('!').code() }"#
+        ),
+        33
+    );
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int { "".chars().find(fn(_ch: Char) => true).unwrap_or('?').code() }"#
+        ),
+        63
+    );
+}
+
+#[test]
 fn test_string_lines_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a\nb\nc".lines().count() }"#),
