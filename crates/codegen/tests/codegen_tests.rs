@@ -60,6 +60,10 @@ fn run_main_i32(source: &str) -> i32 {
         .expect("main trapped")
 }
 
+fn run_main_bool(source: &str) -> bool {
+    run_main_i32(source) != 0
+}
+
 fn run_main_string(source: &str) -> String {
     let mut program = instantiate_main(source);
     let ptr = program.call_main_i32().expect("main trapped") as u32;
@@ -1324,6 +1328,43 @@ fn test_range_fold_with_capturing_closure() {
              }"
         ),
         46
+    );
+}
+
+#[test]
+fn test_range_any_empty_is_false() {
+    assert!(!run_main_bool(
+        "fn main() -> Bool { ((0)..<0).any(fn(_n: Int) => true) }"
+    ));
+}
+
+#[test]
+fn test_range_all_empty_is_true() {
+    assert!(run_main_bool(
+        "fn main() -> Bool { ((0)..<0).all(fn(_n: Int) => false) }"
+    ));
+}
+
+#[test]
+fn test_range_any_and_all_with_capturing_predicate() {
+    assert!(run_main_bool(
+        "fn main() -> Bool {\n\
+           let pivot = 3\n\
+           let xs = ((0)..<5)\n\
+           xs.any(fn(n: Int) => n == pivot) && xs.all(fn(n: Int) => n < pivot + 2)\n\
+         }"
+    ));
+}
+
+#[test]
+fn test_range_find_returns_first_match() {
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               ((0)..<6).find(fn(n: Int) => n % 2 == 0 && n > 0).unwrap_or(-1)\n\
+             }"
+        ),
+        2
     );
 }
 
