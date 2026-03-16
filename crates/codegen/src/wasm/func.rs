@@ -4008,13 +4008,91 @@ impl<'a> FuncCodegen<'a> {
         Ok(())
     }
 
+    fn core_seq_element_ty<'b>(&'b self, seq: ValueId) -> Option<&'b Ty> {
+        let Ty::Adt { def, args } = self.value_ty(seq) else {
+            return None;
+        };
+        let type_name = self.ctx.item_tree.types[*def]
+            .name
+            .resolve(self.ctx.interner);
+        if type_name == "$core_Seq" || type_name == "Seq" {
+            args.first()
+        } else {
+            None
+        }
+    }
+
     fn emit_seq_any(
         &self,
         func: &mut Function,
         seq: ValueId,
         predicate: ValueId,
     ) -> Result<(), CodegenError> {
-        self.emit_seq_load_range_bounds(func, seq)?;
+        self.emit_get(func, seq);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        match self.core_seq_element_ty(seq) {
+            Some(Ty::Int) => {
+                self.emit_seq_any_range_from_local(func, self.scratch_i32, predicate)?
+            }
+            Some(Ty::Char) => {
+                self.emit_seq_any_chars_from_local(func, self.scratch_i32, predicate)?
+            }
+            Some(elem_ty) => {
+                return Err(CodegenError::UnsupportedInstruction(format!(
+                    "seq_any over Wasm seq element type {elem_ty:?} (deferred)"
+                )));
+            }
+            None => {
+                return Err(CodegenError::UnsupportedInstruction(format!(
+                    "seq_any over non-Seq receiver in Wasm: {:?}",
+                    self.value_ty(seq)
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn emit_seq_all(
+        &self,
+        func: &mut Function,
+        seq: ValueId,
+        predicate: ValueId,
+    ) -> Result<(), CodegenError> {
+        self.emit_get(func, seq);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        match self.core_seq_element_ty(seq) {
+            Some(Ty::Int) => {
+                self.emit_seq_all_range_from_local(func, self.scratch_i32, predicate)?
+            }
+            Some(Ty::Char) => {
+                self.emit_seq_all_chars_from_local(func, self.scratch_i32, predicate)?
+            }
+            Some(elem_ty) => {
+                return Err(CodegenError::UnsupportedInstruction(format!(
+                    "seq_all over Wasm seq element type {elem_ty:?} (deferred)"
+                )));
+            }
+            None => {
+                return Err(CodegenError::UnsupportedInstruction(format!(
+                    "seq_all over non-Seq receiver in Wasm: {:?}",
+                    self.value_ty(seq)
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn emit_seq_any_range_from_local(
+        &self,
+        func: &mut Function,
+        seq_local: u32,
+        predicate: ValueId,
+    ) -> Result<(), CodegenError> {
+        self.emit_seq_load_range_bounds_from_local(func, seq_local)?;
         func.instruction(&Instruction::I32Const(0));
         func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
 
@@ -4045,13 +4123,81 @@ impl<'a> FuncCodegen<'a> {
         Ok(())
     }
 
-    fn emit_seq_all(
+    fn emit_seq_any_chars_from_local(
         &self,
         func: &mut Function,
-        seq: ValueId,
+        seq_local: u32,
         predicate: ValueId,
     ) -> Result<(), CodegenError> {
-        self.emit_seq_load_range_bounds(func, seq)?;
+        func.instruction(&Instruction::LocalGet(seq_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4));
+
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        self.emit_utf8_char_width_from_local(
+            func,
+            self.scratch_i32_3,
+            self.scratch_i32_5,
+            self.scratch_i32_7,
+        );
+        self.emit_utf8_codepoint_from_local(
+            func,
+            self.scratch_i32_3,
+            self.scratch_i32_5,
+            self.scratch_i32_7,
+            self.scratch_i32_8,
+        );
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+        self.emit_indirect_call_single_arg(func, predicate)?;
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+        func.instruction(&Instruction::Br(2));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        Ok(())
+    }
+
+    fn emit_seq_all_range_from_local(
+        &self,
+        func: &mut Function,
+        seq_local: u32,
+        predicate: ValueId,
+    ) -> Result<(), CodegenError> {
+        self.emit_seq_load_range_bounds_from_local(func, seq_local)?;
         func.instruction(&Instruction::I32Const(1));
         func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
 
@@ -4083,6 +4229,75 @@ impl<'a> FuncCodegen<'a> {
         Ok(())
     }
 
+    fn emit_seq_all_chars_from_local(
+        &self,
+        func: &mut Function,
+        seq_local: u32,
+        predicate: ValueId,
+    ) -> Result<(), CodegenError> {
+        func.instruction(&Instruction::LocalGet(seq_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4));
+
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        self.emit_utf8_char_width_from_local(
+            func,
+            self.scratch_i32_3,
+            self.scratch_i32_5,
+            self.scratch_i32_7,
+        );
+        self.emit_utf8_codepoint_from_local(
+            func,
+            self.scratch_i32_3,
+            self.scratch_i32_5,
+            self.scratch_i32_7,
+            self.scratch_i32_8,
+        );
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+        self.emit_indirect_call_single_arg(func, predicate)?;
+        func.instruction(&Instruction::I32Eqz);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+        func.instruction(&Instruction::Br(2));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        Ok(())
+    }
+
     fn emit_seq_fold(
         &self,
         func: &mut Function,
@@ -4102,49 +4317,22 @@ impl<'a> FuncCodegen<'a> {
         self.emit_get(func, seq);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
-        match self.value_ty(seq) {
-            Ty::Adt { def, args } => {
-                let type_name = self.ctx.item_tree.types[*def]
-                    .name
-                    .resolve(self.ctx.interner);
-                if type_name != "$core_Seq" && type_name != "Seq" {
-                    return Err(CodegenError::UnsupportedInstruction(format!(
-                        "seq_fold over non-Seq receiver in Wasm: {:?}",
-                        self.value_ty(seq)
-                    )));
-                }
-                match args.first() {
-                    Some(Ty::Int) => {
-                        self.emit_seq_fold_range_from_local(
-                            func,
-                            self.scratch_i32,
-                            acc_local,
-                            folder,
-                        )?;
-                    }
-                    Some(Ty::Char) => {
-                        self.emit_seq_fold_chars_from_local(
-                            func,
-                            self.scratch_i32,
-                            acc_local,
-                            folder,
-                        )?;
-                    }
-                    Some(elem_ty) => {
-                        return Err(CodegenError::UnsupportedInstruction(format!(
-                            "seq_fold over Wasm seq element type {elem_ty:?} (deferred)"
-                        )));
-                    }
-                    None => {
-                        return Err(CodegenError::UnsupportedInstruction(
-                            "seq_fold over Seq with missing element type".into(),
-                        ));
-                    }
-                }
+        match self.core_seq_element_ty(seq) {
+            Some(Ty::Int) => {
+                self.emit_seq_fold_range_from_local(func, self.scratch_i32, acc_local, folder)?;
             }
-            other => {
+            Some(Ty::Char) => {
+                self.emit_seq_fold_chars_from_local(func, self.scratch_i32, acc_local, folder)?;
+            }
+            Some(elem_ty) => {
                 return Err(CodegenError::UnsupportedInstruction(format!(
-                    "seq_fold over non-Seq receiver in Wasm: {other:?}"
+                    "seq_fold over Wasm seq element type {elem_ty:?} (deferred)"
+                )));
+            }
+            None => {
+                return Err(CodegenError::UnsupportedInstruction(format!(
+                    "seq_fold over non-Seq receiver in Wasm: {:?}",
+                    self.value_ty(seq)
                 )));
             }
         }

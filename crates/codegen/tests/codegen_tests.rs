@@ -192,6 +192,38 @@ fn test_string_chars_fold_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_chars_any_matches_interpreter_semantics() {
+    assert!(run_main_bool(
+        "fn main() -> Bool {\n\
+           let target = 'é'\n\
+           \"café\".chars().any(fn(ch: Char) => ch == target)\n\
+         }"
+    ));
+    assert!(!run_main_bool(
+        r#"fn main() -> Bool { "abc".chars().any(fn(ch: Char) => ch == 'z') }"#
+    ));
+    assert!(!run_main_bool(
+        r#"fn main() -> Bool { "".chars().any(fn(_ch: Char) => true) }"#
+    ));
+}
+
+#[test]
+fn test_string_chars_all_matches_interpreter_semantics() {
+    assert!(run_main_bool(
+        r#"fn main() -> Bool { "abc".chars().all(fn(ch: Char) => ch != 'z') }"#
+    ));
+    assert!(!run_main_bool(
+        "fn main() -> Bool {\n\
+           let limit = 200\n\
+           \"café\".chars().all(fn(ch: Char) => ch.code() < limit)\n\
+         }"
+    ));
+    assert!(run_main_bool(
+        r#"fn main() -> Bool { "".chars().all(fn(_ch: Char) => false) }"#
+    ));
+}
+
+#[test]
 fn test_string_lines_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a\nb\nc".lines().count() }"#),
