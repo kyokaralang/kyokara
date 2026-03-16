@@ -3208,6 +3208,7 @@ impl<'a> FuncCodegen<'a> {
                 }
                 "seq_count" => self.emit_seq_count(func, args[0]),
                 "seq_count_by" => self.emit_seq_count_by(func, args[0], args[1]),
+                "seq_fold" => self.emit_seq_fold(func, args[0], args[1], args[2], result_ty),
                 "option_unwrap_or" => self.emit_option_unwrap_or(func, args[0], args[1], result_ty),
                 "option_map" => self.emit_option_map(func, args[0], args[1], result_ty),
                 "option_and_then" => self.emit_option_and_then(func, args[0], args[1], result_ty),
@@ -3417,6 +3418,48 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::End);
 
         func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        Ok(())
+    }
+
+    fn emit_seq_fold(
+        &self,
+        func: &mut Function,
+        seq: ValueId,
+        init: ValueId,
+        folder: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        self.emit_seq_load_range_bounds(func, seq)?;
+
+        let acc_local = match result_ty {
+            Ty::Float => self.scratch_f64,
+            Ty::Int => self.scratch_i64_3,
+            _ => self.scratch_i32_8,
+        };
+        self.emit_get(func, init);
+        func.instruction(&Instruction::LocalSet(acc_local));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
+        func.instruction(&Instruction::I64GeS);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(acc_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        self.emit_indirect_call_two_args(func, folder)?;
+        func.instruction(&Instruction::LocalSet(acc_local));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Const(1));
+        func.instruction(&Instruction::I64Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(acc_local));
         Ok(())
     }
 
@@ -4034,6 +4077,37 @@ impl<'a> FuncCodegen<'a> {
     }
 
     fn emit_indirect_call_single_arg(
+        &self,
+        func: &mut Function,
+        callee: ValueId,
+    ) -> Result<(), CodegenError> {
+        self.emit_get(func, callee);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::GlobalSet(
+            self.ctx.current_closure_global_index,
+        ));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        let sig = FnTypeKey::from_ty(self.value_ty(callee))?;
+        let type_index = self.ctx.fn_type_map.get(&sig).ok_or_else(|| {
+            CodegenError::UnsupportedInstruction(format!(
+                "missing wasm function type for indirect callee {:?}",
+                self.value_ty(callee)
+            ))
+        })?;
+        func.instruction(&Instruction::CallIndirect {
+            type_index: *type_index,
+            table_index: 0,
+        });
+        Ok(())
+    }
+
+    fn emit_indirect_call_two_args(
         &self,
         func: &mut Function,
         callee: ValueId,

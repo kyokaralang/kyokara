@@ -1306,6 +1306,27 @@ fn test_range_count_by_with_capturing_predicate() {
     );
 }
 
+#[test]
+fn test_range_fold_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64("fn main() -> Int { (0..<5).fold(0, fn(acc: Int, x: Int) => acc + x) }"),
+        10
+    );
+}
+
+#[test]
+fn test_range_fold_with_capturing_closure() {
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               let base = 10\n\
+               (0..<4).fold(0, fn(acc: Int, x: Int) => acc + x + base)\n\
+             }"
+        ),
+        46
+    );
+}
+
 // ── ADTs ──────────────────────────────────────────────────────────
 
 #[test]
