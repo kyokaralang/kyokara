@@ -81,6 +81,10 @@ fn with_option_variants(src: &str) -> String {
     with_imports("from Option import Some, None", src)
 }
 
+fn with_result_variants(src: &str) -> String {
+    with_imports("from Result import Ok, Err", src)
+}
+
 fn with_core_variants(src: &str) -> String {
     with_imports(
         "from Result import Ok, Err\nfrom ParseError import InvalidInt, InvalidFloat",
@@ -353,6 +357,139 @@ fn test_parse_float_error_matches_interpreter_semantics() {
         ),
         1,
     )]);
+}
+
+#[test]
+fn test_result_unwrap_or_matches_interpreter_semantics() {
+    assert_i64_cases(&[
+        (
+            &with_result_variants(r#"fn main() -> Int { Ok(41).unwrap_or(0) }"#),
+            41,
+        ),
+        (
+            &with_result_variants(r#"fn main() -> Int { Err("oops").unwrap_or(7) }"#),
+            7,
+        ),
+    ]);
+}
+
+#[test]
+fn test_result_map_matches_interpreter_semantics() {
+    assert_i64_cases(&[
+        (
+            &with_result_variants(
+                r#"fn inc(n: Int) -> Int { n + 1 }
+        fn main() -> Int {
+            let r: Result<Int, String> = Ok(41)
+            let mapped: Result<Int, String> = r.map(inc)
+            match (mapped) {
+                Ok(n) => n
+                Err(_) => 0
+            }
+        }"#,
+            ),
+            42,
+        ),
+        (
+            &with_result_variants(
+                r#"fn inc(n: Int) -> Int { n + 1 }
+        fn main() -> Int {
+            let r: Result<Int, String> = Err("oops")
+            let mapped: Result<Int, String> = r.map(inc)
+            match (mapped) {
+                Ok(n) => n
+                Err(msg) => msg.len()
+            }
+        }"#,
+            ),
+            4,
+        ),
+    ]);
+}
+
+#[test]
+fn test_result_and_then_matches_interpreter_semantics() {
+    assert_i64_cases(&[
+        (
+            &with_result_variants(
+                r#"fn next(n: Int) -> Result<Int, String> { Ok(n + 1) }
+        fn main() -> Int {
+            match (Ok(41).and_then(next)) {
+                Ok(n) => n
+                Err(_) => 0
+            }
+        }"#,
+            ),
+            42,
+        ),
+        (
+            &with_result_variants(
+                r#"fn next(n: Int) -> Result<Int, String> { Ok(n + 1) }
+        fn main() -> Int {
+            let r: Result<Int, String> = Err("oops")
+            match (r.and_then(next)) {
+                Ok(n) => n
+                Err(msg) => msg.len()
+            }
+        }"#,
+            ),
+            4,
+        ),
+    ]);
+}
+
+#[test]
+fn test_result_map_err_matches_interpreter_semantics() {
+    assert_i64_cases(&[
+        (
+            &with_result_variants(
+                r#"fn err_len(msg: String) -> Int { msg.len() }
+        fn main() -> Int {
+            let r: Result<Int, String> = Err("oops")
+            match (r.map_err(err_len)) {
+                Ok(_) => 0
+                Err(n) => n
+            }
+        }"#,
+            ),
+            4,
+        ),
+        (
+            &with_result_variants(
+                r#"fn err_len(msg: String) -> Int { msg.len() }
+        fn main() -> Int {
+            match (Ok(41).map_err(err_len)) {
+                Ok(n) => n
+                Err(_) => 0
+            }
+        }"#,
+            ),
+            41,
+        ),
+    ]);
+}
+
+#[test]
+fn test_result_map_or_matches_interpreter_semantics() {
+    assert_i64_cases(&[
+        (
+            &with_result_variants(
+                r#"fn inc(n: Int) -> Int { n + 1 }
+        fn main() -> Int { Ok(41).map_or(0, inc) }"#,
+            ),
+            42,
+        ),
+        (
+            &with_result_variants(
+                r#"fn inc(n: Int) -> Int { n + 1 }
+        fn main() -> Int {
+            let r: Result<Int, String> = Err("oops")
+            r.map_or(9, inc)
+        }"#,
+            ),
+            9,
+        ),
+    ]);
 }
 
 #[test]

@@ -3191,6 +3191,13 @@ impl<'a> FuncCodegen<'a> {
                     self.emit_int_min_max(func, args[0], args[1], true);
                     Ok(())
                 }
+                "result_unwrap_or" => self.emit_result_unwrap_or(func, args[0], args[1], result_ty),
+                "result_map" => self.emit_result_map(func, args[0], args[1], result_ty),
+                "result_and_then" => self.emit_result_and_then(func, args[0], args[1], result_ty),
+                "result_map_err" => self.emit_result_map_err(func, args[0], args[1], result_ty),
+                "result_map_or" => {
+                    self.emit_result_map_or(func, args[0], args[1], args[2], result_ty)
+                }
                 "parse_float" => self.emit_parse_float_result(func, args[0], result_ty),
                 "parse_int" => self.emit_parse_int_result(func, args[0], result_ty),
                 "string_contains" => {
@@ -3284,6 +3291,321 @@ impl<'a> FuncCodegen<'a> {
             memory_index: 0,
         }));
         func.instruction(&Instruction::Call(helper_fn_index));
+    }
+
+    fn emit_result_unwrap_or(
+        &self,
+        func: &mut Function,
+        result: ValueId,
+        fallback: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let input_result_ty = self.value_ty(result);
+        let (ok_ty, _err_ty, ok_tag, _err_tag) =
+            self.lookup_result_variant_tags(input_result_ty, "result_unwrap_or")?;
+        let temp_local = self.temp_local_for_ty(result_ty);
+
+        self.emit_get(func, result);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Const(ok_tag as i32));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_result_payload_load_from_local(func, self.scratch_i32, ok_ty);
+        func.instruction(&Instruction::LocalSet(temp_local));
+        func.instruction(&Instruction::Else);
+        self.emit_get(func, fallback);
+        func.instruction(&Instruction::LocalSet(temp_local));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(temp_local));
+        Ok(())
+    }
+
+    fn emit_result_map(
+        &self,
+        func: &mut Function,
+        result: ValueId,
+        mapper: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let input_result_ty = self.value_ty(result);
+        let (input_ok_ty, input_err_ty, input_ok_tag, _input_err_tag) =
+            self.lookup_result_variant_tags(input_result_ty, "result_map")?;
+        let (output_ok_ty, output_err_ty, _output_ok_tag, _output_err_tag) =
+            self.lookup_result_variant_tags(result_ty, "result_map")?;
+        let mapped_local = self.temp_local_for_ty(output_ok_ty);
+        let err_local = self.temp_local_for_ty(output_err_ty);
+
+        self.emit_get(func, result);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Const(input_ok_tag as i32));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_result_payload_load_from_local(func, self.scratch_i32, input_ok_ty);
+        self.emit_indirect_call_single_arg(func, mapper)?;
+        func.instruction(&Instruction::LocalSet(mapped_local));
+        self.emit_single_field_adt_from_local(
+            func,
+            result_ty,
+            "Ok",
+            mapped_local,
+            output_ok_ty,
+            self.scratch_i32_6,
+        )?;
+        func.instruction(&Instruction::Else);
+        self.emit_result_payload_load_from_local(func, self.scratch_i32, input_err_ty);
+        func.instruction(&Instruction::LocalSet(err_local));
+        self.emit_single_field_adt_from_local(
+            func,
+            result_ty,
+            "Err",
+            err_local,
+            output_err_ty,
+            self.scratch_i32_6,
+        )?;
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        Ok(())
+    }
+
+    fn emit_result_and_then(
+        &self,
+        func: &mut Function,
+        result: ValueId,
+        mapper: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let input_result_ty = self.value_ty(result);
+        let (input_ok_ty, input_err_ty, input_ok_tag, _input_err_tag) =
+            self.lookup_result_variant_tags(input_result_ty, "result_and_then")?;
+        let (_output_ok_ty, output_err_ty, _output_ok_tag, _output_err_tag) =
+            self.lookup_result_variant_tags(result_ty, "result_and_then")?;
+        let err_local = self.temp_local_for_ty(output_err_ty);
+
+        self.emit_get(func, result);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Const(input_ok_tag as i32));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_result_payload_load_from_local(func, self.scratch_i32, input_ok_ty);
+        self.emit_indirect_call_single_arg(func, mapper)?;
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+        func.instruction(&Instruction::Else);
+        self.emit_result_payload_load_from_local(func, self.scratch_i32, input_err_ty);
+        func.instruction(&Instruction::LocalSet(err_local));
+        self.emit_single_field_adt_from_local(
+            func,
+            result_ty,
+            "Err",
+            err_local,
+            output_err_ty,
+            self.scratch_i32_6,
+        )?;
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        Ok(())
+    }
+
+    fn emit_result_map_err(
+        &self,
+        func: &mut Function,
+        result: ValueId,
+        mapper: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let input_result_ty = self.value_ty(result);
+        let (input_ok_ty, input_err_ty, input_ok_tag, _input_err_tag) =
+            self.lookup_result_variant_tags(input_result_ty, "result_map_err")?;
+        let (output_ok_ty, output_err_ty, _output_ok_tag, _output_err_tag) =
+            self.lookup_result_variant_tags(result_ty, "result_map_err")?;
+        let ok_local = self.temp_local_for_ty(output_ok_ty);
+        let mapped_err_local = self.temp_local_for_ty(output_err_ty);
+
+        self.emit_get(func, result);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Const(input_ok_tag as i32));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_result_payload_load_from_local(func, self.scratch_i32, input_ok_ty);
+        func.instruction(&Instruction::LocalSet(ok_local));
+        self.emit_single_field_adt_from_local(
+            func,
+            result_ty,
+            "Ok",
+            ok_local,
+            output_ok_ty,
+            self.scratch_i32_6,
+        )?;
+        func.instruction(&Instruction::Else);
+        self.emit_result_payload_load_from_local(func, self.scratch_i32, input_err_ty);
+        self.emit_indirect_call_single_arg(func, mapper)?;
+        func.instruction(&Instruction::LocalSet(mapped_err_local));
+        self.emit_single_field_adt_from_local(
+            func,
+            result_ty,
+            "Err",
+            mapped_err_local,
+            output_err_ty,
+            self.scratch_i32_6,
+        )?;
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        Ok(())
+    }
+
+    fn emit_result_map_or(
+        &self,
+        func: &mut Function,
+        result: ValueId,
+        fallback: ValueId,
+        mapper: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let input_result_ty = self.value_ty(result);
+        let (input_ok_ty, _input_err_ty, input_ok_tag, _input_err_tag) =
+            self.lookup_result_variant_tags(input_result_ty, "result_map_or")?;
+        let temp_local = self.temp_local_for_ty(result_ty);
+
+        self.emit_get(func, result);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Const(input_ok_tag as i32));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_result_payload_load_from_local(func, self.scratch_i32, input_ok_ty);
+        self.emit_indirect_call_single_arg(func, mapper)?;
+        func.instruction(&Instruction::LocalSet(temp_local));
+        func.instruction(&Instruction::Else);
+        self.emit_get(func, fallback);
+        func.instruction(&Instruction::LocalSet(temp_local));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(temp_local));
+        Ok(())
+    }
+
+    fn lookup_result_variant_tags<'b>(
+        &self,
+        result_ty: &'b Ty,
+        op: &str,
+    ) -> Result<(&'b Ty, &'b Ty, u32, u32), CodegenError> {
+        let Ty::Adt { def, args } = result_ty else {
+            return Err(CodegenError::UnsupportedInstruction(format!(
+                "{op} expected Result<_, _>, got {result_ty:?}"
+            )));
+        };
+        let ok_ty = args.first().ok_or_else(|| {
+            CodegenError::UnsupportedInstruction(format!(
+                "{op} expected Result<_, _>, got {result_ty:?}"
+            ))
+        })?;
+        let err_ty = args.get(1).ok_or_else(|| {
+            CodegenError::UnsupportedInstruction(format!(
+                "{op} expected Result<_, _>, got {result_ty:?}"
+            ))
+        })?;
+
+        let layout = self
+            .ctx
+            .adt_layouts
+            .get(def)
+            .ok_or(CodegenError::MissingAdtDef)?;
+        let type_item = &self.ctx.item_tree.types[*def];
+        let TypeDefKind::Adt { variants } = &type_item.kind else {
+            return Err(CodegenError::MissingAdtDef);
+        };
+        let ok_variant = variants
+            .iter()
+            .find(|variant| variant.name.resolve(self.ctx.interner) == "Ok")
+            .ok_or(CodegenError::MissingAdtDef)?;
+        let err_variant = variants
+            .iter()
+            .find(|variant| variant.name.resolve(self.ctx.interner) == "Err")
+            .ok_or(CodegenError::MissingAdtDef)?;
+        let ok_tag = *layout
+            .tag_map
+            .get(&ok_variant.name)
+            .ok_or(CodegenError::MissingAdtDef)?;
+        let err_tag = *layout
+            .tag_map
+            .get(&err_variant.name)
+            .ok_or(CodegenError::MissingAdtDef)?;
+        Ok((ok_ty, err_ty, ok_tag, err_tag))
+    }
+
+    fn emit_result_payload_load_from_local(
+        &self,
+        func: &mut Function,
+        result_ptr_local: u32,
+        payload_ty: &Ty,
+    ) {
+        func.instruction(&Instruction::LocalGet(result_ptr_local));
+        self.emit_typed_load(func, payload_ty, u64::from(AdtLayout::field_offset(0)));
+    }
+
+    fn emit_indirect_call_single_arg(
+        &self,
+        func: &mut Function,
+        callee: ValueId,
+    ) -> Result<(), CodegenError> {
+        self.emit_get(func, callee);
+        let sig = FnTypeKey::from_ty(self.value_ty(callee))?;
+        let type_index = self.ctx.fn_type_map.get(&sig).ok_or_else(|| {
+            CodegenError::UnsupportedInstruction(format!(
+                "missing wasm function type for indirect callee {:?}",
+                self.value_ty(callee)
+            ))
+        })?;
+        func.instruction(&Instruction::CallIndirect {
+            type_index: *type_index,
+            table_index: 0,
+        });
+        Ok(())
+    }
+
+    fn temp_local_for_ty(&self, ty: &Ty) -> u32 {
+        match ty {
+            Ty::Float => self.scratch_f64,
+            Ty::Int => self.scratch_i64,
+            _ => self.scratch_i32_7,
+        }
     }
 
     fn emit_parse_int_result(
