@@ -34,6 +34,11 @@ pub struct FuncCodegen<'a> {
     next_local: u32,
     /// Scratch i64 local for checked integer codegen.
     scratch_i64: u32,
+    scratch_i64_2: u32,
+    scratch_i64_3: u32,
+    scratch_i64_4: u32,
+    /// Scratch f64 local for float runtime helpers.
+    scratch_f64: u32,
     /// Scratch i32 local for checked integer codegen.
     scratch_i32: u32,
     /// Additional scratch i32 locals for runtime helpers.
@@ -55,6 +60,10 @@ impl<'a> FuncCodegen<'a> {
             local_types: Vec::new(),
             next_local: kir_func.params.len() as u32,
             scratch_i64: 0,
+            scratch_i64_2: 0,
+            scratch_i64_3: 0,
+            scratch_i64_4: 0,
+            scratch_f64: 0,
             scratch_i32: 0,
             scratch_i32_2: 0,
             scratch_i32_3: 0,
@@ -113,6 +122,22 @@ impl<'a> FuncCodegen<'a> {
         self.scratch_i64 = self.next_local;
         self.next_local += 1;
         self.local_types.push(ValType::I64);
+
+        self.scratch_i64_2 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I64);
+
+        self.scratch_i64_3 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I64);
+
+        self.scratch_i64_4 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I64);
+
+        self.scratch_f64 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::F64);
 
         self.scratch_i32 = self.next_local;
         self.next_local += 1;
@@ -1491,6 +1516,31 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::End);
 
         func.instruction(&Instruction::LocalGet(self.scratch_i64));
+    }
+
+    fn emit_checked_int_mul_locals(
+        &self,
+        func: &mut Function,
+        lhs_local: u32,
+        rhs_local: u32,
+        temp_local: u32,
+    ) {
+        func.instruction(&Instruction::LocalGet(lhs_local));
+        func.instruction(&Instruction::LocalGet(rhs_local));
+        func.instruction(&Instruction::I64Mul);
+        func.instruction(&Instruction::LocalSet(temp_local));
+
+        func.instruction(&Instruction::LocalGet(lhs_local));
+        func.instruction(&Instruction::I64Eqz);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(temp_local));
+        func.instruction(&Instruction::LocalGet(lhs_local));
+        func.instruction(&Instruction::I64DivS);
+        func.instruction(&Instruction::LocalGet(rhs_local));
+        func.instruction(&Instruction::I64Ne);
+        self.emit_trap_if_true(func);
+        func.instruction(&Instruction::End);
     }
 
     fn emit_checked_int_mod(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
@@ -3078,8 +3128,59 @@ impl<'a> FuncCodegen<'a> {
                     self.emit_char_to_string(func, args[0]);
                     Ok(())
                 }
+                "abs" => {
+                    self.emit_int_abs(func, args[0]);
+                    Ok(())
+                }
+                "float_abs" => {
+                    self.emit_get(func, args[0]);
+                    func.instruction(&Instruction::F64Abs);
+                    Ok(())
+                }
+                "float_is_finite" => {
+                    self.emit_float_is_finite(func, args[0]);
+                    Ok(())
+                }
+                "float_is_infinite" => {
+                    self.emit_float_is_infinite(func, args[0]);
+                    Ok(())
+                }
+                "float_is_nan" => {
+                    self.emit_float_is_nan(func, args[0]);
+                    Ok(())
+                }
+                "float_to_int" => {
+                    self.emit_get(func, args[0]);
+                    func.instruction(&Instruction::I64TruncSatF64S);
+                    Ok(())
+                }
+                "gcd" => {
+                    self.emit_gcd(func, args[0], args[1]);
+                    Ok(())
+                }
+                "int_pow" => {
+                    self.emit_int_pow(func, args[0], args[1]);
+                    Ok(())
+                }
+                "int_to_float" => {
+                    self.emit_get(func, args[0]);
+                    func.instruction(&Instruction::F64ConvertI64S);
+                    Ok(())
+                }
+                "lcm" => {
+                    self.emit_lcm(func, args[0], args[1]);
+                    Ok(())
+                }
                 "int_to_string" => {
                     self.emit_int_to_string(func, args[0]);
+                    Ok(())
+                }
+                "max" => {
+                    self.emit_int_min_max(func, args[0], args[1], false);
+                    Ok(())
+                }
+                "min" => {
+                    self.emit_int_min_max(func, args[0], args[1], true);
                     Ok(())
                 }
                 "string_contains" => {
@@ -3125,6 +3226,237 @@ impl<'a> FuncCodegen<'a> {
                 ))),
             },
         }
+    }
+
+    fn emit_int_abs(&self, func: &mut Function, value: ValueId) {
+        self.emit_get(func, value);
+        func.instruction(&Instruction::I64Const(i64::MIN));
+        func.instruction(&Instruction::I64Eq);
+        self.emit_trap_if_true(func);
+
+        self.emit_get(func, value);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Sub);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+    }
+
+    fn emit_int_min_max(&self, func: &mut Function, lhs: ValueId, rhs: ValueId, pick_min: bool) {
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_2));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
+        if pick_min {
+            func.instruction(&Instruction::I64LeS);
+        } else {
+            func.instruction(&Instruction::I64GeS);
+        }
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+    }
+
+    fn emit_unsigned_abs_to_local(&self, func: &mut Function, value: ValueId, target_local: u32) {
+        self.emit_get(func, value);
+        func.instruction(&Instruction::LocalSet(target_local));
+        func.instruction(&Instruction::LocalGet(target_local));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::LocalGet(target_local));
+        func.instruction(&Instruction::I64Sub);
+        func.instruction(&Instruction::LocalSet(target_local));
+        func.instruction(&Instruction::End);
+    }
+
+    fn emit_unsigned_gcd_loop(
+        &self,
+        func: &mut Function,
+        a_local: u32,
+        b_local: u32,
+        tmp_local: u32,
+    ) {
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(b_local));
+        func.instruction(&Instruction::I64Eqz);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(b_local));
+        func.instruction(&Instruction::LocalSet(tmp_local));
+
+        func.instruction(&Instruction::LocalGet(a_local));
+        func.instruction(&Instruction::LocalGet(b_local));
+        func.instruction(&Instruction::I64RemU);
+        func.instruction(&Instruction::LocalSet(b_local));
+
+        func.instruction(&Instruction::LocalGet(tmp_local));
+        func.instruction(&Instruction::LocalSet(a_local));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+    }
+
+    fn emit_gcd(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        self.emit_unsigned_abs_to_local(func, lhs, self.scratch_i64);
+        self.emit_unsigned_abs_to_local(func, rhs, self.scratch_i64_2);
+        self.emit_unsigned_gcd_loop(
+            func,
+            self.scratch_i64,
+            self.scratch_i64_2,
+            self.scratch_i64_3,
+        );
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        self.emit_trap_if_true(func);
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+    }
+
+    fn emit_lcm(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::I64Eqz);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::I64Eqz);
+        func.instruction(&Instruction::I32Or);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+        func.instruction(&Instruction::Else);
+        self.emit_unsigned_abs_to_local(func, lhs, self.scratch_i64);
+        self.emit_unsigned_abs_to_local(func, rhs, self.scratch_i64_2);
+        self.emit_unsigned_gcd_loop(
+            func,
+            self.scratch_i64,
+            self.scratch_i64_2,
+            self.scratch_i64_3,
+        );
+
+        self.emit_unsigned_abs_to_local(func, lhs, self.scratch_i64);
+        self.emit_unsigned_abs_to_local(func, rhs, self.scratch_i64_2);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        func.instruction(&Instruction::I64DivU);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+
+        func.instruction(&Instruction::I64Const(i64::MAX));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
+        func.instruction(&Instruction::I64DivU);
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64LtU);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
+        func.instruction(&Instruction::I64Mul);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+    }
+
+    fn emit_int_pow(&self, func: &mut Function, base: ValueId, exp: ValueId) {
+        self.emit_get(func, exp);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::I64Const(1));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        self.emit_get(func, base);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_2));
+        self.emit_get(func, exp);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        func.instruction(&Instruction::I64Eqz);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        func.instruction(&Instruction::I64Const(1));
+        func.instruction(&Instruction::I64And);
+        func.instruction(&Instruction::I64Const(1));
+        func.instruction(&Instruction::I64Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_checked_int_mul_locals(
+            func,
+            self.scratch_i64,
+            self.scratch_i64_2,
+            self.scratch_i64_4,
+        );
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_4));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        func.instruction(&Instruction::I64Const(1));
+        func.instruction(&Instruction::I64ShrU);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        func.instruction(&Instruction::I64Eqz);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::Else);
+        self.emit_checked_int_mul_locals(
+            func,
+            self.scratch_i64_2,
+            self.scratch_i64_2,
+            self.scratch_i64_4,
+        );
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_4));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_2));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+    }
+
+    fn emit_float_is_nan(&self, func: &mut Function, value: ValueId) {
+        self.emit_get(func, value);
+        self.emit_get(func, value);
+        func.instruction(&Instruction::F64Ne);
+    }
+
+    fn emit_float_is_infinite(&self, func: &mut Function, value: ValueId) {
+        self.emit_get(func, value);
+        func.instruction(&Instruction::F64Abs);
+        func.instruction(&Instruction::F64Const(f64::INFINITY));
+        func.instruction(&Instruction::F64Eq);
+    }
+
+    fn emit_float_is_finite(&self, func: &mut Function, value: ValueId) {
+        self.emit_get(func, value);
+        self.emit_get(func, value);
+        func.instruction(&Instruction::F64Eq);
+        self.emit_get(func, value);
+        func.instruction(&Instruction::F64Abs);
+        func.instruction(&Instruction::F64Const(f64::INFINITY));
+        func.instruction(&Instruction::F64Ne);
+        func.instruction(&Instruction::I32And);
     }
 
     fn emit_char_to_digit_option(

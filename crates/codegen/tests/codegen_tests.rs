@@ -351,6 +351,60 @@ fn test_char_to_digit_invalid_radix_traps() {
     )));
 }
 
+#[test]
+fn test_int_numeric_intrinsics_match_interpreter_semantics() {
+    assert_i64_cases(&[
+        ("fn main() -> Int { (0 - 5).abs() }", 5),
+        ("fn main() -> Int { 2.pow(10) }", 1024),
+        ("fn main() -> Int { 5.pow(0) }", 1),
+        ("import math\nfn main() -> Int { math.min(3, 7) }", 3),
+        ("import math\nfn main() -> Int { math.max(3, 7) }", 7),
+        ("import math\nfn main() -> Int { math.gcd(54, 24) }", 6),
+        (
+            "import math\nfn main() -> Int { math.gcd(-54, 24) + math.gcd(0, 0) }",
+            6,
+        ),
+        ("import math\nfn main() -> Int { math.lcm(6, 8) }", 24),
+        (
+            "import math\nfn main() -> Int { math.lcm(0, 5) + math.lcm(-3, 4) }",
+            12,
+        ),
+    ]);
+}
+
+#[test]
+fn test_int_numeric_intrinsic_traps_match_current_wasm_runtime_behavior() {
+    assert!(run_main_traps(
+        "fn main() -> Int { (-9223372036854775807 - 1).abs() }"
+    ));
+    assert!(run_main_traps("fn main() -> Int { 2.pow(-1) }"));
+    assert!(run_main_traps("fn main() -> Int { 2.pow(63) }"));
+    assert!(run_main_traps(
+        "import math\nfn main() -> Int { math.lcm(9223372036854775807, 2) }"
+    ));
+}
+
+#[test]
+fn test_float_numeric_intrinsics_match_interpreter_semantics() {
+    let to_float = run_main_f64("fn main() -> Float { 42.to_float() }");
+    assert!((to_float - 42.0).abs() < f64::EPSILON);
+
+    let abs_val = run_main_f64("fn main() -> Float { (0.0 - 2.5).abs() }");
+    assert!((abs_val - 2.5).abs() < f64::EPSILON);
+
+    assert_i64_cases(&[("fn main() -> Int { 42.9.to_int() }", 42)]);
+    assert_i32_cases(&[
+        ("fn main() -> Bool { (0.0 / 0.0).is_nan() }", 1),
+        ("fn main() -> Bool { (1.0 / 0.0).is_infinite() }", 1),
+        ("fn main() -> Bool { ((0.0 - 1.0) / 0.0).is_infinite() }", 1),
+        ("fn main() -> Bool { 1.5.is_finite() }", 1),
+        (
+            "fn main() -> Bool { !(0.0 / 0.0).is_finite() && !(1.0 / 0.0).is_finite() }",
+            1,
+        ),
+    ]);
+}
+
 // ── Arithmetic ────────────────────────────────────────────────────
 
 #[test]
