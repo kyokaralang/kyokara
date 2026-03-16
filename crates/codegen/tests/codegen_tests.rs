@@ -173,6 +173,30 @@ fn test_string_chars_count_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_lines_count_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "a\nb\nc".lines().count() }"#),
+        3
+    );
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "a\nb\n".lines().count() }"#),
+        2
+    );
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "".lines().count() }"#),
+        0
+    );
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "a\r\nb\r\nc".lines().count() }"#),
+        3
+    );
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "\n\n".lines().count() }"#),
+        2
+    );
+}
+
+#[test]
 fn test_string_equality_uses_value_semantics() {
     assert_i32_cases(&[
         (
