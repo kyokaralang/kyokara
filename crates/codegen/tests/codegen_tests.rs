@@ -331,6 +331,39 @@ fn test_string_split_count_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_lines_contains_matches_interpreter_semantics() {
+    assert_i32_cases(&[
+        (
+            r#"fn main() -> Bool { "a\nb\nc".lines().contains("b") }"#,
+            1,
+        ),
+        (r#"fn main() -> Bool { "a\r\nb".lines().contains("a") }"#, 1),
+        (r#"fn main() -> Bool { "".lines().contains("") }"#, 0),
+        (r#"fn main() -> Bool { "\n\n".lines().contains("") }"#, 1),
+    ]);
+}
+
+#[test]
+fn test_string_split_contains_nonempty_delim_matches_interpreter_semantics() {
+    assert_i32_cases(&[
+        (
+            r#"fn main() -> Bool { "a,b,c".split(",").contains("b") }"#,
+            1,
+        ),
+        (r#"fn main() -> Bool { "a,,b".split(",").contains("") }"#, 1),
+        (r#"fn main() -> Bool { "".split(",").contains("") }"#, 1),
+    ]);
+}
+
+#[test]
+fn test_string_split_contains_empty_delim_matches_interpreter_semantics() {
+    assert_i32_cases(&[
+        (r#"fn main() -> Bool { "ab".split("").contains("a") }"#, 1),
+        (r#"fn main() -> Bool { "ab".split("").contains("z") }"#, 0),
+    ]);
+}
+
+#[test]
 fn test_string_equality_uses_value_semantics() {
     assert_i32_cases(&[
         (
