@@ -173,6 +173,25 @@ fn test_string_chars_count_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_chars_fold_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int { "abc".chars().fold(0, fn(acc: Int, ch: Char) => acc + ch.code()) }"#
+        ),
+        294
+    );
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               let base = 1\n\
+               \"café\".chars().fold(base, fn(acc: Int, ch: Char) => acc + ch.code())\n\
+             }"
+        ),
+        532
+    );
+}
+
+#[test]
 fn test_string_lines_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a\nb\nc".lines().count() }"#),
