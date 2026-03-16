@@ -4442,14 +4442,51 @@ impl<'a> FuncCodegen<'a> {
         seq: ValueId,
         needle: ValueId,
     ) -> Result<(), CodegenError> {
-        if !matches!(self.value_ty(needle), Ty::Int) {
-            return Err(CodegenError::UnsupportedInstruction(format!(
-                "seq_contains over range-backed Wasm seq expects Int needle, got {:?}",
-                self.value_ty(needle)
-            )));
+        self.emit_get(func, seq);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        match self.core_seq_element_ty(seq) {
+            Some(Ty::Int) => {
+                if !matches!(self.value_ty(needle), Ty::Int) {
+                    return Err(CodegenError::UnsupportedInstruction(format!(
+                        "seq_contains over Wasm Seq<Int> expects Int needle, got {:?}",
+                        self.value_ty(needle)
+                    )));
+                }
+                self.emit_seq_contains_range_from_local(func, self.scratch_i32, needle)?;
+            }
+            Some(Ty::Char) => {
+                if !matches!(self.value_ty(needle), Ty::Char) {
+                    return Err(CodegenError::UnsupportedInstruction(format!(
+                        "seq_contains over Wasm Seq<Char> expects Char needle, got {:?}",
+                        self.value_ty(needle)
+                    )));
+                }
+                self.emit_seq_contains_chars_from_local(func, self.scratch_i32, needle)?;
+            }
+            Some(elem_ty) => {
+                return Err(CodegenError::UnsupportedInstruction(format!(
+                    "seq_contains over Wasm seq element type {elem_ty:?} (deferred)"
+                )));
+            }
+            None => {
+                return Err(CodegenError::UnsupportedInstruction(format!(
+                    "seq_contains over non-Seq receiver in Wasm: {:?}",
+                    self.value_ty(seq)
+                )));
+            }
         }
 
-        self.emit_seq_load_range_bounds(func, seq)?;
+        Ok(())
+    }
+
+    fn emit_seq_contains_range_from_local(
+        &self,
+        func: &mut Function,
+        seq_local: u32,
+        needle: ValueId,
+    ) -> Result<(), CodegenError> {
+        self.emit_seq_load_range_bounds_from_local(func, seq_local)?;
         self.emit_get(func, needle);
         func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
         func.instruction(&Instruction::I32Const(0));
@@ -4480,6 +4517,77 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::End);
 
         func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        Ok(())
+    }
+
+    fn emit_seq_contains_chars_from_local(
+        &self,
+        func: &mut Function,
+        seq_local: u32,
+        needle: ValueId,
+    ) -> Result<(), CodegenError> {
+        func.instruction(&Instruction::LocalGet(seq_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4));
+
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        self.emit_get(func, needle);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_7));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        self.emit_utf8_char_width_from_local(
+            func,
+            self.scratch_i32_3,
+            self.scratch_i32_5,
+            self.scratch_i32_8,
+        );
+        self.emit_utf8_codepoint_from_local(
+            func,
+            self.scratch_i32_3,
+            self.scratch_i32_5,
+            self.scratch_i32_8,
+            self.scratch_i32_2,
+        );
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_7));
+        func.instruction(&Instruction::Br(2));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
         Ok(())
     }
 

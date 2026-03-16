@@ -249,6 +249,19 @@ fn test_string_chars_find_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_chars_contains_matches_interpreter_semantics() {
+    assert!(run_main_bool(
+        r#"fn main() -> Bool { "café".chars().contains('é') }"#
+    ));
+    assert!(!run_main_bool(
+        r#"fn main() -> Bool { "abc".chars().contains('z') }"#
+    ));
+    assert!(!run_main_bool(
+        r#"fn main() -> Bool { "".chars().contains('a') }"#
+    ));
+}
+
+#[test]
 fn test_string_lines_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a\nb\nc".lines().count() }"#),
