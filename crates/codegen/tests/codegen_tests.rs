@@ -360,6 +360,110 @@ fn test_parse_float_error_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_option_unwrap_or_matches_interpreter_semantics() {
+    assert_i64_cases(&[
+        (
+            &with_option_variants(r#"fn main() -> Int { Some(41).unwrap_or(0) }"#),
+            41,
+        ),
+        (
+            &with_option_variants(
+                r#"fn main() -> Int {
+            let o: Option<Int> = None
+            o.unwrap_or(7)
+        }"#,
+            ),
+            7,
+        ),
+    ]);
+}
+
+#[test]
+fn test_option_map_matches_interpreter_semantics() {
+    assert_i64_cases(&[
+        (
+            &with_option_variants(
+                r#"fn inc(n: Int) -> Int { n + 1 }
+        fn main() -> Int {
+            match (Some(41).map(inc)) {
+                Some(n) => n
+                None => 0
+            }
+        }"#,
+            ),
+            42,
+        ),
+        (
+            &with_option_variants(
+                r#"fn inc(n: Int) -> Int { n + 1 }
+        fn main() -> Int {
+            let o: Option<Int> = None
+            match (o.map(inc)) {
+                Some(n) => n
+                None => 7
+            }
+        }"#,
+            ),
+            7,
+        ),
+    ]);
+}
+
+#[test]
+fn test_option_and_then_matches_interpreter_semantics() {
+    assert_i64_cases(&[
+        (
+            &with_option_variants(
+                r#"fn next(n: Int) -> Option<Int> { Some(n + 1) }
+        fn main() -> Int {
+            match (Some(41).and_then(next)) {
+                Some(n) => n
+                None => 0
+            }
+        }"#,
+            ),
+            42,
+        ),
+        (
+            &with_option_variants(
+                r#"fn next(n: Int) -> Option<Int> { Some(n + 1) }
+        fn main() -> Int {
+            let o: Option<Int> = None
+            match (o.and_then(next)) {
+                Some(n) => n
+                None => 7
+            }
+        }"#,
+            ),
+            7,
+        ),
+    ]);
+}
+
+#[test]
+fn test_option_map_or_matches_interpreter_semantics() {
+    assert_i64_cases(&[
+        (
+            &with_option_variants(
+                r#"fn inc(n: Int) -> Int { n + 1 }
+        fn main() -> Int { Some(41).map_or(0, inc) }"#,
+            ),
+            42,
+        ),
+        (
+            &with_option_variants(
+                r#"fn inc(n: Int) -> Int { n + 1 }
+        fn main() -> Int {
+            let o: Option<Int> = None
+            o.map_or(9, inc)
+        }"#,
+            ),
+            9,
+        ),
+    ]);
+}
+
+#[test]
 fn test_result_unwrap_or_matches_interpreter_semantics() {
     assert_i64_cases(&[
         (

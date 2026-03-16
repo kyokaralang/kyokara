@@ -3191,6 +3191,12 @@ impl<'a> FuncCodegen<'a> {
                     self.emit_int_min_max(func, args[0], args[1], true);
                     Ok(())
                 }
+                "option_unwrap_or" => self.emit_option_unwrap_or(func, args[0], args[1], result_ty),
+                "option_map" => self.emit_option_map(func, args[0], args[1], result_ty),
+                "option_and_then" => self.emit_option_and_then(func, args[0], args[1], result_ty),
+                "option_map_or" => {
+                    self.emit_option_map_or(func, args[0], args[1], args[2], result_ty)
+                }
                 "result_unwrap_or" => self.emit_result_unwrap_or(func, args[0], args[1], result_ty),
                 "result_map" => self.emit_result_map(func, args[0], args[1], result_ty),
                 "result_and_then" => self.emit_result_and_then(func, args[0], args[1], result_ty),
@@ -3291,6 +3297,296 @@ impl<'a> FuncCodegen<'a> {
             memory_index: 0,
         }));
         func.instruction(&Instruction::Call(helper_fn_index));
+    }
+
+    fn emit_option_unwrap_or(
+        &self,
+        func: &mut Function,
+        option: ValueId,
+        fallback: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let input_option_ty = self.value_ty(option);
+        let (some_ty, some_tag, none_tag) =
+            self.lookup_option_variant_tags(input_option_ty, "option_unwrap_or")?;
+        let temp_local = self.temp_local_for_ty(result_ty);
+
+        self.emit_get(func, option);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(some_tag as i32));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_option_payload_load_from_local(func, self.scratch_i32, some_ty);
+        func.instruction(&Instruction::LocalSet(temp_local));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(none_tag as i32));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::I32Eqz);
+        self.emit_trap_if_true(func);
+        self.emit_get(func, fallback);
+        func.instruction(&Instruction::LocalSet(temp_local));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(temp_local));
+        Ok(())
+    }
+
+    fn emit_option_map(
+        &self,
+        func: &mut Function,
+        option: ValueId,
+        mapper: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let input_option_ty = self.value_ty(option);
+        let (input_some_ty, input_some_tag, input_none_tag) =
+            self.lookup_option_variant_tags(input_option_ty, "option_map")?;
+        let (output_some_ty, _output_some_tag, _output_none_tag) =
+            self.lookup_option_variant_tags(result_ty, "option_map")?;
+        let mapped_local = self.temp_local_for_ty(output_some_ty);
+
+        self.emit_get(func, option);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(input_some_tag as i32));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_option_payload_load_from_local(func, self.scratch_i32, input_some_ty);
+        self.emit_indirect_call_single_arg(func, mapper)?;
+        func.instruction(&Instruction::LocalSet(mapped_local));
+        self.emit_single_field_adt_from_local(
+            func,
+            result_ty,
+            "Some",
+            mapped_local,
+            output_some_ty,
+            self.scratch_i32_6,
+        )?;
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(input_none_tag as i32));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::I32Eqz);
+        self.emit_trap_if_true(func);
+        self.emit_option_none(func, result_ty, self.scratch_i32_6)?;
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        Ok(())
+    }
+
+    fn emit_option_and_then(
+        &self,
+        func: &mut Function,
+        option: ValueId,
+        mapper: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let input_option_ty = self.value_ty(option);
+        let (input_some_ty, input_some_tag, input_none_tag) =
+            self.lookup_option_variant_tags(input_option_ty, "option_and_then")?;
+
+        self.emit_get(func, option);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(input_some_tag as i32));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_option_payload_load_from_local(func, self.scratch_i32, input_some_ty);
+        self.emit_indirect_call_single_arg(func, mapper)?;
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(input_none_tag as i32));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::I32Eqz);
+        self.emit_trap_if_true(func);
+        self.emit_option_none(func, result_ty, self.scratch_i32_6)?;
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        Ok(())
+    }
+
+    fn emit_option_map_or(
+        &self,
+        func: &mut Function,
+        option: ValueId,
+        fallback: ValueId,
+        mapper: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let input_option_ty = self.value_ty(option);
+        let (input_some_ty, input_some_tag, input_none_tag) =
+            self.lookup_option_variant_tags(input_option_ty, "option_map_or")?;
+        let temp_local = self.temp_local_for_ty(result_ty);
+
+        self.emit_get(func, option);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(input_some_tag as i32));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_option_payload_load_from_local(func, self.scratch_i32, input_some_ty);
+        self.emit_indirect_call_single_arg(func, mapper)?;
+        func.instruction(&Instruction::LocalSet(temp_local));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(input_none_tag as i32));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::I32Eqz);
+        self.emit_trap_if_true(func);
+        self.emit_get(func, fallback);
+        func.instruction(&Instruction::LocalSet(temp_local));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(temp_local));
+        Ok(())
+    }
+
+    fn lookup_option_variant_tags<'b>(
+        &self,
+        option_ty: &'b Ty,
+        op: &str,
+    ) -> Result<(&'b Ty, u32, u32), CodegenError> {
+        let Ty::Adt { def, args } = option_ty else {
+            return Err(CodegenError::UnsupportedInstruction(format!(
+                "{op} expected Option<_>, got {option_ty:?}"
+            )));
+        };
+        let some_ty = args.first().ok_or_else(|| {
+            CodegenError::UnsupportedInstruction(format!(
+                "{op} expected Option<_>, got {option_ty:?}"
+            ))
+        })?;
+
+        let layout = self
+            .ctx
+            .adt_layouts
+            .get(def)
+            .ok_or(CodegenError::MissingAdtDef)?;
+        let type_item = &self.ctx.item_tree.types[*def];
+        let TypeDefKind::Adt { variants } = &type_item.kind else {
+            return Err(CodegenError::MissingAdtDef);
+        };
+        let some_variant = variants
+            .iter()
+            .find(|variant| variant.name.resolve(self.ctx.interner) == "Some")
+            .ok_or(CodegenError::MissingAdtDef)?;
+        let none_variant = variants
+            .iter()
+            .find(|variant| variant.name.resolve(self.ctx.interner) == "None")
+            .ok_or(CodegenError::MissingAdtDef)?;
+        let some_tag = *layout
+            .tag_map
+            .get(&some_variant.name)
+            .ok_or(CodegenError::MissingAdtDef)?;
+        let none_tag = *layout
+            .tag_map
+            .get(&none_variant.name)
+            .ok_or(CodegenError::MissingAdtDef)?;
+        Ok((some_ty, some_tag, none_tag))
+    }
+
+    fn emit_option_payload_load_from_local(
+        &self,
+        func: &mut Function,
+        option_ptr_local: u32,
+        payload_ty: &Ty,
+    ) {
+        func.instruction(&Instruction::LocalGet(option_ptr_local));
+        self.emit_typed_load(func, payload_ty, u64::from(AdtLayout::field_offset(0)));
+    }
+
+    fn emit_option_none(
+        &self,
+        func: &mut Function,
+        option_ty: &Ty,
+        out_local: u32,
+    ) -> Result<(), CodegenError> {
+        let Ty::Adt { def, .. } = option_ty else {
+            return Err(CodegenError::UnsupportedInstruction(format!(
+                "expected Option<_>, got {option_ty:?}"
+            )));
+        };
+
+        let layout = self
+            .ctx
+            .adt_layouts
+            .get(def)
+            .ok_or(CodegenError::MissingAdtDef)?;
+        let type_item = &self.ctx.item_tree.types[*def];
+        let TypeDefKind::Adt { variants } = &type_item.kind else {
+            return Err(CodegenError::MissingAdtDef);
+        };
+        let none_variant = variants
+            .iter()
+            .find(|variant| variant.name.resolve(self.ctx.interner) == "None")
+            .ok_or(CodegenError::MissingAdtDef)?;
+        let none_tag = *layout
+            .tag_map
+            .get(&none_variant.name)
+            .ok_or(CodegenError::MissingAdtDef)?;
+
+        func.instruction(&Instruction::I32Const(layout.size as i32));
+        func.instruction(&Instruction::Call(self.ctx.alloc_fn_index));
+        func.instruction(&Instruction::Drop);
+
+        let derive_ptr = |func: &mut Function, size: u32| {
+            func.instruction(&Instruction::GlobalGet(0));
+            func.instruction(&Instruction::I32Const(size as i32));
+            func.instruction(&Instruction::I32Sub);
+        };
+
+        derive_ptr(func, layout.size);
+        func.instruction(&Instruction::I32Const(none_tag as i32));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+
+        derive_ptr(func, layout.size);
+        func.instruction(&Instruction::LocalSet(out_local));
+        Ok(())
     }
 
     fn emit_result_unwrap_or(
