@@ -262,6 +262,27 @@ fn test_string_chars_contains_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_chars_count_by_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               let target = 'a'\n\
+               \"banana\".chars().count(fn(ch: Char) => ch == target)\n\
+             }"
+        ),
+        3
+    );
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "café".chars().count(fn(ch: Char) => ch == 'é') }"#),
+        1
+    );
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "".chars().count(fn(_ch: Char) => true) }"#),
+        0
+    );
+}
+
+#[test]
 fn test_string_lines_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a\nb\nc".lines().count() }"#),

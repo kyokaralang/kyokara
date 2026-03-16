@@ -3968,7 +3968,39 @@ impl<'a> FuncCodegen<'a> {
         seq: ValueId,
         predicate: ValueId,
     ) -> Result<(), CodegenError> {
-        self.emit_seq_load_range_bounds(func, seq)?;
+        self.emit_get(func, seq);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        match self.core_seq_element_ty(seq) {
+            Some(Ty::Int) => {
+                self.emit_seq_count_by_range_from_local(func, self.scratch_i32, predicate)?;
+            }
+            Some(Ty::Char) => {
+                self.emit_seq_count_by_chars_from_local(func, self.scratch_i32, predicate)?;
+            }
+            Some(elem_ty) => {
+                return Err(CodegenError::UnsupportedInstruction(format!(
+                    "seq_count_by over Wasm seq element type {elem_ty:?} (deferred)"
+                )));
+            }
+            None => {
+                return Err(CodegenError::UnsupportedInstruction(format!(
+                    "seq_count_by over non-Seq receiver in Wasm: {:?}",
+                    self.value_ty(seq)
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn emit_seq_count_by_range_from_local(
+        &self,
+        func: &mut Function,
+        seq_local: u32,
+        predicate: ValueId,
+    ) -> Result<(), CodegenError> {
+        self.emit_seq_load_range_bounds_from_local(func, seq_local)?;
 
         func.instruction(&Instruction::I64Const(0));
         func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
@@ -4000,6 +4032,79 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::I64Const(1));
         func.instruction(&Instruction::I64Add);
         func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        Ok(())
+    }
+
+    fn emit_seq_count_by_chars_from_local(
+        &self,
+        func: &mut Function,
+        seq_local: u32,
+        predicate: ValueId,
+    ) -> Result<(), CodegenError> {
+        func.instruction(&Instruction::LocalGet(seq_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4));
+
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        self.emit_utf8_char_width_from_local(
+            func,
+            self.scratch_i32_3,
+            self.scratch_i32_5,
+            self.scratch_i32_7,
+        );
+        self.emit_utf8_codepoint_from_local(
+            func,
+            self.scratch_i32_3,
+            self.scratch_i32_5,
+            self.scratch_i32_7,
+            self.scratch_i32_8,
+        );
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+        self.emit_indirect_call_single_arg(func, predicate)?;
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        func.instruction(&Instruction::I64Const(i64::MAX));
+        func.instruction(&Instruction::I64Eq);
+        self.emit_trap_if_true(func);
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        func.instruction(&Instruction::I64Const(1));
+        func.instruction(&Instruction::I64Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
         func.instruction(&Instruction::Br(0));
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
@@ -4739,16 +4844,6 @@ impl<'a> FuncCodegen<'a> {
 
         func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
         Ok(())
-    }
-
-    fn emit_seq_load_range_bounds(
-        &self,
-        func: &mut Function,
-        seq: ValueId,
-    ) -> Result<(), CodegenError> {
-        self.emit_get(func, seq);
-        func.instruction(&Instruction::LocalSet(self.scratch_i32));
-        self.emit_seq_load_range_bounds_from_local(func, self.scratch_i32)
     }
 
     fn emit_seq_load_range_bounds_from_local(
