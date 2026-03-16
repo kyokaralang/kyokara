@@ -3191,6 +3191,8 @@ impl<'a> FuncCodegen<'a> {
                     self.emit_int_min_max(func, args[0], args[1], true);
                     Ok(())
                 }
+                "parse_float" => self.emit_parse_float_result(func, args[0], result_ty),
+                "parse_int" => self.emit_parse_int_result(func, args[0], result_ty),
                 "string_contains" => {
                     self.emit_string_contains(func, args[0], args[1]);
                     Ok(())
@@ -3282,6 +3284,202 @@ impl<'a> FuncCodegen<'a> {
             memory_index: 0,
         }));
         func.instruction(&Instruction::Call(helper_fn_index));
+    }
+
+    fn emit_parse_int_result(
+        &self,
+        func: &mut Function,
+        value: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let Ty::Adt { args, .. } = result_ty else {
+            return Err(CodegenError::UnsupportedInstruction(format!(
+                "parse_int expected Result<Int, ParseError>, got {result_ty:?}"
+            )));
+        };
+        let ok_ty = args.first().ok_or_else(|| {
+            CodegenError::UnsupportedInstruction(format!(
+                "parse_int expected Result<Int, ParseError>, got {result_ty:?}"
+            ))
+        })?;
+        let err_ty = args.get(1).ok_or_else(|| {
+            CodegenError::UnsupportedInstruction(format!(
+                "parse_int expected Result<Int, ParseError>, got {result_ty:?}"
+            ))
+        })?;
+
+        func.instruction(&Instruction::I32Const(12));
+        func.instruction(&Instruction::Call(self.ctx.alloc_fn_index));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32)); // parse buffer
+
+        self.emit_get(func, value);
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Add);
+        self.emit_get(func, value);
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::Call(
+            self.ctx
+                .parse_int_fn_index
+                .expect("parse_int helper should be imported when used"),
+        ));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2)); // status
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32GtU);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3)); // error message ptr
+        self.emit_single_field_adt_from_local(
+            func,
+            err_ty,
+            "InvalidInt",
+            self.scratch_i32_3,
+            &Ty::String,
+            self.scratch_i32_4,
+        )?;
+        self.emit_single_field_adt_from_local(
+            func,
+            result_ty,
+            "Err",
+            self.scratch_i32_4,
+            err_ty,
+            self.scratch_i32_6,
+        )?;
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I64Load(MemArg {
+            offset: 0,
+            align: 3,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        self.emit_single_field_adt_from_local(
+            func,
+            result_ty,
+            "Ok",
+            self.scratch_i64,
+            ok_ty,
+            self.scratch_i32_6,
+        )?;
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        Ok(())
+    }
+
+    fn emit_parse_float_result(
+        &self,
+        func: &mut Function,
+        value: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let Ty::Adt { args, .. } = result_ty else {
+            return Err(CodegenError::UnsupportedInstruction(format!(
+                "parse_float expected Result<Float, ParseError>, got {result_ty:?}"
+            )));
+        };
+        let ok_ty = args.first().ok_or_else(|| {
+            CodegenError::UnsupportedInstruction(format!(
+                "parse_float expected Result<Float, ParseError>, got {result_ty:?}"
+            ))
+        })?;
+        let err_ty = args.get(1).ok_or_else(|| {
+            CodegenError::UnsupportedInstruction(format!(
+                "parse_float expected Result<Float, ParseError>, got {result_ty:?}"
+            ))
+        })?;
+
+        func.instruction(&Instruction::I32Const(12));
+        func.instruction(&Instruction::Call(self.ctx.alloc_fn_index));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32)); // parse buffer
+
+        self.emit_get(func, value);
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Add);
+        self.emit_get(func, value);
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::Call(
+            self.ctx
+                .parse_float_fn_index
+                .expect("parse_float helper should be imported when used"),
+        ));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2)); // status
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32GtU);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3)); // error message ptr
+        self.emit_single_field_adt_from_local(
+            func,
+            err_ty,
+            "InvalidFloat",
+            self.scratch_i32_3,
+            &Ty::String,
+            self.scratch_i32_4,
+        )?;
+        self.emit_single_field_adt_from_local(
+            func,
+            result_ty,
+            "Err",
+            self.scratch_i32_4,
+            err_ty,
+            self.scratch_i32_6,
+        )?;
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::F64Load(MemArg {
+            offset: 0,
+            align: 3,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_f64));
+        self.emit_single_field_adt_from_local(
+            func,
+            result_ty,
+            "Ok",
+            self.scratch_f64,
+            ok_ty,
+            self.scratch_i32_6,
+        )?;
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        Ok(())
     }
 
     fn emit_int_abs(&self, func: &mut Function, value: ValueId) {
@@ -3715,6 +3913,66 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::End);
 
         derive_ptr(func, layout.size);
+        Ok(())
+    }
+
+    fn emit_single_field_adt_from_local(
+        &self,
+        func: &mut Function,
+        adt_ty: &Ty,
+        variant_name: &str,
+        payload_local: u32,
+        payload_ty: &Ty,
+        out_local: u32,
+    ) -> Result<(), CodegenError> {
+        let Ty::Adt { def, .. } = adt_ty else {
+            return Err(CodegenError::UnsupportedInstruction(format!(
+                "expected ADT for variant `{variant_name}`, got {adt_ty:?}"
+            )));
+        };
+
+        let layout = self
+            .ctx
+            .adt_layouts
+            .get(def)
+            .ok_or(CodegenError::MissingAdtDef)?;
+        let type_item = &self.ctx.item_tree.types[*def];
+        let TypeDefKind::Adt { variants } = &type_item.kind else {
+            return Err(CodegenError::MissingAdtDef);
+        };
+        let variant = variants
+            .iter()
+            .find(|variant| variant.name.resolve(self.ctx.interner) == variant_name)
+            .ok_or(CodegenError::MissingAdtDef)?;
+        let tag = layout
+            .tag_map
+            .get(&variant.name)
+            .ok_or(CodegenError::MissingAdtDef)?;
+
+        func.instruction(&Instruction::I32Const(layout.size as i32));
+        func.instruction(&Instruction::Call(self.ctx.alloc_fn_index));
+        func.instruction(&Instruction::Drop);
+
+        let derive_ptr = |func: &mut Function, size: u32| {
+            func.instruction(&Instruction::GlobalGet(0));
+            func.instruction(&Instruction::I32Const(size as i32));
+            func.instruction(&Instruction::I32Sub);
+        };
+
+        derive_ptr(func, layout.size);
+        func.instruction(&Instruction::I32Const(*tag as i32));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+
+        derive_ptr(func, layout.size);
+        func.instruction(&Instruction::LocalGet(payload_local));
+        self.emit_typed_store_stack(func, payload_ty, u64::from(AdtLayout::field_offset(0)));
+
+        derive_ptr(func, layout.size);
+        func.instruction(&Instruction::LocalSet(out_local));
         Ok(())
     }
 

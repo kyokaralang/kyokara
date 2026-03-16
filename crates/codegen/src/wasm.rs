@@ -64,6 +64,8 @@ pub struct ModuleCtx<'a> {
     pub string_to_upper_fn_index: Option<u32>,
     pub string_to_lower_fn_index: Option<u32>,
     pub string_md5_fn_index: Option<u32>,
+    pub parse_int_fn_index: Option<u32>,
+    pub parse_float_fn_index: Option<u32>,
 }
 
 /// Compile a KIR module to a WASM binary.
@@ -107,6 +109,28 @@ pub fn compile_module(
             )
         })
     });
+    let needs_parse_int = kir.functions.iter().any(|(_, func)| {
+        func.values.iter().any(|(_, value)| {
+            matches!(
+                &value.inst,
+                kyokara_kir::inst::Inst::Call {
+                    target: kyokara_kir::inst::CallTarget::Intrinsic(name),
+                    ..
+                } if name == "parse_int"
+            )
+        })
+    });
+    let needs_parse_float = kir.functions.iter().any(|(_, func)| {
+        func.values.iter().any(|(_, value)| {
+            matches!(
+                &value.inst,
+                kyokara_kir::inst::Inst::Call {
+                    target: kyokara_kir::inst::CallTarget::Intrinsic(name),
+                    ..
+                } if name == "parse_float"
+            )
+        })
+    });
 
     let mut next_fn_index = 0u32;
     let string_to_upper_fn_index = if needs_string_to_upper {
@@ -124,6 +148,20 @@ pub fn compile_module(
         None
     };
     let string_md5_fn_index = if needs_string_md5 {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
+    let parse_int_fn_index = if needs_parse_int {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
+    let parse_float_fn_index = if needs_parse_float {
         let idx = next_fn_index;
         next_fn_index += 1;
         Some(idx)
@@ -157,6 +195,11 @@ pub fn compile_module(
     types
         .ty()
         .function([ValType::I32, ValType::I32], [ValType::I32]);
+    // Type 2: parse helper(i32 ptr, i32 len, i32 value_out, i32 msg_out) -> i32 status
+    types.ty().function(
+        [ValType::I32, ValType::I32, ValType::I32, ValType::I32],
+        [ValType::I32],
+    );
 
     // Build type index for each KIR function, deduplicated by structural
     // signature so indirect calls can reuse the same type index.
@@ -195,6 +238,8 @@ pub fn compile_module(
         string_to_upper_fn_index,
         string_to_lower_fn_index,
         string_md5_fn_index,
+        parse_int_fn_index,
+        parse_float_fn_index,
     };
 
     // ── Import section ────────────────────────────────────────────
@@ -208,6 +253,12 @@ pub fn compile_module(
     }
     if string_md5_fn_index.is_some() {
         imports.import(HOST_MODULE, "string_md5", EntityType::Function(1));
+    }
+    if parse_int_fn_index.is_some() {
+        imports.import(HOST_MODULE, "parse_int", EntityType::Function(2));
+    }
+    if parse_float_fn_index.is_some() {
+        imports.import(HOST_MODULE, "parse_float", EntityType::Function(2));
     }
 
     // ── Function section ──────────────────────────────────────────

@@ -81,6 +81,13 @@ fn with_option_variants(src: &str) -> String {
     with_imports("from Option import Some, None", src)
 }
 
+fn with_core_variants(src: &str) -> String {
+    with_imports(
+        "from Result import Ok, Err\nfrom ParseError import InvalidInt, InvalidFloat",
+        src,
+    )
+}
+
 fn assert_i64_cases(cases: &[(&str, i64)]) {
     for (source, expected) in cases {
         assert_eq!(
@@ -260,6 +267,92 @@ fn test_string_concat_roundtrips_from_guest_memory() {
         run_main_string(r#"fn main() -> String { "é".concat("clair") }"#),
         "éclair"
     );
+}
+
+#[test]
+fn test_parse_int_matches_interpreter_semantics() {
+    assert_i64_cases(&[(
+        &with_core_variants(
+            r#"fn main() -> Int {
+            match ("42".parse_int()) {
+                Ok(n) => n
+                Err(_) => -1
+            }
+        }"#,
+        ),
+        42,
+    )]);
+}
+
+#[test]
+fn test_parse_int_error_matches_interpreter_semantics() {
+    assert_i32_cases(&[(
+        &with_core_variants(
+            r#"fn main() -> Bool {
+            match ("oops".parse_int()) {
+                Ok(_) => false
+                Err(e) => match (e) {
+                    InvalidInt(msg) => msg.len() > 0
+                    InvalidFloat(_) => false
+                }
+            }
+        }"#,
+        ),
+        1,
+    )]);
+}
+
+#[test]
+fn test_parse_float_matches_interpreter_semantics() {
+    assert_f64_cases(&[(
+        &with_core_variants(
+            r#"fn main() -> Float {
+            match ("3.14".parse_float()) {
+                Ok(f) => f
+                Err(_) => 0.0
+            }
+        }"#,
+        ),
+        314.0 / 100.0,
+    )]);
+}
+
+#[test]
+fn test_parse_float_special_values_match_interpreter_semantics() {
+    assert_i32_cases(&[(
+        &with_core_variants(
+            r#"fn main() -> Bool {
+            let inf_ok = match ("inf".parse_float()) {
+                Ok(f) => f.is_infinite()
+                Err(_) => false
+            }
+            let nan_ok = match ("NaN".parse_float()) {
+                Ok(f) => f.is_nan()
+                Err(_) => false
+            }
+            inf_ok && nan_ok
+        }"#,
+        ),
+        1,
+    )]);
+}
+
+#[test]
+fn test_parse_float_error_matches_interpreter_semantics() {
+    assert_i32_cases(&[(
+        &with_core_variants(
+            r#"fn main() -> Bool {
+            match ("oops".parse_float()) {
+                Ok(_) => false
+                Err(e) => match (e) {
+                    InvalidInt(_) => false
+                    InvalidFloat(msg) => msg.len() > 0
+                }
+            }
+        }"#,
+        ),
+        1,
+    )]);
 }
 
 #[test]

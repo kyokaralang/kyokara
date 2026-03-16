@@ -21,6 +21,13 @@ pub enum HostStatus {
     InvalidRequiredByKind = 6,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+enum ParseHelperStatus {
+    Ok = 0,
+    Err = 1,
+}
+
 impl HostStatus {
     fn code(self) -> i32 {
         self as i32
@@ -231,6 +238,46 @@ fn build_host_linker(
     linker
         .func_wrap(
             HOST_MODULE,
+            "parse_int",
+            |mut caller: wasmtime::Caller<'_, StoreState>,
+             text_ptr: i32,
+             text_len: i32,
+             value_out_ptr: i32,
+             message_out_ptr: i32|
+             -> i32 {
+                call_parse_int_helper(
+                    &mut caller,
+                    text_ptr,
+                    text_len,
+                    value_out_ptr,
+                    message_out_ptr,
+                )
+            },
+        )
+        .map_err(WasmRuntimeError::HostLinker)?;
+    linker
+        .func_wrap(
+            HOST_MODULE,
+            "parse_float",
+            |mut caller: wasmtime::Caller<'_, StoreState>,
+             text_ptr: i32,
+             text_len: i32,
+             value_out_ptr: i32,
+             message_out_ptr: i32|
+             -> i32 {
+                call_parse_float_helper(
+                    &mut caller,
+                    text_ptr,
+                    text_len,
+                    value_out_ptr,
+                    message_out_ptr,
+                )
+            },
+        )
+        .map_err(WasmRuntimeError::HostLinker)?;
+    linker
+        .func_wrap(
+            HOST_MODULE,
             "capability_authorize",
             |mut caller: wasmtime::Caller<'_, StoreState>,
              capability_ptr: i32,
@@ -409,6 +456,68 @@ fn call_string_host_helper(
     match alloc_guest_string(caller, &transform(text)) {
         Ok(ptr) => ptr,
         Err(status) => status.code(),
+    }
+}
+
+fn call_parse_int_helper(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    text_ptr: i32,
+    text_len: i32,
+    value_out_ptr: i32,
+    message_out_ptr: i32,
+) -> i32 {
+    let text = match read_guest_string(caller, text_ptr, text_len) {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    match text.parse::<i64>() {
+        Ok(value) => {
+            if write_guest_i64(caller, value_out_ptr, value).is_err() {
+                return HostStatus::BadGuestMemory.code();
+            }
+            ParseHelperStatus::Ok as i32
+        }
+        Err(err) => {
+            let message_ptr = match alloc_guest_string(caller, &err.to_string()) {
+                Ok(ptr) => ptr,
+                Err(status) => return status.code(),
+            };
+            if write_guest_i32(caller, message_out_ptr, message_ptr).is_err() {
+                return HostStatus::BadGuestMemory.code();
+            }
+            ParseHelperStatus::Err as i32
+        }
+    }
+}
+
+fn call_parse_float_helper(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    text_ptr: i32,
+    text_len: i32,
+    value_out_ptr: i32,
+    message_out_ptr: i32,
+) -> i32 {
+    let text = match read_guest_string(caller, text_ptr, text_len) {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    match text.parse::<f64>() {
+        Ok(value) => {
+            if write_guest_f64(caller, value_out_ptr, value).is_err() {
+                return HostStatus::BadGuestMemory.code();
+            }
+            ParseHelperStatus::Ok as i32
+        }
+        Err(err) => {
+            let message_ptr = match alloc_guest_string(caller, &err.to_string()) {
+                Ok(ptr) => ptr,
+                Err(status) => return status.code(),
+            };
+            if write_guest_i32(caller, message_out_ptr, message_ptr).is_err() {
+                return HostStatus::BadGuestMemory.code();
+            }
+            ParseHelperStatus::Err as i32
+        }
     }
 }
 
@@ -641,6 +750,22 @@ fn write_guest_i32(
     caller: &mut wasmtime::Caller<'_, StoreState>,
     ptr: i32,
     value: i32,
+) -> Result<(), HostStatus> {
+    write_guest_bytes(caller, ptr, &value.to_le_bytes())
+}
+
+fn write_guest_i64(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    ptr: i32,
+    value: i64,
+) -> Result<(), HostStatus> {
+    write_guest_bytes(caller, ptr, &value.to_le_bytes())
+}
+
+fn write_guest_f64(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    ptr: i32,
+    value: f64,
 ) -> Result<(), HostStatus> {
     write_guest_bytes(caller, ptr, &value.to_le_bytes())
 }
