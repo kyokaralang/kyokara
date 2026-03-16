@@ -73,6 +73,14 @@ fn run_main_string(source: &str) -> String {
     String::from_utf8(bytes).expect("guest string should be valid UTF-8")
 }
 
+fn with_imports(header: &str, src: &str) -> String {
+    format!("{header}\n{src}")
+}
+
+fn with_option_variants(src: &str) -> String {
+    with_imports("from Option import Some, None", src)
+}
+
 fn assert_i64_cases(cases: &[(&str, i64)]) {
     for (source, expected) in cases {
         assert_eq!(
@@ -252,6 +260,95 @@ fn test_char_equality_comparisons() {
         ("fn main() -> Bool { 'a' != 'b' }", 1),
         ("fn main() -> Bool { 'é' == 'é' }", 1),
     ]);
+}
+
+#[test]
+fn test_char_code_matches_interpreter_semantics() {
+    assert_eq!(run_main_i64("fn main() -> Int { 'A'.code() }"), 65);
+    assert_eq!(run_main_i64("fn main() -> Int { '😀'.code() }"), 128512);
+}
+
+#[test]
+fn test_char_is_decimal_digit_matches_interpreter_semantics() {
+    assert_i32_cases(&[
+        ("fn main() -> Bool { '7'.is_decimal_digit() }", 1),
+        ("fn main() -> Bool { 'x'.is_decimal_digit() }", 0),
+        ("fn main() -> Bool { '٤'.is_decimal_digit() }", 0),
+    ]);
+}
+
+#[test]
+fn test_char_to_decimal_digit_matches_interpreter_semantics() {
+    assert_i64_cases(&[
+        (
+            &with_option_variants(
+                r#"fn main() -> Int {
+    match ('7'.to_decimal_digit()) {
+        Some(n) => n
+        None => 0 - 1
+    }
+}"#,
+            ),
+            7,
+        ),
+        (
+            &with_option_variants(
+                r#"fn main() -> Int {
+    match ('x'.to_decimal_digit()) {
+        Some(n) => n
+        None => 0 - 1
+    }
+}"#,
+            ),
+            -1,
+        ),
+    ]);
+}
+
+#[test]
+fn test_char_to_digit_matches_interpreter_semantics() {
+    assert_i64_cases(&[
+        (
+            &with_option_variants(
+                r#"fn main() -> Int {
+    match ('F'.to_digit(16)) {
+        Some(n) => n
+        None => 0 - 1
+    }
+}"#,
+            ),
+            15,
+        ),
+        (
+            &with_option_variants(
+                r#"fn main() -> Int {
+    match ('f'.to_digit(16)) {
+        Some(n) => n
+        None => 0 - 1
+    }
+}"#,
+            ),
+            15,
+        ),
+        (
+            &with_option_variants(
+                r#"fn main() -> Int {
+    match ('g'.to_digit(16)) {
+        Some(n) => n
+        None => 0 - 1
+    }
+}"#,
+            ),
+            -1,
+        ),
+    ]);
+}
+
+#[test]
+fn test_char_to_digit_invalid_radix_traps() {
+    assert!(run_main_traps(&with_option_variants(
+        "fn main() -> Int { match ('7'.to_digit(1)) { Some(n) => n None => 0 } }",
+    )));
 }
 
 // ── Arithmetic ────────────────────────────────────────────────────

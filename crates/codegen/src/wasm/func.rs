@@ -1296,7 +1296,7 @@ impl<'a> FuncCodegen<'a> {
             }
 
             Inst::Call { target, args } => {
-                self.emit_call(func, target, args)?;
+                self.emit_call(func, target, args, &vdef.ty)?;
                 func.instruction(&Instruction::LocalSet(local_idx));
             }
 
@@ -3018,6 +3018,7 @@ impl<'a> FuncCodegen<'a> {
         func: &mut Function,
         target: &CallTarget,
         args: &[ValueId],
+        result_ty: &Ty,
     ) -> Result<(), CodegenError> {
         match target {
             CallTarget::Direct(name) => {
@@ -3050,6 +3051,29 @@ impl<'a> FuncCodegen<'a> {
                 Ok(())
             }
             CallTarget::Intrinsic(name) => match name.as_str() {
+                "char_code" => {
+                    self.emit_get(func, args[0]);
+                    func.instruction(&Instruction::I64ExtendI32U);
+                    Ok(())
+                }
+                "char_is_decimal_digit" => {
+                    self.emit_get(func, args[0]);
+                    func.instruction(&Instruction::I32Const('0' as i32));
+                    func.instruction(&Instruction::I32GeU);
+                    self.emit_get(func, args[0]);
+                    func.instruction(&Instruction::I32Const('9' as i32));
+                    func.instruction(&Instruction::I32LeU);
+                    func.instruction(&Instruction::I32And);
+                    Ok(())
+                }
+                "char_to_decimal_digit" => {
+                    self.emit_char_to_digit_option(func, args[0], None, result_ty)?;
+                    Ok(())
+                }
+                "char_to_digit" => {
+                    self.emit_char_to_digit_option(func, args[0], Some(args[1]), result_ty)?;
+                    Ok(())
+                }
                 "char_to_string" => {
                     self.emit_char_to_string(func, args[0]);
                     Ok(())
@@ -3101,6 +3125,180 @@ impl<'a> FuncCodegen<'a> {
                 ))),
             },
         }
+    }
+
+    fn emit_char_to_digit_option(
+        &self,
+        func: &mut Function,
+        ch: ValueId,
+        radix: Option<ValueId>,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        if let Some(radix) = radix {
+            self.emit_get(func, radix);
+            func.instruction(&Instruction::I64Const(2));
+            func.instruction(&Instruction::I64LtS);
+            self.emit_get(func, radix);
+            func.instruction(&Instruction::I64Const(36));
+            func.instruction(&Instruction::I64GtS);
+            func.instruction(&Instruction::I32Or);
+            self.emit_trap_if_true(func);
+
+            self.emit_get(func, radix);
+            func.instruction(&Instruction::I32WrapI64);
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+        } else {
+            func.instruction(&Instruction::I32Const(10));
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+        }
+
+        self.emit_char_digit_value(func, ch);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64GeS);
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I64ExtendI32U);
+        func.instruction(&Instruction::I64LtU);
+        func.instruction(&Instruction::I32And);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
+
+        self.emit_option_int_from_locals(func, result_ty, self.scratch_i32_3, self.scratch_i64)
+    }
+
+    fn emit_char_digit_value(&self, func: &mut Function, ch: ValueId) {
+        self.emit_get(func, ch);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        func.instruction(&Instruction::I64Const(-1));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+
+        self.emit_ascii_range_check(func, self.scratch_i32, '0', '9');
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Const('0' as i32));
+        func.instruction(&Instruction::I32Sub);
+        func.instruction(&Instruction::I64ExtendI32U);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        func.instruction(&Instruction::Else);
+        self.emit_ascii_range_check(func, self.scratch_i32, 'a', 'z');
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Const('a' as i32));
+        func.instruction(&Instruction::I32Sub);
+        func.instruction(&Instruction::I32Const(10));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::I64ExtendI32U);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        func.instruction(&Instruction::Else);
+        self.emit_ascii_range_check(func, self.scratch_i32, 'A', 'Z');
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Const('A' as i32));
+        func.instruction(&Instruction::I32Sub);
+        func.instruction(&Instruction::I32Const(10));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::I64ExtendI32U);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+    }
+
+    fn emit_ascii_range_check(&self, func: &mut Function, local: u32, start: char, end: char) {
+        func.instruction(&Instruction::LocalGet(local));
+        func.instruction(&Instruction::I32Const(start as i32));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::LocalGet(local));
+        func.instruction(&Instruction::I32Const(end as i32));
+        func.instruction(&Instruction::I32LeU);
+        func.instruction(&Instruction::I32And);
+    }
+
+    fn emit_option_int_from_locals(
+        &self,
+        func: &mut Function,
+        result_ty: &Ty,
+        has_value_local: u32,
+        value_local: u32,
+    ) -> Result<(), CodegenError> {
+        let Ty::Adt { def, .. } = result_ty else {
+            return Err(CodegenError::UnsupportedInstruction(format!(
+                "char digit conversion expected Option<Int>, got {result_ty:?}"
+            )));
+        };
+
+        let layout = self
+            .ctx
+            .adt_layouts
+            .get(def)
+            .ok_or(CodegenError::MissingAdtDef)?;
+
+        let type_item = &self.ctx.item_tree.types[*def];
+        let TypeDefKind::Adt { variants } = &type_item.kind else {
+            return Err(CodegenError::MissingAdtDef);
+        };
+
+        let some_variant = variants
+            .iter()
+            .find(|variant| variant.name.resolve(self.ctx.interner) == "Some")
+            .ok_or(CodegenError::MissingAdtDef)?;
+        let none_variant = variants
+            .iter()
+            .find(|variant| variant.name.resolve(self.ctx.interner) == "None")
+            .ok_or(CodegenError::MissingAdtDef)?;
+
+        let some_tag = layout
+            .tag_map
+            .get(&some_variant.name)
+            .ok_or(CodegenError::MissingAdtDef)?;
+        let none_tag = layout
+            .tag_map
+            .get(&none_variant.name)
+            .ok_or(CodegenError::MissingAdtDef)?;
+
+        func.instruction(&Instruction::I32Const(layout.size as i32));
+        func.instruction(&Instruction::Call(self.ctx.alloc_fn_index));
+        func.instruction(&Instruction::Drop);
+
+        let derive_ptr = |func: &mut Function, size: u32| {
+            func.instruction(&Instruction::GlobalGet(0));
+            func.instruction(&Instruction::I32Const(size as i32));
+            func.instruction(&Instruction::I32Sub);
+        };
+
+        func.instruction(&Instruction::LocalGet(has_value_local));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        derive_ptr(func, layout.size);
+        func.instruction(&Instruction::I32Const(*some_tag as i32));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        derive_ptr(func, layout.size);
+        func.instruction(&Instruction::LocalGet(value_local));
+        func.instruction(&Instruction::I64Store(MemArg {
+            offset: u64::from(AdtLayout::field_offset(0)),
+            align: 3,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::Else);
+        derive_ptr(func, layout.size);
+        func.instruction(&Instruction::I32Const(*none_tag as i32));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::End);
+
+        derive_ptr(func, layout.size);
+        Ok(())
     }
 
     fn emit_string_concat(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
