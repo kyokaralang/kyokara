@@ -3210,6 +3210,7 @@ impl<'a> FuncCodegen<'a> {
                 "seq_all" => self.emit_seq_all(func, args[0], args[1]),
                 "seq_count" => self.emit_seq_count(func, args[0]),
                 "seq_count_by" => self.emit_seq_count_by(func, args[0], args[1]),
+                "seq_contains" => self.emit_seq_contains(func, args[0], args[1]),
                 "seq_find" => self.emit_seq_find(func, args[0], args[1], result_ty),
                 "seq_fold" => self.emit_seq_fold(func, args[0], args[1], args[2], result_ty),
                 "option_unwrap_or" => self.emit_option_unwrap_or(func, args[0], args[1], result_ty),
@@ -3538,6 +3539,53 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::End);
 
         func.instruction(&Instruction::LocalGet(acc_local));
+        Ok(())
+    }
+
+    fn emit_seq_contains(
+        &self,
+        func: &mut Function,
+        seq: ValueId,
+        needle: ValueId,
+    ) -> Result<(), CodegenError> {
+        if !matches!(self.value_ty(needle), Ty::Int) {
+            return Err(CodegenError::UnsupportedInstruction(format!(
+                "seq_contains over range-backed Wasm seq expects Int needle, got {:?}",
+                self.value_ty(needle)
+            )));
+        }
+
+        self.emit_seq_load_range_bounds(func, seq)?;
+        self.emit_get(func, needle);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
+        func.instruction(&Instruction::I64GeS);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        func.instruction(&Instruction::I64Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
+        func.instruction(&Instruction::Br(2));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Const(1));
+        func.instruction(&Instruction::I64Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
         Ok(())
     }
 

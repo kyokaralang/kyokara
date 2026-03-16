@@ -1368,6 +1368,25 @@ fn test_range_find_returns_first_match() {
     );
 }
 
+#[test]
+fn test_range_contains_returns_true_for_present_value() {
+    assert!(run_main_bool("fn main() -> Bool { ((0)..<6).contains(4) }"));
+}
+
+#[test]
+fn test_range_contains_returns_false_for_missing_value() {
+    assert!(!run_main_bool(
+        "fn main() -> Bool { ((0)..<6).contains(9) }"
+    ));
+}
+
+#[test]
+fn test_range_contains_empty_is_false() {
+    assert!(!run_main_bool(
+        "fn main() -> Bool { ((0)..<0).contains(0) }"
+    ));
+}
+
 // ── ADTs ──────────────────────────────────────────────────────────
 
 #[test]
