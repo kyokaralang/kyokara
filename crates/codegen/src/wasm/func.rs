@@ -3202,6 +3202,12 @@ impl<'a> FuncCodegen<'a> {
                     self.emit_int_min_max(func, args[0], args[1], true);
                     Ok(())
                 }
+                "seq_range" => {
+                    self.emit_seq_range(func, args[0], args[1]);
+                    Ok(())
+                }
+                "seq_count" => self.emit_seq_count(func, args[0]),
+                "seq_count_by" => self.emit_seq_count_by(func, args[0], args[1]),
                 "option_unwrap_or" => self.emit_option_unwrap_or(func, args[0], args[1], result_ty),
                 "option_map" => self.emit_option_map(func, args[0], args[1], result_ty),
                 "option_and_then" => self.emit_option_and_then(func, args[0], args[1], result_ty),
@@ -3308,6 +3314,146 @@ impl<'a> FuncCodegen<'a> {
             memory_index: 0,
         }));
         func.instruction(&Instruction::Call(helper_fn_index));
+    }
+
+    fn emit_seq_range(&self, func: &mut Function, start: ValueId, end: ValueId) {
+        func.instruction(&Instruction::I32Const(24));
+        func.instruction(&Instruction::Call(self.ctx.alloc_fn_index));
+        func.instruction(&Instruction::Drop);
+
+        func.instruction(&Instruction::GlobalGet(0));
+        func.instruction(&Instruction::I32Const(24));
+        func.instruction(&Instruction::I32Sub);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        self.emit_get(func, start);
+        func.instruction(&Instruction::I64Store(MemArg {
+            offset: 8,
+            align: 3,
+            memory_index: 0,
+        }));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        self.emit_get(func, end);
+        func.instruction(&Instruction::I64Store(MemArg {
+            offset: 16,
+            align: 3,
+            memory_index: 0,
+        }));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+    }
+
+    fn emit_seq_count(&self, func: &mut Function, seq: ValueId) -> Result<(), CodegenError> {
+        self.emit_seq_load_range_bounds(func, seq)?;
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
+        func.instruction(&Instruction::I64LtS);
+        func.instruction(&Instruction::If(BlockType::Result(ValType::I64)));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Sub);
+        func.instruction(&Instruction::LocalTee(self.scratch_i64_3));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        self.emit_trap_if_true(func);
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::End);
+        Ok(())
+    }
+
+    fn emit_seq_count_by(
+        &self,
+        func: &mut Function,
+        seq: ValueId,
+        predicate: ValueId,
+    ) -> Result<(), CodegenError> {
+        self.emit_seq_load_range_bounds(func, seq)?;
+
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
+        func.instruction(&Instruction::I64GeS);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        self.emit_indirect_call_single_arg(func, predicate)?;
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        func.instruction(&Instruction::I64Const(i64::MAX));
+        func.instruction(&Instruction::I64Eq);
+        self.emit_trap_if_true(func);
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        func.instruction(&Instruction::I64Const(1));
+        func.instruction(&Instruction::I64Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Const(1));
+        func.instruction(&Instruction::I64Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        Ok(())
+    }
+
+    fn emit_seq_load_range_bounds(
+        &self,
+        func: &mut Function,
+        seq: ValueId,
+    ) -> Result<(), CodegenError> {
+        self.emit_get(func, seq);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::I32Ne);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I64Load(MemArg {
+            offset: 8,
+            align: 3,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I64Load(MemArg {
+            offset: 16,
+            align: 3,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_2));
+        Ok(())
     }
 
     fn emit_option_unwrap_or(

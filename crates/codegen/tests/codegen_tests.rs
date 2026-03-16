@@ -1283,6 +1283,29 @@ fn test_recursive_like_chain() {
     );
 }
 
+#[test]
+fn test_range_count_matches_interpreter_semantics() {
+    assert_eq!(run_main_i64("fn main() -> Int { (0..<10).count() }"), 10);
+}
+
+#[test]
+fn test_range_count_is_zero_when_start_is_not_less_than_end() {
+    assert_eq!(run_main_i64("fn main() -> Int { (10..<0).count() }"), 0);
+}
+
+#[test]
+fn test_range_count_by_with_capturing_predicate() {
+    assert_eq!(
+        run_main_i64(
+            "fn main() -> Int {\n\
+               let floor = 3\n\
+               (0..<10).count(fn(x: Int) => x > floor)\n\
+             }"
+        ),
+        6
+    );
+}
+
 // ── ADTs ──────────────────────────────────────────────────────────
 
 #[test]
