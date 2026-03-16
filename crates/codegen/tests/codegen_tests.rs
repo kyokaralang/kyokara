@@ -153,6 +153,26 @@ fn test_string_len_counts_unicode_scalars() {
 }
 
 #[test]
+fn test_string_chars_count_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "hello".chars().count() }"#),
+        5
+    );
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "".chars().count() }"#),
+        0
+    );
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "café".chars().count() }"#),
+        4
+    );
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "a\nb".chars().count() }"#),
+        3
+    );
+}
+
+#[test]
 fn test_string_equality_uses_value_semantics() {
     assert_i32_cases(&[
         (
