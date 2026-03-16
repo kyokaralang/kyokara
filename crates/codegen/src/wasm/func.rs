@@ -3137,6 +3137,10 @@ impl<'a> FuncCodegen<'a> {
                     func.instruction(&Instruction::F64Abs);
                     Ok(())
                 }
+                "float_max" => {
+                    self.emit_float_min_max(func, args[0], args[1], false);
+                    Ok(())
+                }
                 "float_is_finite" => {
                     self.emit_float_is_finite(func, args[0]);
                     Ok(())
@@ -3147,6 +3151,10 @@ impl<'a> FuncCodegen<'a> {
                 }
                 "float_is_nan" => {
                     self.emit_float_is_nan(func, args[0]);
+                    Ok(())
+                }
+                "float_min" => {
+                    self.emit_float_min_max(func, args[0], args[1], true);
                     Ok(())
                 }
                 "float_to_int" => {
@@ -3439,6 +3447,35 @@ impl<'a> FuncCodegen<'a> {
         self.emit_get(func, value);
         self.emit_get(func, value);
         func.instruction(&Instruction::F64Ne);
+    }
+
+    fn emit_float_min_max(&self, func: &mut Function, lhs: ValueId, rhs: ValueId, pick_min: bool) {
+        self.emit_get(func, lhs);
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::F64Eq);
+        func.instruction(&Instruction::If(BlockType::Result(ValType::F64)));
+        self.emit_get(func, rhs);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::F64Eq);
+        func.instruction(&Instruction::If(BlockType::Result(ValType::F64)));
+        self.emit_get(func, lhs);
+        self.emit_get(func, rhs);
+        if pick_min {
+            func.instruction(&Instruction::F64Lt);
+        } else {
+            func.instruction(&Instruction::F64Gt);
+        }
+        func.instruction(&Instruction::If(BlockType::Result(ValType::F64)));
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::Else);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::Else);
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::Else);
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::End);
     }
 
     fn emit_float_is_infinite(&self, func: &mut Function, value: ValueId) {

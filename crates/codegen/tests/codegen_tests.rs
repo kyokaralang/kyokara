@@ -405,6 +405,21 @@ fn test_float_numeric_intrinsics_match_interpreter_semantics() {
     ]);
 }
 
+#[test]
+fn test_float_min_max_match_interpreter_semantics() {
+    let fmin = run_main_f64("import math\nfn main() -> Float { math.fmin(3.5, 1.5) }");
+    assert!((fmin - 1.5).abs() < f64::EPSILON);
+
+    let fmax = run_main_f64("import math\nfn main() -> Float { math.fmax(3.5, 1.5) }");
+    assert!((fmax - 3.5).abs() < f64::EPSILON);
+
+    let nan_left = run_main_f64("import math\nfn main() -> Float { math.fmin(0.0 / 0.0, 2.0) }");
+    assert!((nan_left - 2.0).abs() < f64::EPSILON);
+
+    let nan_right = run_main_f64("import math\nfn main() -> Float { math.fmax(2.0, 0.0 / 0.0) }");
+    assert!((nan_right - 2.0).abs() < f64::EPSILON);
+}
+
 // ── Arithmetic ────────────────────────────────────────────────────
 
 #[test]
