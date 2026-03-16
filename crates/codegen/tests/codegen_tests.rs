@@ -197,6 +197,30 @@ fn test_string_lines_count_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_split_count_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "a,b,c".split(",").count() }"#),
+        3
+    );
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "a,,b".split(",").count() }"#),
+        3
+    );
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "".split(",").count() }"#),
+        1
+    );
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "abc".split("x").count() }"#),
+        1
+    );
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "ab".split("").count() }"#),
+        4
+    );
+}
+
+#[test]
 fn test_string_equality_uses_value_semantics() {
     assert_i32_cases(&[
         (
