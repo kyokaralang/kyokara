@@ -197,6 +197,44 @@ fn test_string_substring_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_case_conversion_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_string(r#"fn main() -> String { "hello".to_upper() }"#),
+        "HELLO"
+    );
+    assert_eq!(
+        run_main_string(r#"fn main() -> String { "ÉCOLE".to_lower() }"#),
+        "école"
+    );
+    assert_eq!(
+        run_main_string(r#"fn main() -> String { "straße".to_upper() }"#),
+        "STRASSE"
+    );
+}
+
+#[test]
+fn test_string_md5_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_string(r#"fn main() -> String { "abc".md5() }"#),
+        "900150983cd24fb0d6963f7d28e17f72"
+    );
+    assert_eq!(
+        run_main_string(
+            r#"import hash
+fn main() -> String { hash.md5("abc") }"#,
+        ),
+        "900150983cd24fb0d6963f7d28e17f72"
+    );
+    assert_eq!(
+        run_main_string(
+            r#"import hash as h
+fn main() -> String { h.md5("abc") }"#,
+        ),
+        "900150983cd24fb0d6963f7d28e17f72"
+    );
+}
+
+#[test]
 fn test_string_trim_matches_interpreter_semantics() {
     assert_eq!(
         run_main_string(r#"fn main() -> String { "  hello world  ".trim() }"#),

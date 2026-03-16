@@ -13,9 +13,9 @@ use kyokara_intern::Interner;
 use kyokara_kir::KirModule;
 use rustc_hash::FxHashMap;
 use wasm_encoder::{
-    CodeSection, ElementSection, Elements, ExportKind, ExportSection, FunctionSection,
-    GlobalSection, GlobalType, MemorySection, MemoryType, Module, RefType, TableSection, TableType,
-    TypeSection, ValType,
+    CodeSection, ElementSection, Elements, EntityType, ExportKind, ExportSection, FunctionSection,
+    GlobalSection, GlobalType, ImportSection, MemorySection, MemoryType, Module, RefType,
+    TableSection, TableType, TypeSection, ValType,
 };
 
 use crate::error::CodegenError;
@@ -23,6 +23,8 @@ use crate::wasm::func::FuncCodegen;
 use crate::wasm::layout::AdtLayout;
 use crate::wasm::ty::ty_to_valtype;
 use std::borrow::Cow;
+
+const HOST_MODULE: &str = "kyokara_host";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FnTypeKey {
@@ -59,6 +61,9 @@ pub struct ModuleCtx<'a> {
     pub adt_layouts: FxHashMap<TypeItemIdx, AdtLayout>,
     /// WASM function index of the $alloc builtin.
     pub alloc_fn_index: u32,
+    pub string_to_upper_fn_index: Option<u32>,
+    pub string_to_lower_fn_index: Option<u32>,
+    pub string_md5_fn_index: Option<u32>,
 }
 
 /// Compile a KIR module to a WASM binary.
@@ -69,9 +74,64 @@ pub fn compile_module(
 ) -> Result<Vec<u8>, CodegenError> {
     let adt_layouts = layout::compute_adt_layouts(item_tree, interner);
 
-    // Function index 0 = $alloc
-    let alloc_fn_index = 0u32;
-    let mut next_fn_index = 1u32;
+    let needs_string_to_upper = kir.functions.iter().any(|(_, func)| {
+        func.values.iter().any(|(_, value)| {
+            matches!(
+                &value.inst,
+                kyokara_kir::inst::Inst::Call {
+                    target: kyokara_kir::inst::CallTarget::Intrinsic(name),
+                    ..
+                } if name == "string_to_upper"
+            )
+        })
+    });
+    let needs_string_to_lower = kir.functions.iter().any(|(_, func)| {
+        func.values.iter().any(|(_, value)| {
+            matches!(
+                &value.inst,
+                kyokara_kir::inst::Inst::Call {
+                    target: kyokara_kir::inst::CallTarget::Intrinsic(name),
+                    ..
+                } if name == "string_to_lower"
+            )
+        })
+    });
+    let needs_string_md5 = kir.functions.iter().any(|(_, func)| {
+        func.values.iter().any(|(_, value)| {
+            matches!(
+                &value.inst,
+                kyokara_kir::inst::Inst::Call {
+                    target: kyokara_kir::inst::CallTarget::Intrinsic(name),
+                    ..
+                } if name == "string_md5"
+            )
+        })
+    });
+
+    let mut next_fn_index = 0u32;
+    let string_to_upper_fn_index = if needs_string_to_upper {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
+    let string_to_lower_fn_index = if needs_string_to_lower {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
+    let string_md5_fn_index = if needs_string_md5 {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
+    let alloc_fn_index = next_fn_index;
+    next_fn_index += 1;
 
     // Build function name → index map.
     let mut fn_name_map = FxHashMap::default();
@@ -93,6 +153,10 @@ pub fn compile_module(
 
     // Type 0: alloc(i32) -> i32
     types.ty().function([ValType::I32], [ValType::I32]);
+    // Type 1: string helper(i32 ptr, i32 len) -> i32 ptr
+    types
+        .ty()
+        .function([ValType::I32, ValType::I32], [ValType::I32]);
 
     // Build type index for each KIR function, deduplicated by structural
     // signature so indirect calls can reuse the same type index.
@@ -128,7 +192,23 @@ pub fn compile_module(
         fn_type_map,
         adt_layouts,
         alloc_fn_index,
+        string_to_upper_fn_index,
+        string_to_lower_fn_index,
+        string_md5_fn_index,
     };
+
+    // ── Import section ────────────────────────────────────────────
+
+    let mut imports = ImportSection::new();
+    if string_to_upper_fn_index.is_some() {
+        imports.import(HOST_MODULE, "string_to_upper", EntityType::Function(1));
+    }
+    if string_to_lower_fn_index.is_some() {
+        imports.import(HOST_MODULE, "string_to_lower", EntityType::Function(1));
+    }
+    if string_md5_fn_index.is_some() {
+        imports.import(HOST_MODULE, "string_md5", EntityType::Function(1));
+    }
 
     // ── Function section ──────────────────────────────────────────
 
@@ -192,6 +272,7 @@ pub fn compile_module(
 
     // Export memory
     exports.export("memory", ExportKind::Memory, 0);
+    exports.export("__kyokara_alloc", ExportKind::Func, alloc_fn_index);
 
     // Export all user functions by name.
     for (fn_id, wasm_idx) in &fn_order {
@@ -219,6 +300,9 @@ pub fn compile_module(
 
     let mut module = Module::new();
     module.section(&types);
+    if !imports.is_empty() {
+        module.section(&imports);
+    }
     module.section(&functions);
     if !tables.is_empty() {
         module.section(&tables);

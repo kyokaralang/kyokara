@@ -1325,6 +1325,7 @@ dependencies = [
  "kyokara-intern",
  "kyokara-kir",
  "kyokara-runtime",
+ "md-5",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",

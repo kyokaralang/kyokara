@@ -3203,6 +3203,16 @@ impl<'a> FuncCodegen<'a> {
                     self.emit_string_ends_with(func, args[0], args[1]);
                     Ok(())
                 }
+                "string_md5" => {
+                    self.emit_string_host_helper_call(
+                        func,
+                        args[0],
+                        self.ctx
+                            .string_md5_fn_index
+                            .expect("string_md5 helper should be imported when used"),
+                    );
+                    Ok(())
+                }
                 "string_len" => {
                     self.emit_get(func, args[0]);
                     func.instruction(&Instruction::I32Load(MemArg {
@@ -3225,6 +3235,26 @@ impl<'a> FuncCodegen<'a> {
                     self.emit_string_substring(func, args[0], args[1], args[2]);
                     Ok(())
                 }
+                "string_to_lower" => {
+                    self.emit_string_host_helper_call(
+                        func,
+                        args[0],
+                        self.ctx
+                            .string_to_lower_fn_index
+                            .expect("string_to_lower helper should be imported when used"),
+                    );
+                    Ok(())
+                }
+                "string_to_upper" => {
+                    self.emit_string_host_helper_call(
+                        func,
+                        args[0],
+                        self.ctx
+                            .string_to_upper_fn_index
+                            .expect("string_to_upper helper should be imported when used"),
+                    );
+                    Ok(())
+                }
                 "string_trim" => {
                     self.emit_string_trim(func, args[0]);
                     Ok(())
@@ -3234,6 +3264,24 @@ impl<'a> FuncCodegen<'a> {
                 ))),
             },
         }
+    }
+
+    fn emit_string_host_helper_call(
+        &self,
+        func: &mut Function,
+        value: ValueId,
+        helper_fn_index: u32,
+    ) {
+        self.emit_get(func, value);
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Add);
+        self.emit_get(func, value);
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::Call(helper_fn_index));
     }
 
     fn emit_int_abs(&self, func: &mut Function, value: ValueId) {

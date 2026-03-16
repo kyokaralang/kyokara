@@ -4,6 +4,7 @@ use kyokara_runtime::replay::{EffectKind, RequiredByKind};
 use kyokara_runtime::service::{
     CapabilityCheck, EffectRequest, ReplayMode, ReplayRuntime, RuntimeEffectError, RuntimeService,
 };
+use md5::Digest;
 use thiserror::Error;
 
 const HOST_MODULE: &str = "kyokara_host";
@@ -77,7 +78,9 @@ impl WasmProgram {
                 last_host_error: None,
             },
         );
-        let instance = wasmtime::Instance::new(&mut store, &wasm_module, &[])
+        let linker = build_host_linker(&engine)?;
+        let instance = linker
+            .instantiate(&mut store, &wasm_module)
             .map_err(WasmRuntimeError::Instantiation)?;
         Ok(Self { store, instance })
     }
@@ -196,6 +199,35 @@ fn build_host_linker(
     engine: &wasmtime::Engine,
 ) -> Result<wasmtime::Linker<StoreState>, WasmRuntimeError> {
     let mut linker = wasmtime::Linker::new(engine);
+    linker
+        .func_wrap(
+            HOST_MODULE,
+            "string_to_upper",
+            |mut caller: wasmtime::Caller<'_, StoreState>, text_ptr: i32, text_len: i32| -> i32 {
+                call_string_host_helper(&mut caller, text_ptr, text_len, |text| text.to_uppercase())
+            },
+        )
+        .map_err(WasmRuntimeError::HostLinker)?;
+    linker
+        .func_wrap(
+            HOST_MODULE,
+            "string_to_lower",
+            |mut caller: wasmtime::Caller<'_, StoreState>, text_ptr: i32, text_len: i32| -> i32 {
+                call_string_host_helper(&mut caller, text_ptr, text_len, |text| text.to_lowercase())
+            },
+        )
+        .map_err(WasmRuntimeError::HostLinker)?;
+    linker
+        .func_wrap(
+            HOST_MODULE,
+            "string_md5",
+            |mut caller: wasmtime::Caller<'_, StoreState>, text_ptr: i32, text_len: i32| -> i32 {
+                call_string_host_helper(&mut caller, text_ptr, text_len, |text| {
+                    format!("{:x}", md5::Md5::digest(text.as_bytes()))
+                })
+            },
+        )
+        .map_err(WasmRuntimeError::HostLinker)?;
     linker
         .func_wrap(
             HOST_MODULE,
@@ -362,6 +394,22 @@ fn build_host_linker(
         )
         .map_err(WasmRuntimeError::HostLinker)?;
     Ok(linker)
+}
+
+fn call_string_host_helper(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    text_ptr: i32,
+    text_len: i32,
+    transform: impl FnOnce(String) -> String,
+) -> i32 {
+    let text = match read_guest_string(caller, text_ptr, text_len) {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    match alloc_guest_string(caller, &transform(text)) {
+        Ok(ptr) => ptr,
+        Err(status) => status.code(),
+    }
 }
 
 fn decode_required_by_kind(raw: i32) -> Result<RequiredByKind, HostStatus> {
@@ -541,6 +589,33 @@ fn read_guest_bytes(
         .read(caller, ptr as usize, &mut buf)
         .map_err(|_| HostStatus::BadGuestMemory)?;
     Ok(buf)
+}
+
+fn alloc_guest_string(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    text: &str,
+) -> Result<i32, HostStatus> {
+    let byte_len = i32::try_from(text.len()).map_err(|_| HostStatus::BadGuestMemory)?;
+    let char_len = i32::try_from(text.chars().count()).map_err(|_| HostStatus::BadGuestMemory)?;
+    let total_size = 8_i32
+        .checked_add(byte_len)
+        .ok_or(HostStatus::BadGuestMemory)?;
+
+    let alloc = caller
+        .get_export("__kyokara_alloc")
+        .and_then(|export| export.into_func())
+        .ok_or(HostStatus::BadGuestMemory)?;
+    let alloc = alloc
+        .typed::<i32, i32>(&mut *caller)
+        .map_err(|_| HostStatus::BadGuestMemory)?;
+    let ptr = alloc
+        .call(&mut *caller, total_size)
+        .map_err(|_| HostStatus::BadGuestMemory)?;
+
+    write_guest_i32(caller, ptr, byte_len)?;
+    write_guest_i32(caller, ptr + 4, char_len)?;
+    write_guest_bytes(caller, ptr + 8, text.as_bytes())?;
+    Ok(ptr)
 }
 
 fn write_guest_bytes(
