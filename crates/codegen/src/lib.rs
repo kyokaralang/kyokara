@@ -1,8 +1,12 @@
 //! WASM code generation from KyokaraIR.
 //!
-//! Compiles a KIR module to a WASM binary. MVP supports scalar arithmetic,
-//! control flow (if/else, match/switch), function calls, ADTs, and records.
-//! Closures, strings, lists, maps, intrinsics, and capabilities are deferred.
+//! Compiles a KIR module to a WASM binary.
+//!
+//! Current `main` supports the frozen single-file surface across scalars,
+//! control flow, function calls, closures, ADTs, records, strings, lists,
+//! deques, bitsets, intrinsics, and the shared replay/capability host ABI.
+//! The remaining parity work lives in project/package-mode compilation and the
+//! still-missing collection + witness-heavy families.
 
 pub mod error;
 pub mod wasm;

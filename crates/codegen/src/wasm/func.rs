@@ -51,6 +51,22 @@ pub struct FuncCodegen<'a> {
     scratch_i32_8: u32,
     scratch_i32_9: u32,
     scratch_i32_10: u32,
+    scratch_i32_11: u32,
+}
+
+#[derive(Clone, Copy)]
+enum BitSetIndexOp {
+    Set,
+    Reset,
+    Flip,
+}
+
+#[derive(Clone, Copy)]
+enum BitSetBinaryOp {
+    Union,
+    Intersection,
+    Difference,
+    Xor,
 }
 
 impl<'a> FuncCodegen<'a> {
@@ -76,6 +92,7 @@ impl<'a> FuncCodegen<'a> {
             scratch_i32_8: 0,
             scratch_i32_9: 0,
             scratch_i32_10: 0,
+            scratch_i32_11: 0,
         }
     }
 
@@ -180,6 +197,10 @@ impl<'a> FuncCodegen<'a> {
         self.local_types.push(ValType::I32);
 
         self.scratch_i32_10 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_11 = self.next_local;
         self.next_local += 1;
         self.local_types.push(ValType::I32);
 
@@ -3570,6 +3591,110 @@ impl<'a> FuncCodegen<'a> {
                     self.emit_mutable_deque_to_deque(func, args[0]);
                     Ok(())
                 }
+                "bitset_new" => {
+                    self.emit_bitset_new(func, args[0]);
+                    Ok(())
+                }
+                "bitset_test" => {
+                    self.emit_bitset_test(func, args[0], args[1]);
+                    Ok(())
+                }
+                "bitset_set" => {
+                    self.emit_bitset_set(func, args[0], args[1]);
+                    Ok(())
+                }
+                "bitset_reset" => {
+                    self.emit_bitset_reset(func, args[0], args[1]);
+                    Ok(())
+                }
+                "bitset_flip" => {
+                    self.emit_bitset_flip(func, args[0], args[1]);
+                    Ok(())
+                }
+                "bitset_count" => {
+                    self.emit_bitset_count(func, args[0]);
+                    Ok(())
+                }
+                "bitset_size" => {
+                    self.emit_bitset_size(func, args[0]);
+                    Ok(())
+                }
+                "bitset_is_empty" => {
+                    self.emit_bitset_is_empty(func, args[0]);
+                    Ok(())
+                }
+                "bitset_union" => {
+                    self.emit_bitset_union(func, args[0], args[1]);
+                    Ok(())
+                }
+                "bitset_intersection" => {
+                    self.emit_bitset_intersection(func, args[0], args[1]);
+                    Ok(())
+                }
+                "bitset_difference" => {
+                    self.emit_bitset_difference(func, args[0], args[1]);
+                    Ok(())
+                }
+                "bitset_xor" => {
+                    self.emit_bitset_xor(func, args[0], args[1]);
+                    Ok(())
+                }
+                "mutable_bitset_new" => {
+                    self.emit_bitset_new(func, args[0]);
+                    Ok(())
+                }
+                "mutable_bitset_from_bitset" => {
+                    self.emit_mutable_bitset_from_bitset(func, args[0]);
+                    Ok(())
+                }
+                "mutable_bitset_to_bitset" => {
+                    self.emit_mutable_bitset_to_bitset(func, args[0]);
+                    Ok(())
+                }
+                "mutable_bitset_test" => {
+                    self.emit_bitset_test(func, args[0], args[1]);
+                    Ok(())
+                }
+                "mutable_bitset_set" => {
+                    self.emit_mutable_bitset_set(func, args[0], args[1]);
+                    Ok(())
+                }
+                "mutable_bitset_reset" => {
+                    self.emit_mutable_bitset_reset(func, args[0], args[1]);
+                    Ok(())
+                }
+                "mutable_bitset_flip" => {
+                    self.emit_mutable_bitset_flip(func, args[0], args[1]);
+                    Ok(())
+                }
+                "mutable_bitset_count" => {
+                    self.emit_bitset_count(func, args[0]);
+                    Ok(())
+                }
+                "mutable_bitset_size" => {
+                    self.emit_bitset_size(func, args[0]);
+                    Ok(())
+                }
+                "mutable_bitset_is_empty" => {
+                    self.emit_bitset_is_empty(func, args[0]);
+                    Ok(())
+                }
+                "mutable_bitset_union" => {
+                    self.emit_mutable_bitset_union(func, args[0], args[1]);
+                    Ok(())
+                }
+                "mutable_bitset_intersection" => {
+                    self.emit_mutable_bitset_intersection(func, args[0], args[1]);
+                    Ok(())
+                }
+                "mutable_bitset_difference" => {
+                    self.emit_mutable_bitset_difference(func, args[0], args[1]);
+                    Ok(())
+                }
+                "mutable_bitset_xor" => {
+                    self.emit_mutable_bitset_xor(func, args[0], args[1]);
+                    Ok(())
+                }
                 "seq_range" => {
                     self.emit_seq_range(func, args[0], args[1]);
                     Ok(())
@@ -3700,6 +3825,607 @@ impl<'a> FuncCodegen<'a> {
             memory_index: 0,
         }));
         func.instruction(&Instruction::Call(helper_fn_index));
+    }
+
+    fn emit_bitset_new(&self, func: &mut Function, size: ValueId) {
+        self.emit_get(func, size);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        self.emit_trap_if_true(func);
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I32WrapI64);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        self.emit_alloc_zeroed_bitset_from_size_local(func, self.scratch_i32, self.scratch_i32_10);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+    }
+
+    fn emit_bitset_test(&self, func: &mut Function, bitset: ValueId, index: ValueId) {
+        self.emit_get(func, bitset);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        self.emit_get(func, index);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        self.emit_bitset_resolve_index_from_locals(
+            func,
+            self.scratch_i32,
+            self.scratch_i64,
+            self.scratch_i32_2,
+            self.scratch_i64_2,
+            self.scratch_i32_3,
+        );
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::I64Load(MemArg {
+            offset: 0,
+            align: 3,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
+        func.instruction(&Instruction::I64And);
+        func.instruction(&Instruction::I64Eqz);
+        func.instruction(&Instruction::I32Eqz);
+    }
+
+    fn emit_bitset_set(&self, func: &mut Function, bitset: ValueId, index: ValueId) {
+        self.emit_bitset_index_update(func, bitset, index, BitSetIndexOp::Set, false);
+    }
+
+    fn emit_bitset_reset(&self, func: &mut Function, bitset: ValueId, index: ValueId) {
+        self.emit_bitset_index_update(func, bitset, index, BitSetIndexOp::Reset, false);
+    }
+
+    fn emit_bitset_flip(&self, func: &mut Function, bitset: ValueId, index: ValueId) {
+        self.emit_bitset_index_update(func, bitset, index, BitSetIndexOp::Flip, false);
+    }
+
+    fn emit_mutable_bitset_set(&self, func: &mut Function, bitset: ValueId, index: ValueId) {
+        self.emit_bitset_index_update(func, bitset, index, BitSetIndexOp::Set, true);
+    }
+
+    fn emit_mutable_bitset_reset(&self, func: &mut Function, bitset: ValueId, index: ValueId) {
+        self.emit_bitset_index_update(func, bitset, index, BitSetIndexOp::Reset, true);
+    }
+
+    fn emit_mutable_bitset_flip(&self, func: &mut Function, bitset: ValueId, index: ValueId) {
+        self.emit_bitset_index_update(func, bitset, index, BitSetIndexOp::Flip, true);
+    }
+
+    fn emit_bitset_count(&self, func: &mut Function, bitset: ValueId) {
+        self.emit_get(func, bitset);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        self.emit_bitset_count_from_local(func, self.scratch_i32);
+    }
+
+    fn emit_bitset_size(&self, func: &mut Function, bitset: ValueId) {
+        self.emit_get(func, bitset);
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I64ExtendI32U);
+    }
+
+    fn emit_bitset_is_empty(&self, func: &mut Function, bitset: ValueId) {
+        self.emit_get(func, bitset);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        self.emit_bitset_count_from_local(func, self.scratch_i32);
+        func.instruction(&Instruction::I64Eqz);
+    }
+
+    fn emit_bitset_union(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        self.emit_bitset_binary_op(func, lhs, rhs, BitSetBinaryOp::Union, false);
+    }
+
+    fn emit_bitset_intersection(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        self.emit_bitset_binary_op(func, lhs, rhs, BitSetBinaryOp::Intersection, false);
+    }
+
+    fn emit_bitset_difference(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        self.emit_bitset_binary_op(func, lhs, rhs, BitSetBinaryOp::Difference, false);
+    }
+
+    fn emit_bitset_xor(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        self.emit_bitset_binary_op(func, lhs, rhs, BitSetBinaryOp::Xor, false);
+    }
+
+    fn emit_mutable_bitset_union(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        self.emit_bitset_binary_op(func, lhs, rhs, BitSetBinaryOp::Union, true);
+    }
+
+    fn emit_mutable_bitset_intersection(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        self.emit_bitset_binary_op(func, lhs, rhs, BitSetBinaryOp::Intersection, true);
+    }
+
+    fn emit_mutable_bitset_difference(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        self.emit_bitset_binary_op(func, lhs, rhs, BitSetBinaryOp::Difference, true);
+    }
+
+    fn emit_mutable_bitset_xor(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
+        self.emit_bitset_binary_op(func, lhs, rhs, BitSetBinaryOp::Xor, true);
+    }
+
+    fn emit_mutable_bitset_from_bitset(&self, func: &mut Function, bitset: ValueId) {
+        self.emit_get(func, bitset);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        self.emit_clone_bitset_from_local(func, self.scratch_i32, self.scratch_i32_10);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+    }
+
+    fn emit_mutable_bitset_to_bitset(&self, func: &mut Function, bitset: ValueId) {
+        self.emit_get(func, bitset);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        self.emit_clone_bitset_from_local(func, self.scratch_i32, self.scratch_i32_10);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+    }
+
+    fn emit_bitset_index_update(
+        &self,
+        func: &mut Function,
+        bitset: ValueId,
+        index: ValueId,
+        op: BitSetIndexOp,
+        in_place: bool,
+    ) {
+        self.emit_get(func, bitset);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        if in_place {
+            func.instruction(&Instruction::LocalGet(self.scratch_i32));
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_10));
+        } else {
+            self.emit_clone_bitset_from_local(func, self.scratch_i32, self.scratch_i32_10);
+        }
+
+        self.emit_get(func, index);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        self.emit_bitset_resolve_index_from_locals(
+            func,
+            self.scratch_i32_10,
+            self.scratch_i64,
+            self.scratch_i32_2,
+            self.scratch_i64_2,
+            self.scratch_i32_3,
+        );
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::I64Load(MemArg {
+            offset: 0,
+            align: 3,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
+        match op {
+            BitSetIndexOp::Set => {
+                func.instruction(&Instruction::I64Or);
+            }
+            BitSetIndexOp::Reset => {
+                func.instruction(&Instruction::I64Const(-1));
+                func.instruction(&Instruction::I64Xor);
+                func.instruction(&Instruction::I64And);
+            }
+            BitSetIndexOp::Flip => {
+                func.instruction(&Instruction::I64Xor);
+            }
+        }
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_4));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_4));
+        func.instruction(&Instruction::I64Store(MemArg {
+            offset: 0,
+            align: 3,
+            memory_index: 0,
+        }));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+    }
+
+    fn emit_bitset_binary_op(
+        &self,
+        func: &mut Function,
+        lhs: ValueId,
+        rhs: ValueId,
+        op: BitSetBinaryOp,
+        in_place: bool,
+    ) {
+        self.emit_get(func, lhs);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        self.emit_get(func, rhs);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_10));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Ne);
+        self.emit_trap_if_true(func);
+
+        if in_place {
+            func.instruction(&Instruction::LocalGet(self.scratch_i32));
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_9));
+        } else {
+            self.emit_clone_bitset_from_local(func, self.scratch_i32, self.scratch_i32_9);
+        }
+
+        self.emit_bitset_load_header_from_local(
+            func,
+            self.scratch_i32_9,
+            self.scratch_i32_2,
+            self.scratch_i32_3,
+            self.scratch_i32_4,
+        );
+        self.emit_bitset_load_header_from_local(
+            func,
+            self.scratch_i32_10,
+            self.scratch_i32_5,
+            self.scratch_i32_6,
+            self.scratch_i32_7,
+        );
+
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_8));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::I64Load(MemArg {
+            offset: 0,
+            align: 3,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::I64Load(MemArg {
+            offset: 0,
+            align: 3,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_2));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
+        match op {
+            BitSetBinaryOp::Union => {
+                func.instruction(&Instruction::I64Or);
+            }
+            BitSetBinaryOp::Intersection => {
+                func.instruction(&Instruction::I64And);
+            }
+            BitSetBinaryOp::Difference => {
+                func.instruction(&Instruction::I64Const(-1));
+                func.instruction(&Instruction::I64Xor);
+                func.instruction(&Instruction::I64And);
+            }
+            BitSetBinaryOp::Xor => {
+                func.instruction(&Instruction::I64Xor);
+            }
+        }
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        func.instruction(&Instruction::I64Store(MemArg {
+            offset: 0,
+            align: 3,
+            memory_index: 0,
+        }));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_8));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_9));
+    }
+
+    fn emit_bitset_count_from_local(&self, func: &mut Function, bitset_local: u32) {
+        self.emit_bitset_load_header_from_local(
+            func,
+            bitset_local,
+            self.scratch_i32,
+            self.scratch_i32_2,
+            self.scratch_i32_3,
+        );
+
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::I64Load(MemArg {
+            offset: 0,
+            align: 3,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I64Popcnt);
+        func.instruction(&Instruction::I64Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+    }
+
+    fn emit_bitset_load_header_from_local(
+        &self,
+        func: &mut Function,
+        bitset_local: u32,
+        size_local: u32,
+        word_len_local: u32,
+        data_local: u32,
+    ) {
+        func.instruction(&Instruction::LocalGet(bitset_local));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_11));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_11));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(size_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_11));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 4,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(word_len_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_11));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(data_local));
+    }
+
+    fn emit_alloc_zeroed_bitset_from_size_local(
+        &self,
+        func: &mut Function,
+        size_local: u32,
+        out_local: u32,
+    ) {
+        self.emit_alloc_empty_list_to_local(func, out_local);
+
+        func.instruction(&Instruction::LocalGet(size_local));
+        func.instruction(&Instruction::I32Const(63));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::I32Const(6));
+        func.instruction(&Instruction::I32ShrU);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
+        self.emit_alloc_dynamic_bytes_to_local(func, self.scratch_i32_3, self.scratch_i32_4);
+
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64Store(MemArg {
+            offset: 0,
+            align: 3,
+            memory_index: 0,
+        }));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(out_local));
+        func.instruction(&Instruction::LocalGet(size_local));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(out_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 4,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(out_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+    }
+
+    fn emit_clone_bitset_from_local(&self, func: &mut Function, src_local: u32, out_local: u32) {
+        self.emit_bitset_load_header_from_local(
+            func,
+            src_local,
+            self.scratch_i32,
+            self.scratch_i32_2,
+            self.scratch_i32_3,
+        );
+        self.emit_alloc_empty_list_to_local(func, out_local);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4));
+        self.emit_alloc_dynamic_bytes_to_local(func, self.scratch_i32_4, self.scratch_i32_5);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::MemoryCopy {
+            src_mem: 0,
+            dst_mem: 0,
+        });
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(out_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(out_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 4,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(out_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+    }
+
+    fn emit_bitset_resolve_index_from_locals(
+        &self,
+        func: &mut Function,
+        bitset_local: u32,
+        raw_idx_local: u32,
+        word_idx_local: u32,
+        mask_local: u32,
+        data_local: u32,
+    ) {
+        func.instruction(&Instruction::LocalGet(raw_idx_local));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::LocalGet(bitset_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(raw_idx_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I64ExtendI32U);
+        func.instruction(&Instruction::I64GeU);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::LocalGet(bitset_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(data_local));
+
+        func.instruction(&Instruction::LocalGet(raw_idx_local));
+        func.instruction(&Instruction::I64Const(6));
+        func.instruction(&Instruction::I64ShrU);
+        func.instruction(&Instruction::I32WrapI64);
+        func.instruction(&Instruction::LocalSet(word_idx_local));
+
+        func.instruction(&Instruction::LocalGet(raw_idx_local));
+        func.instruction(&Instruction::I64Const(63));
+        func.instruction(&Instruction::I64And);
+        func.instruction(&Instruction::I32WrapI64);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+
+        func.instruction(&Instruction::I64Const(1));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::I64ExtendI32U);
+        func.instruction(&Instruction::I64Shl);
+        func.instruction(&Instruction::LocalSet(mask_local));
     }
 
     fn emit_list_new(&self, func: &mut Function) {

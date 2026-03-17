@@ -940,6 +940,100 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_bitset_core_methods_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let a = collections.BitSet.new(10).with_bit(3).with_bit(1).toggled(3).with_bit(7).without_bit(1)
+  let b = collections.BitSet.new(10).with_bit(7).with_bit(2)
+  let union = a.union(b)
+  let inter = union.intersection(collections.BitSet.new(10).with_bit(7).with_bit(9))
+  let diff = union.difference(collections.BitSet.new(10).with_bit(2))
+  let xo = diff.xor(collections.BitSet.new(10).with_bit(7))
+  if (
+    a.test(7) &&
+    !a.test(3) &&
+    a.count() == 1 &&
+    a.size() == 10 &&
+    !a.is_empty() &&
+    inter.count() == 1 &&
+    diff.count() == 1 &&
+    xo.is_empty()
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_mutable_bitset_aliasing_and_snapshot_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let a = collections.MutableBitSet.new(8)
+  let b = a
+  let snap0 = a.to_bitset()
+  b.set(1).set(3)
+  let frozen = a.to_bitset()
+  let copied = collections.MutableBitSet.from_bitset(frozen)
+  copied.reset(1)
+  if (
+    a.test(1) &&
+    b.test(3) &&
+    !snap0.test(1) &&
+    frozen.test(1) &&
+    frozen.test(3) &&
+    !copied.test(1) &&
+    copied.test(3) &&
+    a.count() == 2 &&
+    copied.count() == 1
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_bitset_out_of_bounds_traps() {
+    assert!(run_main_traps(
+        r#"import collections
+fn main() -> Int {
+  collections.BitSet.new(4).with_bit(4).count()
+}"#
+    ));
+    assert!(run_main_traps(
+        r#"import collections
+fn main() -> Int {
+  collections.MutableBitSet.new(4).set(0 - 1).count()
+}"#
+    ));
+}
+
+#[test]
+fn test_bitset_size_mismatch_traps() {
+    assert!(run_main_traps(
+        r#"import collections
+fn main() -> Int {
+  let a = collections.BitSet.new(4).with_bit(1)
+  let b = collections.BitSet.new(8).with_bit(1)
+  a.union(b).count()
+}"#
+    ));
+    assert!(run_main_traps(
+        r#"import collections
+fn main() -> Int {
+  let a = collections.MutableBitSet.new(4).set(1)
+  let b = collections.MutableBitSet.new(8).set(1)
+  a.union_with(b).count()
+}"#
+    ));
+}
+
+#[test]
 fn test_string_split_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a,b,c".split(",").count() }"#),
