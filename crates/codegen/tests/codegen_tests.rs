@@ -922,6 +922,24 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_linear_collection_contains_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let a = collections.MutableList.new().push(1).push(2).contains(2)
+  let b = collections.MutableList.from_list(collections.MutableList.new().push(1).push(2).to_list()).contains(1)
+  let c = collections.Deque.new().appended(1).appended(2).contains(3)
+  let d = collections.MutableDeque.from_deque(collections.Deque.new().appended(1).appended(2)).contains(2)
+
+  if (a && b && !c && d) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
 fn test_string_split_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a,b,c".split(",").count() }"#),

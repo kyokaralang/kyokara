@@ -7449,6 +7449,16 @@ impl<'a> FuncCodegen<'a> {
         self.emit_get(func, seq);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
+        if let Some(elem_ty) = self.linear_collection_element_ty(seq) {
+            self.emit_seq_contains_linear_collection_from_local(
+                func,
+                self.scratch_i32,
+                elem_ty,
+                needle,
+            )?;
+            return Ok(());
+        }
+
         match self.core_seq_element_ty(seq) {
             Some(Ty::Int) => {
                 if !matches!(self.value_ty(needle), Ty::Int) {
@@ -7514,6 +7524,134 @@ impl<'a> FuncCodegen<'a> {
             }
         }
 
+        Ok(())
+    }
+
+    fn emit_seq_contains_linear_collection_from_local(
+        &self,
+        func: &mut Function,
+        list_local: u32,
+        elem_ty: &Ty,
+        needle: ValueId,
+    ) -> Result<(), CodegenError> {
+        let needle_ty = self.value_ty(needle);
+        match (elem_ty, needle_ty) {
+            (Ty::Int, Ty::Int)
+            | (Ty::Float, Ty::Float)
+            | (Ty::Bool, Ty::Bool)
+            | (Ty::Char, Ty::Char)
+            | (Ty::String, Ty::String)
+            | (Ty::Unit, Ty::Unit) => {}
+            _ => {
+                return Err(CodegenError::UnsupportedInstruction(format!(
+                    "seq_contains over Wasm linear collection expects matching comparable needle, got element {elem_ty:?} and needle {needle_ty:?}"
+                )));
+            }
+        }
+
+        let elem_local = self.temp_local_for_ty(elem_ty);
+        self.emit_load_list_len_and_data_from_local(
+            func,
+            list_local,
+            self.scratch_i32_3,
+            self.scratch_i32_4,
+        );
+
+        match elem_ty {
+            Ty::Int => {
+                self.emit_get(func, needle);
+                func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+            }
+            Ty::Float => {
+                self.emit_get(func, needle);
+                func.instruction(&Instruction::LocalSet(self.scratch_f64));
+            }
+            Ty::Bool | Ty::Char => {
+                self.emit_get(func, needle);
+                func.instruction(&Instruction::LocalSet(self.scratch_i32_8));
+            }
+            Ty::String | Ty::Unit => {}
+            _ => unreachable!("validated above"),
+        }
+
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        self.emit_typed_load(func, elem_ty, 0);
+        func.instruction(&Instruction::LocalSet(elem_local));
+
+        match elem_ty {
+            Ty::Int => {
+                func.instruction(&Instruction::LocalGet(elem_local));
+                func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+                func.instruction(&Instruction::I64Eq);
+            }
+            Ty::Float => {
+                func.instruction(&Instruction::LocalGet(elem_local));
+                func.instruction(&Instruction::LocalGet(self.scratch_f64));
+                func.instruction(&Instruction::F64Eq);
+            }
+            Ty::Bool | Ty::Char => {
+                func.instruction(&Instruction::LocalGet(elem_local));
+                func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+                func.instruction(&Instruction::I32Eq);
+            }
+            Ty::String => {
+                func.instruction(&Instruction::LocalGet(elem_local));
+                func.instruction(&Instruction::I32Load(MemArg {
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
+                }));
+                func.instruction(&Instruction::LocalSet(self.scratch_i32_8)); // byte len
+                func.instruction(&Instruction::I32Const(0));
+                func.instruction(&Instruction::LocalSet(self.scratch_i32_9)); // start
+                self.emit_string_slice_equals_string_value_from_locals(
+                    func,
+                    elem_local,
+                    self.scratch_i32_9,
+                    self.scratch_i32_8,
+                    needle,
+                    self.scratch_i32_6,
+                    self.scratch_i32_10,
+                );
+                func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+            }
+            Ty::Unit => {
+                func.instruction(&Instruction::I32Const(1));
+            }
+            _ => unreachable!("validated above"),
+        }
+
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+        func.instruction(&Instruction::Br(2));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
         Ok(())
     }
 
