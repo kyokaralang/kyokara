@@ -333,6 +333,28 @@ fn test_string_lines_count_by_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_lines_any_matches_interpreter_semantics() {
+    assert_i32_cases(&[
+        (
+            r#"fn main() -> Bool { "a\nb\nc".lines().any(fn(line: String) => line == "b") }"#,
+            1,
+        ),
+        (
+            r#"fn main() -> Bool { "a\r\n\r\nc".lines().any(fn(line: String) => line == "") }"#,
+            1,
+        ),
+        (
+            r#"fn main() -> Bool { "\n\n".lines().any(fn(line: String) => line == "z") }"#,
+            0,
+        ),
+        (
+            r#"fn main() -> Bool { "".lines().any(fn(_line: String) => true) }"#,
+            0,
+        ),
+    ]);
+}
+
+#[test]
 fn test_string_split_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a,b,c".split(",").count() }"#),
