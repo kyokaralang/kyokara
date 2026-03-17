@@ -813,6 +813,115 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_deque_push_front_back_and_pop_front_fifo_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(&with_option_variants(
+            r#"import collections
+fn main() -> Int {
+  let q0 = collections.Deque.new().appended(1).appended(2).prepended(0)
+  match (q0.popped_front()) {
+    Some(p1) => match (p1.rest.popped_front()) {
+      Some(p2) => p1.value * 100 + p2.value * 10 + p2.rest.len()
+      None => -1
+    }
+    None => -1
+  }
+}"#
+        )),
+        11
+    );
+}
+
+#[test]
+fn test_deque_push_front_back_and_pop_back_lifo_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(&with_option_variants(
+            r#"import collections
+fn main() -> Int {
+  let q0 = collections.Deque.new().appended(1).appended(2).prepended(0)
+  match (q0.popped_back()) {
+    Some(p1) => match (p1.rest.popped_back()) {
+      Some(p2) => p1.value * 100 + p2.value * 10 + p2.rest.len()
+      None => -1
+    }
+    None => -1
+  }
+}"#
+        )),
+        211
+    );
+}
+
+#[test]
+fn test_mutable_deque_push_pop_and_to_deque_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(&with_option_variants(
+            r#"import collections
+fn main() -> Int {
+  let q = collections.MutableDeque.new().push_back(1).push_front(0).push_back(2)
+  let front = match (q.pop_front()) {
+    Some(x) => x
+    None => -1
+  }
+  let back = match (q.pop_back()) {
+    Some(x) => x
+    None => -1
+  }
+  let frozen = q.to_deque()
+  if (front == 0 && back == 2 && q.len() == 1 && frozen.len() == 1) { 1 } else { 0 }
+}"#
+        )),
+        1
+    );
+}
+
+#[test]
+fn test_deque_and_mutable_deque_empty_pops_return_none() {
+    assert_eq!(
+        run_main_i64(&with_option_variants(
+            r#"import collections
+fn main() -> Int {
+  let dq: collections.Deque<Int> = collections.Deque.new()
+  let mdq: collections.MutableDeque<Int> = collections.MutableDeque.new()
+  let dq_ok = match (dq.popped_front()) {
+    Some(_p) => false
+    None => true
+  }
+  let mdq_ok = match (mdq.pop_back()) {
+    Some(_x) => false
+    None => true
+  }
+  if (dq_ok && mdq_ok) { 1 } else { 0 }
+}"#
+        )),
+        1
+    );
+}
+
+#[test]
+fn test_deque_seq_traversal_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let q = collections.Deque.new().appended(1).appended(2).appended(3)
+  let m = collections.MutableDeque.from_deque(q)
+  if (
+    q.count() == 3 &&
+    q.count(fn(n: Int) => n >= 2) == 2 &&
+    q.any(fn(n: Int) => n == 2) &&
+    q.all(fn(n: Int) => n <= 3) &&
+    q.find(fn(n: Int) => n == 2).unwrap_or(0) == 2 &&
+    q.fold(0, fn(acc: Int, n: Int) => acc + n) == 6 &&
+    m.fold(0, fn(acc: Int, n: Int) => acc + n) == 6
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
 fn test_string_split_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a,b,c".split(",").count() }"#),

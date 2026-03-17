@@ -3506,6 +3506,70 @@ impl<'a> FuncCodegen<'a> {
                     self.emit_mutable_list_to_list(func, args[0]);
                     Ok(())
                 }
+                "deque_new" => {
+                    self.emit_deque_new(func);
+                    Ok(())
+                }
+                "deque_push_front" => {
+                    self.emit_deque_push_front(func, args[0], args[1]);
+                    Ok(())
+                }
+                "deque_push_back" => {
+                    self.emit_deque_push_back(func, args[0], args[1]);
+                    Ok(())
+                }
+                "deque_pop_front" => self.emit_deque_pop_front(func, args[0], result_ty),
+                "deque_pop_back" => self.emit_deque_pop_back(func, args[0], result_ty),
+                "deque_len" => {
+                    self.emit_get(func, args[0]);
+                    func.instruction(&Instruction::LocalSet(self.scratch_i32));
+                    self.emit_list_len_from_local(func, self.scratch_i32);
+                    Ok(())
+                }
+                "deque_is_empty" => {
+                    self.emit_get(func, args[0]);
+                    func.instruction(&Instruction::LocalSet(self.scratch_i32));
+                    self.emit_list_is_empty_from_local(func, self.scratch_i32);
+                    Ok(())
+                }
+                "mutable_deque_new" => {
+                    self.emit_mutable_deque_new(func);
+                    Ok(())
+                }
+                "mutable_deque_from_deque" => {
+                    self.emit_mutable_deque_from_deque(func, args[0]);
+                    Ok(())
+                }
+                "mutable_deque_push_front" => {
+                    self.emit_mutable_deque_push_front(func, args[0], args[1]);
+                    Ok(())
+                }
+                "mutable_deque_push_back" => {
+                    self.emit_mutable_deque_push_back(func, args[0], args[1]);
+                    Ok(())
+                }
+                "mutable_deque_pop_front" => {
+                    self.emit_mutable_deque_pop_front(func, args[0], result_ty)
+                }
+                "mutable_deque_pop_back" => {
+                    self.emit_mutable_deque_pop_back(func, args[0], result_ty)
+                }
+                "mutable_deque_len" => {
+                    self.emit_get(func, args[0]);
+                    func.instruction(&Instruction::LocalSet(self.scratch_i32));
+                    self.emit_list_len_from_local(func, self.scratch_i32);
+                    Ok(())
+                }
+                "mutable_deque_is_empty" => {
+                    self.emit_get(func, args[0]);
+                    func.instruction(&Instruction::LocalSet(self.scratch_i32));
+                    self.emit_list_is_empty_from_local(func, self.scratch_i32);
+                    Ok(())
+                }
+                "mutable_deque_to_deque" => {
+                    self.emit_mutable_deque_to_deque(func, args[0]);
+                    Ok(())
+                }
                 "seq_range" => {
                     self.emit_seq_range(func, args[0], args[1]);
                     Ok(())
@@ -3662,12 +3726,48 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
     }
 
+    fn emit_deque_new(&self, func: &mut Function) {
+        self.emit_alloc_empty_list_to_local(func, self.scratch_i32);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+    }
+
+    fn emit_mutable_deque_new(&self, func: &mut Function) {
+        self.emit_alloc_empty_list_to_local(func, self.scratch_i32);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+    }
+
+    fn emit_mutable_deque_from_deque(&self, func: &mut Function, deque: ValueId) {
+        self.emit_get(func, deque);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        self.emit_clone_list_from_local(func, self.scratch_i32, self.scratch_i32_10);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+    }
+
+    fn emit_mutable_deque_to_deque(&self, func: &mut Function, deque: ValueId) {
+        self.emit_get(func, deque);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        self.emit_clone_list_from_local(func, self.scratch_i32, self.scratch_i32_10);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+    }
+
     fn emit_seq_to_list(&self, func: &mut Function, value: ValueId) -> Result<(), CodegenError> {
         if self.is_core_list_value(value) {
             self.emit_get(func, value);
             Ok(())
+        } else if self.is_core_deque_value(value) {
+            self.emit_get(func, value);
+            func.instruction(&Instruction::LocalSet(self.scratch_i32));
+            self.emit_clone_list_from_local(func, self.scratch_i32, self.scratch_i32_10);
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+            Ok(())
         } else if self.is_core_mutable_list_value(value) {
             self.emit_mutable_list_to_list(func, value);
+            Ok(())
+        } else if self.is_core_mutable_deque_value(value) {
+            self.emit_get(func, value);
+            func.instruction(&Instruction::LocalSet(self.scratch_i32));
+            self.emit_clone_list_from_local(func, self.scratch_i32, self.scratch_i32_10);
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
             Ok(())
         } else {
             Err(CodegenError::UnsupportedInstruction(format!(
@@ -3681,7 +3781,50 @@ impl<'a> FuncCodegen<'a> {
         self.emit_get(func, list);
         func.instruction(&Instruction::LocalSet(self.scratch_i32)); // list ptr
 
+        self.emit_list_like_push_back_from_local(func, self.scratch_i32, value);
+
         func.instruction(&Instruction::LocalGet(self.scratch_i32));
+    }
+
+    fn emit_deque_push_front(&self, func: &mut Function, deque: ValueId, value: ValueId) {
+        self.emit_get(func, deque);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        self.emit_clone_list_from_local(func, self.scratch_i32, self.scratch_i32_10);
+        self.emit_list_like_push_front_from_local(func, self.scratch_i32_10, value);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+    }
+
+    fn emit_deque_push_back(&self, func: &mut Function, deque: ValueId, value: ValueId) {
+        self.emit_get(func, deque);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        self.emit_clone_list_from_local(func, self.scratch_i32, self.scratch_i32_10);
+        self.emit_list_like_push_back_from_local(func, self.scratch_i32_10, value);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+    }
+
+    fn emit_mutable_deque_push_front(&self, func: &mut Function, deque: ValueId, value: ValueId) {
+        self.emit_get(func, deque);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_10));
+        self.emit_list_like_push_front_from_local(func, self.scratch_i32_10, value);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+    }
+
+    fn emit_mutable_deque_push_back(&self, func: &mut Function, deque: ValueId, value: ValueId) {
+        self.emit_get(func, deque);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_10));
+        self.emit_list_like_push_back_from_local(func, self.scratch_i32_10, value);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+    }
+
+    fn emit_list_like_push_back_from_local(
+        &self,
+        func: &mut Function,
+        list_local: u32,
+        value: ValueId,
+    ) {
+        let value_ty = self.value_ty(value);
+
+        func.instruction(&Instruction::LocalGet(list_local));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 0,
             align: 2,
@@ -3702,7 +3845,7 @@ impl<'a> FuncCodegen<'a> {
 
         func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
         func.instruction(&Instruction::If(BlockType::Empty));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::LocalGet(list_local));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 8,
             align: 2,
@@ -3723,31 +3866,69 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::I32Mul);
         func.instruction(&Instruction::I32Add);
         self.emit_get(func, value);
-        self.emit_typed_store_stack(func, self.value_ty(value), 0);
+        self.emit_typed_store_stack(func, value_ty, 0);
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
-        func.instruction(&Instruction::I32Store(MemArg {
+        self.emit_update_list_header_from_locals(
+            func,
+            list_local,
+            self.scratch_i32_3,
+            self.scratch_i32_5,
+        );
+    }
+
+    fn emit_list_like_push_front_from_local(
+        &self,
+        func: &mut Function,
+        list_local: u32,
+        value: ValueId,
+    ) {
+        let value_ty = self.value_ty(value);
+
+        func.instruction(&Instruction::LocalGet(list_local));
+        func.instruction(&Instruction::I32Load(MemArg {
             offset: 0,
             align: 2,
             memory_index: 0,
         }));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
-        func.instruction(&Instruction::I32Store(MemArg {
-            offset: 4,
-            align: 2,
-            memory_index: 0,
-        }));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2)); // len
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3)); // new len
+
+        self.emit_alloc_list_data_for_len(func, self.scratch_i32_3, self.scratch_i32_5);
+
         func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
-        func.instruction(&Instruction::I32Store(MemArg {
+        self.emit_typed_store(func, value, &value_ty, 0);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(list_local));
+        func.instruction(&Instruction::I32Load(MemArg {
             offset: 8,
             align: 2,
             memory_index: 0,
         }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4)); // old data
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6)); // dst data + 1 slot
+        self.emit_copy_list_slots_from_locals(
+            func,
+            self.scratch_i32_4,
+            self.scratch_i32_6,
+            self.scratch_i32_2,
+        );
+        func.instruction(&Instruction::End);
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        self.emit_update_list_header_from_locals(
+            func,
+            list_local,
+            self.scratch_i32_3,
+            self.scratch_i32_5,
+        );
     }
 
     fn emit_mutable_list_insert(
@@ -4202,6 +4383,279 @@ impl<'a> FuncCodegen<'a> {
         Ok(())
     }
 
+    fn emit_deque_pop_front(
+        &self,
+        func: &mut Function,
+        deque: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let (payload_ty, _, _) = self.lookup_option_variant_tags(result_ty, "deque_pop_front")?;
+        let elem_ty = self.deque_element_ty(deque).ok_or_else(|| {
+            CodegenError::UnsupportedInstruction(format!(
+                "deque_pop_front over non-deque receiver in Wasm: {:?}",
+                self.value_ty(deque)
+            ))
+        })?;
+        let removed_local = self.temp_local_for_ty(elem_ty);
+
+        self.emit_option_none(func, result_ty, self.scratch_i32_8)?;
+        self.emit_get(func, deque);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        self.emit_list_len_from_local(func, self.scratch_i32);
+        func.instruction(&Instruction::I64Eqz);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::Else);
+        self.emit_clone_list_from_local(func, self.scratch_i32, self.scratch_i32_10);
+        self.emit_list_like_pop_front_from_local(func, self.scratch_i32_10, elem_ty, removed_local);
+        self.emit_record_from_locals(
+            func,
+            payload_ty,
+            &[
+                ("rest", self.scratch_i32_10, self.value_ty(deque)),
+                ("value", removed_local, elem_ty),
+            ],
+            self.scratch_i32_9,
+        )?;
+        self.emit_single_field_adt_from_local(
+            func,
+            result_ty,
+            "Some",
+            self.scratch_i32_9,
+            payload_ty,
+            self.scratch_i32_8,
+        )?;
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+        Ok(())
+    }
+
+    fn emit_deque_pop_back(
+        &self,
+        func: &mut Function,
+        deque: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let (payload_ty, _, _) = self.lookup_option_variant_tags(result_ty, "deque_pop_back")?;
+        let elem_ty = self.deque_element_ty(deque).ok_or_else(|| {
+            CodegenError::UnsupportedInstruction(format!(
+                "deque_pop_back over non-deque receiver in Wasm: {:?}",
+                self.value_ty(deque)
+            ))
+        })?;
+        let removed_local = self.temp_local_for_ty(elem_ty);
+
+        self.emit_option_none(func, result_ty, self.scratch_i32_8)?;
+        self.emit_get(func, deque);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        self.emit_list_len_from_local(func, self.scratch_i32);
+        func.instruction(&Instruction::I64Eqz);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::Else);
+        self.emit_clone_list_from_local(func, self.scratch_i32, self.scratch_i32_10);
+        self.emit_list_like_pop_back_from_local(func, self.scratch_i32_10, elem_ty, removed_local);
+        self.emit_record_from_locals(
+            func,
+            payload_ty,
+            &[
+                ("rest", self.scratch_i32_10, self.value_ty(deque)),
+                ("value", removed_local, elem_ty),
+            ],
+            self.scratch_i32_9,
+        )?;
+        self.emit_single_field_adt_from_local(
+            func,
+            result_ty,
+            "Some",
+            self.scratch_i32_9,
+            payload_ty,
+            self.scratch_i32_8,
+        )?;
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+        Ok(())
+    }
+
+    fn emit_mutable_deque_pop_front(
+        &self,
+        func: &mut Function,
+        deque: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let (payload_ty, _, _) =
+            self.lookup_option_variant_tags(result_ty, "mutable_deque_pop_front")?;
+        let elem_ty = self.mutable_deque_element_ty(deque).ok_or_else(|| {
+            CodegenError::UnsupportedInstruction(format!(
+                "mutable_deque_pop_front over non-mutable-deque receiver in Wasm: {:?}",
+                self.value_ty(deque)
+            ))
+        })?;
+        let removed_local = self.temp_local_for_ty(elem_ty);
+
+        self.emit_option_none(func, result_ty, self.scratch_i32_8)?;
+        self.emit_get(func, deque);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_10));
+        self.emit_list_len_from_local(func, self.scratch_i32_10);
+        func.instruction(&Instruction::I64Eqz);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::Else);
+        self.emit_list_like_pop_front_from_local(func, self.scratch_i32_10, elem_ty, removed_local);
+        self.emit_single_field_adt_from_local(
+            func,
+            result_ty,
+            "Some",
+            removed_local,
+            payload_ty,
+            self.scratch_i32_8,
+        )?;
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+        Ok(())
+    }
+
+    fn emit_mutable_deque_pop_back(
+        &self,
+        func: &mut Function,
+        deque: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let (payload_ty, _, _) =
+            self.lookup_option_variant_tags(result_ty, "mutable_deque_pop_back")?;
+        let elem_ty = self.mutable_deque_element_ty(deque).ok_or_else(|| {
+            CodegenError::UnsupportedInstruction(format!(
+                "mutable_deque_pop_back over non-mutable-deque receiver in Wasm: {:?}",
+                self.value_ty(deque)
+            ))
+        })?;
+        let removed_local = self.temp_local_for_ty(elem_ty);
+
+        self.emit_option_none(func, result_ty, self.scratch_i32_8)?;
+        self.emit_get(func, deque);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_10));
+        self.emit_list_len_from_local(func, self.scratch_i32_10);
+        func.instruction(&Instruction::I64Eqz);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::Else);
+        self.emit_list_like_pop_back_from_local(func, self.scratch_i32_10, elem_ty, removed_local);
+        self.emit_single_field_adt_from_local(
+            func,
+            result_ty,
+            "Some",
+            removed_local,
+            payload_ty,
+            self.scratch_i32_8,
+        )?;
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+        Ok(())
+    }
+
+    fn emit_list_like_pop_front_from_local(
+        &self,
+        func: &mut Function,
+        list_local: u32,
+        elem_ty: &Ty,
+        removed_local: u32,
+    ) {
+        func.instruction(&Instruction::LocalGet(list_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2)); // len
+        func.instruction(&Instruction::LocalGet(list_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4)); // old data
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        self.emit_typed_load(func, elem_ty, 0);
+        func.instruction(&Instruction::LocalSet(removed_local));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Sub);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3)); // new len
+        self.emit_alloc_list_data_for_len(func, self.scratch_i32_3, self.scratch_i32_5);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6)); // shifted src
+        self.emit_copy_list_slots_from_locals(
+            func,
+            self.scratch_i32_6,
+            self.scratch_i32_5,
+            self.scratch_i32_3,
+        );
+        func.instruction(&Instruction::End);
+
+        self.emit_update_list_header_from_locals(
+            func,
+            list_local,
+            self.scratch_i32_3,
+            self.scratch_i32_5,
+        );
+    }
+
+    fn emit_list_like_pop_back_from_local(
+        &self,
+        func: &mut Function,
+        list_local: u32,
+        elem_ty: &Ty,
+        removed_local: u32,
+    ) {
+        func.instruction(&Instruction::LocalGet(list_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2)); // len
+        func.instruction(&Instruction::LocalGet(list_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4)); // old data
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Sub);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3)); // new len
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        self.emit_typed_load(func, elem_ty, 0);
+        func.instruction(&Instruction::LocalSet(removed_local));
+
+        self.emit_alloc_list_data_for_len(func, self.scratch_i32_3, self.scratch_i32_5);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_copy_list_slots_from_locals(
+            func,
+            self.scratch_i32_4,
+            self.scratch_i32_5,
+            self.scratch_i32_3,
+        );
+        func.instruction(&Instruction::End);
+
+        self.emit_update_list_header_from_locals(
+            func,
+            list_local,
+            self.scratch_i32_3,
+            self.scratch_i32_5,
+        );
+    }
+
     fn emit_list_get(
         &self,
         func: &mut Function,
@@ -4578,6 +5032,26 @@ impl<'a> FuncCodegen<'a> {
         type_name == "$core_MutableList" || type_name == "MutableList"
     }
 
+    fn is_core_deque_value(&self, value: ValueId) -> bool {
+        let Ty::Adt { def, .. } = self.value_ty(value) else {
+            return false;
+        };
+        let type_name = self.ctx.item_tree.types[*def]
+            .name
+            .resolve(self.ctx.interner);
+        type_name == "$core_Deque" || type_name == "Deque"
+    }
+
+    fn is_core_mutable_deque_value(&self, value: ValueId) -> bool {
+        let Ty::Adt { def, .. } = self.value_ty(value) else {
+            return false;
+        };
+        let type_name = self.ctx.item_tree.types[*def]
+            .name
+            .resolve(self.ctx.interner);
+        type_name == "$core_MutableDeque" || type_name == "MutableDeque"
+    }
+
     fn emit_seq_range(&self, func: &mut Function, start: ValueId, end: ValueId) {
         func.instruction(&Instruction::I32Const(24));
         func.instruction(&Instruction::Call(self.ctx.alloc_fn_index));
@@ -4714,7 +5188,7 @@ impl<'a> FuncCodegen<'a> {
         self.emit_get(func, seq);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
-        if self.list_element_ty(seq).is_some() {
+        if self.linear_collection_element_ty(seq).is_some() {
             self.emit_list_len_from_local(func, self.scratch_i32);
             return Ok(());
         }
@@ -5002,7 +5476,7 @@ impl<'a> FuncCodegen<'a> {
         self.emit_get(func, seq);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
-        if let Some(elem_ty) = self.list_element_ty(seq) {
+        if let Some(elem_ty) = self.linear_collection_element_ty(seq) {
             self.emit_seq_count_by_list_from_local(func, self.scratch_i32, elem_ty, predicate)?;
             return Ok(());
         }
@@ -5852,6 +6326,40 @@ impl<'a> FuncCodegen<'a> {
         }
     }
 
+    fn deque_element_ty<'b>(&'b self, value: ValueId) -> Option<&'b Ty> {
+        let Ty::Adt { def, args } = self.value_ty(value) else {
+            return None;
+        };
+        let type_name = self.ctx.item_tree.types[*def]
+            .name
+            .resolve(self.ctx.interner);
+        if type_name == "$core_Deque" || type_name == "Deque" {
+            args.first()
+        } else {
+            None
+        }
+    }
+
+    fn mutable_deque_element_ty<'b>(&'b self, value: ValueId) -> Option<&'b Ty> {
+        let Ty::Adt { def, args } = self.value_ty(value) else {
+            return None;
+        };
+        let type_name = self.ctx.item_tree.types[*def]
+            .name
+            .resolve(self.ctx.interner);
+        if type_name == "$core_MutableDeque" || type_name == "MutableDeque" {
+            args.first()
+        } else {
+            None
+        }
+    }
+
+    fn linear_collection_element_ty<'b>(&'b self, value: ValueId) -> Option<&'b Ty> {
+        self.list_element_ty(value)
+            .or_else(|| self.deque_element_ty(value))
+            .or_else(|| self.mutable_deque_element_ty(value))
+    }
+
     fn emit_seq_any(
         &self,
         func: &mut Function,
@@ -5861,7 +6369,7 @@ impl<'a> FuncCodegen<'a> {
         self.emit_get(func, seq);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
-        if let Some(elem_ty) = self.list_element_ty(seq) {
+        if let Some(elem_ty) = self.linear_collection_element_ty(seq) {
             self.emit_seq_any_list_from_local(func, self.scratch_i32, elem_ty, predicate)?;
             return Ok(());
         }
@@ -5927,7 +6435,7 @@ impl<'a> FuncCodegen<'a> {
         self.emit_get(func, seq);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
-        if let Some(elem_ty) = self.list_element_ty(seq) {
+        if let Some(elem_ty) = self.linear_collection_element_ty(seq) {
             self.emit_seq_all_list_from_local(func, self.scratch_i32, elem_ty, predicate)?;
             return Ok(());
         }
@@ -6342,7 +6850,7 @@ impl<'a> FuncCodegen<'a> {
         self.emit_get(func, seq);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
-        if let Some(elem_ty) = self.list_element_ty(seq) {
+        if let Some(elem_ty) = self.linear_collection_element_ty(seq) {
             self.emit_seq_fold_list_from_local(func, self.scratch_i32, elem_ty, acc_local, folder)?;
             func.instruction(&Instruction::LocalGet(acc_local));
             return Ok(());
@@ -7676,7 +8184,7 @@ impl<'a> FuncCodegen<'a> {
         self.emit_get(func, seq);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
-        if let Some(elem_ty) = self.list_element_ty(seq) {
+        if let Some(elem_ty) = self.linear_collection_element_ty(seq) {
             self.emit_seq_find_list_from_local(
                 func,
                 self.scratch_i32,
@@ -10271,6 +10779,51 @@ impl<'a> FuncCodegen<'a> {
         // Leave ptr on stack.
         derive_ptr(func, size);
 
+        Ok(())
+    }
+
+    fn emit_record_from_locals(
+        &self,
+        func: &mut Function,
+        record_ty: &Ty,
+        fields: &[(&str, u32, &Ty)],
+        out_local: u32,
+    ) -> Result<(), CodegenError> {
+        let sorted_fields = self.resolve_record_fields(record_ty)?;
+        let size = layout::record_size(sorted_fields.len() as u32);
+
+        func.instruction(&Instruction::I32Const(size as i32));
+        func.instruction(&Instruction::Call(self.ctx.alloc_fn_index));
+        func.instruction(&Instruction::Drop);
+
+        let derive_ptr = |func: &mut Function, size: u32| {
+            func.instruction(&Instruction::GlobalGet(0));
+            func.instruction(&Instruction::I32Const(size as i32));
+            func.instruction(&Instruction::I32Sub);
+        };
+
+        for (i, (field_name, _resolved_ty)) in sorted_fields.iter().enumerate() {
+            let field_name_str = field_name.resolve(self.ctx.interner);
+            let (_, local, field_ty) = fields
+                .iter()
+                .find(|(name, _, _)| *name == field_name_str)
+                .ok_or_else(|| {
+                CodegenError::UnsupportedInstruction(format!(
+                    "missing record field {} for Wasm record construction",
+                    field_name_str
+                ))
+            })?;
+            derive_ptr(func, size);
+            func.instruction(&Instruction::LocalGet(*local));
+            self.emit_typed_store_stack(
+                func,
+                field_ty,
+                u64::from(layout::record_field_offset(i as u32)),
+            );
+        }
+
+        derive_ptr(func, size);
+        func.instruction(&Instruction::LocalSet(out_local));
         Ok(())
     }
 
