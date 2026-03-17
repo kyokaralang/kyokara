@@ -405,6 +405,38 @@ fn test_string_lines_find_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_lines_fold_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int { "a\r\nbb\n".lines().fold(0, fn(acc: Int, line: String) => acc + line.len()) }"#
+        ),
+        3
+    );
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int { "\n\n".lines().fold(0, fn(acc: Int, _line: String) => acc + 1) }"#
+        ),
+        2
+    );
+}
+
+#[test]
+fn test_string_split_fold_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int { "a,b,,c".split(",").fold(0, fn(acc: Int, part: String) => acc + part.len()) }"#
+        ),
+        3
+    );
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int { "ab".split("").fold(0, fn(acc: Int, part: String) => acc + part.len()) }"#
+        ),
+        2
+    );
+}
+
+#[test]
 fn test_string_split_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a,b,c".split(",").count() }"#),

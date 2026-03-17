@@ -5130,6 +5130,30 @@ impl<'a> FuncCodegen<'a> {
             Some(Ty::Char) => {
                 self.emit_seq_fold_chars_from_local(func, self.scratch_i32, acc_local, folder)?;
             }
+            Some(Ty::String) => {
+                func.instruction(&Instruction::LocalGet(self.scratch_i32));
+                func.instruction(&Instruction::I32Load(MemArg {
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
+                }));
+                func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+                func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+                func.instruction(&Instruction::I32Const(2));
+                func.instruction(&Instruction::I32Eq);
+                func.instruction(&Instruction::If(BlockType::Empty));
+                self.emit_seq_fold_lines_from_local(func, self.scratch_i32, acc_local, folder)?;
+                func.instruction(&Instruction::Else);
+                func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+                func.instruction(&Instruction::I32Const(3));
+                func.instruction(&Instruction::I32Eq);
+                func.instruction(&Instruction::If(BlockType::Empty));
+                self.emit_seq_fold_split_from_local(func, self.scratch_i32, acc_local, folder)?;
+                func.instruction(&Instruction::Else);
+                func.instruction(&Instruction::Unreachable);
+                func.instruction(&Instruction::End);
+                func.instruction(&Instruction::End);
+            }
             Some(elem_ty) => {
                 return Err(CodegenError::UnsupportedInstruction(format!(
                     "seq_fold over Wasm seq element type {elem_ty:?} (deferred)"
@@ -5239,6 +5263,398 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
 
+        Ok(())
+    }
+
+    fn emit_seq_fold_lines_from_local(
+        &self,
+        func: &mut Function,
+        seq_local: u32,
+        acc_local: u32,
+        folder: ValueId,
+    ) -> Result<(), CodegenError> {
+        func.instruction(&Instruction::LocalGet(seq_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3)); // string ptr
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4)); // byte len
+
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6)); // scan idx
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_7)); // segment start
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Const(10));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::I32Sub);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2)); // segment len
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::I32GtU);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Sub);
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Const(13));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Sub);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_10));
+        self.emit_string_range_alloc_from_locals(
+            func,
+            self.scratch_i32_3,
+            self.scratch_i32_7,
+            self.scratch_i32_10,
+            self.scratch_i32_5,
+            self.scratch_i32_8,
+            self.scratch_i32_9,
+        );
+        func.instruction(&Instruction::LocalGet(acc_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        self.emit_indirect_call_two_args(func, folder)?;
+        func.instruction(&Instruction::LocalSet(acc_local));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_7));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::I32LtU);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_string_range_alloc_from_locals(
+            func,
+            self.scratch_i32_3,
+            self.scratch_i32_7,
+            self.scratch_i32_4,
+            self.scratch_i32_5,
+            self.scratch_i32_8,
+            self.scratch_i32_9,
+        );
+        func.instruction(&Instruction::LocalGet(acc_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        self.emit_indirect_call_two_args(func, folder)?;
+        func.instruction(&Instruction::LocalSet(acc_local));
+        func.instruction(&Instruction::End);
+
+        Ok(())
+    }
+
+    fn emit_seq_fold_split_from_local(
+        &self,
+        func: &mut Function,
+        seq_local: u32,
+        acc_local: u32,
+        folder: ValueId,
+    ) -> Result<(), CodegenError> {
+        func.instruction(&Instruction::LocalGet(seq_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3)); // string ptr
+        func.instruction(&Instruction::LocalGet(seq_local));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4)); // seq ptr copy
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6)); // string byte len
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 12,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Eqz);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_seq_fold_empty_delim_split_from_local(
+            func,
+            self.scratch_i32_3,
+            self.scratch_i32_6,
+            acc_local,
+            folder,
+        )?;
+        func.instruction(&Instruction::Else);
+
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_7)); // scan idx
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2)); // segment start
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 12,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::I32GtU);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32)); // matched
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5)); // inner offset
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 12,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 12,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Ne);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32));
+        func.instruction(&Instruction::Br(2));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_string_range_alloc_from_locals(
+            func,
+            self.scratch_i32_3,
+            self.scratch_i32_2,
+            self.scratch_i32_7,
+            self.scratch_i32_10,
+            self.scratch_i32,
+            self.scratch_i32_8,
+        );
+        func.instruction(&Instruction::LocalGet(acc_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+        self.emit_indirect_call_two_args(func, folder)?;
+        func.instruction(&Instruction::LocalSet(acc_local));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 12,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_7));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_7));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        self.emit_string_range_alloc_from_locals(
+            func,
+            self.scratch_i32_3,
+            self.scratch_i32_2,
+            self.scratch_i32_6,
+            self.scratch_i32_10,
+            self.scratch_i32,
+            self.scratch_i32_8,
+        );
+        func.instruction(&Instruction::LocalGet(acc_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+        self.emit_indirect_call_two_args(func, folder)?;
+        func.instruction(&Instruction::LocalSet(acc_local));
+        func.instruction(&Instruction::End);
+
+        Ok(())
+    }
+
+    fn emit_seq_fold_empty_delim_split_from_local(
+        &self,
+        func: &mut Function,
+        string_local: u32,
+        string_byte_len_local: u32,
+        acc_local: u32,
+        folder: ValueId,
+    ) -> Result<(), CodegenError> {
+        self.emit_string_const(func, "");
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(acc_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        self.emit_indirect_call_two_args(func, folder)?;
+        func.instruction(&Instruction::LocalSet(acc_local));
+
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_7)); // byte idx
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::LocalGet(string_byte_len_local));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        self.emit_utf8_char_width_from_local(
+            func,
+            string_local,
+            self.scratch_i32_7,
+            self.scratch_i32_2,
+        );
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_8));
+        self.emit_string_range_alloc_from_locals(
+            func,
+            string_local,
+            self.scratch_i32_7,
+            self.scratch_i32_8,
+            self.scratch_i32_5,
+            self.scratch_i32,
+            self.scratch_i32_2,
+        );
+        func.instruction(&Instruction::LocalGet(acc_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        self.emit_indirect_call_two_args(func, folder)?;
+        func.instruction(&Instruction::LocalSet(acc_local));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_7));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        self.emit_string_const(func, "");
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(acc_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        self.emit_indirect_call_two_args(func, folder)?;
+        func.instruction(&Instruction::LocalSet(acc_local));
         Ok(())
     }
 
