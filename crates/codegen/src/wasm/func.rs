@@ -4599,6 +4599,26 @@ impl<'a> FuncCodegen<'a> {
             Some(Ty::Char) => {
                 self.emit_seq_any_chars_from_local(func, self.scratch_i32, predicate)?
             }
+            Some(Ty::String) => {
+                func.instruction(&Instruction::LocalGet(self.scratch_i32));
+                func.instruction(&Instruction::I32Load(MemArg {
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
+                }));
+                func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+                func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+                func.instruction(&Instruction::I32Const(3));
+                func.instruction(&Instruction::I32Eq);
+                func.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+                self.emit_seq_count_by_split_from_local(func, self.scratch_i32, predicate)?;
+                func.instruction(&Instruction::I64Eqz);
+                func.instruction(&Instruction::I32Eqz);
+                func.instruction(&Instruction::Else);
+                func.instruction(&Instruction::Unreachable);
+                func.instruction(&Instruction::I32Const(0));
+                func.instruction(&Instruction::End);
+            }
             Some(elem_ty) => {
                 return Err(CodegenError::UnsupportedInstruction(format!(
                     "seq_any over Wasm seq element type {elem_ty:?} (deferred)"
