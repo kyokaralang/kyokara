@@ -4340,6 +4340,29 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::I32Eqz);
     }
 
+    fn emit_load_list_len_and_data_from_local(
+        &self,
+        func: &mut Function,
+        list_local: u32,
+        len_local: u32,
+        data_local: u32,
+    ) {
+        func.instruction(&Instruction::LocalGet(list_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(len_local));
+        func.instruction(&Instruction::LocalGet(list_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(data_local));
+    }
+
     fn emit_alloc_empty_list_to_local(&self, func: &mut Function, out_local: u32) {
         func.instruction(&Instruction::I32Const(12));
         func.instruction(&Instruction::Call(self.ctx.alloc_fn_index));
@@ -4691,6 +4714,11 @@ impl<'a> FuncCodegen<'a> {
         self.emit_get(func, seq);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
+        if self.list_element_ty(seq).is_some() {
+            self.emit_list_len_from_local(func, self.scratch_i32);
+            return Ok(());
+        }
+
         func.instruction(&Instruction::LocalGet(self.scratch_i32));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 0,
@@ -4974,6 +5002,11 @@ impl<'a> FuncCodegen<'a> {
         self.emit_get(func, seq);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
+        if let Some(elem_ty) = self.list_element_ty(seq) {
+            self.emit_seq_count_by_list_from_local(func, self.scratch_i32, elem_ty, predicate)?;
+            return Ok(());
+        }
+
         match self.core_seq_element_ty(seq) {
             Some(Ty::Int) => {
                 self.emit_seq_count_by_range_from_local(func, self.scratch_i32, predicate)?;
@@ -5020,6 +5053,62 @@ impl<'a> FuncCodegen<'a> {
             }
         }
 
+        Ok(())
+    }
+
+    fn emit_seq_count_by_list_from_local(
+        &self,
+        func: &mut Function,
+        list_local: u32,
+        elem_ty: &Ty,
+        predicate: ValueId,
+    ) -> Result<(), CodegenError> {
+        let elem_local = self.temp_local_for_ty(elem_ty);
+        self.emit_load_list_len_and_data_from_local(
+            func,
+            list_local,
+            self.scratch_i32_3,
+            self.scratch_i32_4,
+        );
+
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        self.emit_typed_load(func, elem_ty, 0);
+        func.instruction(&Instruction::LocalSet(elem_local));
+
+        func.instruction(&Instruction::LocalGet(elem_local));
+        self.emit_indirect_call_single_arg(func, predicate)?;
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        func.instruction(&Instruction::I64Const(1));
+        func.instruction(&Instruction::I64Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
         Ok(())
     }
 
@@ -5772,6 +5861,11 @@ impl<'a> FuncCodegen<'a> {
         self.emit_get(func, seq);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
+        if let Some(elem_ty) = self.list_element_ty(seq) {
+            self.emit_seq_any_list_from_local(func, self.scratch_i32, elem_ty, predicate)?;
+            return Ok(());
+        }
+
         match self.core_seq_element_ty(seq) {
             Some(Ty::Int) => {
                 self.emit_seq_any_range_from_local(func, self.scratch_i32, predicate)?
@@ -5832,6 +5926,11 @@ impl<'a> FuncCodegen<'a> {
     ) -> Result<(), CodegenError> {
         self.emit_get(func, seq);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
+
+        if let Some(elem_ty) = self.list_element_ty(seq) {
+            self.emit_seq_all_list_from_local(func, self.scratch_i32, elem_ty, predicate)?;
+            return Ok(());
+        }
 
         match self.core_seq_element_ty(seq) {
             Some(Ty::Int) => {
@@ -5898,6 +5997,117 @@ impl<'a> FuncCodegen<'a> {
             }
         }
 
+        Ok(())
+    }
+
+    fn emit_seq_any_list_from_local(
+        &self,
+        func: &mut Function,
+        list_local: u32,
+        elem_ty: &Ty,
+        predicate: ValueId,
+    ) -> Result<(), CodegenError> {
+        let elem_local = self.temp_local_for_ty(elem_ty);
+        self.emit_load_list_len_and_data_from_local(
+            func,
+            list_local,
+            self.scratch_i32_3,
+            self.scratch_i32_4,
+        );
+
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        self.emit_typed_load(func, elem_ty, 0);
+        func.instruction(&Instruction::LocalSet(elem_local));
+
+        func.instruction(&Instruction::LocalGet(elem_local));
+        self.emit_indirect_call_single_arg(func, predicate)?;
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+        func.instruction(&Instruction::Br(2));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        Ok(())
+    }
+
+    fn emit_seq_all_list_from_local(
+        &self,
+        func: &mut Function,
+        list_local: u32,
+        elem_ty: &Ty,
+        predicate: ValueId,
+    ) -> Result<(), CodegenError> {
+        let elem_local = self.temp_local_for_ty(elem_ty);
+        self.emit_load_list_len_and_data_from_local(
+            func,
+            list_local,
+            self.scratch_i32_3,
+            self.scratch_i32_4,
+        );
+
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        self.emit_typed_load(func, elem_ty, 0);
+        func.instruction(&Instruction::LocalSet(elem_local));
+
+        func.instruction(&Instruction::LocalGet(elem_local));
+        self.emit_indirect_call_single_arg(func, predicate)?;
+        func.instruction(&Instruction::I32Eqz);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+        func.instruction(&Instruction::Br(2));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
         Ok(())
     }
 
@@ -6132,6 +6342,12 @@ impl<'a> FuncCodegen<'a> {
         self.emit_get(func, seq);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
+        if let Some(elem_ty) = self.list_element_ty(seq) {
+            self.emit_seq_fold_list_from_local(func, self.scratch_i32, elem_ty, acc_local, folder)?;
+            func.instruction(&Instruction::LocalGet(acc_local));
+            return Ok(());
+        }
+
         match self.core_seq_element_ty(seq) {
             Some(Ty::Int) => {
                 self.emit_seq_fold_range_from_local(func, self.scratch_i32, acc_local, folder)?;
@@ -6177,6 +6393,55 @@ impl<'a> FuncCodegen<'a> {
         }
 
         func.instruction(&Instruction::LocalGet(acc_local));
+        Ok(())
+    }
+
+    fn emit_seq_fold_list_from_local(
+        &self,
+        func: &mut Function,
+        list_local: u32,
+        elem_ty: &Ty,
+        acc_local: u32,
+        folder: ValueId,
+    ) -> Result<(), CodegenError> {
+        let elem_local = self.temp_local_for_ty(elem_ty);
+        self.emit_load_list_len_and_data_from_local(
+            func,
+            list_local,
+            self.scratch_i32_3,
+            self.scratch_i32_4,
+        );
+
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        self.emit_typed_load(func, elem_ty, 0);
+        func.instruction(&Instruction::LocalSet(elem_local));
+
+        func.instruction(&Instruction::LocalGet(acc_local));
+        func.instruction(&Instruction::LocalGet(elem_local));
+        self.emit_indirect_call_two_args(func, folder)?;
+        func.instruction(&Instruction::LocalSet(acc_local));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
         Ok(())
     }
 
@@ -7411,6 +7676,17 @@ impl<'a> FuncCodegen<'a> {
         self.emit_get(func, seq);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
+        if let Some(elem_ty) = self.list_element_ty(seq) {
+            self.emit_seq_find_list_from_local(
+                func,
+                self.scratch_i32,
+                elem_ty,
+                predicate,
+                result_ty,
+            )?;
+            return Ok(());
+        }
+
         match self.core_seq_element_ty(seq) {
             Some(Ty::Int) => {
                 self.emit_seq_find_range_from_local(func, self.scratch_i32, predicate, result_ty)?;
@@ -7456,6 +7732,67 @@ impl<'a> FuncCodegen<'a> {
             }
         }
 
+        Ok(())
+    }
+
+    fn emit_seq_find_list_from_local(
+        &self,
+        func: &mut Function,
+        list_local: u32,
+        elem_ty: &Ty,
+        predicate: ValueId,
+        result_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let payload_local = self.temp_local_for_ty(elem_ty);
+        self.emit_option_none(func, result_ty, self.scratch_i32_8)?;
+        self.emit_load_list_len_and_data_from_local(
+            func,
+            list_local,
+            self.scratch_i32_3,
+            self.scratch_i32_4,
+        );
+
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        self.emit_typed_load(func, elem_ty, 0);
+        func.instruction(&Instruction::LocalSet(payload_local));
+
+        func.instruction(&Instruction::LocalGet(payload_local));
+        self.emit_indirect_call_single_arg(func, predicate)?;
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_single_field_adt_from_local(
+            func,
+            result_ty,
+            "Some",
+            payload_local,
+            elem_ty,
+            self.scratch_i32_8,
+        )?;
+        func.instruction(&Instruction::Br(2));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
         Ok(())
     }
 

@@ -753,6 +753,66 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_list_seq_count_and_count_by_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let floor = 1
+  let xs = collections.MutableList.new().push(1).push(2).push(3)
+  let ys = xs.to_list()
+  ys.count() * 100 + xs.count(fn(n: Int) => n > floor) * 10 + ys.count(fn(n: Int) => n % 2 == 1)
+}"#
+        ),
+        322
+    );
+}
+
+#[test]
+fn test_list_seq_any_and_all_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(1).push(0).push(2)
+  let ys = xs.to_list()
+  if (xs.any(fn(n: Int) => n == 0) && ys.all(fn(n: Int) => n <= 2)) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_list_seq_find_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(2).push(1).push(3).to_list()
+  xs.find(fn(n: Int) => n == 1).unwrap_or(0)
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_list_seq_fold_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(1).push(2).push(3)
+  let ys = xs.to_list()
+  ys.fold(10, fn(acc: Int, n: Int) => acc + n) * 10 + xs.fold(0, fn(acc: Int, n: Int) => acc + n)
+}"#
+        ),
+        166
+    );
+}
+
+#[test]
 fn test_string_split_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a,b,c".split(",").count() }"#),
