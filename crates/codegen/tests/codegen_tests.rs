@@ -391,6 +391,50 @@ fn test_string_split_all_empty_delim_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_split_find_nonempty_delim_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_string(
+            r#"fn main() -> String { "a,b,,c".split(",").find(fn(part: String) => part == "").unwrap_or("!") }"#
+        ),
+        ""
+    );
+    assert_eq!(
+        run_main_string(
+            r#"fn main() -> String { "a,b,c".split(",").find(fn(part: String) => part == "b").unwrap_or("!") }"#
+        ),
+        "b"
+    );
+    assert_eq!(
+        run_main_string(
+            r#"fn main() -> String { "a,b,c".split(",").find(fn(part: String) => part == "z").unwrap_or("!") }"#
+        ),
+        "!"
+    );
+}
+
+#[test]
+fn test_string_split_find_empty_delim_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_string(
+            r#"fn main() -> String { "ab".split("").find(fn(part: String) => part == "").unwrap_or("!") }"#
+        ),
+        ""
+    );
+    assert_eq!(
+        run_main_string(
+            r#"fn main() -> String { "éé".split("").find(fn(part: String) => part == "é").unwrap_or("!") }"#
+        ),
+        "é"
+    );
+    assert_eq!(
+        run_main_string(
+            r#"fn main() -> String { "ab".split("").find(fn(part: String) => part == "zz").unwrap_or("!") }"#
+        ),
+        "!"
+    );
+}
+
+#[test]
 fn test_string_split_count_by_nonempty_delim_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(
