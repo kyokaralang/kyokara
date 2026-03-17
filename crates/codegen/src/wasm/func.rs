@@ -4651,6 +4651,34 @@ impl<'a> FuncCodegen<'a> {
             Some(Ty::Char) => {
                 self.emit_seq_all_chars_from_local(func, self.scratch_i32, predicate)?
             }
+            Some(Ty::String) => {
+                func.instruction(&Instruction::LocalGet(self.scratch_i32));
+                func.instruction(&Instruction::I32Load(MemArg {
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
+                }));
+                func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+                func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+                func.instruction(&Instruction::I32Const(3));
+                func.instruction(&Instruction::I32Eq);
+                func.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+                func.instruction(&Instruction::LocalGet(self.scratch_i32));
+                func.instruction(&Instruction::I64ExtendI32U);
+                func.instruction(&Instruction::LocalSet(self.scratch_i64_4));
+                self.emit_seq_count_by_split_from_local(func, self.scratch_i32, predicate)?;
+                func.instruction(&Instruction::LocalSet(self.scratch_i64_2));
+                func.instruction(&Instruction::LocalGet(self.scratch_i64_4));
+                func.instruction(&Instruction::I32WrapI64);
+                func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+                self.emit_seq_count_split_from_local(func, self.scratch_i32_2);
+                func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
+                func.instruction(&Instruction::I64Eq);
+                func.instruction(&Instruction::Else);
+                func.instruction(&Instruction::Unreachable);
+                func.instruction(&Instruction::I32Const(0));
+                func.instruction(&Instruction::End);
+            }
             Some(elem_ty) => {
                 return Err(CodegenError::UnsupportedInstruction(format!(
                     "seq_all over Wasm seq element type {elem_ty:?} (deferred)"

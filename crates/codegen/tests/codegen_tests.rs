@@ -363,6 +363,34 @@ fn test_string_split_any_empty_delim_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_split_all_nonempty_delim_matches_interpreter_semantics() {
+    assert_i32_cases(&[
+        (
+            r#"fn main() -> Bool { "a,b,c".split(",").all(fn(part: String) => part != "") }"#,
+            1,
+        ),
+        (
+            r#"fn main() -> Bool { "a,b,,c".split(",").all(fn(part: String) => part != "") }"#,
+            0,
+        ),
+    ]);
+}
+
+#[test]
+fn test_string_split_all_empty_delim_matches_interpreter_semantics() {
+    assert_i32_cases(&[
+        (
+            r#"fn main() -> Bool { "ab".split("").all(fn(part: String) => part.len() <= 1) }"#,
+            1,
+        ),
+        (
+            r#"fn main() -> Bool { "éé".split("").all(fn(part: String) => part == "é") }"#,
+            0,
+        ),
+    ]);
+}
+
+#[test]
 fn test_string_split_count_by_nonempty_delim_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(
