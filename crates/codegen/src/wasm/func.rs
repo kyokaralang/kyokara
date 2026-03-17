@@ -4840,6 +4840,22 @@ impl<'a> FuncCodegen<'a> {
                 }));
                 func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
                 func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+                func.instruction(&Instruction::I32Const(2));
+                func.instruction(&Instruction::I32Eq);
+                func.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+                func.instruction(&Instruction::LocalGet(self.scratch_i32));
+                func.instruction(&Instruction::I64ExtendI32U);
+                func.instruction(&Instruction::LocalSet(self.scratch_i64_4));
+                self.emit_seq_count_by_lines_from_local(func, self.scratch_i32, predicate)?;
+                func.instruction(&Instruction::LocalSet(self.scratch_i64_2));
+                func.instruction(&Instruction::LocalGet(self.scratch_i64_4));
+                func.instruction(&Instruction::I32WrapI64);
+                func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+                self.emit_seq_count_lines_from_local(func, self.scratch_i32_2);
+                func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
+                func.instruction(&Instruction::I64Eq);
+                func.instruction(&Instruction::Else);
+                func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
                 func.instruction(&Instruction::I32Const(3));
                 func.instruction(&Instruction::I32Eq);
                 func.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
@@ -4857,6 +4873,7 @@ impl<'a> FuncCodegen<'a> {
                 func.instruction(&Instruction::Else);
                 func.instruction(&Instruction::Unreachable);
                 func.instruction(&Instruction::I32Const(0));
+                func.instruction(&Instruction::End);
                 func.instruction(&Instruction::End);
             }
             Some(elem_ty) => {

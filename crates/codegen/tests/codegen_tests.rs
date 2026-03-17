@@ -355,6 +355,28 @@ fn test_string_lines_any_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_lines_all_matches_interpreter_semantics() {
+    assert_i32_cases(&[
+        (
+            r#"fn main() -> Bool { "a\nb\nc".lines().all(fn(line: String) => line.len() == 1) }"#,
+            1,
+        ),
+        (
+            r#"fn main() -> Bool { "a\r\n\r\nc".lines().all(fn(line: String) => line != "") }"#,
+            0,
+        ),
+        (
+            r#"fn main() -> Bool { "\n\n".lines().all(fn(line: String) => line == "") }"#,
+            1,
+        ),
+        (
+            r#"fn main() -> Bool { "".lines().all(fn(_line: String) => false) }"#,
+            1,
+        ),
+    ]);
+}
+
+#[test]
 fn test_string_split_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a,b,c".split(",").count() }"#),
