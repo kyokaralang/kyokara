@@ -377,6 +377,34 @@ fn test_string_lines_all_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_lines_find_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_string(
+            r#"fn main() -> String { "a\nb\nc".lines().find(fn(line: String) => line == "b").unwrap_or("!") }"#
+        ),
+        "b"
+    );
+    assert_eq!(
+        run_main_string(
+            r#"fn main() -> String { "a\r\n\r\nc".lines().find(fn(line: String) => line == "").unwrap_or("!") }"#
+        ),
+        ""
+    );
+    assert_eq!(
+        run_main_string(
+            r#"fn main() -> String { "\n\n".lines().find(fn(line: String) => line == "z").unwrap_or("!") }"#
+        ),
+        "!"
+    );
+    assert_eq!(
+        run_main_string(
+            r#"fn main() -> String { "".lines().find(fn(_line: String) => true).unwrap_or("!") }"#
+        ),
+        "!"
+    );
+}
+
+#[test]
 fn test_string_split_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a,b,c".split(",").count() }"#),
