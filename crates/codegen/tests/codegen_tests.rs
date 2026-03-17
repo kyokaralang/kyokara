@@ -592,6 +592,97 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_mutable_list_set_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(10).push(20).set(1, 99)
+  xs.get(1).unwrap_or(0)
+}"#
+        ),
+        99
+    );
+}
+
+#[test]
+fn test_mutable_list_set_is_alias_visible_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(10).push(20)
+  let alias = xs
+  xs.set(0, 77)
+  alias.get(0).unwrap_or(0)
+}"#
+        ),
+        77
+    );
+}
+
+#[test]
+fn test_mutable_list_set_out_of_bounds_traps_in_wasm() {
+    assert!(run_main_traps(
+        r#"import collections
+fn main() -> Int {
+  collections.MutableList.new().push(10).set(9, 0).len()
+}"#
+    ));
+}
+
+#[test]
+fn test_mutable_list_set_negative_index_traps_in_wasm() {
+    assert!(run_main_traps(
+        r#"import collections
+fn main() -> Int {
+  collections.MutableList.new().push(10).set(0 - 1, 0).len()
+}"#
+    ));
+}
+
+#[test]
+fn test_mutable_list_update_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(10).push(20)
+  let ys = xs.update(0, fn(n: Int) => n + 5)
+  ys.get(0).unwrap_or(0)
+}"#
+        ),
+        15
+    );
+}
+
+#[test]
+fn test_mutable_list_update_is_alias_visible_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(10).push(20)
+  let alias = xs
+  xs.update(1, fn(n: Int) => n + 7)
+  alias.get(1).unwrap_or(0)
+}"#
+        ),
+        27
+    );
+}
+
+#[test]
+fn test_mutable_list_update_out_of_bounds_traps_in_wasm() {
+    assert!(run_main_traps(
+        r#"import collections
+fn main() -> Int {
+  collections.MutableList.new().push(10).update(3, fn(n: Int) => n + 1).len()
+}"#
+    ));
+}
+
+#[test]
 fn test_string_split_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a,b,c".split(",").count() }"#),

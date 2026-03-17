@@ -3478,6 +3478,14 @@ impl<'a> FuncCodegen<'a> {
                     self.emit_list_is_empty_from_local(func, self.scratch_i32);
                     Ok(())
                 }
+                "mutable_list_set" => {
+                    self.emit_mutable_list_set(func, args[0], args[1], args[2]);
+                    Ok(())
+                }
+                "mutable_list_update" => {
+                    self.emit_mutable_list_update(func, args[0], args[1], args[2])?;
+                    Ok(())
+                }
                 "mutable_list_index" => {
                     self.emit_list_index(func, args[0], args[1], result_ty);
                     Ok(())
@@ -3729,6 +3737,132 @@ impl<'a> FuncCodegen<'a> {
         }));
 
         func.instruction(&Instruction::LocalGet(self.scratch_i32));
+    }
+
+    fn emit_mutable_list_set(
+        &self,
+        func: &mut Function,
+        list: ValueId,
+        index: ValueId,
+        value: ValueId,
+    ) {
+        let value_ty = self.value_ty(value);
+
+        self.emit_get(func, list);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32)); // list ptr
+        self.emit_get(func, index);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64)); // raw index
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2)); // len
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I64ExtendI32U);
+        func.instruction(&Instruction::I64GeU);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I32WrapI64);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3)); // index i32
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4)); // data ptr
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        self.emit_typed_store(func, value, &value_ty, 0);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+    }
+
+    fn emit_mutable_list_update(
+        &self,
+        func: &mut Function,
+        list: ValueId,
+        index: ValueId,
+        updater: ValueId,
+    ) -> Result<(), CodegenError> {
+        let elem_ty = self.list_element_ty(list).ok_or_else(|| {
+            CodegenError::UnsupportedInstruction(format!(
+                "mutable_list_update over non-list receiver in Wasm: {:?}",
+                self.value_ty(list)
+            ))
+        })?;
+        let updated_local = self.temp_local_for_ty(elem_ty);
+
+        self.emit_get(func, list);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6)); // list ptr
+        self.emit_get(func, index);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64)); // raw index
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2)); // len
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I64ExtendI32U);
+        func.instruction(&Instruction::I64GeU);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I32WrapI64);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3)); // index i32
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4)); // data ptr
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5)); // slot addr
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        self.emit_typed_load(func, elem_ty, 0);
+        self.emit_indirect_call_single_arg(func, updater)?;
+        func.instruction(&Instruction::LocalSet(updated_local));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalGet(updated_local));
+        self.emit_typed_store_stack(func, elem_ty, 0);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        Ok(())
     }
 
     fn emit_list_get(
@@ -5224,6 +5358,24 @@ impl<'a> FuncCodegen<'a> {
             .name
             .resolve(self.ctx.interner);
         if type_name == "$core_Seq" || type_name == "Seq" {
+            args.first()
+        } else {
+            None
+        }
+    }
+
+    fn list_element_ty<'b>(&'b self, value: ValueId) -> Option<&'b Ty> {
+        let Ty::Adt { def, args } = self.value_ty(value) else {
+            return None;
+        };
+        let type_name = self.ctx.item_tree.types[*def]
+            .name
+            .resolve(self.ctx.interner);
+        if type_name == "$core_List"
+            || type_name == "List"
+            || type_name == "$core_MutableList"
+            || type_name == "MutableList"
+        {
             args.first()
         } else {
             None
