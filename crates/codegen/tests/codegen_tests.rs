@@ -683,6 +683,76 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_mutable_list_insert_delete_and_remove_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new()
+  let alias = xs
+  let _ = xs.insert(0, 10).insert(1, 30).insert(1, 20).insert(xs.len(), 40)
+  let last_removed = xs.remove_at(xs.len() - 1)
+  let _ = xs.delete_at(1).insert(1, 25).delete_at(0)
+  if (last_removed == 40 && alias.len() == 2 && alias.get(0).unwrap_or(0) == 25 && alias.get(1).unwrap_or(0) == 30) {
+    1
+  } else {
+    0
+  }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_mutable_list_remove_at_singleton_leaves_empty_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().insert(0, 42)
+  let removed = xs.remove_at(0)
+  if (removed == 42 && xs.is_empty() && xs.len() == 0) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_mutable_list_insert_out_of_bounds_traps_in_wasm() {
+    assert!(run_main_traps(
+        r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(3).push(4)
+  xs.insert(3, 0).len()
+}"#
+    ));
+}
+
+#[test]
+fn test_mutable_list_delete_at_out_of_bounds_traps_in_wasm() {
+    assert!(run_main_traps(
+        r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new()
+  xs.delete_at(0).len()
+}"#
+    ));
+}
+
+#[test]
+fn test_mutable_list_remove_at_out_of_bounds_traps_in_wasm() {
+    assert!(run_main_traps(
+        r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new()
+  xs.remove_at(0)
+}"#
+    ));
+}
+
+#[test]
 fn test_string_split_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a,b,c".split(",").count() }"#),
