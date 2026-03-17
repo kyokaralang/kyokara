@@ -11,7 +11,7 @@ use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::path::Path;
 use kyokara_hir_def::resolver::ResolvedName;
-use kyokara_hir_def::resolver::{PrimitiveType, ReceiverKey, StaticOwnerKey};
+use kyokara_hir_def::resolver::{CoreType, PrimitiveType, ReceiverKey, StaticOwnerKey};
 use kyokara_hir_def::scope::ScopeDef;
 use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_hir_ty::effects::EffectSet;
@@ -65,11 +65,25 @@ impl<'a> LoweringCtx<'a> {
                 self.builder.push_field_get(bv, field, ty)
             }
             Expr::Index { base, index } => {
-                let _bv = self.lower_expr(base);
-                let _iv = self.lower_expr(index);
-                // TODO: lower to proper index instruction when KIR supports it
-                let id = self.next_hole_id();
-                self.builder.push_hole(id, vec![], ty)
+                let bv = self.lower_expr(base);
+                let iv = self.lower_expr(index);
+                let base_ty = self.expr_ty(base);
+                match self.receiver_key_for_ty(&base_ty) {
+                    Some(ReceiverKey::Core(CoreType::List)) => self.builder.push_call(
+                        CallTarget::Intrinsic("list_index".to_string()),
+                        vec![bv, iv],
+                        ty,
+                    ),
+                    Some(ReceiverKey::Core(CoreType::MutableList)) => self.builder.push_call(
+                        CallTarget::Intrinsic("mutable_list_index".to_string()),
+                        vec![bv, iv],
+                        ty,
+                    ),
+                    _ => {
+                        let id = self.next_hole_id();
+                        self.builder.push_hole(id, vec![], ty)
+                    }
+                }
             }
             Expr::If {
                 condition,

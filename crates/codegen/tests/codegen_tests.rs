@@ -542,6 +542,56 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_list_index_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(10).push(20).to_list()
+  xs[1]
+}"#
+        ),
+        20
+    );
+}
+
+#[test]
+fn test_mutable_list_index_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(10).push(20)
+  xs[0] * 100 + xs[1]
+}"#
+        ),
+        1020
+    );
+}
+
+#[test]
+fn test_list_index_out_of_bounds_traps_in_wasm() {
+    assert!(run_main_traps(
+        r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(10).push(20).to_list()
+  xs[2]
+}"#
+    ));
+}
+
+#[test]
+fn test_mutable_list_negative_index_traps_in_wasm() {
+    assert!(run_main_traps(
+        r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(10).push(20)
+  xs[-1]
+}"#
+    ));
+}
+
+#[test]
 fn test_string_split_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a,b,c".split(",").count() }"#),

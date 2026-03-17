@@ -3449,6 +3449,10 @@ impl<'a> FuncCodegen<'a> {
                     self.emit_list_is_empty_from_local(func, self.scratch_i32);
                     Ok(())
                 }
+                "list_index" => {
+                    self.emit_list_index(func, args[0], args[1], result_ty);
+                    Ok(())
+                }
                 "list_get" => self.emit_list_get(func, args[0], args[1], result_ty),
                 "mutable_list_new" => {
                     self.emit_mutable_list_new(func);
@@ -3472,6 +3476,10 @@ impl<'a> FuncCodegen<'a> {
                     self.emit_get(func, args[0]);
                     func.instruction(&Instruction::LocalSet(self.scratch_i32));
                     self.emit_list_is_empty_from_local(func, self.scratch_i32);
+                    Ok(())
+                }
+                "mutable_list_index" => {
+                    self.emit_list_index(func, args[0], args[1], result_ty);
                     Ok(())
                 }
                 "mutable_list_get" => self.emit_list_get(func, args[0], args[1], result_ty),
@@ -3794,6 +3802,51 @@ impl<'a> FuncCodegen<'a> {
 
         func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
         Ok(())
+    }
+
+    fn emit_list_index(&self, func: &mut Function, list: ValueId, index: ValueId, result_ty: &Ty) {
+        self.emit_get(func, list);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32)); // list ptr
+        self.emit_get(func, index);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64)); // raw index
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2)); // len
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I64ExtendI32U);
+        func.instruction(&Instruction::I64GeU);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I32WrapI64);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3)); // index i32
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4)); // data ptr
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        self.emit_typed_load(func, result_ty, 0);
     }
 
     fn emit_list_len_from_local(&self, func: &mut Function, list_local: u32) {
