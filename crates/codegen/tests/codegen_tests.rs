@@ -437,6 +437,111 @@ fn test_string_split_fold_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_list_new_and_len_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs: collections.List<Int> = collections.List.new()
+  xs.len()
+}"#
+        ),
+        0
+    );
+}
+
+#[test]
+fn test_mutable_list_push_get_and_to_list_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(10).push(20)
+  let ys = xs.to_list()
+  ys.get(0).unwrap_or(7) * 100 + ys.get(1).unwrap_or(7) * 10 + ys.get(9).unwrap_or(7)
+}"#
+        ),
+        1207
+    );
+}
+
+#[test]
+fn test_mutable_list_push_is_alias_visible_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new()
+  let ys = xs.push(10)
+  xs.push(20)
+  ys.len()
+}"#
+        ),
+        2
+    );
+}
+
+#[test]
+fn test_mutable_list_get_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(10).push(20)
+  xs.get(0).unwrap_or(7) * 100 + xs.get(1).unwrap_or(7) * 10 + xs.get(9).unwrap_or(7)
+}"#
+        ),
+        1207
+    );
+}
+
+#[test]
+fn test_mutable_list_get_single_element_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(10)
+  xs.get(0).unwrap_or(7)
+}"#
+        ),
+        10
+    );
+}
+
+#[test]
+fn test_mutable_list_to_list_is_snapshot_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(1)
+  let snap = xs.to_list()
+  xs.push(2)
+  snap.len() * 10 + xs.len()
+}"#
+        ),
+        12
+    );
+}
+
+#[test]
+fn test_mutable_list_from_list_clones_source_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let base = collections.MutableList.new().push(1).to_list()
+  let ys = collections.MutableList.from_list(base)
+  ys.push(2)
+  base.len() * 10 + ys.len()
+}"#
+        ),
+        12
+    );
+}
+
+#[test]
 fn test_string_split_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a,b,c".split(",").count() }"#),
