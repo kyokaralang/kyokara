@@ -307,6 +307,32 @@ fn test_string_lines_count_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_string_lines_count_by_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int { "a\nb\nc".lines().count(fn(line: String) => line == "b") }"#
+        ),
+        1
+    );
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int { "a\r\n\r\nc".lines().count(fn(line: String) => line == "") }"#
+        ),
+        1
+    );
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int { "\n\n".lines().count(fn(line: String) => line == "") }"#
+        ),
+        2
+    );
+    assert_eq!(
+        run_main_i64(r#"fn main() -> Int { "".lines().count(fn(_line: String) => true) }"#),
+        0
+    );
+}
+
+#[test]
 fn test_string_split_count_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(r#"fn main() -> Int { "a,b,c".split(",").count() }"#),
