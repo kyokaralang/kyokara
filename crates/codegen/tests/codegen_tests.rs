@@ -556,6 +556,20 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_list_index_matches_interpreter_semantics_with_member_imports() {
+    assert_eq!(
+        run_main_i64(
+            r#"from collections import MutableList
+fn main() -> Int {
+  let xs = MutableList.new().push(10).push(20).to_list()
+  xs[1]
+}"#
+        ),
+        20
+    );
+}
+
+#[test]
 fn test_mutable_list_index_matches_interpreter_semantics() {
     assert_eq!(
         run_main_i64(
@@ -940,6 +954,480 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_list_reverse_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(3).push(1).push(4).to_list()
+  let ys = xs.reversed()
+  if (ys[0] == 4 && ys[2] == 3 && xs[0] == 3) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_mutable_list_reverse_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(3).push(1).push(4)
+  let alias = xs
+  let _r = xs.reverse()
+  if (alias[0] == 4 && alias[2] == 3 && xs.len() == 3) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_list_sort_and_binary_search_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(3).push(1).push(4).push(1).push(5).to_list()
+  let asc = xs.sorted()
+  let desc = xs.sorted_by(fn(a: Int, b: Int) => b - a)
+  if (
+    asc[0] == 1 &&
+    asc[3] == 4 &&
+    desc[0] == 5 &&
+    desc[4] == 1 &&
+    asc.binary_search(4) == 3 &&
+    asc.binary_search(2) == -3
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_mutable_list_sort_and_binary_search_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(3).push(1).push(4).push(1).push(5)
+  let alias = xs
+  let _sorted = xs.sort()
+  let found = alias.binary_search(4)
+  let missing = xs.binary_search(2)
+  let _desc = xs.sort_by(fn(a: Int, b: Int) => b - a)
+  if (
+    found == 3 &&
+    missing == -3 &&
+    alias[0] == 5 &&
+    alias[4] == 1
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_mutable_list_sort_and_binary_search_support_derived_ord_records_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+type Point derive(Eq, Ord) = { x: Int }
+
+fn main() -> Int {
+  let a: Point = Point { x: 3 }
+  let b: Point = Point { x: 1 }
+  let c: Point = Point { x: 2 }
+  let xs = collections.MutableList.new().push(a).push(b).push(c).sort()
+  let needle: Point = Point { x: 2 }
+  if (
+    xs[0].x == 1 &&
+    xs[1].x == 2 &&
+    xs[2].x == 3 &&
+    xs.binary_search(needle) == 1
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_mutable_list_sort_supports_lexicographic_nested_lists_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let a = collections.MutableList.new().push(2).to_list()
+  let b = collections.MutableList.new().push(1).push(9).to_list()
+  let c = collections.MutableList.new().push(2).push(1).to_list()
+  let xs = collections.MutableList.new().push(a).push(b).push(c).sort()
+  let needle = collections.MutableList.new().push(2).push(1).to_list()
+  if (
+    xs[0][0] == 1 &&
+    xs[1][0] == 2 &&
+    xs[1].len() == 1 &&
+    xs[2][1] == 1 &&
+    xs.binary_search(needle) == 2
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_mutable_list_sort_supports_deeply_nested_lists_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"from collections import List, MutableList
+fn wrap(n: Int) -> List<List<List<List<Int>>>> {
+  MutableList.new()
+    .push(MutableList.new()
+      .push(MutableList.new()
+        .push(MutableList.new().push(n).to_list())
+        .to_list())
+      .to_list())
+    .to_list()
+}
+fn main() -> Int {
+  let xs = MutableList.new().push(wrap(2)).push(wrap(1)).sort()
+  let needle = wrap(2)
+  if (
+    xs[0][0][0][0][0] == 1 &&
+    xs[1][0][0][0][0] == 2 &&
+    xs.binary_search(needle) == 1
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_builtin_trait_qualified_ord_compare_matches_interpreter_semantics() {
+    assert_eq!(run_main_i64("fn main() -> Int { Ord.compare(3, 1) }"), 1);
+}
+
+#[test]
+fn test_builtin_trait_qualified_eq_on_derived_record_matches_interpreter_semantics() {
+    assert!(run_main_bool(
+        r#"type Point derive(Eq) = { x: Int }
+fn main() -> Bool {
+  let a: Point = Point { x: 7 }
+  let b: Point = Point { x: 7 }
+  Eq.eq(a, b)
+}"#
+    ));
+}
+
+#[test]
+fn test_user_impl_trait_qualified_show_dispatches_in_wasm() {
+    assert_eq!(
+        run_main_string(
+            r#"trait Show { fn show(self) -> String }
+type Point = { x: Int }
+impl Show for Point { fn show(self) -> String { "p" } }
+
+fn main() -> String {
+  let p: Point = Point { x: 1 }
+  Show.show(p)
+}"#
+        ),
+        "p"
+    );
+}
+
+#[test]
+fn test_builtin_trait_qualified_hash_is_stable_for_primitives_in_wasm() {
+    assert!(run_main_bool(
+        r#"fn main() -> Bool {
+  let a = Hash.hash(42)
+  let b = Hash.hash(42)
+  let c = Hash.hash(7)
+  a == b && a != c
+}"#
+    ));
+}
+
+#[test]
+fn test_builtin_trait_qualified_hash_supports_structural_records_in_wasm() {
+    assert!(run_main_bool(
+        r#"type Pair derive(Hash) = { left: Int, right: Int }
+fn main() -> Bool {
+  let a: Pair = Pair { left: 1, right: 2 }
+  let b: Pair = Pair { left: 1, right: 2 }
+  let c: Pair = Pair { left: 2, right: 1 }
+  let ha = Hash.hash(a)
+  let hb = Hash.hash(b)
+  let hc = Hash.hash(c)
+  ha == hb && ha != hc
+}"#
+    ));
+}
+
+#[test]
+fn test_builtin_trait_qualified_show_supports_structural_values_in_wasm() {
+    assert_eq!(
+        run_main_string(
+            r#"import collections
+type Pair derive(Show) = { right: Int, left: Int }
+
+fn main() -> String {
+  let pair: Pair = Pair { right: 2, left: 1 }
+  let list = collections.MutableList.new().push(4).push(5).to_list()
+  let deque = collections.MutableDeque.new().push_back(6).push_back(7).to_deque()
+  Show.show(pair)
+    .concat("|")
+    .concat(Show.show(list))
+    .concat("|")
+    .concat(Show.show(deque))
+}"#
+        ),
+        "{ left: 1, right: 2 }|[4, 5]|Deque([6, 7])"
+    );
+}
+
+#[test]
+fn test_builtin_trait_qualified_show_and_hash_support_deep_nested_lists_in_wasm() {
+    assert_eq!(
+        run_main_string(
+            r#"from collections import List, MutableList
+fn wrap(n: Int) -> List<List<List<List<Int>>>> {
+  MutableList.new()
+    .push(MutableList.new()
+      .push(MutableList.new()
+        .push(MutableList.new().push(n).to_list())
+        .to_list())
+      .to_list())
+    .to_list()
+}
+fn main() -> String { Show.show(wrap(1)) }"#
+        ),
+        "[[[[1]]]]"
+    );
+    assert!(run_main_bool(
+        r#"from collections import List, MutableList
+fn wrap(n: Int) -> List<List<List<List<Int>>>> {
+  MutableList.new()
+    .push(MutableList.new()
+      .push(MutableList.new()
+        .push(MutableList.new().push(n).to_list())
+        .to_list())
+      .to_list())
+    .to_list()
+}
+fn main() -> Bool {
+  let a = Hash.hash(wrap(1))
+  let b = Hash.hash(wrap(1))
+  let c = Hash.hash(wrap(2))
+  a == b && a != c
+}"#
+    ));
+}
+
+#[test]
+fn test_builtin_trait_qualified_show_supports_option_variants_in_wasm() {
+    assert_eq!(
+        run_main_string(&with_option_variants(
+            r#"fn main() -> String { Show.show(Some(3)) }"#
+        )),
+        "Some(3)"
+    );
+    assert_eq!(
+        run_main_string(&with_option_variants(
+            r#"fn main() -> String {
+  let value: Option<Int> = None
+  Show.show(value)
+}"#
+        )),
+        "None"
+    );
+}
+
+#[test]
+fn test_builtin_trait_qualified_hash_supports_option_variants_in_wasm() {
+    assert!(run_main_bool(&with_option_variants(
+        r#"fn main() -> Bool {
+  let a = Hash.hash(Some(3))
+  let b = Hash.hash(Some(3))
+  let c = Hash.hash(Some(4))
+  let d: Option<Int> = None
+  a == b && a != c && a != Hash.hash(d)
+}"#
+    )));
+}
+
+#[test]
+fn test_builtin_trait_qualified_show_supports_underconstrained_result_variants_in_wasm() {
+    assert_eq!(
+        run_main_string(
+            r#"from Result import Ok, Err
+fn main() -> String { Show.show(Ok(3)) }"#
+        ),
+        "Ok(3)"
+    );
+    assert_eq!(
+        run_main_string(
+            r#"from Result import Ok, Err
+fn main() -> String { Show.show(Err("boom")) }"#
+        ),
+        "Err(boom)"
+    );
+}
+
+#[test]
+fn test_builtin_trait_qualified_hash_supports_underconstrained_result_variants_in_wasm() {
+    assert!(run_main_bool(
+        r#"from Result import Ok, Err
+fn main() -> Bool {
+  let a = Hash.hash(Ok(3))
+  let b = Hash.hash(Ok(3))
+  let c = Hash.hash(Ok(4))
+  let d = Hash.hash(Err("boom"))
+  a == b && a != c && a != d
+}"#
+    ));
+}
+
+#[test]
+fn test_list_concat_head_and_tail_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(3).push(1).push(4).to_list()
+  let ys = collections.MutableList.new().push(1).push(5).to_list()
+  let zs = xs.concat(ys)
+  if (
+    xs.head().unwrap_or(0) == 3 &&
+    xs.tail().len() == 2 &&
+    xs.tail()[0] == 1 &&
+    zs.len() == 5 &&
+    zs[3] == 1 &&
+    zs[4] == 5
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_mutable_list_last_pop_extend_head_and_tail_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(3).push(1)
+  let added = collections.MutableList.new().push(4).push(1).push(5).to_list()
+  let head = xs.head().unwrap_or(0)
+  let tail = xs.tail()
+  let last = xs.last().unwrap_or(0)
+  let popped = xs.pop().unwrap_or(0)
+  let _ = xs.extend(added)
+  if (
+    head == 3 &&
+    tail.len() == 1 &&
+    tail[0] == 1 &&
+    last == 1 &&
+    popped == 1 &&
+    xs.len() == 4 &&
+    xs[0] == 3 &&
+    xs[3] == 5
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_long_logical_and_chain_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int {
+  let x = 1
+  if (
+    x == 1 &&
+    x == 1 &&
+    x == 1 &&
+    x == 1 &&
+    x == 1 &&
+    x == 1 &&
+    x == 1 &&
+    x == 1 &&
+    x == 1 &&
+    x == 1 &&
+    x == 1 &&
+    x == 1 &&
+    x == 1 &&
+    x == 1 &&
+    x == 1 &&
+    x == 1 &&
+    x == 1 &&
+    x == 1
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_mutable_bitset_long_logical_chain_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let grown = collections.MutableBitSet.from_bitset(collections.BitSet.new(8).with_bit(1).with_bit(3))
+  let alias = grown
+  let _a = grown.set(0)
+  let _b = grown.reset(1)
+  let _c = alias.flip(2)
+  let values = grown.values().to_list()
+
+  let unioned = collections.MutableBitSet.from_bitset(grown.to_bitset())
+    .union_with(collections.MutableBitSet.new(8).set(3).set(4))
+  let intersected = collections.MutableBitSet.from_bitset(collections.BitSet.new(8).with_bit(0).with_bit(2).with_bit(4))
+    .intersection_with(collections.MutableBitSet.new(8).set(0).set(4).set(7))
+  let differenced = collections.MutableBitSet.from_bitset(collections.BitSet.new(8).with_bit(0).with_bit(2).with_bit(4))
+    .difference_with(collections.MutableBitSet.new(8).set(2))
+  let xored = collections.MutableBitSet.from_bitset(collections.BitSet.new(8).with_bit(0).with_bit(2))
+    .xor_with(collections.MutableBitSet.new(8).set(2).set(5))
+  let snapshot = unioned.to_bitset()
+
+  if (
+    grown.size() == 8 &&
+    grown.count() == 3 &&
+    grown.test(0) &&
+    grown.test(2) &&
+    values[0] == 0 &&
+    values[2] == 3 &&
+    unioned.count() == 4 &&
+    unioned.test(4) &&
+    intersected.count() == 2 &&
+    intersected.test(0) &&
+    intersected.test(4) &&
+    differenced.count() == 2 &&
+    differenced.test(0) &&
+    differenced.test(4) &&
+    xored.count() == 2 &&
+    xored.test(0) &&
+    xored.test(5) &&
+    snapshot.count() == 4
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
 fn test_bitset_core_methods_match_interpreter_semantics() {
     assert_eq!(
         run_main_i64(
@@ -1029,6 +1517,60 @@ fn main() -> Int {
   let a = collections.MutableBitSet.new(4).set(1)
   let b = collections.MutableBitSet.new(8).set(1)
   a.union_with(b).count()
+}"#
+    ));
+}
+
+#[test]
+fn test_bitset_values_to_list_matches_interpreter_semantics() {
+    assert!(run_main_bool(
+        r#"import collections
+fn main() -> Bool {
+  let vals = collections.BitSet.new(16).with_bit(9).with_bit(1).with_bit(12).with_bit(3).values().to_list()
+  vals.len() == 4
+    && vals.get(0).unwrap_or(-1) == 1
+    && vals.get(1).unwrap_or(-1) == 3
+    && vals.get(2).unwrap_or(-1) == 9
+    && vals.get(3).unwrap_or(-1) == 12
+}"#
+    ));
+    assert!(run_main_bool(
+        r#"import collections
+fn main() -> Bool {
+  let vals = collections.MutableBitSet.new(10).set(4).set(1).set(7).values().to_list()
+  vals.len() == 3
+    && vals.get(0).unwrap_or(-1) == 1
+    && vals.get(1).unwrap_or(-1) == 4
+    && vals.get(2).unwrap_or(-1) == 7
+}"#
+    ));
+}
+
+#[test]
+fn test_bitset_values_seq_consumers_match_interpreter_semantics() {
+    assert!(run_main_bool(
+        r#"import collections
+fn main() -> Bool {
+  let vals = collections.MutableBitSet.new(12).set(1).set(4).set(9).values()
+  vals.count() == 3
+    && vals.count(fn(n: Int) => n >= 4) == 2
+    && vals.any(fn(n: Int) => n == 4)
+    && vals.all(fn(n: Int) => n < 10)
+    && vals.contains(9)
+    && vals.find(fn(n: Int) => n > 4).unwrap_or(-1) == 9
+    && vals.fold(0, fn(acc: Int, n: Int) => acc + n) == 14
+}"#
+    ));
+    assert!(run_main_bool(
+        r#"import collections
+fn main() -> Bool {
+  let vals = collections.BitSet.new(0).values()
+  vals.count() == 0
+    && !vals.any(fn(_n: Int) => true)
+    && vals.all(fn(_n: Int) => true)
+    && !vals.contains(0)
+    && vals.find(fn(_n: Int) => true).unwrap_or(-1) == -1
+    && vals.fold(5, fn(acc: Int, n: Int) => acc + n) == 5
 }"#
     ));
 }
@@ -1190,6 +1732,631 @@ fn test_string_split_count_by_empty_delim_matches_interpreter_semantics() {
             r#"fn main() -> Int { "éé".split("").count(fn(part: String) => part == "é") }"#
         ),
         2
+    );
+}
+
+#[test]
+fn test_seq_map_filter_fold_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int {
+  (0..<10)
+    .map(fn(n: Int) => n + 1)
+    .filter(fn(n: Int) => n % 2 == 0)
+    .fold(0, fn(acc: Int, n: Int) => acc + n)
+}"#
+        ),
+        30
+    );
+}
+
+#[test]
+fn test_list_map_filter_and_materialized_seq_terminals_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(3).push(1).push(4).push(1).push(5).to_list()
+  let mapped = xs.map(fn(n: Int) => n + 1)
+  let filtered = mapped.filter(fn(n: Int) => n > 3)
+  filtered.count() * 100 + filtered.to_list()[0] * 10 + filtered.fold(0, fn(acc: Int, n: Int) => acc + n)
+}"#
+        ),
+        355
+    );
+}
+
+#[test]
+fn test_mutable_deque_filter_count_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let q = collections.MutableDeque.new().push_back(1).push_back(2).push_back(3)
+  q.filter(fn(n: Int) => n > 1).count()
+}"#
+        ),
+        2
+    );
+}
+
+#[test]
+fn test_list_flat_map_to_list_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(3).push(1).push(4).to_list()
+  let flat = xs
+    .flat_map(fn(n: Int) => collections.MutableList.new().push(n).push(n + 10).to_list())
+    .to_list()
+  flat.len() * 1000 + flat[1] * 100 + flat[4] * 10 + flat[5]
+}"#
+        ),
+        7354
+    );
+}
+
+#[test]
+fn test_range_flat_map_to_list_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = (1..<4)
+    .flat_map(fn(n: Int) => collections.MutableList.new().push(n).push(n * 10).to_list())
+    .to_list()
+  xs.len() * 100 + xs[1] * 10 + xs[5]
+}"#
+        ),
+        730
+    );
+}
+
+#[test]
+fn test_list_scan_to_list_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(3).push(1).push(4).push(1).push(5).to_list()
+  let scanned = xs.scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
+  scanned.len() * 100 + scanned[0] * 10 + scanned[5]
+}"#
+        ),
+        614
+    );
+}
+
+#[test]
+fn test_range_scan_to_list_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int {
+  let scanned = (1..<4).scan(0, fn(acc: Int, n: Int) => acc + n).to_list()
+  scanned.len() * 100 + scanned[0] * 10 + scanned[3]
+}"#
+        ),
+        406
+    );
+}
+
+#[test]
+fn test_seq_unfold_to_list_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"from Option import Some, None
+fn main() -> Int {
+  let xs = (0).unfold(fn(state: Int) =>
+    if (state < 3) {
+      Some({ value: state + 1, state: state + 1 })
+    } else {
+      None
+    }
+  ).to_list()
+  xs.len() * 10 + xs[2]
+}"#
+        ),
+        33
+    );
+}
+
+#[test]
+fn test_list_enumerate_zip_chunks_windows_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let xs = collections.MutableList.new().push(3).push(1).push(4).push(1).push(5).to_list()
+  let mapped = xs.map(fn(n: Int) => n + 1).to_list()
+  let enumerated = xs.enumerate().to_list()
+  let zipped = xs.zip(mapped).to_list()
+  let chunks = xs.chunks(2).to_list()
+  let windows = xs.windows(3).to_list()
+  if (
+    enumerated[2].index == 2 &&
+    enumerated[2].value == 4 &&
+    zipped[0].left == 3 &&
+    zipped[0].right == 4 &&
+    chunks.len() == 3 &&
+    chunks[1][0] == 4 &&
+    windows.len() == 3 &&
+    windows[2][1] == 1
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_string_backed_seq_map_and_enumerate_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int {
+  let chars = "ab".chars().map(fn(ch: Char) => ch.code()).to_list()
+  let lines = "a\nbb".lines().map(fn(line: String) => line.len()).to_list()
+  let parts = "x,yy".split(",").enumerate().to_list()
+
+  if (
+    chars[0] == 97 &&
+    chars[1] == 98 &&
+    lines[0] == 1 &&
+    lines[1] == 2 &&
+    parts[1].index == 1 &&
+    parts[1].value == "yy"
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_string_backed_seq_flat_map_and_scan_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let expanded = "ab".chars()
+    .flat_map(fn(ch: Char) => collections.MutableList.new().push(ch.code()).push(ch.code() + 100).to_list())
+    .to_list()
+  let scanned = "a\nbb".lines().scan(0, fn(acc: Int, line: String) => acc + line.len()).to_list()
+
+  if (
+    expanded.len() == 4 &&
+    expanded[0] == 97 &&
+    expanded[1] == 197 &&
+    expanded[3] == 198 &&
+    scanned.len() == 3 &&
+    scanned[1] == 1 &&
+    scanned[2] == 3
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_range_zip_list_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let left = (1..<4)
+  let right = collections.MutableList.new().push(10).push(20).push(30).push(40).to_list()
+  let zs = left.zip(right).to_list()
+  zs.len() * 100 + zs[0].left + zs[0].right + zs[2].right
+}"#
+        ),
+        341
+    );
+}
+
+#[test]
+fn test_range_chunks_and_windows_match_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int {
+  let base = (1..<7)
+  let cs = base.chunks(4).to_list()
+  let ws = base.windows(3).to_list()
+  cs.len() * 100 + cs[1].len() * 10 + ws.len() + ws[3][0]
+}"#
+        ),
+        228
+    );
+}
+
+#[test]
+fn test_list_frequencies_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let counts = collections.MutableList.new().push(3).push(1).push(3).push(2).frequencies()
+  counts.get(1).unwrap_or(0) * 100 + counts.get(2).unwrap_or(0) * 10 + counts.get(3).unwrap_or(0)
+}"#
+        ),
+        112
+    );
+}
+
+#[test]
+fn test_map_index_supports_structural_keys_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+type Point derive(Eq, Hash) = { x: Int }
+fn main() -> Int {
+  let p: Point = Point { x: 3 }
+  let counts = collections.MutableList.new().push(p).push(p).frequencies()
+  counts[p]
+}"#
+        ),
+        2
+    );
+}
+
+#[test]
+fn test_map_and_mutable_map_example_surface_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let snapshot = collections.MutableMap.new()
+    .insert("alpha", 1)
+    .insert("beta", 2)
+    .insert("gamma", 3)
+    .to_map()
+  let keys = snapshot.keys().to_list()
+  let values_sum = snapshot.values().fold(0, fn(acc: Int, n: Int) => acc + n)
+
+  let calls = collections.MutableList.new().push(0)
+  let m = collections.MutableMap.with_capacity(8)
+  let first = m.get_or_insert_with("alpha", fn() =>
+    if (true) {
+      let _ = calls.set(0, calls[0] + 1)
+      7
+    } else {
+      0
+    }
+  )
+  let second = m.get_or_insert_with("alpha", fn() =>
+    if (true) {
+      let _ = calls.set(0, calls[0] + 1)
+      99
+    } else {
+      0
+    }
+  )
+  let _ = m.insert("beta", 2)
+  let _ = m.insert("gamma", 3)
+  let had_beta = m.contains("beta")
+  let keys_before = m.keys().to_list()
+  let values_before = m.values().fold(0, fn(acc: Int, n: Int) => acc + n)
+  let _ = m.remove("beta")
+  let snapshot2 = m.to_map()
+  let round_trip = collections.MutableMap.from_map(snapshot2).insert("delta", 4).to_map()
+
+  if (
+    snapshot.len() == 3 &&
+    snapshot.get("beta").unwrap_or(0) == 2 &&
+    snapshot.contains("gamma") &&
+    keys[0] == "alpha" &&
+    keys[2] == "gamma" &&
+    values_sum == 6 &&
+    first == 7 &&
+    second == 7 &&
+    calls[0] == 1 &&
+    had_beta &&
+    m.get("gamma").unwrap_or(0) == 3 &&
+    m.len() == 2 &&
+    keys_before[0] == "alpha" &&
+    keys_before[1] == "beta" &&
+    keys_before[2] == "gamma" &&
+    values_before == 12 &&
+    snapshot2.get("beta").unwrap_or(0) == 0 &&
+    round_trip.get("delta").unwrap_or(0) == 4 &&
+    round_trip.len() == 3
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_set_and_mutable_set_example_surface_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+fn main() -> Int {
+  let snapshot = collections.MutableSet.new()
+    .insert(3)
+    .insert(1)
+    .insert(3)
+    .insert(2)
+    .to_set()
+  let values = snapshot.values().to_list()
+
+  let s = collections.MutableSet.with_capacity(8)
+  let _ = s.insert(5)
+  let _ = s.insert(7)
+  let _ = s.insert(5)
+  let had_five = s.contains(5)
+  let values_before = s.values().to_list()
+  let _ = s.remove(5)
+  let snapshot2 = s.to_set()
+  let round_trip = collections.MutableSet.from_set(snapshot2).insert(9).to_set()
+
+  if (
+    snapshot.len() == 3 &&
+    snapshot.contains(1) &&
+    !snapshot.contains(99) &&
+    values[0] == 3 &&
+    values[1] == 1 &&
+    values[2] == 2 &&
+    had_five &&
+    s.len() == 1 &&
+    values_before.len() == 2 &&
+    values_before[0] == 5 &&
+    values_before[1] == 7 &&
+    !s.contains(5) &&
+    snapshot2.contains(7) &&
+    round_trip.contains(9) &&
+    round_trip.len() == 2
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_mutable_priority_queue_surface_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+from Option import Some, None
+
+fn main() -> Int {
+  let minq: collections.MutablePriorityQueue<Int, Int> = collections.MutablePriorityQueue.new_min()
+  let alias = minq.push(5, 50).push(1, 10)
+  let _ = alias.push(1, 11).push(3, 30)
+
+  let peek_min = match (minq.peek()) {
+    Some(item) => item.priority * 100 + item.value,
+    None => -1,
+  }
+  let pop_min_1 = match (minq.pop()) {
+    Some(item) => item.priority * 100 + item.value,
+    None => -1,
+  }
+  let pop_min_2 = match (minq.pop()) {
+    Some(item) => item.priority * 100 + item.value,
+    None => -1,
+  }
+  let pop_min_3 = match (minq.pop()) {
+    Some(item) => item.priority * 100 + item.value,
+    None => -1,
+  }
+  let pop_min_4 = match (minq.pop()) {
+    Some(item) => item.priority * 100 + item.value,
+    None => -1,
+  }
+  let empty_pop = match (minq.pop()) {
+    Some(_item) => 0,
+    None => 1,
+  }
+
+  let maxq: collections.MutablePriorityQueue<Int, Int> = collections.MutablePriorityQueue.new_max()
+  let _ = maxq.push(5, 50).push(7, 70).push(7, 71).push(1, 10)
+  let peek_max = match (maxq.peek()) {
+    Some(item) => item.priority * 100 + item.value,
+    None => -1,
+  }
+  let pop_max_1 = match (maxq.pop()) {
+    Some(item) => item.priority * 100 + item.value,
+    None => -1,
+  }
+  let pop_max_2 = match (maxq.pop()) {
+    Some(item) => item.priority * 100 + item.value,
+    None => -1,
+  }
+  let pop_max_3 = match (maxq.pop()) {
+    Some(item) => item.priority * 100 + item.value,
+    None => -1,
+  }
+  let pop_max_4 = match (maxq.pop()) {
+    Some(item) => item.priority * 100 + item.value,
+    None => -1,
+  }
+
+  if (
+    peek_min == 110 &&
+    pop_min_1 == 110 &&
+    pop_min_2 == 111 &&
+    pop_min_3 == 330 &&
+    pop_min_4 == 550 &&
+    minq.len() == 0 &&
+    minq.is_empty() &&
+    empty_pop == 1 &&
+    peek_max == 770 &&
+    pop_max_1 == 770 &&
+    pop_max_2 == 771 &&
+    pop_max_3 == 550 &&
+    pop_max_4 == 110 &&
+    maxq.len() == 0 &&
+    maxq.is_empty()
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_builtin_trait_qualified_show_supports_collection_families_in_wasm() {
+    assert_eq!(
+        run_main_string(
+            r#"import collections
+
+type Point = { x: Int, y: Int }
+
+fn main() -> String {
+  let a = Show.show(collections.BitSet.new(8).with_bit(1).with_bit(3))
+  let b = Show.show(collections.MutableBitSet.new(8).set(2).set(4))
+  let c = Show.show(collections.MutableMap.new().insert("k", 1).to_map())
+  let d = Show.show(collections.MutableSet.new().insert(7).insert(9).to_set())
+  let e = Show.show(collections.MutableMap.new().insert({ x: 1, y: 2 }, 3))
+  let f = Show.show(collections.MutableSet.new().insert({ x: 1, y: 2 }))
+  let pq: collections.MutablePriorityQueue<Int, Int> = collections.MutablePriorityQueue.new_min()
+  let g = Show.show(pq.push(3, 30).push(1, 10).push(2, 20))
+  a.concat(" | ")
+    .concat(b)
+    .concat(" | ")
+    .concat(c)
+    .concat(" | ")
+    .concat(d)
+    .concat(" | ")
+    .concat(e)
+    .concat(" | ")
+    .concat(f)
+    .concat(" | ")
+    .concat(g)
+}"#
+        ),
+        "BitSet(size=8, #{1, 3}) | MutableBitSet(size=8, #{2, 4}) | {k: 1} | #{7, 9} | MutableMap({{ x: 1, y: 2 }: 3}) | MutableSet(#{{ x: 1, y: 2 }}) | MutablePriorityQueue(direction=min, len=3)"
+    );
+}
+
+#[test]
+fn test_mutable_map_and_set_support_derived_record_keys_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+
+type Point derive(Eq, Hash) = { x: Int, y: Int }
+
+fn pt(x: Int, y: Int) -> Point {
+  Point { x: x, y: y }
+}
+
+fn main() -> Int {
+  let p1 = pt(1, 2)
+  let p2 = pt(3, 4)
+  let p1_again = pt(1, 2)
+
+  let m: collections.MutableMap<Point, Int> = collections.MutableMap.new()
+  let s: collections.MutableSet<Point> = collections.MutableSet.new()
+
+  let _ = m.insert(p1, 7).insert(p2, 9)
+  let _ = s.insert(p1_again).insert(p2)
+
+  let snapshot = m.to_map()
+  let values = s.values().to_list()
+
+  if (
+    m.get(p1_again).unwrap_or(0) == 7 &&
+    snapshot.get(p2).unwrap_or(0) == 9 &&
+    s.contains(p1) &&
+    values.len() == 2 &&
+    values[0].x == 1 &&
+    values[1].y == 4
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_list_contains_supports_derived_record_values_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+
+type Point derive(Eq, Hash) = { x: Int, y: Int }
+
+fn pt(x: Int, y: Int) -> Point {
+  Point { x: x, y: y }
+}
+
+fn main() -> Int {
+  let xs = collections.MutableList.new()
+    .push(pt(1, 2))
+    .push(pt(3, 4))
+    .to_list()
+
+  if (
+    xs.contains(pt(1, 2)) &&
+    !xs.contains(pt(9, 9))
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn test_structural_set_values_seq_transformers_match_interpreter_semantics_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+
+type Point derive(Eq, Hash) = { x: Int }
+
+fn main() -> Int {
+  let s: collections.MutableSet<Point> = collections.MutableSet.new()
+  let _ = s.insert(Point { x: 1 }).insert(Point { x: 2 })
+  let mapped = s.values().map(fn(p: Point) => p.x).to_list()
+  let enumerated = s.values().enumerate().to_list()
+  let flat = s.values().flat_map(fn(p: Point) =>
+    collections.MutableList.new().push(p.x).push(p.x + 10).to_list()
+  ).to_list()
+  let scanned = s.values().scan(0, fn(acc: Int, p: Point) => acc + p.x).to_list()
+  mapped.fold(0, fn(acc: Int, n: Int) => acc + n)
+    + enumerated.fold(0, fn(acc: Int, pair: { index: Int, value: Point }) =>
+        acc + pair.index + pair.value.x
+      ) * 10
+    + flat.fold(0, fn(acc: Int, n: Int) => acc + n) * 100
+    + scanned[2] * 10000
+}"#
+        ),
+        32643
+    );
+}
+
+#[test]
+fn test_structural_set_values_seq_consumers_match_interpreter_semantics_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+
+type Point derive(Eq, Hash) = { x: Int }
+
+fn main() -> Int {
+  let p1 = Point { x: 1 }
+  let p2 = Point { x: 2 }
+  let s: collections.MutableSet<Point> = collections.MutableSet.new()
+  let _ = s.insert(p1).insert(p2)
+  let counts = collections.MutableList.new().push(p1).push(p2).push(p2).frequencies()
+  let found = s.values().find(fn(p: Point) => p.x == 2).map_or(0, fn(p: Point) => p.x)
+  let any_two = s.values().any(fn(p: Point) => p.x == 2)
+  let all_pos = s.values().all(fn(p: Point) => p.x > 0)
+  let count_two = s.values().count(fn(p: Point) => p.x == 2)
+  let contains_p1 = s.values().contains(p1)
+  let sum = s.values().fold(0, fn(acc: Int, p: Point) => acc + p.x)
+  if (any_two && all_pos && contains_p1) {
+    found + count_two * 10 + sum * 100 + counts[p2] * 1000
+  } else {
+    0
+  }
+}"#
+        ),
+        2312
     );
 }
 

@@ -172,6 +172,16 @@ fn package_example_registry_selected_closure_runs_with_pinned_transitives() {
 
     let run = run_cli(&example_root, &["run", "app/src/main.ky"]);
     assert_stdout_trimmed(&run, "12", "registry selected-closure run");
+
+    let wasm_run = run_cli(
+        &example_root,
+        &["run", "app/src/main.ky", "--backend", "wasm"],
+    );
+    assert_stdout_trimmed(
+        &wasm_run,
+        "12",
+        "registry selected-closure run with wasm backend",
+    );
 }
 
 #[test]
@@ -211,4 +221,10 @@ fn package_example_git_moving_ref_refreshes_after_update() {
 
     let second_run = run_cli(&example_root, &["run", "app/src/main.ky"]);
     assert_stdout_trimmed(&second_run, "8", "git moving-ref second run");
+
+    let wasm_run = run_cli(
+        &example_root,
+        &["run", "app/src/main.ky", "--backend", "wasm"],
+    );
+    assert_stdout_trimmed(&wasm_run, "8", "git moving-ref run with wasm backend");
 }

@@ -51,6 +51,60 @@ fn run_backend_wasm_executes_single_file_program() {
 }
 
 #[test]
+fn run_backend_wasm_displays_structural_main_output() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "type Point = { x: Int, y: Int }\nfn main() -> Point { { x: 3, y: 4 } }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "{ x: 3, y: 4 }",
+        "run --backend wasm structural main output",
+    );
+}
+
+#[test]
+fn run_backend_wasm_displays_collection_main_output() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableMap\nfn main() -> MutableMap<String, Int> { MutableMap.new().insert(\"k\", 1).insert(\"z\", 2) }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "MutableMap({k: 1, z: 2})",
+        "run --backend wasm collection main output",
+    );
+}
+
+#[test]
+fn run_backend_wasm_supports_io_println_effects() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "import io\nfn main() -> Unit { io.println(\"hello from wasm io\") }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "hello from wasm io",
+        "run --backend wasm with io.println",
+    );
+}
+
+#[test]
 fn replay_dispatches_wasm_logs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
@@ -78,7 +132,42 @@ fn replay_dispatches_wasm_logs() {
 }
 
 #[test]
-fn run_backend_wasm_rejects_project_mode_for_now() {
+fn replay_dispatches_wasm_logs_for_structural_output() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let log = dir.path().join("run.jsonl");
+    fs::write(
+        &file,
+        "type Point = { x: Int, y: Int }\nfn main() -> Point { { x: 5, y: 8 } }",
+    )
+    .expect("write source");
+
+    let run = run_cli(
+        dir.path(),
+        &[
+            "run",
+            "main.ky",
+            "--backend",
+            "wasm",
+            "--replay-log",
+            log.to_str().expect("utf-8 log path"),
+        ],
+    );
+    assert_stdout_trimmed(
+        &run,
+        "{ x: 5, y: 8 }",
+        "run --backend wasm --replay-log structural output",
+    );
+
+    let replay = run_cli(
+        dir.path(),
+        &["replay", log.to_str().expect("utf-8 log path")],
+    );
+    assert_stdout_trimmed(&replay, "{ x: 5, y: 8 }", "replay wasm structural log");
+}
+
+#[test]
+fn run_backend_wasm_executes_project_mode_program() {
     let dir = tempfile::tempdir().expect("tempdir");
     let app = dir.path().join("main.ky");
     let helper = dir.path().join("helper.ky");
@@ -93,15 +182,95 @@ fn run_backend_wasm_rejects_project_mode_for_now() {
         dir.path(),
         &["run", "main.ky", "--backend", "wasm", "--project"],
     );
-    assert!(
-        !output.status.success(),
-        "wasm project-mode run should fail until project lowering exists\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+    assert_stdout_trimmed(&output, "7", "wasm project-mode run");
+}
+
+#[test]
+fn run_backend_wasm_displays_structural_project_output() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let app = dir.path().join("main.ky");
+    let helper = dir.path().join("helper.ky");
+    fs::write(
+        &app,
+        "from helper import make\nfn main() -> { x: Int, y: Int } { make() }",
+    )
+    .expect("write app");
+    fs::write(
+        &helper,
+        "pub fn make() -> { x: Int, y: Int } { { x: 7, y: 9 } }",
+    )
+    .expect("write helper");
+
+    let output = run_cli(
+        dir.path(),
+        &["run", "main.ky", "--backend", "wasm", "--project"],
     );
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("project mode"),
-        "stderr should explain current wasm project-mode limitation\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
+    assert_stdout_trimmed(
+        &output,
+        "{ x: 7, y: 9 }",
+        "wasm project-mode structural output",
     );
+}
+
+#[test]
+fn build_backend_wasm_supports_project_mode() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let app = dir.path().join("main.ky");
+    let helper = dir.path().join("helper.ky");
+    let out = dir.path().join("out").join("app.wasm");
+    fs::write(
+        &app,
+        "from helper import value\nfn main() -> Int { value() }",
+    )
+    .expect("write app");
+    fs::write(&helper, "pub fn value() -> Int { 7 }").expect("write helper");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "build",
+            "main.ky",
+            "--project",
+            "--target",
+            "wasm",
+            "--out",
+            out.to_str().expect("utf-8 out path"),
+        ],
+    );
+    assert_success(&output, "wasm project-mode build");
+    assert!(out.is_file(), "expected wasm artifact at {}", out.display());
+}
+
+#[test]
+fn replay_dispatches_wasm_project_logs() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let app = dir.path().join("main.ky");
+    let helper = dir.path().join("helper.ky");
+    let log = dir.path().join("run.jsonl");
+    fs::write(
+        &app,
+        "from helper import value\nfn main() -> Int { value() }",
+    )
+    .expect("write app");
+    fs::write(&helper, "pub fn value() -> Int { 7 }").expect("write helper");
+
+    let run = run_cli(
+        dir.path(),
+        &[
+            "run",
+            "main.ky",
+            "--project",
+            "--backend",
+            "wasm",
+            "--replay-log",
+            log.to_str().expect("utf-8 log path"),
+        ],
+    );
+    assert_stdout_trimmed(&run, "7", "wasm project-mode run with replay log");
+
+    let replay = run_cli(
+        dir.path(),
+        &["replay", log.to_str().expect("utf-8 log path")],
+    );
+    assert_stdout_trimmed(&replay, "7", "replay wasm project log");
 }

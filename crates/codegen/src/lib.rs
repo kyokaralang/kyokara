@@ -2,11 +2,10 @@
 //!
 //! Compiles a KIR module to a WASM binary.
 //!
-//! Current `main` supports the frozen single-file surface across scalars,
-//! control flow, function calls, closures, ADTs, records, strings, lists,
-//! deques, bitsets, intrinsics, and the shared replay/capability host ABI.
-//! The remaining parity work lives in project/package-mode compilation and the
-//! still-missing collection + witness-heavy families.
+//! Current `main` supports the frozen surface across scalars, control flow,
+//! function calls, closures, ADTs, records, strings, collections, trait-backed
+//! builtins, and the shared replay/capability host ABI. Public single-file and
+//! project/package-mode Wasm run/build/replay now flow through this backend.
 
 pub mod error;
 pub mod wasm;

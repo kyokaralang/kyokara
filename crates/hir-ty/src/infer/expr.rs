@@ -1615,13 +1615,22 @@ impl<'a> InferenceCtx<'a> {
             Ty::Float => Some(ReceiverKey::Primitive(PrimitiveType::Float)),
             Ty::Bool => Some(ReceiverKey::Primitive(PrimitiveType::Bool)),
             Ty::Char => Some(ReceiverKey::Primitive(PrimitiveType::Char)),
-            Ty::Adt { def, .. } => Some(
-                self.module_scope
-                    .core_types
-                    .kind_for_idx(*def)
-                    .map(ReceiverKey::Core)
-                    .unwrap_or(ReceiverKey::User(*def)),
-            ),
+            Ty::Adt { def, .. } => {
+                let public_name = self.item_tree.types[*def].name;
+                Some(
+                    self.module_scope
+                        .core_types
+                        .kind_for_idx(*def)
+                        .or_else(|| {
+                            kyokara_hir_def::resolver::core_type_from_public_name(
+                                public_name,
+                                self.interner,
+                            )
+                        })
+                        .map(ReceiverKey::Core)
+                        .unwrap_or(ReceiverKey::User(*def)),
+                )
+            }
             _ => None,
         }
     }
@@ -1630,9 +1639,13 @@ impl<'a> InferenceCtx<'a> {
         &self,
         type_idx: kyokara_hir_def::item_tree::TypeItemIdx,
     ) -> StaticOwnerKey {
+        let public_name = self.item_tree.types[type_idx].name;
         self.module_scope
             .core_types
             .kind_for_idx(type_idx)
+            .or_else(|| {
+                kyokara_hir_def::resolver::core_type_from_public_name(public_name, self.interner)
+            })
             .map(StaticOwnerKey::Core)
             .unwrap_or(StaticOwnerKey::User(type_idx))
     }

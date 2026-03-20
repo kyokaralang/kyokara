@@ -55,7 +55,7 @@ fn build_target_wasm_writes_single_file_module() {
 }
 
 #[test]
-fn build_target_wasm_rejects_project_mode_for_now() {
+fn build_target_wasm_supports_project_mode() {
     let dir = tempfile::tempdir().expect("tempdir");
     let app = dir.path().join("main.ky");
     let helper = dir.path().join("helper.ky");
@@ -79,15 +79,13 @@ fn build_target_wasm_rejects_project_mode_for_now() {
             out.to_str().expect("utf-8 output path"),
         ],
     );
+    assert_success(&output, "build --project --target wasm");
+
+    let bytes = fs::read(&out).expect("read wasm artifact");
     assert!(
-        !output.status.success(),
-        "wasm project-mode build should fail until project lowering exists\nstdout:\n{}\nstderr:\n{}",
+        bytes.starts_with(b"\0asm"),
+        "project-mode build should produce a wasm module\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("project mode"),
-        "stderr should explain current wasm project-mode limitation\nstderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
 }

@@ -202,11 +202,11 @@ fn main() {
             emit,
             project,
         } => {
-            let path = std::path::Path::new(&file);
-            let is_multi_file = should_use_project_mode(path, project);
+            let path = resolve_cli_path(&file);
+            let is_multi_file = should_use_project_mode(&path, project);
             let include_typed_ast = emit.as_deref() == Some("typed-ast");
 
-            if let Err(message) = sync_project_lockfile_if_needed(path, is_multi_file) {
+            if let Err(message) = sync_project_lockfile_if_needed(&path, is_multi_file) {
                 eprintln!("error: {message}");
                 std::process::exit(1);
             }
@@ -219,16 +219,16 @@ fn main() {
             let options = kyokara_api::CheckOptions { include_typed_ast };
 
             let output = if is_multi_file {
-                kyokara_api::check_project_with_options(path, &options)
+                kyokara_api::check_project_with_options(&path, &options)
             } else {
-                let source = match std::fs::read_to_string(&file) {
+                let source = match std::fs::read_to_string(&path) {
                     Ok(s) => s,
                     Err(e) => {
-                        eprintln!("error: cannot read `{file}`: {e}");
+                        eprintln!("error: cannot read `{}`: {e}", path.display());
                         std::process::exit(1);
                     }
                 };
-                kyokara_api::check_with_options(&source, &file, &options)
+                kyokara_api::check_with_options(&source, &path.display().to_string(), &options)
             };
 
             match format.as_str() {
@@ -265,10 +265,10 @@ fn main() {
             caps,
             replay_log,
         } => {
-            let path = std::path::Path::new(&file);
-            let is_multi_file = should_use_project_mode(path, project);
+            let path = resolve_cli_path(&file);
+            let is_multi_file = should_use_project_mode(&path, project);
 
-            if let Err(message) = sync_project_lockfile_if_needed(path, is_multi_file) {
+            if let Err(message) = sync_project_lockfile_if_needed(&path, is_multi_file) {
                 eprintln!("error: {message}");
                 std::process::exit(1);
             }
@@ -297,12 +297,9 @@ fn main() {
 
             match backend.as_str() {
                 "wasm" => {
-                    if is_multi_file {
-                        eprintln!("runtime error: wasm backend does not yet support project mode");
-                        std::process::exit(1);
-                    }
-                    match run_single_file_with_wasm_backend(
-                        path,
+                    match run_with_wasm_backend(
+                        &path,
+                        is_multi_file,
                         options.manifest.clone(),
                         options.replay_log,
                     ) {
@@ -316,7 +313,7 @@ fn main() {
                 }
                 _ => {
                     if is_multi_file {
-                        match kyokara_eval::run_project_with_options(path, &options) {
+                        match kyokara_eval::run_project_with_options(&path, &options) {
                             Ok(result) => {
                                 if !matches!(result.value, kyokara_eval::value::Value::Unit) {
                                     println!("{}", result.value.display(&result.interner));
@@ -328,7 +325,7 @@ fn main() {
                             }
                         }
                     } else {
-                        match kyokara_eval::run_file_with_options(path, &options) {
+                        match kyokara_eval::run_file_with_options(&path, &options) {
                             Ok(result) => {
                                 if !matches!(result.value, kyokara_eval::value::Value::Unit) {
                                     println!("{}", result.value.display(&result.interner));
@@ -349,22 +346,18 @@ fn main() {
             target,
             out,
         } => {
-            let path = std::path::Path::new(&file);
-            let is_multi_file = should_use_project_mode(path, project);
+            let path = resolve_cli_path(&file);
+            let is_multi_file = should_use_project_mode(&path, project);
 
-            if let Err(message) = sync_project_lockfile_if_needed(path, is_multi_file) {
+            if let Err(message) = sync_project_lockfile_if_needed(&path, is_multi_file) {
                 eprintln!("error: {message}");
                 std::process::exit(1);
             }
 
             match target.as_str() {
                 "wasm" => {
-                    if is_multi_file {
-                        eprintln!("error: wasm build does not yet support project mode");
-                        std::process::exit(1);
-                    }
                     if let Err(message) =
-                        build_single_file_wasm_artifact(path, std::path::Path::new(&out))
+                        build_wasm_artifact(&path, is_multi_file, std::path::Path::new(&out))
                     {
                         eprintln!("error: {message}");
                         std::process::exit(1);
@@ -378,8 +371,8 @@ fn main() {
                 "verify" => kyokara_eval::ReplayMode::Verify,
                 _ => kyokara_eval::ReplayMode::Replay,
             };
-            let path = std::path::Path::new(&file);
-            let header = match kyokara_runtime::replay::ReplayReader::from_path(path) {
+            let path = resolve_cli_path(&file);
+            let header = match kyokara_runtime::replay::ReplayReader::from_path(&path) {
                 Ok(reader) => reader.header().clone(),
                 Err(e) => {
                     eprintln!("runtime error: {e}");
@@ -388,7 +381,7 @@ fn main() {
             };
             match header.runtime.as_str() {
                 kyokara_runtime::replay::WASM_RUNTIME => {
-                    match replay_single_file_with_wasm_backend(path, mode) {
+                    match replay_with_wasm_backend(&path, mode) {
                         Ok(Some(output)) => println!("{output}"),
                         Ok(None) => {}
                         Err(message) => {
@@ -397,7 +390,7 @@ fn main() {
                         }
                     }
                 }
-                _ => match kyokara_eval::replay_from_log(path, mode) {
+                _ => match kyokara_eval::replay_from_log(&path, mode) {
                     Ok(result) => {
                         if !matches!(result.value, kyokara_eval::value::Value::Unit) {
                             println!("{}", result.value.display(&result.interner));
@@ -418,10 +411,10 @@ fn main() {
             format,
             project,
         } => {
-            let path = std::path::Path::new(&file);
-            let is_multi_file = should_use_project_mode(path, project);
+            let path = resolve_cli_path(&file);
+            let is_multi_file = should_use_project_mode(&path, project);
 
-            if let Err(message) = sync_project_lockfile_if_needed(path, is_multi_file) {
+            if let Err(message) = sync_project_lockfile_if_needed(&path, is_multi_file) {
                 eprintln!("error: {message}");
                 std::process::exit(1);
             }
@@ -440,7 +433,7 @@ fn main() {
             };
 
             let report = if is_multi_file {
-                kyokara_pbt::run_project_tests(path, &config)
+                kyokara_pbt::run_project_tests(&path, &config)
             } else {
                 let source = match std::fs::read_to_string(&file) {
                     Ok(s) => s,
@@ -1382,20 +1375,42 @@ fn should_use_project_mode(path: &std::path::Path, force_project: bool) -> bool 
             .is_some_and(|dir| has_sibling_ky_files(path, dir))
 }
 
-fn run_single_file_with_wasm_backend(
+fn resolve_cli_path(file: &str) -> std::path::PathBuf {
+    let path = std::path::PathBuf::from(file);
+    if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .join(path)
+    }
+}
+
+fn run_with_wasm_backend(
     entry_file: &std::path::Path,
+    project_mode: bool,
     manifest: Option<kyokara_eval::manifest::CapabilityManifest>,
     replay_log: Option<&std::path::Path>,
 ) -> Result<Option<String>, String> {
     validate_manifest_constraints_for_wasm(&manifest)?;
-    let (wasm_bytes, ret_ty) = compile_single_file_to_wasm(entry_file)?;
+    let (wasm_bytes, ret_ty, source_paths, has_show_wrapper) = if project_mode {
+        compile_project_to_wasm(entry_file)?
+    } else {
+        let (wasm_bytes, ret_ty, has_show_wrapper) = compile_single_file_to_wasm(entry_file)?;
+        (
+            wasm_bytes,
+            ret_ty,
+            vec![entry_file.to_path_buf()],
+            has_show_wrapper,
+        )
+    };
     let replay = if let Some(path) = replay_log {
         Some(kyokara_runtime::replay::ReplayLogConfig {
             path: path.to_path_buf(),
             header: kyokara_runtime::service::build_replay_header(
                 entry_file,
-                false,
-                [entry_file.to_path_buf()],
+                project_mode,
+                source_paths,
                 kyokara_runtime::replay::WASM_RUNTIME,
             )
             .map_err(|err| err.to_string())?,
@@ -1404,25 +1419,32 @@ fn run_single_file_with_wasm_backend(
         None
     };
     let mut program = instantiate_wasm_program(&wasm_bytes, manifest, replay)?;
-    decode_wasm_main_output(&mut program, &ret_ty)
+    decode_wasm_main_output(&mut program, &ret_ty, has_show_wrapper)
 }
 
-fn replay_single_file_with_wasm_backend(
+fn replay_with_wasm_backend(
     log_path: &std::path::Path,
     mode: kyokara_eval::ReplayMode,
 ) -> Result<Option<String>, String> {
     let reader = kyokara_runtime::replay::ReplayReader::from_path(log_path)
         .map_err(|err| err.to_string())?;
     let header = reader.header().clone();
-    if header.project_mode {
-        return Err("wasm replay does not yet support project mode".into());
-    }
     let entry_file = std::path::PathBuf::from(&header.entry_file);
-    let (wasm_bytes, ret_ty) = compile_single_file_to_wasm(&entry_file)?;
+    let (wasm_bytes, ret_ty, _, has_show_wrapper) = if header.project_mode {
+        compile_project_to_wasm(&entry_file)?
+    } else {
+        let (wasm_bytes, ret_ty, has_show_wrapper) = compile_single_file_to_wasm(&entry_file)?;
+        (
+            wasm_bytes,
+            ret_ty,
+            vec![entry_file.clone()],
+            has_show_wrapper,
+        )
+    };
     let (mut program, _) =
         kyokara_wasm_runtime::WasmProgram::instantiate_with_replay_log(&wasm_bytes, log_path, mode)
             .map_err(|err| err.to_string())?;
-    decode_wasm_main_output(&mut program, &ret_ty)
+    decode_wasm_main_output(&mut program, &ret_ty, has_show_wrapper)
 }
 
 fn instantiate_wasm_program(
@@ -1447,6 +1469,7 @@ fn instantiate_wasm_program(
 fn decode_wasm_main_output(
     program: &mut kyokara_wasm_runtime::WasmProgram,
     ret_ty: &kyokara_hir_ty::ty::Ty,
+    has_show_wrapper: bool,
 ) -> Result<Option<String>, String> {
     use kyokara_hir_ty::ty::Ty;
 
@@ -1482,10 +1505,75 @@ fn decode_wasm_main_output(
             let text = read_guest_string(program, ptr as u32)?;
             Ok(Some(text))
         }
+        _other if has_show_wrapper => {
+            let ptr = program
+                .call_export_i32(WASM_MAIN_SHOW_EXPORT)
+                .map_err(|err| format_wasm_runtime_error(program, err))?;
+            let text = read_guest_string(program, ptr as u32)?;
+            Ok(Some(text))
+        }
         other => Err(format!(
             "wasm backend cannot yet display main return type `{other:?}`"
         )),
     }
+}
+
+const WASM_MAIN_SHOW_EXPORT: &str = "__kyokara_main_show";
+
+fn wasm_main_output_is_directly_displayable(ret_ty: &kyokara_hir_ty::ty::Ty) -> bool {
+    use kyokara_hir_ty::ty::Ty;
+
+    matches!(
+        ret_ty,
+        Ty::Int | Ty::Float | Ty::Bool | Ty::Unit | Ty::Char | Ty::String
+    )
+}
+
+fn add_wasm_main_show_wrapper(
+    module: &mut kyokara_kir::KirModule,
+    interner: &mut kyokara_intern::Interner,
+) -> bool {
+    let Some(entry_fn) = module.entry else {
+        return false;
+    };
+    let entry_func = &module.functions[entry_fn];
+    if wasm_main_output_is_directly_displayable(&entry_func.ret_ty) {
+        return false;
+    }
+
+    let wrapper_name = kyokara_hir_def::name::Name::new(interner, WASM_MAIN_SHOW_EXPORT);
+    if module
+        .functions
+        .iter()
+        .any(|(_, func)| func.name == wrapper_name)
+    {
+        return true;
+    }
+
+    let mut builder = kyokara_kir::build::KirBuilder::new();
+    let entry_block = builder.new_block(Some(wrapper_name));
+    builder.switch_to(entry_block);
+    let main_value = builder.push_call(
+        kyokara_kir::inst::CallTarget::Direct(entry_func.name),
+        Vec::new(),
+        entry_func.ret_ty.clone(),
+    );
+    let shown = builder.push_call(
+        kyokara_kir::inst::CallTarget::Intrinsic("trait_show_show".to_string()),
+        vec![main_value],
+        kyokara_hir_ty::ty::Ty::String,
+    );
+    builder.set_return(shown);
+    let wrapper = builder.build(
+        wrapper_name,
+        Vec::new(),
+        kyokara_hir_ty::ty::Ty::String,
+        entry_func.effects.clone(),
+        entry_block,
+        kyokara_kir::function::KirContracts::default(),
+    );
+    module.functions.alloc(wrapper);
+    true
 }
 
 fn read_guest_string(
@@ -1531,7 +1619,7 @@ fn validate_manifest_constraints_for_wasm(
 
 fn compile_single_file_to_wasm(
     entry_file: &std::path::Path,
-) -> Result<(Vec<u8>, kyokara_hir_ty::ty::Ty), String> {
+) -> Result<(Vec<u8>, kyokara_hir_ty::ty::Ty, bool), String> {
     let source = std::fs::read_to_string(entry_file)
         .map_err(|err| format!("cannot read `{}`: {err}", entry_file.display()))?;
     let path_label = entry_file.display().to_string();
@@ -1552,7 +1640,7 @@ fn compile_single_file_to_wasm(
 
     let check = kyokara_hir::check_file(&source);
     let mut interner = check.interner;
-    let module = kyokara_kir::lower::lower_module(
+    let mut module = kyokara_kir::lower::lower_module(
         &check.item_tree,
         &check.module_scope,
         &check.type_check,
@@ -1562,16 +1650,309 @@ fn compile_single_file_to_wasm(
         .entry
         .ok_or_else(|| "no main function found for wasm backend".to_string())?;
     let ret_ty = module.functions[entry_fn].ret_ty.clone();
+    let has_show_wrapper = add_wasm_main_show_wrapper(&mut module, &mut interner);
     let wasm_bytes = kyokara_codegen::compile(&module, &check.item_tree, &interner)
         .map_err(|err| err.to_string())?;
-    Ok((wasm_bytes, ret_ty))
+    Ok((wasm_bytes, ret_ty, has_show_wrapper))
 }
 
-fn build_single_file_wasm_artifact(
+struct ProjectWasmFunction {
+    module_path: kyokara_hir::ModulePath,
+    fn_item: kyokara_hir::FnItem,
+    body: kyokara_hir::Body,
+    infer: kyokara_hir::InferenceResult,
+}
+
+enum WasmScopeImportAugment {
+    Member {
+        visible_name: kyokara_hir::Name,
+        source_name: kyokara_hir::Name,
+        target_path: kyokara_hir::ModulePath,
+    },
+    Namespace {
+        visible_name: kyokara_hir::Name,
+        target_path: kyokara_hir::ModulePath,
+    },
+}
+
+fn compile_project_to_wasm(
     entry_file: &std::path::Path,
+) -> Result<
+    (
+        Vec<u8>,
+        kyokara_hir_ty::ty::Ty,
+        Vec<std::path::PathBuf>,
+        bool,
+    ),
+    String,
+> {
+    let mut project = kyokara_hir::check_project(entry_file);
+    if let Some(errors) = collect_project_compile_errors_for_wasm(&project) {
+        return Err(format!("compile errors: {}", errors.join("; ")));
+    }
+
+    let entry_path = kyokara_hir::ModulePath::root();
+    let mut type_checks_by_path: std::collections::HashMap<
+        kyokara_hir::ModulePath,
+        kyokara_hir::TypeCheckResult,
+    > = project.type_checks.drain(..).collect();
+    let entry_tc = type_checks_by_path
+        .remove(&entry_path)
+        .ok_or_else(|| "entry module type check not found".to_string())?;
+
+    let mut imported_namespace_names: std::collections::HashMap<
+        kyokara_hir::ModulePath,
+        Vec<kyokara_hir::Name>,
+    > = std::collections::HashMap::new();
+    let mut imported_member_names: std::collections::HashMap<
+        kyokara_hir::ModulePath,
+        Vec<(kyokara_hir::Name, kyokara_hir::Name)>,
+    > = std::collections::HashMap::new();
+    {
+        let entry_info = project
+            .module_graph
+            .get(&entry_path)
+            .ok_or_else(|| "entry module not found".to_string())?;
+        for imp in &entry_info.item_tree.imports {
+            let Some(resolved_path) = resolve_runtime_import_target_for_wasm(
+                &project.module_graph,
+                &entry_path,
+                &imp.path,
+                &project.interner,
+            ) else {
+                continue;
+            };
+            match &imp.kind {
+                kyokara_hir::ImportKind::Namespace { alias } => {
+                    let visible_name = alias.unwrap_or_else(|| {
+                        imp.path
+                            .last()
+                            .expect("namespace import path should not be empty")
+                    });
+                    imported_namespace_names
+                        .entry(resolved_path)
+                        .or_default()
+                        .push(visible_name);
+                }
+                kyokara_hir::ImportKind::Members { members } => {
+                    let imported = imported_member_names.entry(resolved_path).or_default();
+                    for member in members {
+                        imported.push((member.alias.unwrap_or(member.name), member.name));
+                    }
+                }
+            }
+        }
+    }
+
+    let mut runtime_functions = Vec::new();
+    for (mod_path, tc) in &mut type_checks_by_path {
+        let Some(mod_info) = project.module_graph.get(mod_path) else {
+            continue;
+        };
+        for (src_fn_idx, body) in std::mem::take(&mut tc.fn_bodies) {
+            let Some(infer) = tc.fn_results.remove(&src_fn_idx) else {
+                continue;
+            };
+            runtime_functions.push(ProjectWasmFunction {
+                module_path: mod_path.clone(),
+                fn_item: mod_info.item_tree.functions[src_fn_idx].clone(),
+                body,
+                infer,
+            });
+        }
+    }
+
+    let mut scope_augments = Vec::new();
+    for (mod_path, mod_info) in project.module_graph.iter() {
+        if *mod_path == entry_path {
+            continue;
+        }
+        for import in &mod_info.item_tree.imports {
+            let Some(target_path) = resolve_runtime_import_target_for_wasm(
+                &project.module_graph,
+                mod_path,
+                &import.path,
+                &project.interner,
+            ) else {
+                continue;
+            };
+            match &import.kind {
+                kyokara_hir::ImportKind::Members { members } => {
+                    for member in members {
+                        scope_augments.push(WasmScopeImportAugment::Member {
+                            visible_name: member.alias.unwrap_or(member.name),
+                            source_name: member.name,
+                            target_path: target_path.clone(),
+                        });
+                    }
+                }
+                kyokara_hir::ImportKind::Namespace { alias } => {
+                    let visible_name = alias.unwrap_or_else(|| {
+                        import
+                            .path
+                            .last()
+                            .expect("namespace import path should not be empty")
+                    });
+                    scope_augments.push(WasmScopeImportAugment::Namespace {
+                        visible_name,
+                        target_path: target_path.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    let (wasm_bytes, ret_ty, has_show_wrapper) = {
+        let entry_info = project
+            .module_graph
+            .get_mut(&entry_path)
+            .ok_or_else(|| "entry module not found".to_string())?;
+
+        kyokara_hir::register_builtin_intrinsics(
+            &mut entry_info.item_tree,
+            &mut entry_info.scope,
+            &mut project.interner,
+        );
+        kyokara_hir::register_builtin_methods(&mut entry_info.scope, &mut project.interner);
+        kyokara_hir::register_synthetic_modules(
+            &mut entry_info.item_tree,
+            &mut entry_info.scope,
+            &mut project.interner,
+        );
+        kyokara_hir::register_static_methods(&mut entry_info.scope, &mut project.interner);
+        kyokara_hir::activate_synthetic_imports(
+            &entry_info.item_tree,
+            &mut entry_info.scope,
+            &mut project.interner,
+        );
+        kyokara_hir::activate_type_member_imports(&entry_info.item_tree, &mut entry_info.scope);
+
+        let mut fn_bodies = entry_tc.fn_bodies;
+        let mut fn_results = entry_tc.fn_results;
+        let mut stitched_functions = Vec::new();
+
+        for runtime_fn in runtime_functions {
+            let matching_indices = matching_entry_runtime_fn_indices_for_wasm(
+                &entry_info.item_tree,
+                &entry_info.scope,
+                imported_member_names.get(&runtime_fn.module_path),
+                imported_namespace_names.get(&runtime_fn.module_path),
+                &runtime_fn.fn_item,
+            );
+
+            let runtime_idx = if matching_indices.is_empty() {
+                let runtime_idx = entry_info
+                    .item_tree
+                    .functions
+                    .alloc(runtime_fn.fn_item.clone());
+                runtime_idx
+            } else {
+                matching_indices[0]
+            };
+
+            fn_bodies.insert(runtime_idx, runtime_fn.body);
+            fn_results.insert(runtime_idx, runtime_fn.infer);
+            let family = entry_info
+                .scope
+                .functions
+                .entry(runtime_fn.fn_item.name)
+                .or_default();
+            if !family.contains(&runtime_idx) {
+                family.push(runtime_idx);
+            }
+            stitched_functions.push((runtime_fn.module_path, runtime_fn.fn_item, runtime_idx));
+        }
+
+        for augment in scope_augments {
+            match augment {
+                WasmScopeImportAugment::Member {
+                    visible_name,
+                    source_name,
+                    target_path,
+                } => {
+                    for (module_path, fn_item, runtime_idx) in &stitched_functions {
+                        if *module_path == target_path
+                            && fn_item.is_pub
+                            && fn_item.name == source_name
+                        {
+                            let family =
+                                entry_info.scope.functions.entry(visible_name).or_default();
+                            if !family.contains(runtime_idx) {
+                                family.push(*runtime_idx);
+                            }
+                        }
+                    }
+                }
+                WasmScopeImportAugment::Namespace {
+                    visible_name,
+                    target_path,
+                } => {
+                    let namespace = entry_info.scope.namespaces.entry(visible_name).or_default();
+                    for (module_path, fn_item, runtime_idx) in &stitched_functions {
+                        if *module_path == target_path && fn_item.is_pub {
+                            let family = namespace.functions.entry(fn_item.name).or_default();
+                            if !family.contains(runtime_idx) {
+                                family.push(*runtime_idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let merged_tc = kyokara_hir::TypeCheckResult {
+            fn_results,
+            fn_bodies,
+            let_results: entry_tc.let_results,
+            let_bodies: entry_tc.let_bodies,
+            diagnostics: entry_tc.diagnostics,
+            raw_diagnostics: entry_tc.raw_diagnostics,
+            body_lowering_diagnostics: entry_tc.body_lowering_diagnostics,
+            fn_calls: entry_tc.fn_calls,
+        };
+
+        let mut module = kyokara_kir::lower::lower_module(
+            &entry_info.item_tree,
+            &entry_info.scope,
+            &merged_tc,
+            &mut project.interner,
+        );
+        let entry_fn = module
+            .entry
+            .ok_or_else(|| "no main function found for wasm backend".to_string())?;
+        let ret_ty = module.functions[entry_fn].ret_ty.clone();
+        let has_show_wrapper = add_wasm_main_show_wrapper(&mut module, &mut project.interner);
+        let wasm_bytes =
+            kyokara_codegen::compile(&module, &entry_info.item_tree, &project.interner)
+                .map_err(|err| err.to_string())?;
+        (wasm_bytes, ret_ty, has_show_wrapper)
+    };
+
+    let source_paths = project
+        .module_graph
+        .iter()
+        .map(|(_, info)| info.path.clone())
+        .collect();
+
+    Ok((wasm_bytes, ret_ty, source_paths, has_show_wrapper))
+}
+
+fn build_wasm_artifact(
+    entry_file: &std::path::Path,
+    project_mode: bool,
     out_path: &std::path::Path,
 ) -> Result<(), String> {
-    let (wasm_bytes, _) = compile_single_file_to_wasm(entry_file)?;
+    let (wasm_bytes, _, _, _) = if project_mode {
+        compile_project_to_wasm(entry_file)?
+    } else {
+        let (wasm_bytes, ret_ty, has_show_wrapper) = compile_single_file_to_wasm(entry_file)?;
+        (
+            wasm_bytes,
+            ret_ty,
+            vec![entry_file.to_path_buf()],
+            has_show_wrapper,
+        )
+    };
     if let Some(parent) = out_path.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -1580,6 +1961,177 @@ fn build_single_file_wasm_artifact(
     }
     std::fs::write(out_path, wasm_bytes)
         .map_err(|err| format!("cannot write `{}`: {err}", out_path.display()))
+}
+
+fn collect_project_compile_errors_for_wasm(
+    project: &kyokara_hir::ProjectCheckResult,
+) -> Option<Vec<String>> {
+    let mut errors = Vec::new();
+
+    for (_mod_path, errs) in &project.parse_errors {
+        for err in errs {
+            errors.push(format!("{err:?}"));
+        }
+    }
+
+    for diag in &project.lowering_diagnostics {
+        if diag.severity == kyokara_diagnostics::Severity::Error {
+            errors.push(diag.message.clone());
+        }
+    }
+
+    for (_mod_path, tc) in &project.type_checks {
+        for diag in &tc.body_lowering_diagnostics {
+            if diag.severity == kyokara_diagnostics::Severity::Error {
+                errors.push(diag.message.clone());
+            }
+        }
+    }
+
+    for (mod_path, tc) in &project.type_checks {
+        let Some(mod_info) = project.module_graph.get(mod_path) else {
+            continue;
+        };
+        for (data, span) in &tc.raw_diagnostics {
+            let msg = data
+                .clone()
+                .into_diagnostic(*span, &project.interner, &mod_info.item_tree)
+                .message;
+            errors.push(msg);
+        }
+    }
+
+    if errors.is_empty() {
+        None
+    } else {
+        Some(errors)
+    }
+}
+
+fn project_runtime_fn_matches_for_wasm(
+    lhs: &kyokara_hir::FnItem,
+    rhs: &kyokara_hir::FnItem,
+) -> bool {
+    let compatible_source_range = match (lhs.source_range, rhs.source_range) {
+        (Some(lhs_range), Some(rhs_range)) => lhs_range == rhs_range,
+        _ => true,
+    };
+
+    lhs.name == rhs.name
+        && lhs.params == rhs.params
+        && lhs.ret_type == rhs.ret_type
+        && lhs.type_params == rhs.type_params
+        && lhs.receiver_type == rhs.receiver_type
+        && compatible_source_range
+}
+
+fn matching_entry_runtime_fn_indices_for_wasm(
+    entry_item_tree: &kyokara_hir::ItemTree,
+    entry_scope: &kyokara_hir::ModuleScope,
+    member_imports: Option<&Vec<(kyokara_hir::Name, kyokara_hir::Name)>>,
+    namespace_names: Option<&Vec<kyokara_hir::Name>>,
+    src_fn_item: &kyokara_hir::FnItem,
+) -> Vec<kyokara_hir_def::item_tree::FnItemIdx> {
+    let mut runtime_indices = Vec::new();
+
+    if src_fn_item.is_pub {
+        if let Some(member_imports) = member_imports {
+            for (visible_name, source_name) in member_imports {
+                if *source_name != src_fn_item.name {
+                    continue;
+                }
+                let Some(entry_candidates) = entry_scope.functions.get(visible_name) else {
+                    continue;
+                };
+                for &entry_fn_idx in entry_candidates {
+                    let candidate = &entry_item_tree.functions[entry_fn_idx];
+                    if project_runtime_fn_matches_for_wasm(candidate, src_fn_item)
+                        && !runtime_indices.contains(&entry_fn_idx)
+                    {
+                        runtime_indices.push(entry_fn_idx);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(namespace_names) = namespace_names {
+        for namespace_name in namespace_names {
+            let Some(namespace) = entry_scope.namespaces.get(namespace_name) else {
+                continue;
+            };
+            let Some(namespace_candidates) = namespace.functions.get(&src_fn_item.name) else {
+                continue;
+            };
+            for &entry_fn_idx in namespace_candidates {
+                let candidate = &entry_item_tree.functions[entry_fn_idx];
+                if project_runtime_fn_matches_for_wasm(candidate, src_fn_item)
+                    && !runtime_indices.contains(&entry_fn_idx)
+                {
+                    runtime_indices.push(entry_fn_idx);
+                }
+            }
+        }
+    }
+
+    runtime_indices
+}
+
+fn runtime_package_prefix_for_wasm<'a>(
+    module_path: &'a kyokara_hir::ModulePath,
+    interner: &kyokara_intern::Interner,
+) -> &'a [kyokara_hir::Name] {
+    let mut prefix_len = 0;
+    while prefix_len + 1 < module_path.0.len()
+        && module_path.0[prefix_len].resolve(interner) == "deps"
+    {
+        prefix_len += 2;
+    }
+    &module_path.0[..prefix_len]
+}
+
+fn resolve_runtime_import_target_for_wasm(
+    graph: &kyokara_hir::ModuleGraph,
+    importing_mod: &kyokara_hir::ModulePath,
+    import_path: &kyokara_hir::Path,
+    interner: &kyokara_intern::Interner,
+) -> Option<kyokara_hir::ModulePath> {
+    if import_path.segments.is_empty() {
+        return None;
+    }
+
+    let is_dependency_import = import_path
+        .segments
+        .first()
+        .is_some_and(|seg| seg.resolve(interner) == "deps");
+    let importing_prefix = runtime_package_prefix_for_wasm(importing_mod, interner);
+    if is_dependency_import {
+        if import_path.segments.len() < 2 {
+            return None;
+        }
+        let mut target_segments = importing_prefix.to_vec();
+        target_segments.extend(import_path.segments.iter().copied());
+        let target_path = kyokara_hir::ModulePath(target_segments);
+        return graph.get(&target_path).map(|_| target_path);
+    }
+
+    if import_path.segments.len() > 1 {
+        let mut target_segments = importing_prefix.to_vec();
+        target_segments.extend(import_path.segments.iter().copied());
+        let target_path = kyokara_hir::ModulePath(target_segments);
+        return graph.get(&target_path).map(|_| target_path);
+    }
+
+    let resolve_name = import_path.segments[0];
+    let candidates: Vec<_> = graph
+        .iter()
+        .filter_map(|(candidate_path, _)| {
+            (runtime_package_prefix_for_wasm(candidate_path, interner) == importing_prefix
+                && candidate_path.last() == Some(resolve_name))
+            .then(|| candidate_path.clone())
+        })
+        .collect();
+    (candidates.len() == 1).then(|| candidates[0].clone())
 }
 
 #[cfg(test)]

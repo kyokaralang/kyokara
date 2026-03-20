@@ -6,12 +6,14 @@ use kyokara_hir_def::call_family::{
     CallFamilySelection, bind_call_args_to_params, select_call_family_candidate,
 };
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, MatchArm, Stmt};
-use kyokara_hir_def::item_tree::TypeDefKind;
+use kyokara_hir_def::item_tree::{TypeDefKind, TypeItemIdx, TypeParamDef};
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::path::Path;
 use kyokara_hir_def::resolver::ResolvedName;
-use kyokara_hir_def::resolver::{CoreType, PrimitiveType, ReceiverKey, StaticOwnerKey};
+use kyokara_hir_def::resolver::{
+    CoreType, PrimitiveType, ReceiverKey, StaticOwnerKey, core_type_from_public_name,
+};
 use kyokara_hir_def::scope::ScopeDef;
 use kyokara_hir_def::type_ref::TypeRef;
 use kyokara_hir_ty::effects::EffectSet;
@@ -76,6 +78,16 @@ impl<'a> LoweringCtx<'a> {
                     ),
                     Some(ReceiverKey::Core(CoreType::MutableList)) => self.builder.push_call(
                         CallTarget::Intrinsic("mutable_list_index".to_string()),
+                        vec![bv, iv],
+                        ty,
+                    ),
+                    Some(ReceiverKey::Core(CoreType::Map)) => self.builder.push_call(
+                        CallTarget::Intrinsic("map_index".to_string()),
+                        vec![bv, iv],
+                        ty,
+                    ),
+                    Some(ReceiverKey::Core(CoreType::MutableMap)) => self.builder.push_call(
+                        CallTarget::Intrinsic("mutable_map_index".to_string()),
                         vec![bv, iv],
                         ty,
                     ),
@@ -877,13 +889,17 @@ impl<'a> LoweringCtx<'a> {
             Ty::Float => Some(ReceiverKey::Primitive(PrimitiveType::Float)),
             Ty::Bool => Some(ReceiverKey::Primitive(PrimitiveType::Bool)),
             Ty::Char => Some(ReceiverKey::Primitive(PrimitiveType::Char)),
-            Ty::Adt { def, .. } => Some(
-                self.module_scope
-                    .core_types
-                    .kind_for_idx(*def)
-                    .map(ReceiverKey::Core)
-                    .unwrap_or(ReceiverKey::User(*def)),
-            ),
+            Ty::Adt { def, .. } => {
+                let public_name = self.item_tree.types[*def].name;
+                Some(
+                    self.module_scope
+                        .core_types
+                        .kind_for_idx(*def)
+                        .or_else(|| core_type_from_public_name(public_name, self.interner))
+                        .map(ReceiverKey::Core)
+                        .unwrap_or(ReceiverKey::User(*def)),
+                )
+            }
             _ => None,
         }
     }
@@ -892,9 +908,11 @@ impl<'a> LoweringCtx<'a> {
         &self,
         type_idx: kyokara_hir_def::item_tree::TypeItemIdx,
     ) -> StaticOwnerKey {
+        let public_name = self.item_tree.types[type_idx].name;
         self.module_scope
             .core_types
             .kind_for_idx(type_idx)
+            .or_else(|| core_type_from_public_name(public_name, self.interner))
             .map(StaticOwnerKey::Core)
             .unwrap_or(StaticOwnerKey::User(type_idx))
     }
@@ -914,6 +932,189 @@ impl<'a> LoweringCtx<'a> {
                     .unwrap_or(false)
             }
             _ => false,
+        }
+    }
+
+    fn resolve_trait_dispatch_method(
+        &self,
+        trait_name: Name,
+        method_name: Name,
+        recv_ty: &Ty,
+    ) -> Option<kyokara_hir_def::item_tree::FnItemIdx> {
+        self.item_tree.impls.iter().find_map(|(_, impl_item)| {
+            let impl_trait_name = impl_item.trait_ref.path.last()?;
+            if impl_trait_name != trait_name {
+                return None;
+            }
+
+            let mut bindings = FxHashMap::default();
+            if !self.type_ref_matches_ty(
+                &impl_item.self_ty,
+                recv_ty,
+                &impl_item.type_params,
+                &mut bindings,
+            ) {
+                return None;
+            }
+
+            impl_item
+                .methods
+                .iter()
+                .copied()
+                .find(|&fn_idx| self.item_tree.functions[fn_idx].name == method_name)
+        })
+    }
+
+    fn type_ref_matches_ty(
+        &self,
+        ty_ref: &TypeRef,
+        actual_ty: &Ty,
+        type_params: &[TypeParamDef],
+        bindings: &mut FxHashMap<Name, Ty>,
+    ) -> bool {
+        match ty_ref {
+            TypeRef::Path { path, args } => {
+                let Some(seg) = path.last() else {
+                    return false;
+                };
+                if path.is_single()
+                    && args.is_empty()
+                    && type_params.iter().any(|param| param.name == seg)
+                {
+                    if let Some(existing) = bindings.get(&seg) {
+                        return existing == actual_ty;
+                    }
+                    bindings.insert(seg, actual_ty.clone());
+                    return true;
+                }
+
+                match actual_ty {
+                    Ty::Int => {
+                        path.is_single() && seg.resolve(self.interner) == "Int" && args.is_empty()
+                    }
+                    Ty::Float => {
+                        path.is_single() && seg.resolve(self.interner) == "Float" && args.is_empty()
+                    }
+                    Ty::String => {
+                        path.is_single()
+                            && seg.resolve(self.interner) == "String"
+                            && args.is_empty()
+                    }
+                    Ty::Char => {
+                        path.is_single() && seg.resolve(self.interner) == "Char" && args.is_empty()
+                    }
+                    Ty::Bool => {
+                        path.is_single() && seg.resolve(self.interner) == "Bool" && args.is_empty()
+                    }
+                    Ty::Unit => {
+                        path.is_single() && seg.resolve(self.interner) == "Unit" && args.is_empty()
+                    }
+                    Ty::Adt {
+                        def,
+                        args: actual_args,
+                    } => {
+                        if path.last() != Some(self.item_tree.types[*def].name)
+                            || args.len() != actual_args.len()
+                        {
+                            return false;
+                        }
+                        args.iter()
+                            .zip(actual_args.iter())
+                            .all(|(arg_ref, actual_arg)| {
+                                self.type_ref_matches_ty(arg_ref, actual_arg, type_params, bindings)
+                            })
+                    }
+                    Ty::Record {
+                        fields: actual_fields,
+                    } => {
+                        let TypeRef::Record { fields } = ty_ref else {
+                            return false;
+                        };
+                        if fields.len() != actual_fields.len() {
+                            return false;
+                        }
+                        fields.iter().zip(actual_fields.iter()).all(
+                            |((exp_name, exp_ty), (act_name, act_ty))| {
+                                exp_name == act_name
+                                    && self.type_ref_matches_ty(
+                                        exp_ty,
+                                        act_ty,
+                                        type_params,
+                                        bindings,
+                                    )
+                            },
+                        )
+                    }
+                    Ty::Fn { params, ret } => {
+                        let TypeRef::Fn {
+                            params: exp_params,
+                            ret: exp_ret,
+                        } = ty_ref
+                        else {
+                            return false;
+                        };
+                        exp_params.len() == params.len()
+                            && exp_params.iter().zip(params.iter()).all(|(exp, act)| {
+                                self.type_ref_matches_ty(exp, act, type_params, bindings)
+                            })
+                            && self.type_ref_matches_ty(exp_ret, ret, type_params, bindings)
+                    }
+                    Ty::Never | Ty::Error | Ty::Var(_) => false,
+                }
+            }
+            TypeRef::Fn { params, ret } => {
+                let Ty::Fn {
+                    params: actual_params,
+                    ret: actual_ret,
+                } = actual_ty
+                else {
+                    return false;
+                };
+                params.len() == actual_params.len()
+                    && params
+                        .iter()
+                        .zip(actual_params.iter())
+                        .all(|(exp, act)| self.type_ref_matches_ty(exp, act, type_params, bindings))
+                    && self.type_ref_matches_ty(ret, actual_ret, type_params, bindings)
+            }
+            TypeRef::Record { fields } => {
+                let Ty::Record {
+                    fields: actual_fields,
+                } = actual_ty
+                else {
+                    return false;
+                };
+                if fields.len() != actual_fields.len() {
+                    return false;
+                }
+                fields.iter().zip(actual_fields.iter()).all(
+                    |((exp_name, exp_ty), (act_name, act_ty))| {
+                        exp_name == act_name
+                            && self.type_ref_matches_ty(exp_ty, act_ty, type_params, bindings)
+                    },
+                )
+            }
+            TypeRef::Refined { base, .. } => {
+                self.type_ref_matches_ty(base, actual_ty, type_params, bindings)
+            }
+            TypeRef::Error => false,
+        }
+    }
+
+    fn builtin_trait_intrinsic_name(
+        &self,
+        trait_name: Name,
+        method_name: Name,
+    ) -> Option<&'static str> {
+        match (
+            trait_name.resolve(self.interner),
+            method_name.resolve(self.interner),
+        ) {
+            ("Ord", "compare") => Some("trait_ord_compare"),
+            ("Eq", "eq") => Some("trait_eq_eq"),
+            ("Hash", "hash") => Some("trait_hash_hash"),
+            ("Show", "show") => Some("trait_show_show"),
+            _ => None,
         }
     }
 
@@ -951,11 +1152,21 @@ impl<'a> LoweringCtx<'a> {
 
             // 2. Constructor call → AdtConstruct.
             if let Some((type_idx, _)) = self.module_scope.resolve_constructor_path(path) {
+                let arg_tys: Vec<_> = args
+                    .iter()
+                    .map(|arg| match arg {
+                        CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => {
+                            self.expr_ty(*expr)
+                        }
+                    })
+                    .collect();
                 let arg_vals = self.lower_call_args_source_order(&args);
                 let ctor_name = *path.segments.last().unwrap_or(&name);
+                let ctor_ty =
+                    self.best_effort_constructor_result_ty(type_idx, ctor_name, &arg_tys, ty);
                 return self
                     .builder
-                    .push_adt_construct(type_idx, ctor_name, arg_vals, ty);
+                    .push_adt_construct(type_idx, ctor_name, arg_vals, ctor_ty);
             }
 
             // 3. Module-level function (direct call — user-defined takes precedence).
@@ -1046,6 +1257,58 @@ impl<'a> LoweringCtx<'a> {
                 && path.is_single()
             {
                 let seg = path.segments[0];
+
+                if self.module_scope.traits.contains_key(&seg)
+                    && let Some(first_arg_expr) = args.first().map(|arg| match arg {
+                        CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => *expr,
+                    })
+                {
+                    let recv_ty = self.expr_ty(first_arg_expr);
+                    if let Some(fn_idx) = self.resolve_trait_dispatch_method(seg, field, &recv_ty) {
+                        let param_names = self.param_names_for_fn_idx(fn_idx);
+                        let param_named_only = self.param_named_only_for_fn_idx(fn_idx);
+                        let arg_vals = self.lower_call_args_for_param_specs(
+                            &args,
+                            &param_names,
+                            Some(&param_named_only),
+                        );
+                        let fn_item = &self.item_tree.functions[fn_idx];
+                        let target = if self.intrinsics.contains(&fn_item.name) {
+                            CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
+                        } else {
+                            CallTarget::Direct(fn_item.name)
+                        };
+                        return self.builder.push_call(target, arg_vals, ty);
+                    }
+
+                    if let Some(intrinsic) = self.builtin_trait_intrinsic_name(seg, field) {
+                        let arg_vals = self.lower_call_args_source_order(&args);
+                        return self.builder.push_call(
+                            CallTarget::Intrinsic(intrinsic.to_string()),
+                            arg_vals,
+                            ty,
+                        );
+                    }
+                }
+
+                if let Some(&(module_name, type_name)) =
+                    self.module_scope.imported_type_namespaces.get(&seg)
+                    && let Some(&fn_idx) = self.module_scope.synthetic_module_static_methods.get(&(
+                        module_name,
+                        type_name,
+                        field,
+                    ))
+                {
+                    let param_names = self.param_names_for_fn_idx(fn_idx);
+                    let arg_vals = self.lower_call_args_for_param_names(&args, &param_names);
+                    let fn_item = &self.item_tree.functions[fn_idx];
+                    let target = if self.intrinsics.contains(&fn_item.name) {
+                        CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
+                    } else {
+                        CallTarget::Direct(fn_item.name)
+                    };
+                    return self.builder.push_call(target, arg_vals, ty);
+                }
 
                 if let Some(&type_idx) = self.module_scope.types.get(&seg)
                     && self
@@ -1204,44 +1467,56 @@ impl<'a> LoweringCtx<'a> {
         rhs: ExprIdx,
         ty: Ty,
     ) -> ValueId {
-        let lhs_val = self.lower_expr(lhs);
+        let mut terms = Vec::new();
+        self.collect_logical_chain(op, lhs, &mut terms);
+        self.collect_logical_chain(op, rhs, &mut terms);
+        let mut terms = terms.into_iter();
 
-        let rhs_blk = self.builder.new_block(None);
+        let mut current_val = self.lower_expr(
+            terms
+                .next()
+                .expect("logical binary should always have at least one operand"),
+        );
+
         let short_blk = self.builder.new_block(None);
         let merge_blk = self.builder.new_block(Some(self.labels.merge));
 
-        match op {
-            BinaryOp::And => self.builder.set_branch(
-                lhs_val,
-                BranchTarget {
-                    block: rhs_blk,
-                    args: vec![],
-                },
-                BranchTarget {
-                    block: short_blk,
-                    args: vec![],
-                },
-            ),
-            BinaryOp::Or => self.builder.set_branch(
-                lhs_val,
-                BranchTarget {
-                    block: short_blk,
-                    args: vec![],
-                },
-                BranchTarget {
-                    block: rhs_blk,
-                    args: vec![],
-                },
-            ),
-            _ => unreachable!("non-logical operator passed to lower_logical_binary"),
+        for term in terms {
+            let next_blk = self.builder.new_block(None);
+            match op {
+                BinaryOp::And => self.builder.set_branch(
+                    current_val,
+                    BranchTarget {
+                        block: next_blk,
+                        args: vec![],
+                    },
+                    BranchTarget {
+                        block: short_blk,
+                        args: vec![],
+                    },
+                ),
+                BinaryOp::Or => self.builder.set_branch(
+                    current_val,
+                    BranchTarget {
+                        block: short_blk,
+                        args: vec![],
+                    },
+                    BranchTarget {
+                        block: next_blk,
+                        args: vec![],
+                    },
+                ),
+                _ => unreachable!("non-logical operator passed to lower_logical_binary"),
+            }
+
+            self.builder.switch_to(next_blk);
+            current_val = self.lower_expr(term);
         }
 
-        self.builder.switch_to(rhs_blk);
-        let rhs_val = self.lower_expr(rhs);
         if !self.block_has_terminator() {
             self.builder.set_jump(BranchTarget {
                 block: merge_blk,
-                args: vec![rhs_val],
+                args: vec![current_val],
             });
         }
 
@@ -1257,6 +1532,20 @@ impl<'a> LoweringCtx<'a> {
         let result = self.builder.add_block_param(merge_blk, None, ty);
         self.builder.switch_to(merge_blk);
         result
+    }
+
+    fn collect_logical_chain(&self, op: BinaryOp, expr_idx: ExprIdx, out: &mut Vec<ExprIdx>) {
+        match &self.body.exprs[expr_idx] {
+            Expr::Binary {
+                op: inner_op,
+                lhs,
+                rhs,
+            } if *inner_op == op => {
+                self.collect_logical_chain(op, *lhs, out);
+                self.collect_logical_chain(op, *rhs, out);
+            }
+            _ => out.push(expr_idx),
+        }
     }
 
     // ── If ───────────────────────────────────────────────────────
@@ -2292,14 +2581,94 @@ impl<'a> LoweringCtx<'a> {
             && let Some((type_idx, _)) = self.module_scope.resolve_constructor_path(path)
         {
             let ctor_name = path.last().expect("constructor path must have a variant");
+            let arg_tys: Vec<_> = fields.iter().map(|(_, expr)| self.expr_ty(*expr)).collect();
             let vals: Vec<_> = field_vals.into_iter().map(|(_, v)| v).collect();
+            let ctor_ty = self.best_effort_constructor_result_ty(type_idx, ctor_name, &arg_tys, ty);
             return self
                 .builder
-                .push_adt_construct(type_idx, ctor_name, vals, ty);
+                .push_adt_construct(type_idx, ctor_name, vals, ctor_ty);
         }
 
         // Plain record literal.
         self.builder.push_record_create(field_vals, ty)
+    }
+}
+
+impl<'a> LoweringCtx<'a> {
+    fn best_effort_constructor_result_ty(
+        &self,
+        type_idx: TypeItemIdx,
+        ctor_name: Name,
+        arg_tys: &[Ty],
+        fallback: Ty,
+    ) -> Ty {
+        let type_item = &self.item_tree.types[type_idx];
+        let TypeDefKind::Adt { variants } = &type_item.kind else {
+            return fallback;
+        };
+        let Some(variant) = variants.iter().find(|variant| variant.name == ctor_name) else {
+            return fallback;
+        };
+
+        let mut ty_args = match fallback {
+            Ty::Adt { def, args } if def == type_idx => args,
+            _ => vec![Ty::Error; type_item.type_params.len()],
+        };
+        if ty_args.len() < type_item.type_params.len() {
+            ty_args.resize(type_item.type_params.len(), Ty::Error);
+        }
+
+        for (field_ty, arg_ty) in variant.fields.iter().zip(arg_tys.iter()) {
+            self.fill_constructor_type_params(
+                field_ty,
+                arg_ty,
+                &type_item.type_params,
+                &mut ty_args,
+            );
+        }
+
+        Ty::Adt {
+            def: type_idx,
+            args: ty_args,
+        }
+    }
+
+    fn fill_constructor_type_params(
+        &self,
+        field_ty: &TypeRef,
+        arg_ty: &Ty,
+        type_params: &[TypeParamDef],
+        ty_args: &mut [Ty],
+    ) {
+        match field_ty {
+            TypeRef::Path { path, args } if path.is_single() => {
+                let seg = path.segments[0];
+                if args.is_empty()
+                    && let Some(index) = type_params.iter().position(|param| param.name == seg)
+                {
+                    ty_args[index] = arg_ty.clone();
+                    return;
+                }
+
+                if let Ty::Adt {
+                    args: actual_args, ..
+                } = arg_ty
+                {
+                    for (nested_field, nested_actual) in args.iter().zip(actual_args.iter()) {
+                        self.fill_constructor_type_params(
+                            nested_field,
+                            nested_actual,
+                            type_params,
+                            ty_args,
+                        );
+                    }
+                }
+            }
+            TypeRef::Refined { base, .. } => {
+                self.fill_constructor_type_params(base, arg_ty, type_params, ty_args);
+            }
+            _ => {}
+        }
     }
 }
 

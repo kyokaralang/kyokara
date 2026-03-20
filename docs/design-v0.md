@@ -422,7 +422,7 @@ KyokaraIR is the low-level **Intermediate Representation (IR)** — a compiler-i
 
 **Implementation status:** The `kir` crate implements the data structures, text format printer, well-formedness validator, builder API, and HIR→KIR lowering pass. Key design choices: block parameters instead of phi nodes (Cranelift/MLIR style), reuses `hir_ty::Ty` directly (no parallel type system), arena-based storage via `la_arena`. The lowering pass walks the typed HIR expression tree and emits flat SSA instructions with explicit control-flow blocks — if/else becomes Branch+merge, match becomes Switch (ADT) or chained Branch (sequential), contracts become Assert instructions with `old()` pre-state preservation, function references become FnRef values.
 
-**WASM codegen (current state):** The `codegen` crate compiles KIR to WASM binary via `wasm-encoder`, and `kyokara run --backend wasm` / `kyokara build --target wasm` already use that pipeline for single-file programs. Value representation stays Int→i64, Float→f64, Bool/Unit→i32, Char→i32, and heap values (ADT/Record/String/closures/collections)→i32 pointers into linear memory. Linear memory still uses a bump allocator (1 page initial, no deallocation). ADTs use `[tag:i32][pad:4][field0:8]...` layout with uniform 8-byte slots. Records use sorted-by-name fields without a tag header. Current shipped support includes closures, strings, lists, deques, bitsets, intrinsics, and the shared replay/capability host ABI. Remaining Wasm completion work is project/package mode plus the still-missing collection and witness-heavy families.
+**WASM codegen (current state):** The `codegen` crate compiles KIR to WASM binary via `wasm-encoder`, and `kyokara run --backend wasm` / `kyokara build --target wasm` / `kyokara replay` now use that pipeline for both single-file and project/package-mode programs. Value representation stays Int→i64, Float→f64, Bool/Unit→i32, Char→i32, and heap values (ADT/Record/String/closures/collections)→i32 pointers into linear memory. Linear memory still uses a bump allocator (1 page initial, no deallocation). ADTs use `[tag:i32][pad:4][field0:8]...` layout with uniform 8-byte slots. Records use sorted-by-name fields without a tag header. Current shipped support covers the frozen surface across closures, strings, collections, trait-backed builtins, and the shared replay/capability host ABI.
 
 **Validator invariants:** The well-formedness validator enforces: value reference validity, block parameter count/type matching against branch arguments, terminator presence, entry block has zero parameters, return type consistency, Bool type for Branch/Assert conditions, Record/Adt base type for field access, Adt base type for ADT field extraction, Fn type for indirect call targets, no duplicate Switch case variants, and no block parameters without predecessor edges (excluding unreachable blocks).
 
@@ -748,7 +748,7 @@ Mental model: `List`/`Map`/`Set`/`BitSet`/`Deque` are immutable snapshot and val
 **v0.3 — Verification + Codegen + Replay**
 * Property-based test harness ✓ (`pbt` crate: choice-sequence engine, type-driven generators with `Gen.*` specs and `<-` bindings, 4-pass shrinker, corpus persistence, `where`-constrained generation via discard budgets; `kyokara test <file> --explore` discovers contract functions and explicit `property` declarations, generates random inputs, checks contracts/properties, shrinks counterexamples)
 * SMT integration for contract verification (restricted fragment: linear arithmetic + uninterpreted functions, best-effort, never blocks compilation)
-* KyokaraIR data structures ✓ (SSA, block params, text format, validator) + HIR→KIR lowering ✓ + WASM backend in progress (public single-file run/build/replay ✓; strings, closures, list/deque/bitset families ✓; remaining work: project/package mode, map/set/priority-queue families, witness-heavy parity)
+* KyokaraIR data structures ✓ (SSA, block params, text format, validator) + HIR→KIR lowering ✓ + WASM backend ✓ (public run/build/replay for single-file + project/package mode, frozen-surface parity across strings, closures, collections, trait-backed builtins, and shared replay/capability host ABI)
 * Capability sandbox runtime (host functions + manifest)
 * Deterministic replay logging and execution (single-threaded, recorded effects)
 
@@ -828,7 +828,7 @@ Rust is recommended for:
 10. ~~Add contracts as runtime checks.~~ ✓
 11. ~~Implement module system (convention-based layout, pub visibility, namespace imports + `from ... import ...` member imports).~~ ✓
 12. ~~Implement LSP server with salsa incrementality (diagnostics, hover, goto-def, references, completion, code actions, formatting).~~ ✓
-13. Implement WASM runtime host functions for capabilities + replay log.
+13. ~~Implement WASM runtime host functions for capabilities + replay log.~~ ✓
 14. ~~Add property test runner and basic generators.~~ ✓
 15. Integrate SMT solver for opt-in static verification.
 

@@ -67,6 +67,8 @@ pub struct ModuleCtx<'a> {
     pub string_md5_fn_index: Option<u32>,
     pub parse_int_fn_index: Option<u32>,
     pub parse_float_fn_index: Option<u32>,
+    pub io_print_fn_index: Option<u32>,
+    pub io_println_fn_index: Option<u32>,
     pub current_closure_global_index: u32,
 }
 
@@ -225,6 +227,28 @@ pub fn compile_module(
             )
         })
     });
+    let needs_io_print = kir.functions.iter().any(|(_, func)| {
+        func.values.iter().any(|(_, value)| {
+            matches!(
+                &value.inst,
+                kyokara_kir::inst::Inst::Call {
+                    target: kyokara_kir::inst::CallTarget::Intrinsic(name),
+                    ..
+                } if name == "print"
+            )
+        })
+    });
+    let needs_io_println = kir.functions.iter().any(|(_, func)| {
+        func.values.iter().any(|(_, value)| {
+            matches!(
+                &value.inst,
+                kyokara_kir::inst::Inst::Call {
+                    target: kyokara_kir::inst::CallTarget::Intrinsic(name),
+                    ..
+                } if name == "println"
+            )
+        })
+    });
 
     let mut next_fn_index = 0u32;
     let string_to_upper_fn_index = if needs_string_to_upper {
@@ -256,6 +280,20 @@ pub fn compile_module(
         None
     };
     let parse_float_fn_index = if needs_parse_float {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
+    let io_print_fn_index = if needs_io_print {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
+    let io_println_fn_index = if needs_io_println {
         let idx = next_fn_index;
         next_fn_index += 1;
         Some(idx)
@@ -355,6 +393,8 @@ pub fn compile_module(
         string_md5_fn_index,
         parse_int_fn_index,
         parse_float_fn_index,
+        io_print_fn_index,
+        io_println_fn_index,
         current_closure_global_index: CURRENT_CLOSURE_GLOBAL_INDEX,
     };
 
@@ -375,6 +415,12 @@ pub fn compile_module(
     }
     if parse_float_fn_index.is_some() {
         imports.import(HOST_MODULE, "parse_float", EntityType::Function(2));
+    }
+    if io_print_fn_index.is_some() {
+        imports.import(HOST_MODULE, "io_print", EntityType::Function(2));
+    }
+    if io_println_fn_index.is_some() {
+        imports.import(HOST_MODULE, "io_println", EntityType::Function(2));
     }
 
     // ── Function section ──────────────────────────────────────────
