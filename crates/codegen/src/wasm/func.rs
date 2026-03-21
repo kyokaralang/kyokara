@@ -785,6 +785,25 @@ impl<'a> FuncCodegen<'a> {
             return else_reaches_header.then_some((else_target, then_target));
         }
 
+        if param_count == 1 && matches!(self.value_ty(header_params[0].value), Ty::Bool) {
+            if then_target.args.is_empty() && !else_target.args.is_empty() {
+                let then_reaches_header = self
+                    .reachable_block_distances(then_target.block)
+                    .contains_key(&header);
+                return then_reaches_header.then_some((then_target, else_target));
+            }
+            if else_target.args.is_empty() && !then_target.args.is_empty() {
+                let else_reaches_header = self
+                    .reachable_block_distances(else_target.block)
+                    .contains_key(&header);
+                return else_reaches_header.then_some((else_target, then_target));
+            }
+        }
+
+        if param_count <= 1 {
+            return None;
+        }
+
         let then_reaches_header = self
             .reachable_block_distances(then_target.block)
             .contains_key(&header);
@@ -10395,10 +10414,16 @@ impl<'a> FuncCodegen<'a> {
         seq_local: u32,
         out_list_local: u32,
     ) {
+        let [len_local, data_local, index_local, slot_ptr_local] =
+            self.range_list_builder_i32_locals(out_list_local);
         self.emit_seq_load_range_bounds_from_local(func, seq_local)
             .expect("range materialization expects a core range seq");
+        self.emit_seq_compute_loaded_range_len_to_local(func, len_local);
+        self.emit_alloc_list_data_for_len(func, len_local, data_local);
         func.instruction(&Instruction::LocalGet(self.scratch_i64));
         func.instruction(&Instruction::LocalSet(self.scratch_i64_3)); // current
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(index_local));
 
         func.instruction(&Instruction::Block(BlockType::Empty));
         func.instruction(&Instruction::Loop(BlockType::Empty));
@@ -10407,20 +10432,24 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::I64GeS);
         func.instruction(&Instruction::BrIf(1));
 
-        self.emit_list_like_push_back_local_typed(
-            func,
-            out_list_local,
-            self.scratch_i64_3,
-            &Ty::Int,
-        );
+        self.emit_list_slot_ptr_from_locals(func, data_local, index_local, slot_ptr_local);
+        func.instruction(&Instruction::LocalGet(slot_ptr_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
+        self.emit_typed_store_stack(func, &Ty::Int, 0);
 
         func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
         func.instruction(&Instruction::I64Const(1));
         func.instruction(&Instruction::I64Add);
         func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+        func.instruction(&Instruction::LocalGet(index_local));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(index_local));
         func.instruction(&Instruction::Br(0));
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
+
+        self.emit_update_list_header_from_locals(func, out_list_local, len_local, data_local);
     }
 
     fn emit_seq_chunks(
@@ -11645,14 +11674,20 @@ impl<'a> FuncCodegen<'a> {
         output_ty: &Ty,
         out_list_local: u32,
     ) -> Result<(), CodegenError> {
+        let [len_local, data_local, index_local, slot_ptr_local] =
+            self.range_list_builder_i32_locals(out_list_local);
         let output_local = match output_ty {
             Ty::Float => self.scratch_f64_2,
             Ty::Int => self.scratch_i64_4,
-            _ => self.scratch_i32_12,
+            _ => self.range_list_builder_output_i32_local(out_list_local),
         };
         self.emit_seq_load_range_bounds_from_local(func, seq_local)?;
+        self.emit_seq_compute_loaded_range_len_to_local(func, len_local);
+        self.emit_alloc_list_data_for_len(func, len_local, data_local);
         func.instruction(&Instruction::LocalGet(self.scratch_i64));
         func.instruction(&Instruction::LocalSet(self.scratch_i64_3)); // current
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(index_local));
 
         func.instruction(&Instruction::Block(BlockType::Empty));
         func.instruction(&Instruction::Loop(BlockType::Empty));
@@ -11664,15 +11699,23 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
         self.emit_indirect_call_single_arg(func, mapper)?;
         func.instruction(&Instruction::LocalSet(output_local));
-        self.emit_list_like_push_back_local_typed(func, out_list_local, output_local, output_ty);
+        self.emit_list_slot_ptr_from_locals(func, data_local, index_local, slot_ptr_local);
+        func.instruction(&Instruction::LocalGet(slot_ptr_local));
+        func.instruction(&Instruction::LocalGet(output_local));
+        self.emit_typed_store_stack(func, output_ty, 0);
 
         func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
         func.instruction(&Instruction::I64Const(1));
         func.instruction(&Instruction::I64Add);
         func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
+        func.instruction(&Instruction::LocalGet(index_local));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(index_local));
         func.instruction(&Instruction::Br(0));
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
+        self.emit_update_list_header_from_locals(func, out_list_local, len_local, data_local);
         Ok(())
     }
 
@@ -12082,27 +12125,8 @@ impl<'a> FuncCodegen<'a> {
         seq_local: u32,
         out_local: u32,
     ) -> Result<(), CodegenError> {
-        self.emit_seq_load_range_bounds_from_local(func, seq_local)?;
         self.emit_alloc_empty_list_to_local(func, out_local);
-        func.instruction(&Instruction::LocalGet(self.scratch_i64));
-        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
-
-        func.instruction(&Instruction::Block(BlockType::Empty));
-        func.instruction(&Instruction::Loop(BlockType::Empty));
-        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
-        func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
-        func.instruction(&Instruction::I64GeS);
-        func.instruction(&Instruction::BrIf(1));
-
-        self.emit_list_like_push_back_local_typed(func, out_local, self.scratch_i64_3, &Ty::Int);
-
-        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
-        func.instruction(&Instruction::I64Const(1));
-        func.instruction(&Instruction::I64Add);
-        func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
-        func.instruction(&Instruction::Br(0));
-        func.instruction(&Instruction::End);
-        func.instruction(&Instruction::End);
+        self.emit_seq_materialize_range_to_list_from_local(func, seq_local, out_local);
         Ok(())
     }
 
@@ -19451,6 +19475,54 @@ impl<'a> FuncCodegen<'a> {
         }));
         func.instruction(&Instruction::LocalSet(self.scratch_i64_2));
         Ok(())
+    }
+
+    fn emit_seq_compute_loaded_range_len_to_local(&self, func: &mut Function, len_local: u32) {
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64LeS);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(len_local));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Sub);
+        func.instruction(&Instruction::I32WrapI64);
+        func.instruction(&Instruction::LocalSet(len_local));
+        func.instruction(&Instruction::End);
+    }
+
+    fn range_list_builder_i32_locals(&self, out_list_local: u32) -> [u32; 4] {
+        let candidates = [
+            self.scratch_i32_9,
+            self.scratch_i32_10,
+            self.scratch_i32_11,
+            self.scratch_i32_12,
+            self.scratch_i32_16,
+        ];
+        let mut picked = [0; 4];
+        let mut next = 0;
+        for candidate in candidates {
+            if candidate != out_list_local {
+                picked[next] = candidate;
+                next += 1;
+                if next == picked.len() {
+                    return picked;
+                }
+            }
+        }
+        panic!("missing i32 scratch locals for range list builder");
+    }
+
+    fn range_list_builder_output_i32_local(&self, out_list_local: u32) -> u32 {
+        if self.scratch_i32_7 != out_list_local {
+            self.scratch_i32_7
+        } else if self.scratch_i32_8 != out_list_local {
+            self.scratch_i32_8
+        } else {
+            panic!("missing i32 scratch output local for range list builder");
+        }
     }
 
     fn emit_option_unwrap_or(

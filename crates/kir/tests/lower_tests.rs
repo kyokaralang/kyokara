@@ -253,6 +253,84 @@ fn test_while_break_continue_lower_without_placeholder_holes() {
 }
 
 #[test]
+fn test_loop_with_multiple_returns_and_indexed_record_fields_lowers_without_placeholder_holes() {
+    let out = lower_and_display(
+        "from collections import MutableList\n\
+         type Table = { keys: MutableList<Int>, states: MutableList<Int>, size: Int }\n\
+         fn helper(table: Table, key: Int) -> Int {\n\
+           var idx = 0\n\
+           while (true) {\n\
+             let cur = table.keys[idx]\n\
+             if (cur == -1) {\n\
+               return 0\n\
+             }\n\
+             if (cur == key) {\n\
+               return table.states[idx]\n\
+             }\n\
+             idx = (idx + 1) % table.size\n\
+           }\n\
+           0\n\
+         }\n\
+         fn main() -> Int { 1 }\n",
+    );
+    assert!(
+        !out.contains("hole"),
+        "multi-return indexed loop lowering should not leave placeholder holes. output:\n{out}"
+    );
+    assert!(out.contains("@helper"), "output:\n{out}");
+}
+
+#[test]
+fn test_loop_with_nested_unit_merges_and_mutations_lowers_without_placeholder_holes() {
+    let out = lower_and_display(
+        "from collections import MutableList\n\
+         type Table = { keys: MutableList<Int>, states: MutableList<Int>, size: Int }\n\
+         fn set_state(table: Table, key: Int, state: Int) -> Unit {\n\
+           var idx = 0\n\
+           while (true) {\n\
+             let cur = table.keys[idx]\n\
+             if (cur == -1 || cur == key) {\n\
+               if (cur == -1) {\n\
+                 let _k = table.keys.set(idx, key)\n\
+               }\n\
+               let _s = table.states.set(idx, state)\n\
+               return\n\
+             }\n\
+             idx = (idx + 1) % table.size\n\
+           }\n\
+         }\n\
+         fn main() -> Int { 1 }\n",
+    );
+    assert!(
+        !out.contains("hole"),
+        "nested unit-merge loop lowering should not leave placeholder holes. output:\n{out}"
+    );
+    assert!(out.contains("@set_state"), "output:\n{out}");
+}
+
+#[test]
+fn test_first8_short_circuit_loop_shape_lowers_without_placeholder_holes() {
+    let out = lower_and_display(
+        "from collections import MutableList\n\
+         fn first8(xs: MutableList<Int>) -> String {\n\
+           var s = \"\"\n\
+           var i = 0\n\
+           while (i < 8 && i < xs.len()) {\n\
+             s = s.concat(xs[i].to_string())\n\
+             i = i + 1\n\
+           }\n\
+           s\n\
+         }\n\
+         fn main() -> Int { 1 }\n",
+    );
+    assert!(
+        !out.contains("hole"),
+        "first8 short-circuit loop lowering should not leave placeholder holes. output:\n{out}"
+    );
+    assert!(out.contains("@first8"), "output:\n{out}");
+}
+
+#[test]
 fn test_for_range_break_continue_lower_without_placeholder_holes() {
     let out = lower_and_display(
         "fn f() -> Int {\n\

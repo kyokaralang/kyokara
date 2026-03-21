@@ -251,6 +251,42 @@ fn run_backend_wasm_handles_large_mutable_list_push_workloads() {
 }
 
 #[test]
+fn run_backend_wasm_materializes_large_ranges_to_lists() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(&file, "fn main() -> Int { (0..<40000).to_list().len() }").expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "40000",
+        "run --backend wasm with large range.to_list()",
+    );
+}
+
+#[test]
+fn run_backend_wasm_materializes_large_range_maps_before_mutable_list_copies() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn main() -> Int {\n\
+           let xs = MutableList.from_list((0..<40000).map(fn(i: Int) => i % 10).to_list())\n\
+           xs[39999]\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "9",
+        "run --backend wasm with large range.map(...).to_list() feeding MutableList.from_list()",
+    );
+}
+
+#[test]
 fn run_backend_wasm_supports_for_loops_over_char_sequences() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
@@ -660,6 +696,85 @@ fn build_backend_wasm_supports_project_mode() {
     );
     assert_success(&output, "wasm project-mode build");
     assert!(out.is_file(), "expected wasm artifact at {}", out.display());
+}
+
+#[test]
+fn build_backend_wasm_handles_unused_loop_helpers_with_multiple_returns() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let out = dir.path().join("out.wasm");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         type Table = { keys: MutableList<Int>, states: MutableList<Int>, size: Int }\n\
+         fn helper(table: Table, key: Int) -> Int {\n\
+           var idx = 0\n\
+           while (true) {\n\
+             let cur = table.keys[idx]\n\
+             if (cur == -1) {\n\
+               return 0\n\
+             }\n\
+             if (cur == key) {\n\
+               return table.states[idx]\n\
+             }\n\
+             idx = (idx + 1) % table.size\n\
+           }\n\
+           0\n\
+         }\n\
+         fn main() -> Int { 1 }",
+    )
+    .expect("write source");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "build",
+            "main.ky",
+            "--target",
+            "wasm",
+            "--out",
+            out.to_str().expect("utf-8 out path"),
+        ],
+    );
+    assert_success(
+        &output,
+        "wasm build with unused loop helper using multiple returns",
+    );
+    assert!(out.is_file(), "expected wasm artifact at {}", out.display());
+}
+
+#[test]
+fn run_backend_wasm_handles_unused_mutating_loop_helpers() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         type Table = { keys: MutableList<Int>, states: MutableList<Int>, size: Int }\n\
+         fn set_state(table: Table, key: Int, state: Int) -> Unit {\n\
+           var idx = 0\n\
+           while (true) {\n\
+             let cur = table.keys[idx]\n\
+             if (cur == -1 || cur == key) {\n\
+               if (cur == -1) {\n\
+                 let _k = table.keys.set(idx, key)\n\
+               }\n\
+               let _s = table.states.set(idx, state)\n\
+               return\n\
+             }\n\
+             idx = (idx + 1) % table.size\n\
+           }\n\
+         }\n\
+         fn main() -> Int { 1 }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "1",
+        "run --backend wasm with unused mutating loop helper",
+    );
 }
 
 #[test]
