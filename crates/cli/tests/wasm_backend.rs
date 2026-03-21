@@ -285,6 +285,47 @@ fn run_backend_wasm_handles_mutable_list_growth_and_set_loops() {
 }
 
 #[test]
+fn run_backend_wasm_handles_mutable_map_capacity_churn() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableMap\n\
+         fn main() -> Int {\n\
+           let grid: MutableMap<Int, Int> = MutableMap.with_capacity(768)\n\
+           for (i in 0 ..< 768) {\n\
+             let _ = grid.insert(i, 1)\n\
+           }\n\
+           var round = 0\n\
+           var acc = 0\n\
+           while (round < 600) {\n\
+             for (i in 0 ..< 768) {\n\
+               let key = i + (round + 1) * 100000\n\
+               if (grid.contains(key - 1)) {\n\
+                 acc = acc + 1\n\
+               }\n\
+               let _ = grid.insert(key, i)\n\
+               if (grid.get(key).unwrap_or(-1) == i) {\n\
+                 acc = acc + 1\n\
+               }\n\
+               let _ = grid.remove(key)\n\
+             }\n\
+             round = round + 1\n\
+           }\n\
+           acc + grid.len()\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "461568",
+        "run --backend wasm with mutable map capacity churn",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_mutable_loop_locals_across_if_merges() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
