@@ -422,6 +422,110 @@ fn run_backend_wasm_matches_fft_sample_output() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_string_values_through_list_map() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn id_string(s: String) -> String { s }\n\
+         fn main() -> Int {\n\
+           let xs = MutableList.new().push(\"aa\").push(\"bbb\").push(\"cccc\").to_list().map(id_string).to_list()\n\
+           xs[1].len()\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "3",
+        "run --backend wasm with list<String>.map(identity)",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_char_values_through_list_map() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn id_char(ch: Char) -> Char { ch }\n\
+         fn main() -> Int {\n\
+           let xs = MutableList.new().push('a').push('b').push('c').to_list().map(id_char).to_list()\n\
+           xs[1].code()\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "98",
+        "run --backend wasm with list<Char>.map(identity)",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_chars_materialization_inside_filtered_string_loops() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn main() -> Int {\n\
+           let lines = MutableList.new().push(\"algo\").push(\"\").push(\"aaa\").push(\"bbb\").push(\"ccc\").to_list()\n\
+           let filtered = lines.filter(fn(line: String) => line.len() > 0).to_list()\n\
+           var total = 0\n\
+           var i = 0\n\
+           while (i < filtered.len()) {\n\
+             total = total + filtered[i].chars().to_list().len()\n\
+             i = i + 1\n\
+           }\n\
+           total\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "13",
+        "run --backend wasm with filtered strings feeding chars().to_list() in a loop",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_chars_materialization_inside_range_mapped_string_loops() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn main() -> Int {\n\
+           let lines = MutableList.new().push(\"algo\").push(\"\").push(\"aaa\").push(\"bbb\").push(\"ccc\").to_list()\n\
+           let mapped = (2 ..< lines.len()).map(fn(i: Int) => lines[i]).to_list()\n\
+           var total = 0\n\
+           var i = 0\n\
+           while (i < mapped.len()) {\n\
+             total = total + mapped[i].chars().to_list().len()\n\
+             i = i + 1\n\
+           }\n\
+           total\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "9",
+        "run --backend wasm with range-mapped strings feeding chars().to_list() in a loop",
+    );
+}
+
+#[test]
 fn replay_dispatches_wasm_logs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
