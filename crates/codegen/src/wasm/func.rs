@@ -708,7 +708,7 @@ impl<'a> FuncCodegen<'a> {
             else_target,
         } = term
             && let Some((body_target, exit_target)) =
-                self.classify_loop_branch(block_id, then_target, else_target)
+                self.classify_loop_branch(block_id, then_target, else_target, None, None)
         {
             self.emit_loop(
                 func,
@@ -762,6 +762,8 @@ impl<'a> FuncCodegen<'a> {
         header: BlockId,
         then_target: &'b kyokara_kir::block::BranchTarget,
         else_target: &'b kyokara_kir::block::BranchTarget,
+        enclosing_header: Option<BlockId>,
+        enclosing_exit: Option<BlockId>,
     ) -> Option<(
         &'b kyokara_kir::block::BranchTarget,
         &'b kyokara_kir::block::BranchTarget,
@@ -772,35 +774,68 @@ impl<'a> FuncCodegen<'a> {
             if self.predecessor_blocks(header).len() < 2 {
                 return None;
             }
-            if self.find_branch_merge_deep(then_target, else_target).is_some() {
+            if self
+                .find_branch_merge_deep(then_target, else_target)
+                .is_some()
+            {
                 return None;
             }
         }
 
         if then_target.args.is_empty() && else_target.args.len() == param_count {
-            let then_reaches_header = self
-                .reachable_block_distances(then_target.block)
-                .contains_key(&header);
+            let then_reaches_header = self.reaches_header_within_enclosing_loop(
+                then_target.block,
+                header,
+                enclosing_header,
+                enclosing_exit,
+            );
             return then_reaches_header.then_some((then_target, else_target));
         }
         if else_target.args.is_empty() && then_target.args.len() == param_count {
-            let else_reaches_header = self
-                .reachable_block_distances(else_target.block)
-                .contains_key(&header);
+            let else_reaches_header = self.reaches_header_within_enclosing_loop(
+                else_target.block,
+                header,
+                enclosing_header,
+                enclosing_exit,
+            );
             return else_reaches_header.then_some((else_target, then_target));
         }
 
         if param_count == 1 && matches!(self.value_ty(header_params[0].value), Ty::Bool) {
+            let then_reaches_header = self.reaches_header_within_enclosing_loop(
+                then_target.block,
+                header,
+                enclosing_header,
+                enclosing_exit,
+            );
+            let else_reaches_header = self.reaches_header_within_enclosing_loop(
+                else_target.block,
+                header,
+                enclosing_header,
+                enclosing_exit,
+            );
+            match (then_reaches_header, else_reaches_header) {
+                (true, false) => return Some((then_target, else_target)),
+                (false, true) => return Some((else_target, then_target)),
+                _ => {}
+            }
+
             if then_target.args.is_empty() && !else_target.args.is_empty() {
-                let then_reaches_header = self
-                    .reachable_block_distances(then_target.block)
-                    .contains_key(&header);
+                let then_reaches_header = self.reaches_header_within_enclosing_loop(
+                    then_target.block,
+                    header,
+                    enclosing_header,
+                    enclosing_exit,
+                );
                 return then_reaches_header.then_some((then_target, else_target));
             }
             if else_target.args.is_empty() && !then_target.args.is_empty() {
-                let else_reaches_header = self
-                    .reachable_block_distances(else_target.block)
-                    .contains_key(&header);
+                let else_reaches_header = self.reaches_header_within_enclosing_loop(
+                    else_target.block,
+                    header,
+                    enclosing_header,
+                    enclosing_exit,
+                );
                 return else_reaches_header.then_some((else_target, then_target));
             }
         }
@@ -809,17 +844,45 @@ impl<'a> FuncCodegen<'a> {
             return None;
         }
 
-        let then_reaches_header = self
-            .reachable_block_distances(then_target.block)
-            .contains_key(&header);
-        let else_reaches_header = self
-            .reachable_block_distances(else_target.block)
-            .contains_key(&header);
+        let then_reaches_header = self.reaches_header_within_enclosing_loop(
+            then_target.block,
+            header,
+            enclosing_header,
+            enclosing_exit,
+        );
+        let else_reaches_header = self.reaches_header_within_enclosing_loop(
+            else_target.block,
+            header,
+            enclosing_header,
+            enclosing_exit,
+        );
         match (then_reaches_header, else_reaches_header) {
             (true, false) => Some((then_target, else_target)),
             (false, true) => Some((else_target, then_target)),
             _ => None,
         }
+    }
+
+    fn reaches_header_within_enclosing_loop(
+        &self,
+        start: BlockId,
+        header: BlockId,
+        enclosing_header: Option<BlockId>,
+        enclosing_exit: Option<BlockId>,
+    ) -> bool {
+        let mut stops = FxHashSet::default();
+        if let Some(block) = enclosing_header {
+            if block != header {
+                stops.insert(block);
+            }
+        }
+        if let Some(block) = enclosing_exit {
+            if block != header {
+                stops.insert(block);
+            }
+        }
+        self.reachable_block_distances_until(start, &stops)
+            .contains_key(&header)
     }
 
     fn emit_loop(
@@ -965,8 +1028,13 @@ impl<'a> FuncCodegen<'a> {
             then_target,
             else_target,
         } = term
-            && let Some((body_target, exit_target)) =
-                self.classify_loop_branch(block_id, then_target, else_target)
+            && let Some((body_target, exit_target)) = self.classify_loop_branch(
+                block_id,
+                then_target,
+                else_target,
+                Some(header),
+                Some(exit),
+            )
         {
             self.emit_nested_loop(
                 func,
@@ -12225,12 +12293,7 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::I32GeU);
         func.instruction(&Instruction::BrIf(1));
 
-        self.emit_utf8_char_width_from_local(
-            func,
-            string_local,
-            byte_idx_local,
-            char_width_local,
-        );
+        self.emit_utf8_char_width_from_local(func, string_local, byte_idx_local, char_width_local);
         self.emit_utf8_codepoint_from_local(
             func,
             string_local,

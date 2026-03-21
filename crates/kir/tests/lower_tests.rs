@@ -200,6 +200,42 @@ fn test_short_circuit_while_condition_lowers_without_placeholder_holes() {
 }
 
 #[test]
+fn test_nested_short_circuit_while_index_condition_lowers_without_placeholder_holes() {
+    let out = lower_and_display(
+        "from collections import MutableList\n\
+         fn f() -> Int {\n\
+           let blocks = MutableList.new().push(0).push(-1).push(1).push(-1).push(2)\n\
+           let left = MutableList.new().push(0)\n\
+           let right = MutableList.new().push(blocks.len() - 1)\n\
+           while (left[0] < right[0]) {\n\
+             while (left[0] < blocks.len() && blocks[left[0]] != -1) {\n\
+               let _l = left.set(0, left[0] + 1)\n\
+             }\n\
+             while (right[0] >= 0 && blocks[right[0]] == -1) {\n\
+               let _r = right.set(0, right[0] - 1)\n\
+             }\n\
+             if (left[0] < right[0]) {\n\
+               let value = blocks[right[0]]\n\
+               let _a = blocks.set(left[0], value)\n\
+               let _b = blocks.set(right[0], -1)\n\
+               let _l = left.set(0, left[0] + 1)\n\
+               let _r = right.set(0, right[0] - 1)\n\
+             }\n\
+           }\n\
+           var total = 0\n\
+           for (i in 0..<blocks.len()) {\n\
+             let value = blocks[i]\n\
+             if (value >= 0) {\n\
+               total = total + i * value\n\
+             }\n\
+           }\n\
+           total\n\
+         }",
+    );
+    assert!(!out.contains("hole"), "output:\n{out}");
+}
+
+#[test]
 fn test_for_over_seq_lowers_without_placeholder_holes() {
     let out = lower_and_display(
         "fn f() -> Int {\n\

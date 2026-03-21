@@ -183,6 +183,32 @@ fn run_backend_wasm_supports_short_circuit_while_conditions() {
 }
 
 #[test]
+fn run_backend_wasm_short_circuits_indexed_while_guards() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn main() -> Int {\n\
+           let blocks = MutableList.new().push(0).push(-1).push(1).push(-1).push(2)\n\
+           let left = MutableList.new().push(0)\n\
+           while (left[0] < blocks.len() && blocks[left[0]] != -1) {\n\
+             let _l = left.set(0, left[0] + 1)\n\
+           }\n\
+           left[0]\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "1",
+        "run --backend wasm with indexed short-circuit while guard",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_short_circuit_if_results_across_loop_iterations() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
@@ -875,6 +901,74 @@ fn run_backend_wasm_handles_unused_mutating_loop_helpers() {
         &output,
         "1",
         "run --backend wasm with unused mutating loop helper",
+    );
+}
+
+#[test]
+fn run_backend_wasm_executes_aoc_2024_day09_sample() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("day09.txt");
+    fs::write(&input, "2333133121414131402\n").expect("write sample input");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "run",
+            "/Users/alpha/CodexProjects/polyglot-bench/adapters/kyokara/solutions/advent-of-code/2024/day09.ky",
+            "--backend",
+            "wasm",
+        ],
+    );
+    assert_stdout_trimmed(
+        &output,
+        "Part 1: 1928\nPart 2: 2858",
+        "run --backend wasm AoC 2024 day09 sample",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_nested_compaction_loops() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn main() -> Int {\n\
+           let blocks = MutableList.new().push(0).push(-1).push(1).push(-1).push(2)\n\
+           let left = MutableList.new().push(0)\n\
+           let right = MutableList.new().push(blocks.len() - 1)\n\
+           while (left[0] < right[0]) {\n\
+             while (left[0] < blocks.len() && blocks[left[0]] != -1) {\n\
+               let _l = left.set(0, left[0] + 1)\n\
+             }\n\
+             while (right[0] >= 0 && blocks[right[0]] == -1) {\n\
+               let _r = right.set(0, right[0] - 1)\n\
+             }\n\
+             if (left[0] < right[0]) {\n\
+               let value = blocks[right[0]]\n\
+               let _a = blocks.set(left[0], value)\n\
+               let _b = blocks.set(right[0], -1)\n\
+               let _l = left.set(0, left[0] + 1)\n\
+               let _r = right.set(0, right[0] - 1)\n\
+             }\n\
+           }\n\
+           var total = 0\n\
+           for (i in 0..<blocks.len()) {\n\
+             let value = blocks[i]\n\
+             if (value >= 0) {\n\
+               total = total + i * value\n\
+             }\n\
+           }\n\
+           total\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "4",
+        "run --backend wasm with nested compaction loops",
     );
 }
 
