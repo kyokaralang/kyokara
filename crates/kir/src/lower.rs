@@ -50,12 +50,14 @@ impl Labels {
 
 pub(crate) struct HiddenNames {
     for_current: Name,
+    for_source: Name,
 }
 
 impl HiddenNames {
     fn new(interner: &mut Interner) -> Self {
         Self {
             for_current: Name::new(interner, "$for_cur"),
+            for_source: Name::new(interner, "$for_src"),
         }
     }
 }

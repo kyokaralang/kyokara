@@ -200,6 +200,36 @@ fn test_short_circuit_while_condition_lowers_without_placeholder_holes() {
 }
 
 #[test]
+fn test_for_over_seq_lowers_without_placeholder_holes() {
+    let out = lower_and_display(
+        "fn f() -> Int {\n\
+           let text = \"1234567890\"\n\
+           var sum = 0\n\
+           for (ch in text.chars()) {\n\
+             sum = sum + (ch.code() - '0'.code())\n\
+           }\n\
+           sum\n\
+         }",
+    );
+    assert!(
+        !out.contains("hole"),
+        "for-over-seq lowering should not leave placeholder holes. output:\n{out}"
+    );
+    assert!(out.contains("intrinsic:seq_to_list"), "output:\n{out}");
+    assert!(out.contains("intrinsic:list_index"), "output:\n{out}");
+}
+
+#[test]
+fn test_string_index_lowers_without_placeholder_holes() {
+    let out = lower_and_display(r#"fn f() -> Int { "abc"[1].code() }"#);
+    assert!(
+        !out.contains("hole"),
+        "string index lowering should not leave placeholder holes. output:\n{out}"
+    );
+    assert!(out.contains("intrinsic:string_index"), "output:\n{out}");
+}
+
+#[test]
 fn test_while_break_continue_lower_without_placeholder_holes() {
     let out = lower_and_display(
         "fn f() -> Int {\n\

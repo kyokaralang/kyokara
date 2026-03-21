@@ -766,9 +766,25 @@ impl<'a> FuncCodegen<'a> {
         &'b kyokara_kir::block::BranchTarget,
         &'b kyokara_kir::block::BranchTarget,
     )> {
-        if self.kir_func.blocks[header].params.is_empty() {
+        let header_params = &self.kir_func.blocks[header].params;
+        if header_params.is_empty() {
             return None;
         }
+        let param_count = header_params.len();
+
+        if then_target.args.is_empty() && else_target.args.len() == param_count {
+            let then_reaches_header = self
+                .reachable_block_distances(then_target.block)
+                .contains_key(&header);
+            return then_reaches_header.then_some((then_target, else_target));
+        }
+        if else_target.args.is_empty() && then_target.args.len() == param_count {
+            let else_reaches_header = self
+                .reachable_block_distances(else_target.block)
+                .contains_key(&header);
+            return else_reaches_header.then_some((else_target, then_target));
+        }
+
         let then_reaches_header = self
             .reachable_block_distances(then_target.block)
             .contains_key(&header);
@@ -812,6 +828,7 @@ impl<'a> FuncCodegen<'a> {
             exit_target.block,
             1,
             2,
+            None,
             &mut loop_emitted,
         )?;
         func.instruction(&Instruction::Else);
@@ -827,6 +844,65 @@ impl<'a> FuncCodegen<'a> {
         Ok(())
     }
 
+    fn emit_nested_loop(
+        &self,
+        func: &mut Function,
+        header: BlockId,
+        condition: ValueId,
+        body_target: &kyokara_kir::block::BranchTarget,
+        exit_target: &kyokara_kir::block::BranchTarget,
+        outer_header: BlockId,
+        outer_exit: BlockId,
+        continue_depth: u32,
+        break_depth: u32,
+        stop_at: Option<BlockId>,
+        emitted: &mut FxHashMap<BlockId, ()>,
+    ) -> Result<(), CodegenError> {
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+
+        let header_block = &self.kir_func.blocks[header];
+        for &vid in &header_block.body {
+            self.emit_inst(func, vid)?;
+        }
+
+        self.emit_get(func, condition);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_block_param_stores(func, body_target)?;
+
+        let mut loop_emitted = FxHashMap::default();
+        self.emit_loop_block_chain(
+            func,
+            body_target.block,
+            header,
+            exit_target.block,
+            1,
+            2,
+            None,
+            &mut loop_emitted,
+        )?;
+        func.instruction(&Instruction::Else);
+        self.emit_block_param_stores(func, exit_target)?;
+        func.instruction(&Instruction::Br(2));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        emitted.extend(loop_emitted);
+        self.emit_loop_block_chain(
+            func,
+            exit_target.block,
+            outer_header,
+            outer_exit,
+            continue_depth,
+            break_depth,
+            stop_at,
+            emitted,
+        )?;
+        Ok(())
+    }
+
     fn emit_loop_block_chain(
         &self,
         func: &mut Function,
@@ -835,8 +911,12 @@ impl<'a> FuncCodegen<'a> {
         exit: BlockId,
         continue_depth: u32,
         break_depth: u32,
+        stop_at: Option<BlockId>,
         emitted: &mut FxHashMap<BlockId, ()>,
     ) -> Result<(), CodegenError> {
+        if Some(block_id) == stop_at {
+            return Ok(());
+        }
         if block_id == header {
             func.instruction(&Instruction::Br(continue_depth));
             return Ok(());
@@ -851,14 +931,38 @@ impl<'a> FuncCodegen<'a> {
         emitted.insert(block_id, ());
 
         let block = &self.kir_func.blocks[block_id];
-        for &vid in &block.body {
-            self.emit_inst(func, vid)?;
-        }
-
         let term = block
             .terminator
             .as_ref()
             .ok_or_else(|| CodegenError::MissingTerminator("block has no terminator".into()))?;
+
+        if let Terminator::Branch {
+            condition,
+            then_target,
+            else_target,
+        } = term
+            && let Some((body_target, exit_target)) =
+                self.classify_loop_branch(block_id, then_target, else_target)
+        {
+            self.emit_nested_loop(
+                func,
+                block_id,
+                *condition,
+                body_target,
+                exit_target,
+                header,
+                exit,
+                continue_depth,
+                break_depth,
+                stop_at,
+                emitted,
+            )?;
+            return Ok(());
+        }
+
+        for &vid in &block.body {
+            self.emit_inst(func, vid)?;
+        }
 
         match term {
             Terminator::Return(val) => {
@@ -877,6 +981,7 @@ impl<'a> FuncCodegen<'a> {
                     exit,
                     continue_depth,
                     break_depth,
+                    stop_at,
                     emitted,
                 )?;
             }
@@ -894,6 +999,7 @@ impl<'a> FuncCodegen<'a> {
                     exit,
                     continue_depth,
                     break_depth,
+                    stop_at,
                     emitted,
                 )?;
             }
@@ -914,6 +1020,7 @@ impl<'a> FuncCodegen<'a> {
                         exit,
                         continue_depth,
                         break_depth,
+                        stop_at,
                         emitted,
                     )?;
                 }
@@ -933,31 +1040,35 @@ impl<'a> FuncCodegen<'a> {
         exit: BlockId,
         continue_depth: u32,
         break_depth: u32,
+        outer_stop: Option<BlockId>,
         emitted: &mut FxHashMap<BlockId, ()>,
     ) -> Result<(), CodegenError> {
-        let merge_id = self.find_loop_branch_merge(then_target, else_target, header, exit);
+        let merge_id = self
+            .find_branch_merge_deep(then_target, else_target)
+            .filter(|merge_id| *merge_id != header && *merge_id != exit)
+            .or_else(|| self.find_loop_branch_merge(then_target, else_target, header, exit));
 
         self.emit_get(func, condition);
         func.instruction(&Instruction::If(BlockType::Empty));
         self.emit_loop_branch_arm(
             func,
             then_target,
-            merge_id,
             header,
             exit,
             continue_depth + 1,
             break_depth + 1,
+            merge_id,
             emitted,
         )?;
         func.instruction(&Instruction::Else);
         self.emit_loop_branch_arm(
             func,
             else_target,
-            merge_id,
             header,
             exit,
             continue_depth + 1,
             break_depth + 1,
+            merge_id,
             emitted,
         )?;
         func.instruction(&Instruction::End);
@@ -970,6 +1081,7 @@ impl<'a> FuncCodegen<'a> {
                 exit,
                 continue_depth,
                 break_depth,
+                outer_stop,
                 emitted,
             )?;
         }
@@ -1084,11 +1196,11 @@ impl<'a> FuncCodegen<'a> {
         &self,
         func: &mut Function,
         target: &kyokara_kir::block::BranchTarget,
-        merge_id: Option<BlockId>,
         header: BlockId,
         exit: BlockId,
         continue_depth: u32,
         break_depth: u32,
+        merge_id: Option<BlockId>,
         emitted: &mut FxHashMap<BlockId, ()>,
     ) -> Result<(), CodegenError> {
         if Some(target.block) == merge_id {
@@ -1104,6 +1216,7 @@ impl<'a> FuncCodegen<'a> {
             exit,
             continue_depth,
             break_depth,
+            merge_id,
             emitted,
         )
     }
@@ -1119,6 +1232,7 @@ impl<'a> FuncCodegen<'a> {
         exit: BlockId,
         continue_depth: u32,
         break_depth: u32,
+        outer_stop: Option<BlockId>,
         emitted: &mut FxHashMap<BlockId, ()>,
     ) -> Result<(), CodegenError> {
         let scrutinee_ty = self.value_ty(scrutinee);
@@ -1230,6 +1344,7 @@ impl<'a> FuncCodegen<'a> {
                 exit,
                 continue_depth,
                 break_depth,
+                outer_stop,
                 emitted,
             )?;
         } else {
@@ -3567,6 +3682,70 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
     }
 
+    fn emit_string_index(&self, func: &mut Function, s: ValueId, index: ValueId) {
+        self.emit_get(func, s);
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 4,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32)); // char_len
+
+        self.emit_get(func, index);
+        func.instruction(&Instruction::LocalSet(self.scratch_i64)); // raw index
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I64ExtendI32U);
+        func.instruction(&Instruction::I64GeU);
+        self.emit_trap_if_true(func);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i64));
+        func.instruction(&Instruction::I32WrapI64);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2)); // target char idx
+
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3)); // current char idx
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4)); // byte idx
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        self.emit_utf8_char_width(func, s, self.scratch_i32_4, self.scratch_i32_5);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        self.emit_utf8_char_width(func, s, self.scratch_i32_4, self.scratch_i32_5);
+        self.emit_utf8_codepoint(
+            func,
+            s,
+            self.scratch_i32_4,
+            self.scratch_i32_5,
+            self.scratch_i32_6,
+        );
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+    }
+
     // ── Binary operations ─────────────────────────────────────────
 
     fn emit_binary(
@@ -4456,6 +4635,10 @@ impl<'a> FuncCodegen<'a> {
                 }
                 "string_substring" => {
                     self.emit_string_substring(func, args[0], args[1], args[2]);
+                    Ok(())
+                }
+                "string_index" => {
+                    self.emit_string_index(func, args[0], args[1]);
                     Ok(())
                 }
                 "string_to_lower" => {
@@ -6657,10 +6840,97 @@ impl<'a> FuncCodegen<'a> {
     }
 
     fn emit_mutable_list_push(&self, func: &mut Function, list: ValueId, value: ValueId) {
+        let value_ty = self.value_ty(value);
+
         self.emit_get(func, list);
         func.instruction(&Instruction::LocalSet(self.scratch_i32)); // list ptr
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_2)); // len
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 4,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3)); // capacity
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4)); // data ptr
 
-        self.emit_list_like_push_back_from_local(func, self.scratch_i32, value);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5)); // new len
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Eqz);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::I32Const(4));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6)); // new capacity
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6)); // doubled capacity
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::I32LtU);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_8)); // byte size
+        self.emit_alloc_dynamic_bytes_to_local(func, self.scratch_i32_8, self.scratch_i32_9);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_copy_list_slots_from_locals(
+            func,
+            self.scratch_i32_4,
+            self.scratch_i32_9,
+            self.scratch_i32_2,
+        );
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_9));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        self.emit_get(func, value);
+        self.emit_typed_store_stack(func, &value_ty, 0);
+
+        self.emit_update_mutable_list_header_from_locals(
+            func,
+            self.scratch_i32,
+            self.scratch_i32_5,
+            self.scratch_i32_3,
+            self.scratch_i32_4,
+        );
 
         func.instruction(&Instruction::LocalGet(self.scratch_i32));
     }
@@ -8717,6 +8987,37 @@ impl<'a> FuncCodegen<'a> {
         }));
         func.instruction(&Instruction::LocalGet(list_local));
         func.instruction(&Instruction::LocalGet(len_local));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 4,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(list_local));
+        func.instruction(&Instruction::LocalGet(data_local));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+    }
+
+    fn emit_update_mutable_list_header_from_locals(
+        &self,
+        func: &mut Function,
+        list_local: u32,
+        len_local: u32,
+        capacity_local: u32,
+        data_local: u32,
+    ) {
+        func.instruction(&Instruction::LocalGet(list_local));
+        func.instruction(&Instruction::LocalGet(len_local));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(list_local));
+        func.instruction(&Instruction::LocalGet(capacity_local));
         func.instruction(&Instruction::I32Store(MemArg {
             offset: 4,
             align: 2,

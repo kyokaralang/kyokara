@@ -71,6 +71,11 @@ impl<'a> LoweringCtx<'a> {
                 let iv = self.lower_expr(index);
                 let base_ty = self.expr_ty(base);
                 match self.receiver_key_for_ty(&base_ty) {
+                    Some(ReceiverKey::Primitive(PrimitiveType::String)) => self.builder.push_call(
+                        CallTarget::Intrinsic("string_index".to_string()),
+                        vec![bv, iv],
+                        ty,
+                    ),
                     Some(ReceiverKey::Core(CoreType::List)) => self.builder.push_call(
                         CallTarget::Intrinsic("list_index".to_string()),
                         vec![bv, iv],
@@ -2251,16 +2256,11 @@ impl<'a> LoweringCtx<'a> {
                 source,
                 body: loop_body,
             } => {
-                if !self.try_lower_for_range_stmt(*pat, *source, *loop_body) {
-                    // RFC 0006 phase-1 compatibility fallback for non-range
-                    // traversal sources that still lower via seq intrinsics.
-                    self.lower_expr(*source);
-                    self.push_scope();
+                if !self.try_lower_for_range_stmt(*pat, *source, *loop_body)
+                    && !self.try_lower_for_seq_stmt(*pat, *source, *loop_body)
+                {
                     let hole = self.next_hole_id();
-                    let elem = self.builder.push_hole(hole, vec![], self.pat_ty(*pat));
-                    self.bind_pattern(*pat, elem);
-                    self.lower_expr(*loop_body);
-                    self.pop_scope();
+                    self.builder.push_hole(hole, vec![], Ty::Unit);
                 }
             }
             Stmt::Break | Stmt::Continue => {
@@ -2471,6 +2471,156 @@ impl<'a> LoweringCtx<'a> {
         });
         self.push_scope();
         self.bind_pattern(pat, current);
+        let one = self.builder.push_const(Constant::Int(1), Ty::Int);
+        let next = self
+            .builder
+            .push_binary(BinaryOp::Add, current, one, Ty::Int);
+        let _ = self.rebind_local(self.hidden.for_current, next);
+        self.lower_expr(loop_body);
+        self.pop_scope();
+        self.loop_stack.pop();
+        if !self.block_has_terminator() {
+            self.builder.set_jump(BranchTarget {
+                block: cond_blk,
+                args: self.current_loop_args(&loop_state_names),
+            });
+        }
+
+        let exit_params: Vec<_> = loop_state
+            .iter()
+            .map(|(name, ty)| {
+                self.builder
+                    .add_block_param(exit_blk, Some(*name), ty.clone())
+            })
+            .collect();
+        self.builder.switch_to(exit_blk);
+        for ((name, _), param) in loop_state.iter().zip(exit_params.iter()) {
+            let _ = self.rebind_local(*name, *param);
+        }
+        self.pop_scope();
+        true
+    }
+
+    fn try_lower_for_seq_stmt(
+        &mut self,
+        pat: kyokara_hir_def::expr::PatIdx,
+        source: ExprIdx,
+        loop_body: ExprIdx,
+    ) -> bool {
+        let source_ty = self.expr_ty(source);
+        let is_seq_like = matches!(
+            self.receiver_key_for_ty(&source_ty),
+            Some(ReceiverKey::Core(
+                CoreType::List
+                    | CoreType::MutableList
+                    | CoreType::Deque
+                    | CoreType::MutableDeque
+                    | CoreType::Seq
+            ))
+        );
+        if !is_seq_like {
+            return false;
+        }
+
+        let elem_ty = self.pat_ty(pat);
+        let Some(list_info) = self.module_scope.core_types.get(CoreType::List) else {
+            return false;
+        };
+        let list_ty = Ty::Adt {
+            def: list_info.type_idx,
+            args: vec![elem_ty.clone()],
+        };
+
+        let source_value = self.lower_expr(source);
+        let iter_list = self.builder.push_call(
+            CallTarget::Intrinsic("seq_to_list".to_string()),
+            vec![source_value],
+            list_ty,
+        );
+
+        self.push_scope();
+        self.define_local(self.hidden.for_source, iter_list);
+        let zero = self.builder.push_const(Constant::Int(0), Ty::Int);
+        self.define_local(self.hidden.for_current, zero);
+
+        let mut loop_state_names = vec![self.hidden.for_current];
+        loop_state_names.extend(self.collect_loop_carried_locals(loop_body));
+        let loop_state: Vec<(Name, Ty)> = loop_state_names
+            .iter()
+            .filter_map(|name| {
+                self.lookup_local(*name)
+                    .map(|vid| (*name, self.builder_value_ty(vid)))
+            })
+            .collect();
+
+        let cond_blk = self.builder.new_block(None);
+        let body_blk = self.builder.new_block(None);
+        let exit_blk = self.builder.new_block(None);
+
+        self.builder.set_jump(BranchTarget {
+            block: cond_blk,
+            args: self.current_loop_args(&loop_state_names),
+        });
+
+        let cond_params: Vec<_> = loop_state
+            .iter()
+            .map(|(name, ty)| {
+                self.builder
+                    .add_block_param(cond_blk, Some(*name), ty.clone())
+            })
+            .collect();
+        self.builder.switch_to(cond_blk);
+        for ((name, _), param) in loop_state.iter().zip(cond_params.iter()) {
+            let _ = self.rebind_local(*name, *param);
+        }
+
+        let current = self
+            .lookup_local(self.hidden.for_current)
+            .expect("for loop current must be in scope");
+        let list_value = self
+            .lookup_local(self.hidden.for_source)
+            .expect("for loop source list must be in scope");
+        let list_len = self.builder.push_call(
+            CallTarget::Intrinsic("list_len".to_string()),
+            vec![list_value],
+            Ty::Int,
+        );
+        let cond_val = self
+            .builder
+            .push_binary(BinaryOp::Lt, current, list_len, Ty::Bool);
+        if !self.block_has_terminator() {
+            self.builder.set_branch(
+                cond_val,
+                BranchTarget {
+                    block: body_blk,
+                    args: vec![],
+                },
+                BranchTarget {
+                    block: exit_blk,
+                    args: self.current_loop_args(&loop_state_names),
+                },
+            );
+        }
+
+        self.builder.switch_to(body_blk);
+        self.loop_stack.push(super::LoopContext {
+            continue_block: cond_blk,
+            break_block: exit_blk,
+            carried_names: loop_state_names.clone(),
+        });
+        self.push_scope();
+        let iter_list = self
+            .lookup_local(self.hidden.for_source)
+            .expect("for loop source list must be in scope");
+        let current = self
+            .lookup_local(self.hidden.for_current)
+            .expect("for loop current must be in scope");
+        let elem = self.builder.push_call(
+            CallTarget::Intrinsic("list_index".to_string()),
+            vec![iter_list, current],
+            elem_ty,
+        );
+        self.bind_pattern(pat, elem);
         let one = self.builder.push_const(Constant::Int(1), Ty::Int);
         let next = self
             .builder

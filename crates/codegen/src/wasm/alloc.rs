@@ -9,7 +9,7 @@ use wasm_encoder::{BlockType, Function, Instruction, ValType};
 ///   reject if size < 0
 ///   new_ptr = ptr + size
 ///   reject on wrapping add (new_ptr < ptr)
-///   reject if new_ptr > memory_size_bytes
+///   grow memory if new_ptr exceeds current memory size
 ///   global $heap_ptr = new_ptr
 ///   return ptr
 pub fn emit_alloc_function() -> Function {
@@ -44,7 +44,7 @@ pub fn emit_alloc_function() -> Function {
     func.instruction(&Instruction::Unreachable);
     func.instruction(&Instruction::End);
 
-    // Reject allocations that exceed current memory size.
+    // Grow memory when the requested allocation would exceed the current size.
     // Compare in i64 space to avoid overflow when converting pages -> bytes.
     func.instruction(&Instruction::LocalGet(2));
     func.instruction(&Instruction::I64ExtendI32U);
@@ -54,7 +54,27 @@ pub fn emit_alloc_function() -> Function {
     func.instruction(&Instruction::I64Mul);
     func.instruction(&Instruction::I64GtU);
     func.instruction(&Instruction::If(BlockType::Empty));
+    // pages_to_grow = ceil((new_ptr - current_bytes) / 65536)
+    func.instruction(&Instruction::LocalGet(2));
+    func.instruction(&Instruction::I64ExtendI32U);
+    func.instruction(&Instruction::MemorySize(0));
+    func.instruction(&Instruction::I64ExtendI32U);
+    func.instruction(&Instruction::I64Const(65_536));
+    func.instruction(&Instruction::I64Mul);
+    func.instruction(&Instruction::I64Sub);
+    func.instruction(&Instruction::I64Const(1));
+    func.instruction(&Instruction::I64Sub);
+    func.instruction(&Instruction::I64Const(65_536));
+    func.instruction(&Instruction::I64DivU);
+    func.instruction(&Instruction::I64Const(1));
+    func.instruction(&Instruction::I64Add);
+    func.instruction(&Instruction::I32WrapI64);
+    func.instruction(&Instruction::MemoryGrow(0));
+    func.instruction(&Instruction::I32Const(-1));
+    func.instruction(&Instruction::I32Eq);
+    func.instruction(&Instruction::If(BlockType::Empty));
     func.instruction(&Instruction::Unreachable);
+    func.instruction(&Instruction::End);
     func.instruction(&Instruction::End);
 
     // global $heap_ptr = new_ptr
@@ -107,6 +127,7 @@ mod tests {
         let mut exports = ExportSection::new();
         exports.export("alloc", ExportKind::Func, 0);
         exports.export("heap_ptr", ExportKind::Global, 0);
+        exports.export("memory", ExportKind::Memory, 0);
 
         let mut code = CodeSection::new();
         code.function(&emit_alloc_function());
@@ -157,6 +178,13 @@ mod tests {
             .expect("heap_ptr should be mutable");
     }
 
+    fn memory_pages_get(store: &mut wasmtime::Store<()>, instance: &wasmtime::Instance) -> u64 {
+        instance
+            .get_memory(&mut *store, "memory")
+            .expect("memory export should exist")
+            .size(store)
+    }
+
     #[test]
     fn alloc_positive_size_returns_old_ptr_and_advances_heap() {
         let (mut store, instance) = instantiate_alloc_module();
@@ -190,7 +218,7 @@ mod tests {
     #[test]
     fn alloc_wrapping_addition_traps() {
         let (mut store, instance) = instantiate_alloc_module();
-        let start = i32::MAX - 8;
+        let start = -8;
         heap_ptr_set(&mut store, &instance, start);
 
         assert!(call_alloc(&mut store, &instance, 16).is_err());
@@ -202,16 +230,21 @@ mod tests {
     }
 
     #[test]
-    fn alloc_beyond_memory_limit_traps() {
+    fn alloc_beyond_memory_limit_grows_memory() {
         let (mut store, instance) = instantiate_alloc_module();
         // Memory is one page = 65536 bytes.
         heap_ptr_set(&mut store, &instance, 65_520);
+        assert_eq!(memory_pages_get(&mut store, &instance), 1);
 
-        assert!(call_alloc(&mut store, &instance, 32).is_err());
+        assert_eq!(
+            call_alloc(&mut store, &instance, 32).expect("alloc should grow guest memory"),
+            65_520
+        );
         assert_eq!(
             heap_ptr_get(&mut store, &instance),
-            65_520,
-            "heap_ptr should remain unchanged on out-of-bounds allocation"
+            65_552,
+            "heap_ptr should advance after growth"
         );
+        assert_eq!(memory_pages_get(&mut store, &instance), 2);
     }
 }

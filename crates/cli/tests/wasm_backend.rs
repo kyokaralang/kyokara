@@ -197,6 +197,231 @@ fn run_backend_wasm_handles_deep_recursive_workloads_without_native_stack_overfl
 }
 
 #[test]
+fn run_backend_wasm_handles_mutable_list_growth_and_set_loops() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn main() -> Int {\n\
+           let xs = MutableList.from_list((0..<200).map(fn(_i: Int) => 0).to_list())\n\
+           var i = 0\n\
+           while (i < 200) {\n\
+             let _ = xs.set(i, i % 10)\n\
+             i = i + 1\n\
+           }\n\
+           xs[199]\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "9",
+        "run --backend wasm with MutableList growth and set loop",
+    );
+}
+
+#[test]
+fn run_backend_wasm_handles_large_mutable_list_push_workloads() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn main() -> Int {\n\
+           let xs = MutableList.new()\n\
+           var i = 0\n\
+           while (i < 50000) {\n\
+             let _ = xs.push(i % 10)\n\
+             i = i + 1\n\
+           }\n\
+           xs[49999]\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "9",
+        "run --backend wasm with large MutableList push workload",
+    );
+}
+
+#[test]
+fn run_backend_wasm_supports_for_loops_over_char_sequences() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let text = "1234567890".repeat(100);
+    fs::write(
+        &file,
+        format!(
+            "fn main() -> Int {{\n  let text = \"{text}\"\n  var sum = 0\n  for (ch in text.chars()) {{\n    sum = sum + (ch.code() - '0'.code())\n  }}\n  sum\n}}"
+        ),
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(&output, "4500", "run --backend wasm with for-over-chars");
+}
+
+#[test]
+fn run_backend_wasm_supports_string_indexing_at_high_offsets() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let text = "1234567890".repeat(20);
+    fs::write(
+        &file,
+        format!("fn main() -> Int {{ \"{text}\"[199].code() - '0'.code() }}"),
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(&output, "0", "run --backend wasm with string indexing");
+}
+
+#[test]
+fn run_backend_wasm_preserves_values_after_nested_while_loops() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "fn main() -> String {\n\
+           var pos = 0\n\
+           var s = \"\"\n\
+           while (pos < 3) {\n\
+             var total = 0\n\
+             var start = pos\n\
+             while (start < 3) {\n\
+               total = total + 1\n\
+               start = start + 1\n\
+             }\n\
+             s = s.concat(total.to_string())\n\
+             pos = pos + 1\n\
+           }\n\
+           s\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "321",
+        "run --backend wasm with nested while loop carried values",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_loop_values_through_one_armed_if() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "fn main() -> Int {\n\
+           var total = 0\n\
+           var start = 0\n\
+           while (start < 1) {\n\
+             total = total + 12\n\
+             let cond = false\n\
+             if (cond) {\n\
+               total = total - 1\n\
+             }\n\
+             start = start + 1\n\
+           }\n\
+           total\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "12",
+        "run --backend wasm with loop-carried values through one-armed if",
+    );
+}
+
+#[test]
+fn run_backend_wasm_matches_fft_sample_output() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn parse_digits(text: String) -> MutableList<Int> {\n\
+           let digits = MutableList.new()\n\
+           for (ch in text.chars()) {\n\
+             let _ = digits.push(ch.code() - '0'.code())\n\
+           }\n\
+           digits\n\
+         }\n\
+         fn prefix_sums(xs: MutableList<Int>) -> MutableList<Int> {\n\
+           let sums = MutableList.new().push(0)\n\
+           var acc = 0\n\
+           var i = 0\n\
+           while (i < xs.len()) {\n\
+             acc = acc + xs[i]\n\
+             let _ = sums.push(acc)\n\
+             i = i + 1\n\
+           }\n\
+           sums\n\
+         }\n\
+         fn abs_i(n: Int) -> Int {\n\
+           if (n < 0) { -n } else { n }\n\
+         }\n\
+         fn phase(input: MutableList<Int>) -> MutableList<Int> {\n\
+           let n = input.len()\n\
+           let sums = prefix_sums(input)\n\
+           let out = MutableList.new()\n\
+           var pos = 0\n\
+           while (pos < n) {\n\
+             let step = pos + 1\n\
+             var total = 0\n\
+             var start = pos\n\
+             while (start < n) {\n\
+               let plus_end = if (start + step < n) { start + step } else { n }\n\
+               total = total + (sums[plus_end] - sums[start])\n\
+               let minus_start = start + (2 * step)\n\
+               if (minus_start < n) {\n\
+                 let minus_end = if (minus_start + step < n) { minus_start + step } else { n }\n\
+                 total = total - (sums[minus_end] - sums[minus_start])\n\
+               }\n\
+               start = start + (4 * step)\n\
+             }\n\
+             let _ = out.push(abs_i(total) % 10)\n\
+             pos = pos + 1\n\
+           }\n\
+           out\n\
+         }\n\
+         fn first8(xs: MutableList<Int>) -> String {\n\
+           var s = \"\"\n\
+           var i = 0\n\
+           while (i < 8 && i < xs.len()) {\n\
+             s = s.concat(xs[i].to_string())\n\
+             i = i + 1\n\
+           }\n\
+           s\n\
+         }\n\
+         fn main() -> String {\n\
+           var digits = parse_digits(\"12345678\")\n\
+           var i = 0\n\
+           while (i < 4) {\n\
+             digits = phase(digits)\n\
+             i = i + 1\n\
+           }\n\
+           first8(digits)\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(&output, "01029498", "run --backend wasm with fft sample");
+}
+
+#[test]
 fn replay_dispatches_wasm_logs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
