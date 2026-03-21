@@ -123,6 +123,52 @@ fn run_backend_wasm_supports_direct_imported_hash_md5() {
 }
 
 #[test]
+fn run_backend_wasm_supports_fs_read_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let input = dir.path().join("input.txt");
+    fs::write(&input, "hello from file").expect("write input");
+    fs::write(
+        &file,
+        format!(
+            "import fs\nfn main() -> String {{ fs.read_file(\"{}\") }}",
+            input.display()
+        ),
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "hello from file",
+        "run --backend wasm with fs.read_file",
+    );
+}
+
+#[test]
+fn run_backend_wasm_supports_direct_imported_fs_read_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let input = dir.path().join("input.txt");
+    fs::write(&input, "hello from direct import").expect("write input");
+    fs::write(
+        &file,
+        format!(
+            "from fs import read_file\nfn main() -> String {{ read_file(\"{}\") }}",
+            input.display()
+        ),
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "hello from direct import",
+        "run --backend wasm with direct-imported fs.read_file",
+    );
+}
+
+#[test]
 fn replay_dispatches_wasm_logs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");

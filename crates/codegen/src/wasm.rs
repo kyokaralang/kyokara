@@ -67,6 +67,7 @@ pub struct ModuleCtx<'a> {
     pub string_md5_fn_index: Option<u32>,
     pub parse_int_fn_index: Option<u32>,
     pub parse_float_fn_index: Option<u32>,
+    pub fs_read_file_fn_index: Option<u32>,
     pub io_print_fn_index: Option<u32>,
     pub io_println_fn_index: Option<u32>,
     pub current_closure_global_index: u32,
@@ -227,6 +228,17 @@ pub fn compile_module(
             )
         })
     });
+    let needs_fs_read_file = kir.functions.iter().any(|(_, func)| {
+        func.values.iter().any(|(_, value)| {
+            matches!(
+                &value.inst,
+                kyokara_kir::inst::Inst::Call {
+                    target: kyokara_kir::inst::CallTarget::Intrinsic(name),
+                    ..
+                } if name == "read_file"
+            )
+        })
+    });
     let needs_io_print = kir.functions.iter().any(|(_, func)| {
         func.values.iter().any(|(_, value)| {
             matches!(
@@ -286,6 +298,13 @@ pub fn compile_module(
     } else {
         None
     };
+    let fs_read_file_fn_index = if needs_fs_read_file {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
     let io_print_fn_index = if needs_io_print {
         let idx = next_fn_index;
         next_fn_index += 1;
@@ -337,6 +356,19 @@ pub fn compile_module(
     // Type 2: parse helper(i32 ptr, i32 len, i32 value_out, i32 msg_out) -> i32 status
     types.ty().function(
         [ValType::I32, ValType::I32, ValType::I32, ValType::I32],
+        [ValType::I32],
+    );
+    // Type 3: fs read helper(path ptr, path len, buffer ptr, buffer cap, written len ptr, required_by ptr, required_by len) -> i32 status
+    types.ty().function(
+        [
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+        ],
         [ValType::I32],
     );
 
@@ -393,6 +425,7 @@ pub fn compile_module(
         string_md5_fn_index,
         parse_int_fn_index,
         parse_float_fn_index,
+        fs_read_file_fn_index,
         io_print_fn_index,
         io_println_fn_index,
         current_closure_global_index: CURRENT_CLOSURE_GLOBAL_INDEX,
@@ -415,6 +448,9 @@ pub fn compile_module(
     }
     if parse_float_fn_index.is_some() {
         imports.import(HOST_MODULE, "parse_float", EntityType::Function(2));
+    }
+    if fs_read_file_fn_index.is_some() {
+        imports.import(HOST_MODULE, "fs_read_file", EntityType::Function(3));
     }
     if io_print_fn_index.is_some() {
         imports.import(HOST_MODULE, "io_print", EntityType::Function(2));
