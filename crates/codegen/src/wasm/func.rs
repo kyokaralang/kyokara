@@ -106,6 +106,16 @@ pub struct FuncCodegen<'a> {
     scratch_i32_54: u32,
     scratch_i32_55: u32,
     scratch_i32_56: u32,
+    scratch_i32_57: u32,
+    scratch_i32_58: u32,
+    scratch_i32_59: u32,
+    scratch_i32_60: u32,
+    scratch_i32_61: u32,
+    scratch_i32_62: u32,
+    scratch_i32_63: u32,
+    scratch_i32_64: u32,
+    scratch_i32_65: u32,
+    scratch_i32_66: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -208,6 +218,16 @@ impl<'a> FuncCodegen<'a> {
             scratch_i32_54: 0,
             scratch_i32_55: 0,
             scratch_i32_56: 0,
+            scratch_i32_57: 0,
+            scratch_i32_58: 0,
+            scratch_i32_59: 0,
+            scratch_i32_60: 0,
+            scratch_i32_61: 0,
+            scratch_i32_62: 0,
+            scratch_i32_63: 0,
+            scratch_i32_64: 0,
+            scratch_i32_65: 0,
+            scratch_i32_66: 0,
         }
     }
 
@@ -532,6 +552,46 @@ impl<'a> FuncCodegen<'a> {
         self.local_types.push(ValType::I32);
 
         self.scratch_i32_56 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_57 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_58 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_59 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_60 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_61 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_62 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_63 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_64 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_65 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_66 = self.next_local;
         self.next_local += 1;
         self.local_types.push(ValType::I32);
 
@@ -6896,6 +6956,20 @@ impl<'a> FuncCodegen<'a> {
                 self.scratch_i32_54,
                 self.scratch_i32_55,
                 self.scratch_i32_56,
+            )),
+            8 => Ok((
+                self.scratch_i32_57,
+                self.scratch_i32_58,
+                self.scratch_i32_59,
+                self.scratch_i32_60,
+                self.scratch_i32_61,
+            )),
+            9 => Ok((
+                self.scratch_i32_62,
+                self.scratch_i32_63,
+                self.scratch_i32_64,
+                self.scratch_i32_65,
+                self.scratch_i32_66,
             )),
             _ => Err(CodegenError::UnsupportedInstruction(
                 "Wasm natural ordering over deeply nested linear collections (deferred)".into(),

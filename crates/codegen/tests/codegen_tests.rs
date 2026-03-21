@@ -1109,6 +1109,46 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_mutable_list_sort_supports_very_deeply_nested_lists_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"from collections import List, MutableList
+fn wrap(n: Int) -> List<List<List<List<List<List<List<List<List<List<Int>>>>>>>>>> {
+  MutableList.new()
+    .push(MutableList.new()
+      .push(MutableList.new()
+        .push(MutableList.new()
+          .push(MutableList.new()
+            .push(MutableList.new()
+              .push(MutableList.new()
+                .push(MutableList.new()
+                  .push(MutableList.new()
+                    .push(MutableList.new().push(n).to_list())
+                    .to_list())
+                  .to_list())
+                .to_list())
+              .to_list())
+            .to_list())
+          .to_list())
+        .to_list())
+      .to_list())
+    .to_list()
+}
+fn main() -> Int {
+  let xs = MutableList.new().push(wrap(2)).push(wrap(1)).sort()
+  let needle = wrap(2)
+  if (
+    xs[0][0][0][0][0][0][0][0][0][0][0] == 1 &&
+    xs[1][0][0][0][0][0][0][0][0][0][0] == 2 &&
+    xs.binary_search(needle) == 1
+  ) { 1 } else { 0 }
+}"#
+        ),
+        1
+    );
+}
+
+#[test]
 fn test_builtin_trait_qualified_ord_compare_matches_interpreter_semantics() {
     assert_eq!(run_main_i64("fn main() -> Int { Ord.compare(3, 1) }"), 1);
 }
