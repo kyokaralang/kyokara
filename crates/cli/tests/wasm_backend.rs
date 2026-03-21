@@ -326,6 +326,28 @@ fn run_backend_wasm_handles_mutable_map_capacity_churn() {
 }
 
 #[test]
+fn run_backend_wasm_handles_mutable_map_string_keys_after_growth() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableMap\n\
+         fn main() -> Int {\n\
+           let m = MutableMap.new().insert(\"k\", 1).insert(\"z\", 2)\n\
+           m.get(\"k\").unwrap_or(-1) + m.get(\"z\").unwrap_or(-1)\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "3",
+        "run --backend wasm with mutable map string keys after growth",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_mutable_loop_locals_across_if_merges() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
@@ -696,6 +718,40 @@ fn run_backend_wasm_preserves_direct_fnref_in_large_chars_map() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_direct_fnref_in_large_chars_map_after_heap_pressure() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let input = dir.path().join("input.txt");
+    fs::write(&input, format!("{}\n", "0".repeat(16_369))).expect("write input");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         from fs import read_file\n\
+         fn digit_value(ch: Char) -> Int { if (ch == '0') { 0 } else { 1 } }\n\
+         fn burn() -> Unit {\n\
+           let xs = MutableList.new()\n\
+           var i = 0\n\
+           while (i < 300000) {\n\
+             let _ = xs.push(i)\n\
+             i = i + 1\n\
+           }\n\
+         }\n\
+         fn main() -> Int {\n\
+           burn()\n\
+           read_file(\"input.txt\").trim().chars().map(digit_value).to_list().len()\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "16369",
+        "run --backend wasm with high-heap chars().map(top_level_fn)",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_chars_materialization_inside_filtered_string_loops() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
@@ -1020,6 +1076,38 @@ fn run_backend_wasm_executes_aoc_2024_day09_reduced_prefix() {
         &output,
         "Part 1: 3383998181182\nPart 2: 3407986590223",
         "run --backend wasm AoC 2024 day09 reduced prefix",
+    );
+}
+
+#[test]
+fn run_backend_wasm_executes_aoc_2024_day09_threshold_prefix() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("day09.txt");
+    let prefix_len = 16_369usize;
+    let full_input = fs::read_to_string(
+        "/Users/alpha/CodexProjects/polyglot-bench/corpus/advent-of-code/2024/day09.txt",
+    )
+    .expect("read full day09 input");
+    let reduced = full_input
+        .trim()
+        .chars()
+        .take(prefix_len)
+        .collect::<String>();
+    fs::write(&input, format!("{reduced}\n")).expect("write threshold input");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "run",
+            "/Users/alpha/CodexProjects/polyglot-bench/adapters/kyokara/solutions/advent-of-code/2024/day09.ky",
+            "--backend",
+            "wasm",
+        ],
+    );
+    assert_stdout_trimmed(
+        &output,
+        "Part 1: 3384249318768\nPart 2: 3408130749484",
+        "run --backend wasm AoC 2024 day09 threshold prefix",
     );
 }
 

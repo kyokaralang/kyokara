@@ -6000,6 +6000,7 @@ impl<'a> FuncCodegen<'a> {
         })?;
         let key_local = self.map_key_local(key_ty);
         let entry_ptr_ty = self.map_entry_ptr_ty();
+        let new_entry_local = self.scratch_i32_16;
         let value_local = self.map_value_local(value_ty);
         self.emit_get(func, map);
         func.instruction(&Instruction::LocalSet(self.scratch_i32_12));
@@ -6030,12 +6031,12 @@ impl<'a> FuncCodegen<'a> {
             key_ty,
             value_local,
             value_ty,
-            self.scratch_i32_10,
+            new_entry_local,
         );
         self.emit_mutable_list_like_push_back_local_typed(
             func,
             self.scratch_i32_12,
-            self.scratch_i32_10,
+            new_entry_local,
             &entry_ptr_ty,
         );
         func.instruction(&Instruction::End);
@@ -6060,6 +6061,7 @@ impl<'a> FuncCodegen<'a> {
         let key_local = self.map_key_local(key_ty);
         let value_local = self.map_value_local(value_ty);
         let entry_ptr_ty = self.map_entry_ptr_ty();
+        let new_entry_local = self.scratch_i32_16;
 
         self.emit_get(func, map);
         func.instruction(&Instruction::LocalSet(self.scratch_i32_12));
@@ -6090,12 +6092,12 @@ impl<'a> FuncCodegen<'a> {
             key_ty,
             value_local,
             value_ty,
-            self.scratch_i32_10,
+            new_entry_local,
         );
         self.emit_mutable_list_like_push_back_local_typed(
             func,
             self.scratch_i32_12,
-            self.scratch_i32_10,
+            new_entry_local,
             &entry_ptr_ty,
         );
         func.instruction(&Instruction::End);
@@ -7010,6 +7012,29 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
 
+        // Reuse the current backing buffer when it is still at the heap tip.
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_10)); // old data end
+        func.instruction(&Instruction::GlobalGet(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_11)); // heap ptr
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_11));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Sub);
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_8)); // growth bytes
+        self.emit_alloc_dynamic_bytes_to_local(func, self.scratch_i32_8, self.scratch_i32_9);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
+        func.instruction(&Instruction::Else);
         func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
         func.instruction(&Instruction::I32Const(8));
         func.instruction(&Instruction::I32Mul);
@@ -7030,6 +7055,7 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalSet(self.scratch_i32_4));
         func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
         func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
+        func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
 
         func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
@@ -8070,6 +8096,29 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
 
+        // Reuse the current backing buffer when it is still at the heap tip.
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_10)); // old data end
+        func.instruction(&Instruction::GlobalGet(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_11)); // heap ptr
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_11));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32Sub);
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_8)); // growth bytes
+        self.emit_alloc_dynamic_bytes_to_local(func, self.scratch_i32_8, self.scratch_i32_9);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
+        func.instruction(&Instruction::Else);
         func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
         func.instruction(&Instruction::I32Const(8));
         func.instruction(&Instruction::I32Mul);
@@ -8090,6 +8139,7 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalSet(self.scratch_i32_4));
         func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
         func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
+        func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
 
         func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
@@ -11787,6 +11837,8 @@ impl<'a> FuncCodegen<'a> {
         out_list_local: u32,
     ) -> Result<(), CodegenError> {
         let input_local = self.temp_local_for_ty(input_ty);
+        let [len_local, data_local, index_local, slot_ptr_local] =
+            self.range_list_builder_i32_locals(out_list_local);
         let output_local = match output_ty {
             Ty::Float => {
                 if input_local == self.scratch_f64 {
@@ -11802,51 +11854,51 @@ impl<'a> FuncCodegen<'a> {
                     self.scratch_i64
                 }
             }
-            _ => {
-                if input_local == self.scratch_i32_7 {
-                    self.scratch_i32_12
-                } else {
-                    self.scratch_i32_7
-                }
-            }
+            _ => self.pick_i32_scratch_local_excluding(&[
+                input_local,
+                out_list_local,
+                len_local,
+                data_local,
+                index_local,
+                slot_ptr_local,
+            ]),
         };
-        func.instruction(&Instruction::LocalGet(list_local));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_8));
+
+        self.emit_load_list_len_and_data_from_local(
+            func,
+            list_local,
+            len_local,
+            self.scratch_i32_4,
+        );
+        self.emit_alloc_list_data_for_len(func, len_local, data_local);
         func.instruction(&Instruction::I32Const(0));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_9));
+        func.instruction(&Instruction::LocalSet(index_local));
 
         func.instruction(&Instruction::Block(BlockType::Empty));
         func.instruction(&Instruction::Loop(BlockType::Empty));
-        self.emit_load_list_len_and_data_from_local(
-            func,
-            self.scratch_i32_8,
-            self.scratch_i32_3,
-            self.scratch_i32_4,
-        );
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_9));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::LocalGet(index_local));
+        func.instruction(&Instruction::LocalGet(len_local));
         func.instruction(&Instruction::I32GeU);
         func.instruction(&Instruction::BrIf(1));
 
-        self.emit_load_list_slot_from_locals(
-            func,
-            self.scratch_i32_4,
-            self.scratch_i32_9,
-            input_ty,
-        );
+        self.emit_load_list_slot_from_locals(func, self.scratch_i32_4, index_local, input_ty);
         func.instruction(&Instruction::LocalSet(input_local));
         func.instruction(&Instruction::LocalGet(input_local));
         self.emit_indirect_call_single_arg(func, mapper)?;
         func.instruction(&Instruction::LocalSet(output_local));
-        self.emit_list_like_push_back_local_typed(func, out_list_local, output_local, output_ty);
+        self.emit_list_slot_ptr_from_locals(func, data_local, index_local, slot_ptr_local);
+        func.instruction(&Instruction::LocalGet(slot_ptr_local));
+        func.instruction(&Instruction::LocalGet(output_local));
+        self.emit_typed_store_stack(func, output_ty, 0);
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_9));
+        func.instruction(&Instruction::LocalGet(index_local));
         func.instruction(&Instruction::I32Const(1));
         func.instruction(&Instruction::I32Add);
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_9));
+        func.instruction(&Instruction::LocalSet(index_local));
         func.instruction(&Instruction::Br(0));
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
+        self.emit_update_list_header_from_locals(func, out_list_local, len_local, data_local);
         Ok(())
     }
 
@@ -19767,13 +19819,25 @@ impl<'a> FuncCodegen<'a> {
     }
 
     fn range_list_builder_output_i32_local(&self, out_list_local: u32) -> u32 {
-        if self.scratch_i32_7 != out_list_local {
-            self.scratch_i32_7
-        } else if self.scratch_i32_8 != out_list_local {
-            self.scratch_i32_8
-        } else {
-            panic!("missing i32 scratch output local for range list builder");
+        self.pick_i32_scratch_local_excluding(&[out_list_local])
+    }
+
+    fn pick_i32_scratch_local_excluding(&self, excluded: &[u32]) -> u32 {
+        let candidates = [
+            self.scratch_i32_7,
+            self.scratch_i32_8,
+            self.scratch_i32_16,
+            self.scratch_i32_12,
+            self.scratch_i32_11,
+            self.scratch_i32_10,
+            self.scratch_i32_9,
+        ];
+        for candidate in candidates {
+            if !excluded.contains(&candidate) {
+                return candidate;
+            }
         }
+        panic!("missing distinct i32 scratch local");
     }
 
     fn emit_option_unwrap_or(
