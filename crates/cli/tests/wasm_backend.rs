@@ -631,6 +631,30 @@ fn run_backend_wasm_preserves_char_values_through_list_map() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_direct_fnref_in_large_chars_map() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let input = dir.path().join("input.txt");
+    fs::write(&input, format!("{}\n", "0".repeat(16_384))).expect("write input");
+    fs::write(
+        &file,
+        "from fs import read_file\n\
+         fn digit_value(ch: Char) -> Int { if (ch == '0') { 0 } else { 1 } }\n\
+         fn main() -> Int {\n\
+           read_file(\"input.txt\").trim().chars().map(digit_value).to_list().len()\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "16384",
+        "run --backend wasm with large chars().map(top_level_fn)",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_chars_materialization_inside_filtered_string_loops() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
@@ -923,6 +947,38 @@ fn run_backend_wasm_executes_aoc_2024_day09_sample() {
         &output,
         "Part 1: 1928\nPart 2: 2858",
         "run --backend wasm AoC 2024 day09 sample",
+    );
+}
+
+#[test]
+fn run_backend_wasm_executes_aoc_2024_day09_reduced_prefix() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("day09.txt");
+    let prefix_len = 16_368usize;
+    let full_input = fs::read_to_string(
+        "/Users/alpha/CodexProjects/polyglot-bench/corpus/advent-of-code/2024/day09.txt",
+    )
+    .expect("read full day09 input");
+    let reduced = full_input
+        .trim()
+        .chars()
+        .take(prefix_len)
+        .collect::<String>();
+    fs::write(&input, format!("{reduced}\n")).expect("write reduced input");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "run",
+            "/Users/alpha/CodexProjects/polyglot-bench/adapters/kyokara/solutions/advent-of-code/2024/day09.ky",
+            "--backend",
+            "wasm",
+        ],
+    );
+    assert_stdout_trimmed(
+        &output,
+        "Part 1: 3383998181182\nPart 2: 3407986590223",
+        "run --backend wasm AoC 2024 day09 reduced prefix",
     );
 }
 

@@ -7000,7 +7000,7 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
         func.instruction(&Instruction::I32Eqz);
         func.instruction(&Instruction::If(BlockType::Empty));
-        func.instruction(&Instruction::I32Const(4));
+        func.instruction(&Instruction::I32Const(1));
         func.instruction(&Instruction::LocalSet(self.scratch_i32_6)); // new capacity
         func.instruction(&Instruction::Else);
         func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
@@ -20205,6 +20205,24 @@ impl<'a> FuncCodegen<'a> {
         func: &mut Function,
         callee: ValueId,
     ) -> Result<(), CodegenError> {
+        match &self.kir_func.values[callee].inst {
+            Inst::FnRef { name } => {
+                let fn_idx = self.ctx.fn_name_map.get(name).ok_or_else(|| {
+                    CodegenError::MissingFunction(name.resolve(self.ctx.interner).to_owned())
+                })?;
+                func.instruction(&Instruction::Call(*fn_idx));
+                return Ok(());
+            }
+            Inst::ClosureCreate { name, captures } if captures.is_empty() => {
+                let fn_idx = self.ctx.fn_name_map.get(name).ok_or_else(|| {
+                    CodegenError::MissingFunction(name.resolve(self.ctx.interner).to_owned())
+                })?;
+                func.instruction(&Instruction::Call(*fn_idx));
+                return Ok(());
+            }
+            _ => {}
+        }
+
         self.emit_get(func, callee);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
         func.instruction(&Instruction::LocalGet(self.scratch_i32));
