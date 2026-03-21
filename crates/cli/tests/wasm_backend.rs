@@ -183,6 +183,41 @@ fn run_backend_wasm_supports_short_circuit_while_conditions() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_short_circuit_if_results_across_loop_iterations() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from io import println\n\
+         fn main() -> Unit {\n\
+           var idx = 0\n\
+           while (idx < 2) {\n\
+             let ox1 = if (idx == 0) { 0 } else { 5 }\n\
+             let ox2 = if (idx == 0) { 1 } else { 2 }\n\
+             let oy1 = if (idx == 0) { 0 } else { 28 }\n\
+             let oy2 = if (idx == 0) { 1 } else { -2 }\n\
+             let oz1 = -17\n\
+             let oz2 = -6\n\
+             if (ox1 <= ox2 && oy1 <= oy2 && oz1 <= oz2) {\n\
+               println(\"T\")\n\
+             } else {\n\
+               println(\"F\")\n\
+             }\n\
+             idx = idx + 1\n\
+           }\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "T\nF",
+        "run --backend wasm with short-circuit if inside loop",
+    );
+}
+
+#[test]
 fn run_backend_wasm_handles_deep_recursive_workloads_without_native_stack_overflow() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
@@ -220,6 +255,47 @@ fn run_backend_wasm_handles_mutable_list_growth_and_set_loops() {
         &output,
         "9",
         "run --backend wasm with MutableList growth and set loop",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_mutable_loop_locals_across_if_merges() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "fn count(flag: Bool) -> Int {\n\
+           var total = 0\n\
+           for (step in (0..<420).to_list()) {\n\
+             var x0 = step\n\
+             var x1 = step\n\
+             var x2 = step\n\
+             var valid = true\n\
+             if (flag) {\n\
+               x0 = x0 + 0\n\
+               x1 = x1 + 0\n\
+               x2 = x2 + 0\n\
+               if (x0 > 19 || x1 > 19 || x2 > 19) {\n\
+                 valid = false\n\
+               }\n\
+             }\n\
+             if (valid) {\n\
+               total = total + 1\n\
+             }\n\
+           }\n\
+           total\n\
+         }\n\
+         fn main() -> String {\n\
+           count(false).to_string().concat(\":\").concat(count(true).to_string())\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "420:20",
+        "run --backend wasm preserves mutable loop locals across if merges",
     );
 }
 

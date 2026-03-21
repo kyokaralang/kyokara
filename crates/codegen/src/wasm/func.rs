@@ -1069,6 +1069,7 @@ impl<'a> FuncCodegen<'a> {
 
         self.emit_get(func, condition);
         func.instruction(&Instruction::If(BlockType::Empty));
+        let mut then_emitted = emitted.clone();
         self.emit_loop_branch_arm(
             func,
             then_target,
@@ -1077,9 +1078,10 @@ impl<'a> FuncCodegen<'a> {
             continue_depth + 1,
             break_depth + 1,
             merge_id,
-            emitted,
+            &mut then_emitted,
         )?;
         func.instruction(&Instruction::Else);
+        let mut else_emitted = emitted.clone();
         self.emit_loop_branch_arm(
             func,
             else_target,
@@ -1088,9 +1090,11 @@ impl<'a> FuncCodegen<'a> {
             continue_depth + 1,
             break_depth + 1,
             merge_id,
-            emitted,
+            &mut else_emitted,
         )?;
         func.instruction(&Instruction::End);
+        emitted.extend(then_emitted);
+        emitted.extend(else_emitted);
 
         if let Some(merge_id) = merge_id {
             self.emit_loop_block_chain(
@@ -1124,7 +1128,11 @@ impl<'a> FuncCodegen<'a> {
         then_reachable
             .iter()
             .filter_map(|(block, then_dist)| {
-                if *block == header || *block == exit {
+                if *block == header
+                    || *block == exit
+                    || *block == then_target.block
+                    || *block == else_target.block
+                {
                     return None;
                 }
                 else_reachable.get(block).map(|else_dist| {
@@ -1390,14 +1398,18 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::If(BlockType::Empty));
 
         // Then arm: emit with merge_id as stop point.
-        self.emit_branch_arm(func, then_target, merge_id, emitted)?;
+        let mut then_emitted = emitted.clone();
+        self.emit_branch_arm(func, then_target, merge_id, &mut then_emitted)?;
 
         func.instruction(&Instruction::Else);
 
         // Else arm: emit with merge_id as stop point.
-        self.emit_branch_arm(func, else_target, merge_id, emitted)?;
+        let mut else_emitted = emitted.clone();
+        self.emit_branch_arm(func, else_target, merge_id, &mut else_emitted)?;
 
         func.instruction(&Instruction::End);
+        emitted.extend(then_emitted);
+        emitted.extend(else_emitted);
 
         // After if/else, emit the merge block (it wasn't emitted by either arm).
         if let Some(mid) = merge_id {
@@ -1531,9 +1543,11 @@ impl<'a> FuncCodegen<'a> {
                 break;
             }
             let block = &self.kir_func.blocks[current];
+            if !block.params.is_empty() {
+                chain.push(current);
+            }
             match &block.terminator {
                 Some(Terminator::Jump(target)) => {
-                    chain.push(target.block);
                     current = target.block;
                 }
                 Some(Terminator::Branch {
@@ -1551,7 +1565,6 @@ impl<'a> FuncCodegen<'a> {
                         break;
                     }
                     if let Some(merge) = self.find_branch_merge_deep(then_target, else_target) {
-                        chain.push(merge);
                         current = merge;
                         continue;
                     }
@@ -1569,7 +1582,6 @@ impl<'a> FuncCodegen<'a> {
                         break;
                     }
                     if let Some(merge) = self.find_switch_merge(cases, default.as_ref()) {
-                        chain.push(merge);
                         current = merge;
                         continue;
                     }
@@ -1905,8 +1917,13 @@ impl<'a> FuncCodegen<'a> {
         target: &kyokara_kir::block::BranchTarget,
     ) -> Result<(), CodegenError> {
         let block = &self.kir_func.blocks[target.block];
-        for (arg, param) in target.args.iter().zip(block.params.iter()) {
+        // Block params are SSA phi-style values, so the incoming args must be
+        // assigned with parallel-copy semantics. Evaluate all args first, then
+        // store into locals in reverse stack order to avoid source clobbering.
+        for arg in &target.args {
             self.emit_get(func, *arg);
+        }
+        for param in block.params.iter().rev() {
             func.instruction(&Instruction::LocalSet(self.local_for(param.value)));
         }
         Ok(())

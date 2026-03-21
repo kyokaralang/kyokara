@@ -220,6 +220,34 @@ fn test_for_over_seq_lowers_without_placeholder_holes() {
 }
 
 #[test]
+fn test_for_loop_if_merge_threads_mutable_locals() {
+    let out = lower_and_display(
+        "fn f(flag: Bool) -> Int {\n\
+           var total = 0\n\
+           for (step in (0..<4).to_list()) {\n\
+             var x0 = step\n\
+             var x1 = step\n\
+             var x2 = step\n\
+             var valid = true\n\
+             if (flag) {\n\
+               x0 = x0 + 0\n\
+               x1 = x1 + 0\n\
+               x2 = x2 + 0\n\
+               if (x0 > 1 || x1 > 1 || x2 > 1) {\n\
+                 valid = false\n\
+               }\n\
+             }\n\
+             if (valid) {\n\
+               total = total + 1\n\
+             }\n\
+           }\n\
+           total\n\
+         }",
+    );
+    assert!(!out.contains("hole"), "output:\n{out}");
+}
+
+#[test]
 fn test_string_index_lowers_without_placeholder_holes() {
     let out = lower_and_display(r#"fn f() -> Int { "abc"[1].code() }"#);
     assert!(
