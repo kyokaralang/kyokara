@@ -767,10 +767,15 @@ impl<'a> FuncCodegen<'a> {
         &'b kyokara_kir::block::BranchTarget,
     )> {
         let header_params = &self.kir_func.blocks[header].params;
-        if header_params.is_empty() {
-            return None;
-        }
         let param_count = header_params.len();
+        if param_count == 0 {
+            if self.predecessor_blocks(header).len() < 2 {
+                return None;
+            }
+            if self.find_branch_merge_deep(then_target, else_target).is_some() {
+                return None;
+            }
+        }
 
         if then_target.args.is_empty() && else_target.args.len() == param_count {
             let then_reaches_header = self
@@ -1613,6 +1618,19 @@ impl<'a> FuncCodegen<'a> {
                 succs
             }
         }
+    }
+
+    fn predecessor_blocks(&self, block_id: BlockId) -> Vec<BlockId> {
+        self.kir_func
+            .blocks
+            .iter()
+            .filter_map(|(candidate, _)| {
+                self.successor_blocks(candidate)
+                    .into_iter()
+                    .any(|succ| succ == block_id)
+                    .then_some(candidate)
+            })
+            .collect()
     }
 
     fn emit_switch(

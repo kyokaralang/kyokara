@@ -300,6 +300,31 @@ fn run_backend_wasm_preserves_mutable_loop_locals_across_if_merges() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_side_effect_only_while_conditions() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn main() -> Int {\n\
+           let i = MutableList.new().push(0)\n\
+           while (i[0] >= 0) {\n\
+             let _i = i.set(0, -1)\n\
+           }\n\
+           11\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "11",
+        "run --backend wasm preserves side-effect-only while conditions",
+    );
+}
+
+#[test]
 fn run_backend_wasm_handles_large_mutable_list_push_workloads() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
