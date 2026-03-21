@@ -1,28 +1,28 @@
 import io
 
-type Color = | Red | Green | Blue
+type Color = Red | Green | Blue
 
 fn color_name(c: Color) -> String {
   match (c) {
-    Red => "red"
-    Green => "green"
-    Blue => "blue"
+    Color.Red => "red"
+    Color.Green => "green"
+    Color.Blue => "blue"
   }
 }
 
 type Shape =
-  | Circle(Int)
+  Circle(Int)
   | Rect(Int, Int)
 
 fn area(s: Shape) -> Int {
   match (s) {
-    Circle(r) => r * r * 3
-    Rect(w, h) => w * h
+    Shape.Circle(r) => r * r * 3
+    Shape.Rect(w, h) => w * h
   }
 }
 
 fn main() -> Unit {
-  io.println(color_name(Green))
-  io.println("circle area: ".concat(area(Circle(5)).to_string()))
-  io.println("rect area: ".concat(area(Rect(4, 6)).to_string()))
+  io.println(color_name(Color.Green))
+  io.println("circle area: ".concat(area(Shape.Circle(5)).to_string()))
+  io.println("rect area: ".concat(area(Shape.Rect(4, 6)).to_string()))
 }

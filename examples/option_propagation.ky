@@ -1,4 +1,5 @@
 import io
+from Option import Some, None
 
 fn safe_div(x: Int, y: Int) -> Option<Int> {
   if (y == 0) {

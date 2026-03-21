@@ -1,22 +1,21 @@
-cap Console {
-  fn print_line(s: String) -> Unit
+import io
+
+effect Audit
+
+fn log(msg: String) -> String with Audit {
+  io.println(msg)
+  msg
 }
 
-cap FileSystem {
-  fn read_file(path: String) -> String
-  fn write_file(path: String, content: String) -> Unit
-}
-
-fn log(msg: String) -> Unit with Console {
-  print_line(msg)
-}
-
-fn copy_file(src: String, dst: String) -> Unit with FileSystem, Console {
-  let content = read_file(src)
-  write_file(dst, content)
+fn copy_label(src: String, dst: String) -> String with Audit {
   log("Copied ".concat(src.concat(" to ".concat(dst))))
 }
 
 fn pure_transform(x: Int) -> Int {
   x * 2 + 1
+}
+
+fn main() -> Unit with Audit {
+  io.println(copy_label("source.txt", "dest.txt"))
+  io.println(pure_transform(20).to_string())
 }

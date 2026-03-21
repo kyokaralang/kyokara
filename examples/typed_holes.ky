@@ -1,14 +1,18 @@
-type Direction = | North | South | East | West
+type Direction = North | South | East | West
 
 fn opposite(d: Direction) -> Direction {
   match (d) {
-    North => South
-    South => North
-    East => _
-    West => _
+    Direction.North => Direction.South
+    Direction.South => Direction.North
+    Direction.East => _
+    Direction.West => _
   }
 }
 
 fn todo_fn(x: Int, y: String) -> Bool {
   _
+}
+
+fn main() -> Direction {
+  opposite(Direction.East)
 }

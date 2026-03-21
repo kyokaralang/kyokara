@@ -1,4 +1,5 @@
 import io
+from Result import Ok, Err
 
 fn parse_positive(n: Int) -> Result<Int, String> {
   if (n > 0) {
