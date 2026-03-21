@@ -8,6 +8,7 @@ use md5::Digest;
 use thiserror::Error;
 
 const HOST_MODULE: &str = "kyokara_host";
+const MAX_WASM_STACK_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
@@ -36,6 +37,8 @@ impl HostStatus {
 
 #[derive(Debug, Error)]
 pub enum WasmRuntimeError {
+    #[error("WASM engine setup failed: {0}")]
+    Engine(#[source] wasmtime::Error),
     #[error("invalid WASM module: {0}")]
     InvalidModule(#[source] wasmtime::Error),
     #[error("WASM instantiation failed: {0}")]
@@ -75,7 +78,7 @@ pub struct WasmProgram {
 
 impl WasmProgram {
     pub fn instantiate(bytes: &[u8]) -> Result<Self, WasmRuntimeError> {
-        let engine = wasmtime::Engine::default();
+        let engine = build_engine()?;
         let wasm_module =
             wasmtime::Module::new(&engine, bytes).map_err(WasmRuntimeError::InvalidModule)?;
         let mut store = wasmtime::Store::new(
@@ -96,7 +99,7 @@ impl WasmProgram {
         bytes: &[u8],
         runtime: Box<dyn RuntimeService>,
     ) -> Result<Self, WasmRuntimeError> {
-        let engine = wasmtime::Engine::default();
+        let engine = build_engine()?;
         let wasm_module =
             wasmtime::Module::new(&engine, bytes).map_err(WasmRuntimeError::InvalidModule)?;
         let mut store = wasmtime::Store::new(
@@ -200,6 +203,12 @@ impl WasmProgram {
         }
         Ok(())
     }
+}
+
+fn build_engine() -> Result<wasmtime::Engine, WasmRuntimeError> {
+    let mut config = wasmtime::Config::new();
+    config.max_wasm_stack(MAX_WASM_STACK_BYTES);
+    wasmtime::Engine::new(&config).map_err(WasmRuntimeError::Engine)
 }
 
 fn build_host_linker(

@@ -94,3 +94,16 @@ fn scalar_mvp_programs_match_interpreter_results() {
         assert_matches_interpreter(source);
     }
 }
+
+#[test]
+fn deep_recursive_programs_do_not_trap_from_default_wasm_stack_limit() {
+    let wasm_bytes = compile_source(
+        "fn dive(n: Int) -> Int { if (n == 0) { 0 } else { dive(n - 1) } }\nfn main() -> Int { dive(35000) }",
+    );
+    let mut program =
+        kyokara_wasm_runtime::WasmProgram::instantiate(&wasm_bytes).expect("wasm instantiate");
+    assert_eq!(
+        program.call_main_i64().expect("wasm recursion call failed"),
+        0
+    );
+}

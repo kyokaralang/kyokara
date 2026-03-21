@@ -430,7 +430,6 @@ pub fn compile_module(
         io_println_fn_index,
         current_closure_global_index: CURRENT_CLOSURE_GLOBAL_INDEX,
     };
-
     // ── Import section ────────────────────────────────────────────
 
     let mut imports = ImportSection::new();

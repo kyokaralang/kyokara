@@ -15,6 +15,8 @@ use std::collections::HashSet;
 use clap::{Parser, Subcommand};
 use semver::{Version, VersionReq};
 
+const WASM_BACKEND_THREAD_STACK_BYTES: usize = 512 * 1024 * 1024;
+
 #[derive(Parser)]
 #[command(name = "kyokara", version, about = "The Kyokara compiler")]
 struct Cli {
@@ -267,6 +269,7 @@ fn main() {
         } => {
             let path = resolve_cli_path(&file);
             let is_multi_file = should_use_project_mode(&path, project);
+            let replay_log_path = replay_log.as_ref().map(std::path::PathBuf::from);
 
             if let Err(message) = sync_project_lockfile_if_needed(&path, is_multi_file) {
                 eprintln!("error: {message}");
@@ -292,17 +295,22 @@ fn main() {
             });
             let options = kyokara_eval::RunOptions {
                 manifest,
-                replay_log: replay_log.as_deref().map(std::path::Path::new),
+                replay_log: replay_log_path.as_deref(),
             };
 
             match backend.as_str() {
                 "wasm" => {
-                    match run_with_wasm_backend(
-                        &path,
-                        is_multi_file,
-                        options.manifest.clone(),
-                        options.replay_log,
-                    ) {
+                    let path = path.clone();
+                    let manifest = options.manifest.clone();
+                    let replay_log_path = replay_log_path.clone();
+                    match run_on_wasm_backend_thread("run", move || {
+                        run_with_wasm_backend(
+                            &path,
+                            is_multi_file,
+                            manifest,
+                            replay_log_path.as_deref(),
+                        )
+                    }) {
                         Ok(Some(output)) => println!("{output}"),
                         Ok(None) => {}
                         Err(message) => {
@@ -381,7 +389,10 @@ fn main() {
             };
             match header.runtime.as_str() {
                 kyokara_runtime::replay::WASM_RUNTIME => {
-                    match replay_with_wasm_backend(&path, mode) {
+                    let path = path.clone();
+                    match run_on_wasm_backend_thread("replay", move || {
+                        replay_with_wasm_backend(&path, mode)
+                    }) {
                         Ok(Some(output)) => println!("{output}"),
                         Ok(None) => {}
                         Err(message) => {
@@ -1420,6 +1431,32 @@ fn run_with_wasm_backend(
     };
     let mut program = instantiate_wasm_program(&wasm_bytes, manifest, replay)?;
     decode_wasm_main_output(&mut program, &ret_ty, has_show_wrapper)
+}
+
+fn run_on_wasm_backend_thread<T, F>(label: &'static str, work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let handle = std::thread::Builder::new()
+        .name(format!("kyokara-wasm-{label}"))
+        .stack_size(WASM_BACKEND_THREAD_STACK_BYTES)
+        .spawn(work)
+        .map_err(|err| format!("failed to start wasm backend thread: {err}"))?;
+    match handle.join() {
+        Ok(result) => result,
+        Err(payload) => Err(format_wasm_backend_thread_panic(payload)),
+    }
+}
+
+fn format_wasm_backend_thread_panic(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return format!("wasm backend thread panicked: {message}");
+    }
+    if let Some(message) = payload.downcast_ref::<&'static str>() {
+        return format!("wasm backend thread panicked: {message}");
+    }
+    "wasm backend thread panicked".to_string()
 }
 
 fn replay_with_wasm_backend(

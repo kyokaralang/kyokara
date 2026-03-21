@@ -181,6 +181,25 @@ fn test_mutable_reassignment_and_while_lower_without_placeholder_holes() {
 }
 
 #[test]
+fn test_short_circuit_while_condition_lowers_without_placeholder_holes() {
+    let out = lower_and_display(
+        "fn f() -> Int {\n\
+           var i = 0\n\
+           while (i < 7 && i < 10) {\n\
+             i = i + 1\n\
+           }\n\
+           i\n\
+         }",
+    );
+    assert!(
+        !out.contains("hole"),
+        "short-circuit while lowering should not leave placeholder holes. output:\n{out}"
+    );
+    assert!(out.contains("branch "), "output:\n{out}");
+    assert!(out.contains("jump "), "output:\n{out}");
+}
+
+#[test]
 fn test_while_break_continue_lower_without_placeholder_holes() {
     let out = lower_and_display(
         "fn f() -> Int {\n\

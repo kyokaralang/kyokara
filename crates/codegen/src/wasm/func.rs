@@ -804,7 +804,7 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::If(BlockType::Empty));
         self.emit_block_param_stores(func, body_target)?;
 
-        let mut loop_emitted = emitted.clone();
+        let mut loop_emitted = FxHashMap::default();
         self.emit_loop_block_chain(
             func,
             body_target.block,
@@ -984,8 +984,11 @@ impl<'a> FuncCodegen<'a> {
         header: BlockId,
         exit: BlockId,
     ) -> Option<BlockId> {
-        let then_reachable = self.reachable_block_distances(then_target.block);
-        let else_reachable = self.reachable_block_distances(else_target.block);
+        let mut stops = FxHashSet::default();
+        stops.insert(header);
+        stops.insert(exit);
+        let then_reachable = self.reachable_block_distances_until(then_target.block, &stops);
+        let else_reachable = self.reachable_block_distances_until(else_target.block, &stops);
 
         then_reachable
             .iter()
@@ -1024,14 +1027,20 @@ impl<'a> FuncCodegen<'a> {
             excluded.insert(default.block);
         }
 
+        let mut stop_blocks = FxHashSet::default();
+        stop_blocks.insert(current_block);
+        stop_blocks.insert(header);
+        stop_blocks.insert(exit);
+
         let mut reachable_sets: Vec<FxHashMap<BlockId, usize>> = cases
             .iter()
             .filter(|case| !self.loop_switch_target_exits_directly(case.target.block, header, exit))
-            .map(|case| self.reachable_block_distances(case.target.block))
+            .map(|case| self.reachable_block_distances_until(case.target.block, &stop_blocks))
             .collect();
         if let Some(default) = default {
             if !self.loop_switch_target_exits_directly(default.block, header, exit) {
-                reachable_sets.push(self.reachable_block_distances(default.block));
+                reachable_sets
+                    .push(self.reachable_block_distances_until(default.block, &stop_blocks));
             }
         }
 
@@ -1351,12 +1360,23 @@ impl<'a> FuncCodegen<'a> {
     }
 
     fn reachable_block_distances(&self, start: BlockId) -> FxHashMap<BlockId, usize> {
+        self.reachable_block_distances_until(start, &FxHashSet::default())
+    }
+
+    fn reachable_block_distances_until(
+        &self,
+        start: BlockId,
+        stops: &FxHashSet<BlockId>,
+    ) -> FxHashMap<BlockId, usize> {
         let mut distances = FxHashMap::default();
         let mut queue = VecDeque::new();
         distances.insert(start, 0);
         queue.push_back(start);
 
         while let Some(block_id) = queue.pop_front() {
+            if stops.contains(&block_id) {
+                continue;
+            }
             let distance = distances[&block_id];
             for succ in self.successor_blocks(block_id) {
                 if distances.insert(succ, distance + 1).is_none() {
@@ -1387,6 +1407,15 @@ impl<'a> FuncCodegen<'a> {
                     else_target,
                     ..
                 }) => {
+                    let then_reaches_current = self
+                        .reachable_block_distances(then_target.block)
+                        .contains_key(&current);
+                    let else_reaches_current = self
+                        .reachable_block_distances(else_target.block)
+                        .contains_key(&current);
+                    if then_reaches_current || else_reaches_current {
+                        break;
+                    }
                     if let Some(merge) = self.find_branch_merge_deep(then_target, else_target) {
                         chain.push(merge);
                         current = merge;
@@ -1395,6 +1424,16 @@ impl<'a> FuncCodegen<'a> {
                     break;
                 }
                 Some(Terminator::Switch { cases, default, .. }) => {
+                    let switch_reaches_current = cases.iter().any(|case| {
+                        self.reachable_block_distances(case.target.block)
+                            .contains_key(&current)
+                    }) || default.as_ref().is_some_and(|default| {
+                        self.reachable_block_distances(default.block)
+                            .contains_key(&current)
+                    });
+                    if switch_reaches_current {
+                        break;
+                    }
                     if let Some(merge) = self.find_switch_merge(cases, default.as_ref()) {
                         chain.push(merge);
                         current = merge;

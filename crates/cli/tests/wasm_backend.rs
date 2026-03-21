@@ -169,6 +169,34 @@ fn run_backend_wasm_supports_direct_imported_fs_read_file() {
 }
 
 #[test]
+fn run_backend_wasm_supports_short_circuit_while_conditions() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "fn main() -> Int {\n  var i = 0\n  while (i < 7 && i < 10) {\n    i = i + 1\n  }\n  i\n}",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(&output, "7", "run --backend wasm with short-circuit while");
+}
+
+#[test]
+fn run_backend_wasm_handles_deep_recursive_workloads_without_native_stack_overflow() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "fn dive(n: Int) -> Int { if (n == 0) { 0 } else { dive(n - 1) } }\nfn main() -> Int { dive(50000) }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(&output, "0", "run --backend wasm with deep recursion");
+}
+
+#[test]
 fn replay_dispatches_wasm_logs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
