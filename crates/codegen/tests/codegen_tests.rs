@@ -1308,6 +1308,40 @@ fn main() -> Bool {
 }
 
 #[test]
+fn test_builtin_trait_qualified_hash_supports_very_deep_nested_lists_in_wasm() {
+    assert!(run_main_bool(
+        r#"from collections import List, MutableList
+fn wrap(n: Int) -> List<List<List<List<List<List<List<List<List<List<Int>>>>>>>>>> {
+  MutableList.new()
+    .push(MutableList.new()
+      .push(MutableList.new()
+        .push(MutableList.new()
+          .push(MutableList.new()
+            .push(MutableList.new()
+              .push(MutableList.new()
+                .push(MutableList.new()
+                  .push(MutableList.new()
+                    .push(MutableList.new().push(n).to_list())
+                    .to_list())
+                  .to_list())
+                .to_list())
+              .to_list())
+            .to_list())
+          .to_list())
+        .to_list())
+      .to_list())
+    .to_list()
+}
+fn main() -> Bool {
+  let a = Hash.hash(wrap(1))
+  let b = Hash.hash(wrap(1))
+  let c = Hash.hash(wrap(2))
+  a == b && a != c
+}"#
+    ));
+}
+
+#[test]
 fn test_builtin_trait_qualified_show_supports_option_variants_in_wasm() {
     assert_eq!(
         run_main_string(&with_option_variants(

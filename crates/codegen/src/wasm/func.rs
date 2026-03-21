@@ -43,6 +43,9 @@ pub struct FuncCodegen<'a> {
     scratch_i64_8: u32,
     scratch_i64_9: u32,
     scratch_i64_10: u32,
+    scratch_i64_11: u32,
+    scratch_i64_12: u32,
+    scratch_i64_13: u32,
     /// Scratch f64 local for float runtime helpers.
     scratch_f64: u32,
     scratch_f64_2: u32,
@@ -158,6 +161,9 @@ impl<'a> FuncCodegen<'a> {
             scratch_i64_8: 0,
             scratch_i64_9: 0,
             scratch_i64_10: 0,
+            scratch_i64_11: 0,
+            scratch_i64_12: 0,
+            scratch_i64_13: 0,
             scratch_f64: 0,
             scratch_f64_2: 0,
             scratch_f64_3: 0,
@@ -312,6 +318,18 @@ impl<'a> FuncCodegen<'a> {
         self.local_types.push(ValType::I64);
 
         self.scratch_i64_10 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I64);
+
+        self.scratch_i64_11 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I64);
+
+        self.scratch_i64_12 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I64);
+
+        self.scratch_i64_13 = self.next_local;
         self.next_local += 1;
         self.local_types.push(ValType::I64);
 
@@ -13694,6 +13712,9 @@ impl<'a> FuncCodegen<'a> {
             4 => Ok(self.scratch_i64_8),
             5 => Ok(self.scratch_i64_9),
             6 => Ok(self.scratch_i64_10),
+            7 => Ok(self.scratch_i64_11),
+            8 => Ok(self.scratch_i64_12),
+            9 => Ok(self.scratch_i64_13),
             _ => Err(CodegenError::UnsupportedInstruction(
                 "Wasm builtin Hash.hash over deeply nested structural values (deferred)".into(),
             )),
