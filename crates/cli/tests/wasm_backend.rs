@@ -105,6 +105,24 @@ fn run_backend_wasm_supports_io_println_effects() {
 }
 
 #[test]
+fn run_backend_wasm_supports_direct_imported_hash_md5() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from hash import md5\nfn main() -> String { md5(\"abc\") }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "900150983cd24fb0d6963f7d28e17f72",
+        "run --backend wasm with direct-imported hash.md5",
+    );
+}
+
+#[test]
 fn replay_dispatches_wasm_logs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");

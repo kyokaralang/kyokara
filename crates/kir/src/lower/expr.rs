@@ -1188,9 +1188,13 @@ impl<'a> LoweringCtx<'a> {
                         &param_names,
                         Some(&param_named_only),
                     );
-                    return self
-                        .builder
-                        .push_call(CallTarget::Direct(name), arg_vals, ty);
+                    let fn_item = &self.item_tree.functions[fn_idx];
+                    let target = if self.intrinsics.contains(&fn_item.name) {
+                        CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
+                    } else {
+                        CallTarget::Direct(fn_item.name)
+                    };
+                    return self.builder.push_call(target, arg_vals, ty);
                 }
             }
 

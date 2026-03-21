@@ -394,6 +394,12 @@ fn test_named_args_reordered_module_call() {
 }
 
 #[test]
+fn test_from_imported_synthetic_module_call_keeps_intrinsic_identity() {
+    let out = lower_and_display("from hash import md5\nfn main() -> String { md5(\"abc\") }");
+    assert!(out.contains("call intrinsic:string_md5"), "output:\n{out}");
+}
+
+#[test]
 fn test_unimported_module_call_is_not_lowered_as_intrinsic() {
     let result = check_file("fn main() -> Int { math.min(1, 2) }");
     let mut interner = result.interner;
