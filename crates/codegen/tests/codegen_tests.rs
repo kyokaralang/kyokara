@@ -1200,6 +1200,26 @@ fn main() -> String {
 }
 
 #[test]
+fn test_builtin_trait_qualified_show_on_derived_record_with_list_field_matches_interpreter_semantics()
+ {
+    assert_eq!(
+        run_main_string(
+            r#"from collections import List, MutableList
+type Box derive(Show) = { xs: List<Int> }
+
+fn mk(n: Int) -> Box {
+  Box { xs: MutableList.new().push(n).to_list() }
+}
+
+fn main() -> String {
+  Show.show(mk(1))
+}"#
+        ),
+        "{ xs: [1] }"
+    );
+}
+
+#[test]
 fn test_builtin_trait_qualified_hash_is_stable_for_primitives_in_wasm() {
     assert!(run_main_bool(
         r#"fn main() -> Bool {
