@@ -1166,6 +1166,23 @@ fn main() -> Bool {
 }
 
 #[test]
+fn test_builtin_trait_qualified_eq_on_derived_record_with_list_field_matches_interpreter_semantics()
+{
+    assert!(run_main_bool(
+        r#"from collections import List, MutableList
+type Box derive(Eq) = { xs: List<Int> }
+
+fn mk(n: Int) -> Box {
+  Box { xs: MutableList.new().push(n).to_list() }
+}
+
+fn main() -> Bool {
+  Eq.eq(mk(1), mk(1))
+}"#
+    ));
+}
+
+#[test]
 fn test_user_impl_trait_qualified_show_dispatches_in_wasm() {
     assert_eq!(
         run_main_string(

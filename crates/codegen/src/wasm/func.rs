@@ -13415,12 +13415,150 @@ impl<'a> FuncCodegen<'a> {
         }
     }
 
-    fn emit_value_equals_from_locals(
+    fn equality_linear_state_locals(
+        &self,
+        depth: u32,
+    ) -> Result<(u32, u32, u32, u32, u32, u32), CodegenError> {
+        match depth {
+            0 => Ok((
+                self.scratch_i32_17,
+                self.scratch_i32_18,
+                self.scratch_i32_19,
+                self.scratch_i32_20,
+                self.scratch_i32_21,
+                self.scratch_i32_22,
+            )),
+            1 => Ok((
+                self.scratch_i32_23,
+                self.scratch_i32_24,
+                self.scratch_i32_25,
+                self.scratch_i32_26,
+                self.scratch_i32_27,
+                self.scratch_i32_28,
+            )),
+            2 => Ok((
+                self.scratch_i32_29,
+                self.scratch_i32_30,
+                self.scratch_i32_31,
+                self.scratch_i32_32,
+                self.scratch_i32_33,
+                self.scratch_i32_34,
+            )),
+            3 => Ok((
+                self.scratch_i32_35,
+                self.scratch_i32_36,
+                self.scratch_i32_37,
+                self.scratch_i32_38,
+                self.scratch_i32_39,
+                self.scratch_i32_40,
+            )),
+            4 => Ok((
+                self.scratch_i32_41,
+                self.scratch_i32_42,
+                self.scratch_i32_43,
+                self.scratch_i32_44,
+                self.scratch_i32_45,
+                self.scratch_i32_46,
+            )),
+            5 => Ok((
+                self.scratch_i32_47,
+                self.scratch_i32_48,
+                self.scratch_i32_49,
+                self.scratch_i32_50,
+                self.scratch_i32_51,
+                self.scratch_i32_52,
+            )),
+            6 => Ok((
+                self.scratch_i32_53,
+                self.scratch_i32_54,
+                self.scratch_i32_55,
+                self.scratch_i32_56,
+                self.scratch_i32_57,
+                self.scratch_i32_58,
+            )),
+            7 => Ok((
+                self.scratch_i32_59,
+                self.scratch_i32_60,
+                self.scratch_i32_61,
+                self.scratch_i32_62,
+                self.scratch_i32_63,
+                self.scratch_i32_64,
+            )),
+            _ => Err(CodegenError::UnsupportedInstruction(
+                "Wasm structural equality over deeply nested linear collections (deferred)".into(),
+            )),
+        }
+    }
+
+    fn emit_linear_collection_equals_from_locals(
+        &self,
+        func: &mut Function,
+        lhs_local: u32,
+        rhs_local: u32,
+        elem_ty: &Ty,
+        depth: u32,
+    ) -> Result<(), CodegenError> {
+        let (lhs_len_local, lhs_data_local, rhs_len_local, rhs_data_local, idx_local, result_local) =
+            self.equality_linear_state_locals(depth)?;
+
+        func.instruction(&Instruction::LocalGet(lhs_local));
+        func.instruction(&Instruction::LocalGet(rhs_local));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::Else);
+
+        self.emit_load_list_len_and_data_from_local(func, lhs_local, lhs_len_local, lhs_data_local);
+        self.emit_load_list_len_and_data_from_local(func, rhs_local, rhs_len_local, rhs_data_local);
+
+        func.instruction(&Instruction::LocalGet(lhs_len_local));
+        func.instruction(&Instruction::LocalGet(rhs_len_local));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(idx_local));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::LocalSet(result_local));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(idx_local));
+        func.instruction(&Instruction::LocalGet(lhs_len_local));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        self.emit_load_list_slot_from_locals(func, lhs_data_local, idx_local, elem_ty);
+        self.emit_load_list_slot_from_locals(func, rhs_data_local, idx_local, elem_ty);
+        self.emit_value_equals_stack_with_depth(func, elem_ty, depth + 1)?;
+        func.instruction(&Instruction::LocalSet(result_local));
+
+        func.instruction(&Instruction::LocalGet(result_local));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(idx_local));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(idx_local));
+        func.instruction(&Instruction::Br(1));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::Br(1));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(result_local));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+        Ok(())
+    }
+
+    fn emit_value_equals_from_locals_with_depth(
         &self,
         func: &mut Function,
         lhs_local: u32,
         rhs_local: u32,
         ty: &Ty,
+        depth: u32,
     ) -> Result<(), CodegenError> {
         match ty {
             Ty::Int => {
@@ -13447,6 +13585,12 @@ impl<'a> FuncCodegen<'a> {
                 Ok(())
             }
             Ty::Record { .. } | Ty::Adt { .. } => {
+                if let Some(elem_ty) = self.linear_collection_element_ty_from_ty(ty) {
+                    return self.emit_linear_collection_equals_from_locals(
+                        func, lhs_local, rhs_local, elem_ty, depth,
+                    );
+                }
+
                 let fields = self.resolve_record_fields(ty).map_err(|_| {
                     CodegenError::UnsupportedInstruction(format!(
                         "Wasm structural equality over {ty:?} (deferred)"
@@ -13474,11 +13618,12 @@ impl<'a> FuncCodegen<'a> {
                     self.emit_typed_load(func, field_ty, offset);
                     func.instruction(&Instruction::LocalSet(field_rhs_local));
 
-                    self.emit_value_equals_from_locals(
+                    self.emit_value_equals_from_locals_with_depth(
                         func,
                         field_lhs_local,
                         field_rhs_local,
                         field_ty,
+                        depth + 1,
                     )?;
                     func.instruction(&Instruction::I32Eqz);
                     func.instruction(&Instruction::If(BlockType::Empty));
@@ -13498,11 +13643,30 @@ impl<'a> FuncCodegen<'a> {
         }
     }
 
-    fn emit_value_equals_stack(&self, func: &mut Function, ty: &Ty) -> Result<(), CodegenError> {
+    fn emit_value_equals_from_locals(
+        &self,
+        func: &mut Function,
+        lhs_local: u32,
+        rhs_local: u32,
+        ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        self.emit_value_equals_from_locals_with_depth(func, lhs_local, rhs_local, ty, 0)
+    }
+
+    fn emit_value_equals_stack_with_depth(
+        &self,
+        func: &mut Function,
+        ty: &Ty,
+        depth: u32,
+    ) -> Result<(), CodegenError> {
         let (lhs_local, rhs_local) = self.equality_temp_locals(ty);
         func.instruction(&Instruction::LocalSet(rhs_local));
         func.instruction(&Instruction::LocalSet(lhs_local));
-        self.emit_value_equals_from_locals(func, lhs_local, rhs_local, ty)
+        self.emit_value_equals_from_locals_with_depth(func, lhs_local, rhs_local, ty, depth)
+    }
+
+    fn emit_value_equals_stack(&self, func: &mut Function, ty: &Ty) -> Result<(), CodegenError> {
+        self.emit_value_equals_stack_with_depth(func, ty, 0)
     }
 
     fn trait_show_child_local(&self, depth: u32) -> Result<u32, CodegenError> {
@@ -20813,16 +20977,34 @@ impl<'a> FuncCodegen<'a> {
     fn resolve_record_fields(&self, record_ty: &Ty) -> Result<Vec<(Name, Ty)>, CodegenError> {
         let mut fields: Vec<(Name, Ty)> = match record_ty {
             Ty::Record { fields } => fields.clone(),
-            Ty::Adt { def, .. } => {
+            Ty::Adt { def, args } => {
                 let type_item = &self.ctx.item_tree.types[*def];
                 match &type_item.kind {
                     TypeDefKind::Record { fields } => fields
                         .iter()
-                        .map(|(name, ty_ref)| (*name, self.resolve_record_field_storage_ty(ty_ref)))
+                        .map(|(name, ty_ref)| {
+                            (
+                                *name,
+                                self.resolve_type_ref_storage_ty_with_args(
+                                    ty_ref,
+                                    &type_item.type_params,
+                                    args,
+                                ),
+                            )
+                        })
                         .collect(),
                     TypeDefKind::Alias(TypeRef::Record { fields }) => fields
                         .iter()
-                        .map(|(name, ty_ref)| (*name, self.resolve_record_field_storage_ty(ty_ref)))
+                        .map(|(name, ty_ref)| {
+                            (
+                                *name,
+                                self.resolve_type_ref_storage_ty_with_args(
+                                    ty_ref,
+                                    &type_item.type_params,
+                                    args,
+                                ),
+                            )
+                        })
                         .collect(),
                     _ => {
                         return Err(CodegenError::UnsupportedType(
@@ -20844,16 +21026,6 @@ impl<'a> FuncCodegen<'a> {
             a_str.cmp(b_str)
         });
         Ok(fields)
-    }
-
-    fn resolve_record_field_storage_ty(&self, type_ref: &TypeRef) -> Ty {
-        match type_ref {
-            TypeRef::Path { path, args } if path.is_single() && args.is_empty() => {
-                let name = path.segments[0].resolve(self.ctx.interner);
-                resolve_builtin(name).unwrap_or(Ty::Error)
-            }
-            _ => Ty::Error,
-        }
     }
 
     fn resolve_type_ref_storage_ty_with_args(
@@ -20884,12 +21056,14 @@ impl<'a> FuncCodegen<'a> {
                     return builtin;
                 }
 
+                let core_name = format!("$core_{name}");
                 self.ctx
                     .item_tree
                     .types
                     .iter()
                     .find_map(|(idx, item)| {
-                        (item.name == seg).then_some(Ty::Adt {
+                        let item_name = item.name.resolve(self.ctx.interner);
+                        ((item.name == seg) || item_name == core_name).then_some(Ty::Adt {
                             def: idx,
                             args: resolved_args.clone(),
                         })
