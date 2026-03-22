@@ -31,6 +31,8 @@ pub struct FuncCodegen<'a> {
     ctx: &'a ModuleCtx<'a>,
     /// ValueId -> WASM local index.
     local_map: FxHashMap<ValueId, u32>,
+    /// Dedicated cache locals for repeated `string.chars().to_list()` call sites.
+    string_chars_to_list_cache_locals: FxHashMap<ValueId, (u32, u32)>,
     /// Types of non-param locals (for WASM local declarations).
     local_types: Vec<ValType>,
     /// Next available local index.
@@ -177,6 +179,7 @@ impl<'a> FuncCodegen<'a> {
             kir_func,
             ctx,
             local_map: FxHashMap::default(),
+            string_chars_to_list_cache_locals: FxHashMap::default(),
             local_types: Vec::new(),
             next_local: kir_func.params.len() as u32,
             scratch_i64: 0,
@@ -331,6 +334,19 @@ impl<'a> FuncCodegen<'a> {
             self.next_local += 1;
             self.local_types.push(wasm_ty);
             self.local_map.insert(vid, local_idx);
+
+            if self.string_chars_to_list_source(vid).is_some() {
+                let cached_string_local = self.next_local;
+                self.next_local += 1;
+                self.local_types.push(ValType::I32);
+
+                let cached_list_local = self.next_local;
+                self.next_local += 1;
+                self.local_types.push(ValType::I32);
+
+                self.string_chars_to_list_cache_locals
+                    .insert(vid, (cached_string_local, cached_list_local));
+            }
         }
 
         // Scratch locals for checked integer operations.
@@ -2211,6 +2227,43 @@ impl<'a> FuncCodegen<'a> {
             }
 
             Inst::Call { target, args } => {
+                if let Some(string_source) = self.string_chars_to_list_source(vid)
+                    && let Some(&(cached_string_local, cached_list_local)) =
+                        self.string_chars_to_list_cache_locals.get(&vid)
+                {
+                    self.emit_get(func, string_source);
+                    func.instruction(&Instruction::LocalSet(self.scratch_i32)); // current string ptr
+
+                    func.instruction(&Instruction::LocalGet(cached_list_local));
+                    func.instruction(&Instruction::I32Eqz);
+                    func.instruction(&Instruction::If(BlockType::Empty));
+                    self.emit_seq_to_list_chars_from_string_local(
+                        func,
+                        self.scratch_i32,
+                        cached_list_local,
+                    );
+                    func.instruction(&Instruction::LocalGet(self.scratch_i32));
+                    func.instruction(&Instruction::LocalSet(cached_string_local));
+                    func.instruction(&Instruction::Else);
+                    func.instruction(&Instruction::LocalGet(cached_string_local));
+                    func.instruction(&Instruction::LocalGet(self.scratch_i32));
+                    func.instruction(&Instruction::I32Ne);
+                    func.instruction(&Instruction::If(BlockType::Empty));
+                    self.emit_seq_to_list_chars_from_string_local(
+                        func,
+                        self.scratch_i32,
+                        cached_list_local,
+                    );
+                    func.instruction(&Instruction::LocalGet(self.scratch_i32));
+                    func.instruction(&Instruction::LocalSet(cached_string_local));
+                    func.instruction(&Instruction::End);
+                    func.instruction(&Instruction::End);
+
+                    func.instruction(&Instruction::LocalGet(cached_list_local));
+                    func.instruction(&Instruction::LocalSet(local_idx));
+                    return Ok(());
+                }
+
                 self.emit_call(func, target, args, &vdef.ty)?;
                 func.instruction(&Instruction::LocalSet(local_idx));
             }
@@ -4035,6 +4088,36 @@ impl<'a> FuncCodegen<'a> {
             self.scratch_i32_6,
         );
         func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
+    }
+
+    fn string_chars_to_list_source(&self, list: ValueId) -> Option<ValueId> {
+        let Inst::Call {
+            target: CallTarget::Intrinsic(seq_to_list),
+            args,
+        } = &self.kir_func.values[list].inst
+        else {
+            return None;
+        };
+        if seq_to_list != "seq_to_list" {
+            return None;
+        }
+        let [seq_value] = args.as_slice() else {
+            return None;
+        };
+        let Inst::Call {
+            target: CallTarget::Intrinsic(chars_intrinsic),
+            args,
+        } = &self.kir_func.values[*seq_value].inst
+        else {
+            return None;
+        };
+        if chars_intrinsic != "string_chars" {
+            return None;
+        }
+        let [string_value] = args.as_slice() else {
+            return None;
+        };
+        Some(*string_value)
     }
 
     // ── Binary operations ─────────────────────────────────────────
@@ -9664,6 +9747,33 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::End);
     }
 
+    fn emit_alloc_mutable_list_with_capacity_from_local(
+        &self,
+        func: &mut Function,
+        capacity_local: u32,
+        out_local: u32,
+    ) {
+        self.emit_alloc_empty_list_to_local(func, out_local);
+
+        func.instruction(&Instruction::LocalGet(capacity_local));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(capacity_local));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
+        self.emit_alloc_dynamic_bytes_to_local(func, self.scratch_i32_3, self.scratch_i32_4);
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
+        self.emit_update_mutable_list_header_from_locals(
+            func,
+            out_local,
+            self.scratch_i32_5,
+            capacity_local,
+            self.scratch_i32_4,
+        );
+        func.instruction(&Instruction::End);
+    }
+
     fn emit_alloc_list_data_for_len(&self, func: &mut Function, len_local: u32, out_local: u32) {
         func.instruction(&Instruction::LocalGet(len_local));
         func.instruction(&Instruction::If(BlockType::Empty));
@@ -12866,32 +12976,7 @@ impl<'a> FuncCodegen<'a> {
         seq_local: u32,
         out_local: u32,
     ) {
-        let use_alt_temps = matches!(
-            out_local,
-            local if local == self.scratch_i32_11
-                || local == self.scratch_i32_12
-                || local == self.scratch_i32_13
-                || local == self.scratch_i32_14
-                || local == self.scratch_i32_15
-        );
-        let (string_local, byte_len_local, byte_idx_local, char_width_local, codepoint_local) =
-            if use_alt_temps {
-                (
-                    self.scratch_i32_16,
-                    self.scratch_i32_17,
-                    self.scratch_i32_18,
-                    self.scratch_i32_19,
-                    self.scratch_i32_20,
-                )
-            } else {
-                (
-                    self.scratch_i32_13,
-                    self.scratch_i32_14,
-                    self.scratch_i32_15,
-                    self.scratch_i32_11,
-                    self.scratch_i32_12,
-                )
-            };
+        let string_local = self.scratch_i32_13;
 
         func.instruction(&Instruction::LocalGet(seq_local));
         func.instruction(&Instruction::I32Load(MemArg {
@@ -12900,6 +12985,21 @@ impl<'a> FuncCodegen<'a> {
             memory_index: 0,
         }));
         func.instruction(&Instruction::LocalSet(string_local)); // string ptr
+        self.emit_seq_to_list_chars_from_string_local(func, string_local, out_local);
+    }
+
+    fn emit_seq_to_list_chars_from_string_local(
+        &self,
+        func: &mut Function,
+        string_local: u32,
+        out_local: u32,
+    ) {
+        let byte_len_local = self.scratch_i32_16;
+        let char_len_local = self.scratch_i32_17;
+        let byte_idx_local = self.scratch_i32_18;
+        let char_width_local = self.scratch_i32_19;
+        let codepoint_local = self.scratch_i32_20;
+        let builder_local = self.scratch_i32_21;
 
         func.instruction(&Instruction::LocalGet(string_local));
         func.instruction(&Instruction::I32Load(MemArg {
@@ -12909,7 +13009,15 @@ impl<'a> FuncCodegen<'a> {
         }));
         func.instruction(&Instruction::LocalSet(byte_len_local)); // byte len
 
-        self.emit_alloc_empty_list_to_local(func, out_local);
+        func.instruction(&Instruction::LocalGet(string_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 4,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(char_len_local)); // char len
+
+        self.emit_alloc_mutable_list_with_capacity_from_local(func, char_len_local, builder_local);
         func.instruction(&Instruction::I32Const(0));
         func.instruction(&Instruction::LocalSet(byte_idx_local)); // byte idx
 
@@ -12928,7 +13036,12 @@ impl<'a> FuncCodegen<'a> {
             char_width_local,
             codepoint_local,
         );
-        self.emit_list_like_push_back_local_typed(func, out_local, codepoint_local, &Ty::Char);
+        self.emit_mutable_list_like_push_back_local_typed(
+            func,
+            builder_local,
+            codepoint_local,
+            &Ty::Char,
+        );
 
         func.instruction(&Instruction::LocalGet(byte_idx_local));
         func.instruction(&Instruction::LocalGet(char_width_local));
@@ -12937,6 +13050,8 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::Br(0));
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
+
+        self.emit_clone_list_from_local(func, builder_local, out_local);
     }
 
     fn emit_seq_to_list_lines_from_local(

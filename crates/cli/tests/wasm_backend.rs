@@ -604,7 +604,11 @@ fn run_backend_wasm_executes_tiny_intcode_io_loop() {
     .expect("write source");
 
     let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
-    assert_stdout_trimmed(&output, "7", "run --backend wasm executes tiny intcode io loop");
+    assert_stdout_trimmed(
+        &output,
+        "7",
+        "run --backend wasm executes tiny intcode io loop",
+    );
 }
 
 #[test]
@@ -1085,6 +1089,38 @@ fn run_backend_wasm_preserves_chars_materialization_inside_filtered_string_loops
         &output,
         "13",
         "run --backend wasm with filtered strings feeding chars().to_list() in a loop",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_repeated_chars_to_list_get_over_large_strings() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let input = dir.path().join("input.txt");
+    let contents = "12 ".repeat(12_000);
+    let expected: i64 = contents.chars().map(|ch| i64::from(u32::from(ch))).sum();
+    fs::write(&input, &contents).expect("write input");
+    fs::write(
+        &file,
+        "from fs import read_file\n\
+         fn main() -> Int {\n\
+           let input = read_file(\"input.txt\")\n\
+           var i = 0\n\
+           var total = 0\n\
+           while (i < input.len()) {\n\
+             total = total + input.chars().to_list().get(i).unwrap_or(' ').code()\n\
+             i = i + 1\n\
+           }\n\
+           total\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        &expected.to_string(),
+        "run --backend wasm with repeated chars().to_list().get(i) over a large string",
     );
 }
 
