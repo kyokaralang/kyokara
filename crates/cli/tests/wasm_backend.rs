@@ -835,6 +835,49 @@ fn run_backend_wasm_preserves_split_filter_to_list_over_strings() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_split_filter_to_list_with_string_inequality() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "fn main() -> Int {\n\
+           \"a b  c\".split(\" \").filter(fn(part: String) => part != \"\").to_list().len()\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "3",
+        "run --backend wasm with split(...).filter(part != \"\").to_list()",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_chars_frequencies() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from io import println\n\
+         fn main() -> Unit {\n\
+           let counts = \"32T3K\".chars().frequencies()\n\
+           println(counts.len().to_string())\n\
+           println(counts.get('3').unwrap_or(0).to_string())\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "4\n2",
+        "run --backend wasm with chars().frequencies()",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_chars_materialization_inside_range_mapped_string_loops() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");

@@ -7281,6 +7281,8 @@ impl<'a> FuncCodegen<'a> {
             )));
         }
 
+        let materialized_list_local = self.scratch_i32_16;
+
         match elem_ty {
             Ty::Int | Ty::String => {
                 func.instruction(&Instruction::LocalGet(self.scratch_i32));
@@ -7297,12 +7299,12 @@ impl<'a> FuncCodegen<'a> {
                 self.emit_seq_load_materialized_list_source_from_local(
                     func,
                     self.scratch_i32,
-                    self.scratch_i32_11,
+                    materialized_list_local,
                 );
                 self.emit_map_new_to_local(func, self.scratch_i32_10);
                 self.emit_seq_frequencies_list_from_local(
                     func,
-                    self.scratch_i32_11,
+                    materialized_list_local,
                     key_ty,
                     self.scratch_i32_10,
                 )?;
@@ -7317,12 +7319,12 @@ impl<'a> FuncCodegen<'a> {
                     func,
                     self.scratch_i32,
                     elem_ty,
-                    self.scratch_i32_11,
+                    materialized_list_local,
                 )?;
                 self.emit_map_new_to_local(func, self.scratch_i32_10);
                 self.emit_seq_frequencies_list_from_local(
                     func,
-                    self.scratch_i32_11,
+                    materialized_list_local,
                     key_ty,
                     self.scratch_i32_10,
                 )?;
@@ -13290,84 +13292,49 @@ impl<'a> FuncCodegen<'a> {
         }));
         func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
 
-        if matches!(elem_ty, Ty::Int) {
-            func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
-            func.instruction(&Instruction::I32Const(SEQ_KIND_RANGE));
-            func.instruction(&Instruction::I32Eq);
-            func.instruction(&Instruction::If(BlockType::Empty));
-            self.emit_seq_to_list_range_from_local(func, seq_local, out_local)?;
-            func.instruction(&Instruction::Else);
-            func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
-            func.instruction(&Instruction::I32Const(SEQ_KIND_BITSET_VALUES));
-            func.instruction(&Instruction::I32Eq);
-            func.instruction(&Instruction::If(BlockType::Empty));
-            self.emit_seq_to_list_bitset_values_from_local(func, seq_local, out_local);
-            func.instruction(&Instruction::Else);
-            func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
-            func.instruction(&Instruction::I32Const(SEQ_KIND_MATERIALIZED_LIST));
-            func.instruction(&Instruction::I32Eq);
-            func.instruction(&Instruction::If(BlockType::Empty));
-            self.emit_seq_load_materialized_list_source_from_local(func, seq_local, out_local);
-            func.instruction(&Instruction::Else);
-            func.instruction(&Instruction::Unreachable);
-            func.instruction(&Instruction::End);
-            func.instruction(&Instruction::End);
-            func.instruction(&Instruction::End);
-            return Ok(());
-        }
-
-        if !matches!(elem_ty, Ty::Char | Ty::String) {
-            func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
-            func.instruction(&Instruction::I32Const(SEQ_KIND_MATERIALIZED_LIST));
-            func.instruction(&Instruction::I32Eq);
-            func.instruction(&Instruction::If(BlockType::Empty));
-            self.emit_seq_load_materialized_list_source_from_local(func, seq_local, out_local);
-            func.instruction(&Instruction::Else);
-            func.instruction(&Instruction::Unreachable);
-            func.instruction(&Instruction::End);
-            return Ok(());
-        }
-
         func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
         func.instruction(&Instruction::I32Const(SEQ_KIND_MATERIALIZED_LIST));
         func.instruction(&Instruction::I32Eq);
         func.instruction(&Instruction::If(BlockType::Empty));
         self.emit_seq_load_materialized_list_source_from_local(func, seq_local, out_local);
         func.instruction(&Instruction::Else);
-        match elem_ty {
-            Ty::Char => {
-                func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
-                func.instruction(&Instruction::I32Const(SEQ_KIND_CHARS));
-                func.instruction(&Instruction::I32Eq);
-                func.instruction(&Instruction::If(BlockType::Empty));
-                self.emit_seq_to_list_chars_from_local(func, seq_local, out_local);
-                func.instruction(&Instruction::Else);
-                func.instruction(&Instruction::Unreachable);
-                func.instruction(&Instruction::End);
-            }
-            Ty::String => {
-                func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
-                func.instruction(&Instruction::I32Const(SEQ_KIND_LINES));
-                func.instruction(&Instruction::I32Eq);
-                func.instruction(&Instruction::If(BlockType::Empty));
-                self.emit_seq_to_list_lines_from_local(func, seq_local, out_local);
-                func.instruction(&Instruction::Else);
-                func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
-                func.instruction(&Instruction::I32Const(SEQ_KIND_SPLIT));
-                func.instruction(&Instruction::I32Eq);
-                func.instruction(&Instruction::If(BlockType::Empty));
-                self.emit_seq_to_list_split_from_local(func, seq_local, out_local);
-                func.instruction(&Instruction::Else);
-                func.instruction(&Instruction::Unreachable);
-                func.instruction(&Instruction::End);
-                func.instruction(&Instruction::End);
-            }
-            _ => {
-                return Err(CodegenError::UnsupportedInstruction(format!(
-                    "seq_to_list over Wasm core seq element type {elem_ty:?} (deferred)"
-                )));
-            }
-        }
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(SEQ_KIND_RANGE));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_seq_to_list_range_from_local(func, seq_local, out_local)?;
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(SEQ_KIND_BITSET_VALUES));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_seq_to_list_bitset_values_from_local(func, seq_local, out_local);
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(SEQ_KIND_CHARS));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_seq_to_list_chars_from_local(func, seq_local, out_local);
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(SEQ_KIND_LINES));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_seq_to_list_lines_from_local(func, seq_local, out_local);
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::I32Const(SEQ_KIND_SPLIT));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_seq_to_list_split_from_local(func, seq_local, out_local);
+        func.instruction(&Instruction::Else);
+        let _ = elem_ty;
+        func.instruction(&Instruction::Unreachable);
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
         Ok(())
     }
