@@ -1617,12 +1617,35 @@ fn read_guest_string(
     program: &mut kyokara_wasm_runtime::WasmProgram,
     ptr: u32,
 ) -> Result<String, String> {
-    let header = program.read_memory(ptr, 8).map_err(|err| err.to_string())?;
-    let byte_len = u32::from_le_bytes(
+    let header = program
+        .read_memory(ptr, 16)
+        .map_err(|err| err.to_string())?;
+    let raw_len = i32::from_le_bytes(
         header[0..4]
             .try_into()
             .map_err(|_| "guest string header missing byte length".to_string())?,
     );
+    if raw_len < 0 {
+        let lhs_ptr = u32::from_le_bytes(
+            header[8..12]
+                .try_into()
+                .map_err(|_| "guest special string header missing lhs pointer".to_string())?,
+        );
+        let rhs_or_sentinel = i32::from_le_bytes(
+            header[12..16]
+                .try_into()
+                .map_err(|_| "guest special string header missing rhs pointer".to_string())?,
+        );
+        if rhs_or_sentinel == -1 {
+            return read_guest_string(program, lhs_ptr);
+        }
+
+        let mut text = read_guest_string(program, lhs_ptr)?;
+        text.push_str(&read_guest_string(program, rhs_or_sentinel as u32)?);
+        return Ok(text);
+    }
+
+    let byte_len = raw_len as u32;
     let bytes = program
         .read_memory(ptr + 8, byte_len)
         .map_err(|err| err.to_string())?;

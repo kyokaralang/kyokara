@@ -1706,6 +1706,343 @@ fn run_backend_wasm_executes_aoc_2020_day22() {
 }
 
 #[test]
+fn run_backend_wasm_executes_aoc_2017_day25() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("day25.txt");
+    fs::copy(
+        "/Users/alpha/CodexProjects/polyglot-bench/corpus/advent-of-code/2017/day25.txt",
+        &input,
+    )
+    .expect("copy day25 input");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "run",
+            "/Users/alpha/CodexProjects/polyglot-bench/adapters/kyokara/solutions/advent-of-code/2017/day25.ky",
+            "--backend",
+            "wasm",
+        ],
+    );
+    assert_stdout_trimmed(
+        &output,
+        "Part 1: 4385\nPart 2: (no part 2)",
+        "run --backend wasm AoC 2017 day25",
+    );
+}
+
+#[test]
+fn run_backend_wasm_executes_aoc_2019_day11() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("day11.txt");
+    fs::copy(
+        "/Users/alpha/CodexProjects/polyglot-bench/corpus/advent-of-code/2019/day11.txt",
+        &input,
+    )
+    .expect("copy day11 input");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "run",
+            "/Users/alpha/CodexProjects/polyglot-bench/adapters/kyokara/solutions/advent-of-code/2019/day11.ky",
+            "--backend",
+            "wasm",
+        ],
+    );
+    assert_stdout_trimmed(
+        &output,
+        "Part 1: 2184\nPart 2: AHCHZEPK",
+        "run --backend wasm AoC 2019 day11",
+    );
+}
+
+#[test]
+fn run_backend_wasm_decodes_aoc_2019_day11_letter_rows() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import List, MutableList\n\
+         fn decode_pattern(pattern: String) -> String {\n\
+           if (pattern == \".##..#..#.#..#.####.#..#.#..#.\") {\n\
+             \"A\"\n\
+           } else if (pattern == \".##..#..#.#....#....#..#..##..\") {\n\
+             \"C\"\n\
+           } else if (pattern == \"#..#.#..#.####.#..#.#..#.#..#.\") {\n\
+             \"H\"\n\
+           } else if (pattern == \"#..#.#.#..##...#.#..#.#..#..#.\") {\n\
+             \"K\"\n\
+           } else if (pattern == \"###..#..#.#..#.###..#....#....\") {\n\
+             \"P\"\n\
+           } else if (pattern == \"####.#....###..#....#....####.\") {\n\
+             \"E\"\n\
+           } else if (pattern == \"####....#...#...#...#....####.\") {\n\
+             \"Z\"\n\
+           } else {\n\
+             \"?\"\n\
+           }\n\
+         }\n\
+         fn pattern_for(rows: List<String>, start_x: Int, width: Int) -> String {\n\
+           let out = MutableList.new().push(\"\")\n\
+           for (row in rows) {\n\
+             for (x in start_x ..< (start_x + width)) {\n\
+               let pixel = row.substring(x, x + 1)\n\
+               let _o = out.set(0, out[0].concat(if (pixel == \"#\") { \"#\" } else { \".\" }))\n\
+             }\n\
+           }\n\
+           out[0]\n\
+         }\n\
+         fn pattern_norm(rows: List<String>, start_x: Int, width: Int) -> String {\n\
+           if (width == 5) {\n\
+             pattern_for(rows, start_x, 5)\n\
+           } else if (width == 4) {\n\
+             let out = MutableList.new().push(\"\")\n\
+             for (row in rows) {\n\
+               for (x in start_x ..< (start_x + 4)) {\n\
+                 let pixel = row.substring(x, x + 1)\n\
+                 let _o = out.set(0, out[0].concat(if (pixel == \"#\") { \"#\" } else { \".\" }))\n\
+               }\n\
+               let _o = out.set(0, out[0].concat(\".\"))\n\
+             }\n\
+             out[0]\n\
+           } else {\n\
+             pattern_for(rows, start_x, width)\n\
+           }\n\
+         }\n\
+         fn col_blank(rows: List<String>, x: Int) -> Bool {\n\
+           rows.all(fn(row: String) => row.substring(x, x + 1) != \"#\")\n\
+         }\n\
+         fn decode_rows(rows: List<String>) -> String {\n\
+           let width = rows[0].len()\n\
+           if (width % 5 == 0) {\n\
+             var out = \"\"\n\
+             for (letter in 0 ..< (width / 5)) {\n\
+               out = out.concat(decode_pattern(pattern_norm(rows, letter * 5, 5)))\n\
+             }\n\
+             return out\n\
+           }\n\
+           var x = 0\n\
+           var out = \"\"\n\
+           while (x < width) {\n\
+             while (x < width && col_blank(rows, x)) {\n\
+               x = x + 1\n\
+             }\n\
+             if (x >= width) {\n\
+               break\n\
+             }\n\
+             var end = x\n\
+             while (end < width && !col_blank(rows, end)) {\n\
+               end = end + 1\n\
+             }\n\
+             out = out.concat(decode_pattern(pattern_norm(rows, x, end - x)))\n\
+             x = end\n\
+           }\n\
+           out\n\
+         }\n\
+         fn main() -> String {\n\
+           let rows = MutableList.new()\n\
+             .push(\".##..#..#..##..#..#.####.####.###..#..#\")\n\
+             .push(\"#..#.#..#.#..#.#..#....#.#....#..#.#.#.\")\n\
+             .push(\"#..#.####.#....####...#..###..#..#.##..\")\n\
+             .push(\"####.#..#.#....#..#..#...#....###..#.#.\")\n\
+             .push(\"#..#.#..#.#..#.#..#.#....#....#....#.#.\")\n\
+             .push(\"#..#.#..#..##..#..#.####.####.#....#..#\")\n\
+             .to_list()\n\
+           decode_rows(rows)\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "AHCHZEPK",
+        "run --backend wasm decodes AoC 2019 day11 letter rows",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_aoc_2019_day11_row_len_and_substring() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "fn main() -> String {\n\
+           let row = \".##..#..#..##..#..#.####.###..####.#..#\"\n\
+           row.len().to_string()\n\
+             .concat(\"\\n\")\n\
+             .concat(row.substring(0, 5))\n\
+             .concat(\"\\n\")\n\
+             .concat(row.substring(5, 10))\n\
+             .concat(\"\\n\")\n\
+             .concat(row.substring(35, 40))\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "39\n.##..\n#..#.\n#..#",
+        "run --backend wasm preserves AoC 2019 day11 row len and substring",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_aoc_2019_day11_pattern_norm() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import List, MutableList\n\
+         fn pattern_for(rows: List<String>, start_x: Int, width: Int) -> String {\n\
+           let out = MutableList.new().push(\"\")\n\
+           for (row in rows) {\n\
+             for (x in start_x ..< (start_x + width)) {\n\
+               let pixel = row.substring(x, x + 1)\n\
+               let _o = out.set(0, out[0].concat(if (pixel == \"#\") { \"#\" } else { \".\" }))\n\
+             }\n\
+           }\n\
+           out[0]\n\
+         }\n\
+         fn pattern_norm(rows: List<String>, start_x: Int, width: Int) -> String {\n\
+           if (width == 5) {\n\
+             pattern_for(rows, start_x, 5)\n\
+           } else if (width == 4) {\n\
+             let out = MutableList.new().push(\"\")\n\
+             for (row in rows) {\n\
+               for (x in start_x ..< (start_x + 4)) {\n\
+                 let pixel = row.substring(x, x + 1)\n\
+                 let _o = out.set(0, out[0].concat(if (pixel == \"#\") { \"#\" } else { \".\" }))\n\
+               }\n\
+               let _o = out.set(0, out[0].concat(\".\"))\n\
+             }\n\
+             out[0]\n\
+           } else {\n\
+             pattern_for(rows, start_x, width)\n\
+           }\n\
+         }\n\
+         fn main() -> String {\n\
+           let rows = MutableList.new()\n\
+             .push(\".##..#..#..##..#..#.####.####.###..#..#\")\n\
+             .push(\"#..#.#..#.#..#.#..#....#.#....#..#.#.#.\")\n\
+             .push(\"#..#.####.#....####...#..###..#..#.##..\")\n\
+             .push(\"####.#..#.#....#..#..#...#....###..#.#.\")\n\
+             .push(\"#..#.#..#.#..#.#..#.#....#....#....#.#.\")\n\
+             .push(\"#..#.#..#..##..#..#.####.####.#....#..#\")\n\
+             .to_list()\n\
+           pattern_norm(rows, 0, 4)\n\
+             .concat(\"\\n\")\n\
+             .concat(pattern_norm(rows, 5, 4))\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        ".##..#..#.#..#.####.#..#.#..#.\n#..#.#..#.####.#..#.#..#.#..#.",
+        "run --backend wasm preserves AoC 2019 day11 pattern_norm",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_mutable_list_string_self_concat_set() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn main() -> String {\n\
+           let out = MutableList.new().push(\"\")\n\
+           let _ = out.set(0, out[0].concat(\"A\"))\n\
+           let _ = out.set(0, out[0].concat(\"B\"))\n\
+           out[0]\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "AB",
+        "run --backend wasm preserves MutableList<String> self-concat set",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_concat_of_string_loaded_from_mutable_list() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn main() -> String {\n\
+           let out = MutableList.new().push(\"A\")\n\
+           out[0].concat(\"B\")\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "AB",
+        "run --backend wasm preserves concat of string loaded from MutableList",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_concat_of_special_string_returned_from_call() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn build() -> String {\n\
+           let out = MutableList.new().push(\"\")\n\
+           let _ = out.set(0, out[0].concat(\"A\"))\n\
+           let _ = out.set(0, out[0].concat(\"B\"))\n\
+           out[0]\n\
+         }\n\
+         fn main() -> String {\n\
+           build().concat(\"C\")\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "ABC",
+        "run --backend wasm preserves concat of special string returned from call",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_string_loaded_from_mutable_list() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn main() -> String {\n\
+           let out = MutableList.new().push(\"A\")\n\
+           out[0]\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "A",
+        "run --backend wasm preserves string loaded from MutableList",
+    );
+}
+
+#[test]
 fn run_backend_wasm_executes_aoc_2024_day09_reduced_prefix() {
     let dir = tempfile::tempdir().expect("tempdir");
     let input = dir.path().join("day09.txt");
