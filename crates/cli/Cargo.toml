@@ -35,6 +35,7 @@ semver.workspace = true
 [dev-dependencies]
 kyokara-runtime.workspace = true
 tempfile.workspace = true
+wasmtime.workspace = true
 
 [lints]
 workspace = true

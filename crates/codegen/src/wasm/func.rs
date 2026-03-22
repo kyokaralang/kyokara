@@ -1365,22 +1365,26 @@ impl<'a> FuncCodegen<'a> {
         outer_stop: Option<BlockId>,
         emitted: &mut FxHashMap<BlockId, ()>,
     ) -> Result<(), CodegenError> {
-        let merge_id = outer_stop
-            .filter(|stop| *stop != header && *stop != exit)
-            .and_then(|stop| {
-                let mut stops = FxHashSet::default();
-                stops.insert(header);
-                stops.insert(exit);
-                let then_reaches_stop = self
-                    .reachable_block_distances_until(then_target.block, &stops)
-                    .contains_key(&stop);
-                let else_reaches_stop = self
-                    .reachable_block_distances_until(else_target.block, &stops)
-                    .contains_key(&stop);
-                (then_reaches_stop || else_reaches_stop).then_some(stop)
+        let merge_id = self
+            .find_branch_merge_deep(then_target, else_target)
+            .filter(|merge_id| *merge_id != header && *merge_id != exit);
+        let merge_id = merge_id
+            .or_else(|| {
+                outer_stop
+                    .filter(|stop| *stop != header && *stop != exit)
+                    .and_then(|stop| {
+                        let mut stops = FxHashSet::default();
+                        stops.insert(header);
+                        stops.insert(exit);
+                        let then_reaches_stop = self
+                            .reachable_block_distances_until(then_target.block, &stops)
+                            .contains_key(&stop);
+                        let else_reaches_stop = self
+                            .reachable_block_distances_until(else_target.block, &stops)
+                            .contains_key(&stop);
+                        (then_reaches_stop || else_reaches_stop).then_some(stop)
+                    })
             })
-            .or_else(|| self.find_branch_merge_deep(then_target, else_target))
-            .filter(|merge_id| *merge_id != header && *merge_id != exit)
             .or_else(|| self.find_loop_branch_merge(then_target, else_target, header, exit));
 
         self.emit_get(func, condition);

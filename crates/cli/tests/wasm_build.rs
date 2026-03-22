@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use wasmtime::{Engine, Module};
 
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_kyokara"))
@@ -88,4 +89,34 @@ fn build_target_wasm_supports_project_mode() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn build_target_wasm_validates_nested_boundary_checks_in_large_parse_function() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let out = dir.path().join("out.wasm");
+    fs::write(&file, include_str!("fixtures/day20_h_id_outer.ky")).expect("write source");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "build",
+            "main.ky",
+            "--target",
+            "wasm",
+            "--out",
+            out.to_str().expect("utf-8 output path"),
+        ],
+    );
+    assert_success(&output, "build --target wasm nested boundary checks");
+
+    let bytes = fs::read(&out).expect("read wasm artifact");
+    Module::new(&Engine::default(), &bytes).unwrap_or_else(|err| {
+        panic!(
+            "built module should validate under wasmtime: {err}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
 }
