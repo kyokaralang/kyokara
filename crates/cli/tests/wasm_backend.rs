@@ -244,6 +244,40 @@ fn run_backend_wasm_preserves_short_circuit_if_results_across_loop_iterations() 
 }
 
 #[test]
+fn run_backend_wasm_preserves_record_accumulators_across_nested_split_folds() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from io import println\n\
+         type G = { a: Int, b: Int }\n\
+         fn main() -> Unit {\n\
+           let out = \"a,b;a,b\".split(\";\").fold(\n\
+             G { a: 0, b: 0 },\n\
+             fn(acc: G, s: String) => s.split(\",\").fold(\n\
+               acc,\n\
+               fn(game: G, part: String) => if (part == \"a\") {\n\
+                     G { a: game.a + 1, b: game.b }\n\
+                   } else {\n\
+                     G { a: game.a, b: game.b + 1 }\n\
+                   },\n\
+             ),\n\
+           )\n\
+           println(\"Part 1: \".concat(out.a.to_string()).concat(\",\").concat(out.b.to_string()))\n\
+           println(\"Part 2: ok\")\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "Part 1: 2,2\nPart 2: ok",
+        "run --backend wasm preserves record accumulators across nested split folds",
+    );
+}
+
+#[test]
 fn run_backend_wasm_handles_deep_recursive_workloads_without_native_stack_overflow() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");

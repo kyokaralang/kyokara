@@ -49,11 +49,13 @@ pub struct FuncCodegen<'a> {
     scratch_i64_11: u32,
     scratch_i64_12: u32,
     scratch_i64_13: u32,
+    seq_fold_acc_i64: u32,
     /// Scratch f64 local for float runtime helpers.
     scratch_f64: u32,
     scratch_f64_2: u32,
     scratch_f64_3: u32,
     scratch_f64_4: u32,
+    seq_fold_acc_f64: u32,
     /// Scratch i32 local for checked integer codegen.
     scratch_i32: u32,
     /// Additional scratch i32 locals for runtime helpers.
@@ -138,6 +140,7 @@ pub struct FuncCodegen<'a> {
     scratch_i32_80: u32,
     scratch_i32_81: u32,
     scratch_i32_82: u32,
+    seq_fold_acc_i32: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -183,10 +186,12 @@ impl<'a> FuncCodegen<'a> {
             scratch_i64_11: 0,
             scratch_i64_12: 0,
             scratch_i64_13: 0,
+            seq_fold_acc_i64: 0,
             scratch_f64: 0,
             scratch_f64_2: 0,
             scratch_f64_3: 0,
             scratch_f64_4: 0,
+            seq_fold_acc_f64: 0,
             scratch_i32: 0,
             scratch_i32_2: 0,
             scratch_i32_3: 0,
@@ -269,6 +274,7 @@ impl<'a> FuncCodegen<'a> {
             scratch_i32_80: 0,
             scratch_i32_81: 0,
             scratch_i32_82: 0,
+            seq_fold_acc_i32: 0,
         }
     }
 
@@ -368,6 +374,10 @@ impl<'a> FuncCodegen<'a> {
         self.next_local += 1;
         self.local_types.push(ValType::I64);
 
+        self.seq_fold_acc_i64 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I64);
+
         self.scratch_f64 = self.next_local;
         self.next_local += 1;
         self.local_types.push(ValType::F64);
@@ -381,6 +391,10 @@ impl<'a> FuncCodegen<'a> {
         self.local_types.push(ValType::F64);
 
         self.scratch_f64_4 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::F64);
+
+        self.seq_fold_acc_f64 = self.next_local;
         self.next_local += 1;
         self.local_types.push(ValType::F64);
 
@@ -709,6 +723,10 @@ impl<'a> FuncCodegen<'a> {
         self.local_types.push(ValType::I32);
 
         self.scratch_i32_82 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.seq_fold_acc_i32 = self.next_local;
         self.next_local += 1;
         self.local_types.push(ValType::I32);
 
@@ -18309,9 +18327,9 @@ impl<'a> FuncCodegen<'a> {
         result_ty: &Ty,
     ) -> Result<(), CodegenError> {
         let acc_local = match result_ty {
-            Ty::Float => self.scratch_f64,
-            Ty::Int => self.scratch_i64_3,
-            _ => self.scratch_i32_8,
+            Ty::Float => self.seq_fold_acc_f64,
+            Ty::Int => self.seq_fold_acc_i64,
+            _ => self.seq_fold_acc_i32,
         };
         self.emit_get(func, init);
         func.instruction(&Instruction::LocalSet(acc_local));
