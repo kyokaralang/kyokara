@@ -1006,6 +1006,43 @@ fn run_backend_wasm_preserves_char_values_through_list_map() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_mutable_list_char_pop_payloads() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         from Option import Some, None\n\
+         from io import println\n\
+         fn show_one(xs: MutableList<Char>) -> Unit {\n\
+           match (xs.pop()) {\n\
+             Some(ch) => println(ch.code().to_string())\n\
+             None => println(\"none\")\n\
+           }\n\
+         }\n\
+         fn main() -> Unit {\n\
+           let stack = MutableList.new()\n\
+           let _a = stack.push('{')\n\
+           let _b = stack.push('[')\n\
+           let _c = stack.push('(')\n\
+           let _d = stack.push('<')\n\
+           show_one(stack)\n\
+           show_one(stack)\n\
+           show_one(stack)\n\
+           show_one(stack)\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "60\n40\n91\n123",
+        "run --backend wasm with MutableList<Char>.pop() payloads",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_direct_fnref_in_large_chars_map() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");

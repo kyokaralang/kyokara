@@ -9186,6 +9186,11 @@ impl<'a> FuncCodegen<'a> {
             ))
         })?;
         let removed_local = self.temp_local_for_ty(elem_ty);
+        let stable_removed_local = if removed_local == self.scratch_i32_7 {
+            self.scratch_i32_13
+        } else {
+            removed_local
+        };
 
         self.emit_get(func, list);
         func.instruction(&Instruction::LocalSet(self.scratch_i32)); // list ptr
@@ -9234,12 +9239,16 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::I32Mul);
         func.instruction(&Instruction::I32Add);
         self.emit_typed_load(func, elem_ty, 0);
-        func.instruction(&Instruction::LocalSet(removed_local));
+        func.instruction(&Instruction::LocalSet(stable_removed_local));
         self.emit_remove_mutable_list_slot_in_place_from_local(
             func,
             self.scratch_i32,
             self.scratch_i32_3,
         );
+        if stable_removed_local != removed_local {
+            func.instruction(&Instruction::LocalGet(stable_removed_local));
+            func.instruction(&Instruction::LocalSet(removed_local));
+        }
         func.instruction(&Instruction::LocalGet(removed_local));
         Ok(())
     }
@@ -9417,6 +9426,12 @@ impl<'a> FuncCodegen<'a> {
         elem_ty: &Ty,
         removed_local: u32,
     ) {
+        let stable_removed_local = if removed_local == self.scratch_i32_7 {
+            self.scratch_i32_13
+        } else {
+            removed_local
+        };
+
         func.instruction(&Instruction::LocalGet(list_local));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 0,
@@ -9433,7 +9448,7 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalSet(self.scratch_i32_4)); // old data
         func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
         self.emit_typed_load(func, elem_ty, 0);
-        func.instruction(&Instruction::LocalSet(removed_local));
+        func.instruction(&Instruction::LocalSet(stable_removed_local));
 
         func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
         func.instruction(&Instruction::I32Const(1));
@@ -9461,6 +9476,10 @@ impl<'a> FuncCodegen<'a> {
             self.scratch_i32_3,
             self.scratch_i32_5,
         );
+        if stable_removed_local != removed_local {
+            func.instruction(&Instruction::LocalGet(stable_removed_local));
+            func.instruction(&Instruction::LocalSet(removed_local));
+        }
     }
 
     fn emit_list_like_pop_back_from_local(
@@ -9470,6 +9489,12 @@ impl<'a> FuncCodegen<'a> {
         elem_ty: &Ty,
         removed_local: u32,
     ) {
+        let stable_removed_local = if removed_local == self.scratch_i32_7 {
+            self.scratch_i32_13
+        } else {
+            removed_local
+        };
+
         func.instruction(&Instruction::LocalGet(list_local));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 0,
@@ -9496,7 +9521,7 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::I32Mul);
         func.instruction(&Instruction::I32Add);
         self.emit_typed_load(func, elem_ty, 0);
-        func.instruction(&Instruction::LocalSet(removed_local));
+        func.instruction(&Instruction::LocalSet(stable_removed_local));
 
         self.emit_alloc_list_data_for_len(func, self.scratch_i32_3, self.scratch_i32_5);
         func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
@@ -9515,6 +9540,10 @@ impl<'a> FuncCodegen<'a> {
             self.scratch_i32_3,
             self.scratch_i32_5,
         );
+        if stable_removed_local != removed_local {
+            func.instruction(&Instruction::LocalGet(stable_removed_local));
+            func.instruction(&Instruction::LocalSet(removed_local));
+        }
     }
 
     fn emit_list_get(
