@@ -1286,6 +1286,109 @@ fn run_backend_wasm_preserves_sorted_string_lists() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_mutable_priority_queue_pop_record_payloads() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutablePriorityQueue\n\
+         from io import println\n\
+         from Option import Some, None\n\
+         fn main() -> Unit {\n\
+           let pq: MutablePriorityQueue<Int, Int> = MutablePriorityQueue.new_min()\n\
+           let _ = pq.push(2, 20)\n\
+           match (pq.pop()) {\n\
+             Some(item) => {\n\
+               println(item.priority.to_string())\n\
+               println(item.value.to_string())\n\
+             }\n\
+             None => println(\"none\")\n\
+           }\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "2\n20",
+        "run --backend wasm preserves MutablePriorityQueue pop record payloads",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_mutable_priority_queue_pop_order_after_removal() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutablePriorityQueue\n\
+         from io import println\n\
+         from Option import Some, None\n\
+         fn main() -> Unit {\n\
+           let pq: MutablePriorityQueue<Int, Int> = MutablePriorityQueue.new_min()\n\
+           let _ = pq.push(0, 0)\n\
+           let _ = pq.push(1, 1)\n\
+           let _ = pq.push(2, 2)\n\
+           match (pq.pop()) {\n\
+             Some(item) => println(item.value.to_string())\n\
+             None => println(\"none\")\n\
+           }\n\
+           match (pq.pop()) {\n\
+             Some(item) => println(item.value.to_string())\n\
+             None => println(\"none\")\n\
+           }\n\
+           println(pq.len().to_string())\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "0\n1\n1",
+        "run --backend wasm preserves MutablePriorityQueue pop order after removal",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_large_mutable_priority_queue_pushes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutablePriorityQueue\n\
+         from io import println\n\
+         from Option import Some, None\n\
+         fn main() -> Unit {\n\
+           let pq: MutablePriorityQueue<Int, Int> = MutablePriorityQueue.new_min()\n\
+           var i = 0\n\
+           while (i < 50000) {\n\
+             let _ = pq.push(i, i)\n\
+             i = i + 1\n\
+           }\n\
+           match (pq.pop()) {\n\
+             Some(item) => println(item.value.to_string())\n\
+             None => println(\"none\")\n\
+           }\n\
+           match (pq.pop()) {\n\
+             Some(item) => println(item.value.to_string())\n\
+             None => println(\"none\")\n\
+           }\n\
+           println(pq.len().to_string())\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "0\n1\n49998",
+        "run --backend wasm with large MutablePriorityQueue push/pop workload",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_chars_materialization_inside_range_mapped_string_loops() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
