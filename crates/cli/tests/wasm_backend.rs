@@ -507,6 +507,155 @@ fn run_backend_wasm_preserves_loop_progress_with_nested_never_taken_return() {
 }
 
 #[test]
+fn run_backend_wasm_executes_tiny_intcode_io_loop() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import List, MutableList\n\
+         fn ensure(mem: MutableList<Int>, idx: Int) -> Unit {\n\
+           while (mem.len() <= idx) {\n\
+             let _m = mem.push(0)\n\
+           }\n\
+         }\n\
+         fn read_mem(mem: MutableList<Int>, idx: Int) -> Int {\n\
+           if (idx < 0) {\n\
+             0\n\
+           } else if (idx >= mem.len()) {\n\
+             0\n\
+           } else {\n\
+             mem[idx]\n\
+           }\n\
+         }\n\
+         fn param(mem: MutableList<Int>, idx: Int, mode: Int, rb: Int) -> Int {\n\
+           let raw = read_mem(mem, idx)\n\
+           if (mode == 0) {\n\
+             read_mem(mem, raw)\n\
+           } else if (mode == 1) {\n\
+             raw\n\
+           } else {\n\
+             read_mem(mem, rb + raw)\n\
+           }\n\
+         }\n\
+         fn addr(mem: MutableList<Int>, idx: Int, mode: Int, rb: Int) -> Int {\n\
+           let raw = read_mem(mem, idx)\n\
+           if (mode == 2) { rb + raw } else { raw }\n\
+         }\n\
+         fn run(program: List<Int>, x: Int) -> Int {\n\
+           let mem = MutableList.from_list(program)\n\
+           var ip = 0\n\
+           var rb = 0\n\
+           var input_pos = 0\n\
+           var out = 0\n\
+           while (true) {\n\
+             let instr = read_mem(mem, ip)\n\
+             let op = instr % 100\n\
+             let m1 = (instr / 100) % 10\n\
+             let m2 = (instr / 1000) % 10\n\
+             let m3 = (instr / 10000) % 10\n\
+             if (op == 99) {\n\
+               return out\n\
+             } else if (op == 1 || op == 2) {\n\
+               let dst = addr(mem, ip + 3, m3, rb)\n\
+               ensure(mem, dst)\n\
+               let _m = mem.set(dst, if (op == 1) { param(mem, ip + 1, m1, rb) + param(mem, ip + 2, m2, rb) } else { param(mem, ip + 1, m1, rb) * param(mem, ip + 2, m2, rb) })\n\
+               ip = ip + 4\n\
+             } else if (op == 3) {\n\
+               let dst = addr(mem, ip + 1, m1, rb)\n\
+               ensure(mem, dst)\n\
+               let value = if (input_pos == 0) { x } else { 0 }\n\
+               let _m = mem.set(dst, value)\n\
+               input_pos = input_pos + 1\n\
+               ip = ip + 2\n\
+             } else if (op == 4) {\n\
+               out = param(mem, ip + 1, m1, rb)\n\
+               ip = ip + 2\n\
+             } else if (op == 5) {\n\
+               if (param(mem, ip + 1, m1, rb) != 0) {\n\
+                 ip = param(mem, ip + 2, m2, rb)\n\
+               } else {\n\
+                 ip = ip + 3\n\
+               }\n\
+             } else if (op == 6) {\n\
+               if (param(mem, ip + 1, m1, rb) == 0) {\n\
+                 ip = param(mem, ip + 2, m2, rb)\n\
+               } else {\n\
+                 ip = ip + 3\n\
+               }\n\
+             } else if (op == 7 || op == 8) {\n\
+               let dst = addr(mem, ip + 3, m3, rb)\n\
+               ensure(mem, dst)\n\
+               let cond = if (op == 7) { param(mem, ip + 1, m1, rb) < param(mem, ip + 2, m2, rb) } else { param(mem, ip + 1, m1, rb) == param(mem, ip + 2, m2, rb) }\n\
+               let _m = mem.set(dst, if (cond) { 1 } else { 0 })\n\
+               ip = ip + 4\n\
+             } else if (op == 9) {\n\
+               rb = rb + param(mem, ip + 1, m1, rb)\n\
+               ip = ip + 2\n\
+             } else {\n\
+               return out\n\
+             }\n\
+           }\n\
+           out\n\
+         }\n\
+         fn main() -> Int {\n\
+           run(MutableList.new().push(3).push(0).push(4).push(0).push(99).to_list(), 7)\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(&output, "7", "run --backend wasm executes tiny intcode io loop");
+}
+
+#[test]
+fn run_backend_wasm_preserves_loop_fallthrough_after_long_else_if_chain() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "fn main() -> Int {\n\
+         var ip = 0\n\
+         var input_pos = 0\n\
+         var steps = 0\n\
+         while (steps < 2) {\n\
+           let op = if (steps == 0) { 3 } else { 99 }\n\
+           if (op == 99) {\n\
+             return 7 + ip + input_pos\n\
+           } else if (op == 1 || op == 2) {\n\
+             ip = 100\n\
+           } else if (op == 3) {\n\
+             let value = if (input_pos == 0) { 7 } else { 0 }\n\
+             input_pos = input_pos + value\n\
+             ip = ip + 2\n\
+           } else if (op == 4) {\n\
+             ip = 40\n\
+           } else if (op == 5) {\n\
+             ip = 50\n\
+           } else if (op == 6) {\n\
+             ip = 60\n\
+           } else if (op == 7 || op == 8) {\n\
+             ip = 70\n\
+           } else if (op == 9) {\n\
+             ip = 90\n\
+           } else {\n\
+             return 111\n\
+           }\n\
+           steps = steps + 1\n\
+         }\n\
+         222\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "16",
+        "run --backend wasm preserves loop fallthrough after long else-if chain",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_mutable_loop_locals_across_if_merges() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
