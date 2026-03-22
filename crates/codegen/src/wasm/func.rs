@@ -140,6 +140,12 @@ pub struct FuncCodegen<'a> {
     scratch_i32_80: u32,
     scratch_i32_81: u32,
     scratch_i32_82: u32,
+    string_compare_lhs_ptr: u32,
+    string_compare_rhs_ptr: u32,
+    string_compare_lhs_len: u32,
+    string_compare_rhs_len: u32,
+    string_compare_index: u32,
+    string_compare_result: u32,
     seq_fold_acc_i32: u32,
 }
 
@@ -274,6 +280,12 @@ impl<'a> FuncCodegen<'a> {
             scratch_i32_80: 0,
             scratch_i32_81: 0,
             scratch_i32_82: 0,
+            string_compare_lhs_ptr: 0,
+            string_compare_rhs_ptr: 0,
+            string_compare_lhs_len: 0,
+            string_compare_rhs_len: 0,
+            string_compare_index: 0,
+            string_compare_result: 0,
             seq_fold_acc_i32: 0,
         }
     }
@@ -723,6 +735,30 @@ impl<'a> FuncCodegen<'a> {
         self.local_types.push(ValType::I32);
 
         self.scratch_i32_82 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.string_compare_lhs_ptr = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.string_compare_rhs_ptr = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.string_compare_lhs_len = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.string_compare_rhs_len = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.string_compare_index = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.string_compare_result = self.next_local;
         self.next_local += 1;
         self.local_types.push(ValType::I32);
 
@@ -7476,11 +7512,13 @@ impl<'a> FuncCodegen<'a> {
             ))
         })?;
 
+        let sort_list_local = self.scratch_i32_16;
+
         self.emit_get(func, list);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
-        self.emit_clone_list_from_local(func, self.scratch_i32, self.scratch_i32_10);
-        self.emit_sort_list_in_place_from_local(func, self.scratch_i32_10, elem_ty, None)?;
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+        self.emit_clone_list_from_local(func, self.scratch_i32, sort_list_local);
+        self.emit_sort_list_in_place_from_local(func, sort_list_local, elem_ty, None)?;
+        func.instruction(&Instruction::LocalGet(sort_list_local));
         Ok(())
     }
 
@@ -7497,16 +7535,13 @@ impl<'a> FuncCodegen<'a> {
             ))
         })?;
 
+        let sort_list_local = self.scratch_i32_16;
+
         self.emit_get(func, list);
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
-        self.emit_clone_list_from_local(func, self.scratch_i32, self.scratch_i32_10);
-        self.emit_sort_list_in_place_from_local(
-            func,
-            self.scratch_i32_10,
-            elem_ty,
-            Some(comparator),
-        )?;
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+        self.emit_clone_list_from_local(func, self.scratch_i32, sort_list_local);
+        self.emit_sort_list_in_place_from_local(func, sort_list_local, elem_ty, Some(comparator))?;
+        func.instruction(&Instruction::LocalGet(sort_list_local));
         Ok(())
     }
 
@@ -7522,10 +7557,12 @@ impl<'a> FuncCodegen<'a> {
             ))
         })?;
 
+        let sort_list_local = self.scratch_i32_16;
+
         self.emit_get(func, list);
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_10));
-        self.emit_sort_list_in_place_from_local(func, self.scratch_i32_10, elem_ty, None)?;
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+        func.instruction(&Instruction::LocalSet(sort_list_local));
+        self.emit_sort_list_in_place_from_local(func, sort_list_local, elem_ty, None)?;
+        func.instruction(&Instruction::LocalGet(sort_list_local));
         Ok(())
     }
 
@@ -7542,15 +7579,12 @@ impl<'a> FuncCodegen<'a> {
             ))
         })?;
 
+        let sort_list_local = self.scratch_i32_16;
+
         self.emit_get(func, list);
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_10));
-        self.emit_sort_list_in_place_from_local(
-            func,
-            self.scratch_i32_10,
-            elem_ty,
-            Some(comparator),
-        )?;
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+        func.instruction(&Instruction::LocalSet(sort_list_local));
+        self.emit_sort_list_in_place_from_local(func, sort_list_local, elem_ty, Some(comparator))?;
+        func.instruction(&Instruction::LocalGet(sort_list_local));
         Ok(())
     }
 
@@ -8152,43 +8186,49 @@ impl<'a> FuncCodegen<'a> {
 
     fn emit_string_compare_from_locals(&self, func: &mut Function, lhs_local: u32, rhs_local: u32) {
         func.instruction(&Instruction::LocalGet(lhs_local));
-        func.instruction(&Instruction::I32Load(MemArg {
-            offset: 0,
-            align: 2,
-            memory_index: 0,
-        }));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_9)); // lhs len
+        func.instruction(&Instruction::LocalSet(self.string_compare_lhs_ptr));
 
         func.instruction(&Instruction::LocalGet(rhs_local));
+        func.instruction(&Instruction::LocalSet(self.string_compare_rhs_ptr));
+
+        func.instruction(&Instruction::LocalGet(self.string_compare_lhs_ptr));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 0,
             align: 2,
             memory_index: 0,
         }));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_10)); // rhs len
+        func.instruction(&Instruction::LocalSet(self.string_compare_lhs_len)); // lhs len
+
+        func.instruction(&Instruction::LocalGet(self.string_compare_rhs_ptr));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.string_compare_rhs_len)); // rhs len
 
         func.instruction(&Instruction::I32Const(0));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_11)); // compare idx
+        func.instruction(&Instruction::LocalSet(self.string_compare_index)); // compare idx
         func.instruction(&Instruction::I32Const(0));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_2)); // compare result
+        func.instruction(&Instruction::LocalSet(self.string_compare_result)); // compare result
 
         func.instruction(&Instruction::Block(BlockType::Empty));
         func.instruction(&Instruction::Loop(BlockType::Empty));
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_11));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_9));
+        func.instruction(&Instruction::LocalGet(self.string_compare_index));
+        func.instruction(&Instruction::LocalGet(self.string_compare_lhs_len));
         func.instruction(&Instruction::I32GeU);
         func.instruction(&Instruction::BrIf(1));
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_11));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+        func.instruction(&Instruction::LocalGet(self.string_compare_index));
+        func.instruction(&Instruction::LocalGet(self.string_compare_rhs_len));
         func.instruction(&Instruction::I32GeU);
         func.instruction(&Instruction::BrIf(1));
 
-        func.instruction(&Instruction::LocalGet(lhs_local));
+        func.instruction(&Instruction::LocalGet(self.string_compare_lhs_ptr));
         func.instruction(&Instruction::I32Const(8));
         func.instruction(&Instruction::I32Add);
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_11));
+        func.instruction(&Instruction::LocalGet(self.string_compare_index));
         func.instruction(&Instruction::I32Add);
         func.instruction(&Instruction::I32Load8U(MemArg {
             offset: 0,
@@ -8198,10 +8238,10 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalSet(self.scratch_i32)); // lhs byte
 
         func.instruction(&Instruction::LocalGet(self.scratch_i32));
-        func.instruction(&Instruction::LocalGet(rhs_local));
+        func.instruction(&Instruction::LocalGet(self.string_compare_rhs_ptr));
         func.instruction(&Instruction::I32Const(8));
         func.instruction(&Instruction::I32Add);
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_11));
+        func.instruction(&Instruction::LocalGet(self.string_compare_index));
         func.instruction(&Instruction::I32Add);
         func.instruction(&Instruction::I32Load8U(MemArg {
             offset: 0,
@@ -8211,15 +8251,15 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::I32LtU);
         func.instruction(&Instruction::If(BlockType::Empty));
         func.instruction(&Instruction::I32Const(-1));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+        func.instruction(&Instruction::LocalSet(self.string_compare_result));
         func.instruction(&Instruction::Br(2));
         func.instruction(&Instruction::End);
 
         func.instruction(&Instruction::LocalGet(self.scratch_i32));
-        func.instruction(&Instruction::LocalGet(rhs_local));
+        func.instruction(&Instruction::LocalGet(self.string_compare_rhs_ptr));
         func.instruction(&Instruction::I32Const(8));
         func.instruction(&Instruction::I32Add);
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_11));
+        func.instruction(&Instruction::LocalGet(self.string_compare_index));
         func.instruction(&Instruction::I32Add);
         func.instruction(&Instruction::I32Load8U(MemArg {
             offset: 0,
@@ -8229,40 +8269,40 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::I32GtU);
         func.instruction(&Instruction::If(BlockType::Empty));
         func.instruction(&Instruction::I32Const(1));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+        func.instruction(&Instruction::LocalSet(self.string_compare_result));
         func.instruction(&Instruction::Br(2));
         func.instruction(&Instruction::End);
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_11));
+        func.instruction(&Instruction::LocalGet(self.string_compare_index));
         func.instruction(&Instruction::I32Const(1));
         func.instruction(&Instruction::I32Add);
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_11));
+        func.instruction(&Instruction::LocalSet(self.string_compare_index));
         func.instruction(&Instruction::Br(0));
 
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::LocalGet(self.string_compare_result));
         func.instruction(&Instruction::I32Eqz);
         func.instruction(&Instruction::If(BlockType::Empty));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_9));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+        func.instruction(&Instruction::LocalGet(self.string_compare_lhs_len));
+        func.instruction(&Instruction::LocalGet(self.string_compare_rhs_len));
         func.instruction(&Instruction::I32LtU);
         func.instruction(&Instruction::If(BlockType::Empty));
         func.instruction(&Instruction::I32Const(-1));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+        func.instruction(&Instruction::LocalSet(self.string_compare_result));
         func.instruction(&Instruction::Else);
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_9));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+        func.instruction(&Instruction::LocalGet(self.string_compare_lhs_len));
+        func.instruction(&Instruction::LocalGet(self.string_compare_rhs_len));
         func.instruction(&Instruction::I32GtU);
         func.instruction(&Instruction::If(BlockType::Empty));
         func.instruction(&Instruction::I32Const(1));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
+        func.instruction(&Instruction::LocalSet(self.string_compare_result));
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::LocalGet(self.string_compare_result));
     }
 
     fn emit_deque_push_front(&self, func: &mut Function, deque: ValueId, value: ValueId) {

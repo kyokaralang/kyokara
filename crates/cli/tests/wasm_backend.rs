@@ -878,6 +878,30 @@ fn run_backend_wasm_preserves_chars_frequencies() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_sorted_string_lists() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         from io import println\n\
+         fn main() -> Unit {\n\
+           let names = MutableList.new().push(\"z19\").push(\"fgn\").push(\"dck\").push(\"z37\").push(\"qdg\").push(\"nvh\").push(\"vvf\").push(\"z12\").to_list().sorted()\n\
+           println(names.len().to_string())\n\
+           println(names.get(0).unwrap_or(\"?\"))\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "8\ndck",
+        "run --backend wasm with List<String>.sorted()",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_chars_materialization_inside_range_mapped_string_loops() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
