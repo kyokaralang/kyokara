@@ -10786,7 +10786,6 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
         if let Some(input_ty) = self.linear_collection_element_ty(seq) {
-            self.emit_alloc_empty_list_to_local(func, self.scratch_i32_10);
             self.emit_seq_filter_list_from_local(
                 func,
                 self.scratch_i32,
@@ -10816,18 +10815,17 @@ impl<'a> FuncCodegen<'a> {
             func,
             self.scratch_i32,
             input_ty,
-            self.scratch_i32_10,
+            self.scratch_i32_21,
         )?;
-        self.emit_alloc_empty_list_to_local(func, self.scratch_i32_11);
         self.emit_seq_filter_list_from_local(
             func,
-            self.scratch_i32_10,
+            self.scratch_i32_21,
             input_ty,
             predicate,
-            self.scratch_i32_11,
+            self.scratch_i32_22,
         )?;
-        self.emit_seq_wrap_list_from_local(func, self.scratch_i32_11, self.scratch_i32_10);
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
+        self.emit_seq_wrap_list_from_local(func, self.scratch_i32_22, self.scratch_i32_23);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_23));
         Ok(())
     }
 

@@ -781,6 +781,26 @@ fn run_backend_wasm_preserves_chars_materialization_inside_filtered_string_loops
 }
 
 #[test]
+fn run_backend_wasm_preserves_split_filter_to_list_over_strings() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "fn main() -> Int {\n\
+           \"a b  c\".split(\" \").filter(fn(word: String) => word.len() > 0).to_list().len()\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "3",
+        "run --backend wasm with split(...).filter(...).to_list() over strings",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_chars_materialization_inside_range_mapped_string_loops() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
