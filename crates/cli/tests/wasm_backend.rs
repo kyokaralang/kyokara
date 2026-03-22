@@ -1732,6 +1732,32 @@ fn run_backend_wasm_executes_aoc_2017_day25() {
 }
 
 #[test]
+fn run_backend_wasm_executes_aoc_2018_day04() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("day04.txt");
+    fs::copy(
+        "/Users/alpha/CodexProjects/polyglot-bench/corpus/advent-of-code/2018/day04.txt",
+        &input,
+    )
+    .expect("copy day04 input");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "run",
+            "/Users/alpha/CodexProjects/polyglot-bench/adapters/kyokara/solutions/advent-of-code/2018/day04.ky",
+            "--backend",
+            "wasm",
+        ],
+    );
+    assert_stdout_trimmed(
+        &output,
+        "Part 1: 19830\nPart 2: 43695",
+        "run --backend wasm AoC 2018 day04",
+    );
+}
+
+#[test]
 fn run_backend_wasm_executes_aoc_2019_day11() {
     let dir = tempfile::tempdir().expect("tempdir");
     let input = dir.path().join("day11.txt");
@@ -2039,6 +2065,33 @@ fn run_backend_wasm_preserves_string_loaded_from_mutable_list() {
         &output,
         "A",
         "run --backend wasm preserves string loaded from MutableList",
+    );
+}
+
+#[test]
+fn run_backend_wasm_parses_int_from_special_string_returned_from_call() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn build() -> String {\n\
+           let digits = MutableList.new().push(\"\")\n\
+           let _ = digits.set(0, digits[0].concat(\"1\"))\n\
+           let _ = digits.set(0, digits[0].concat(\"0\"))\n\
+           digits[0]\n\
+         }\n\
+         fn main() -> String {\n\
+           build().parse_int().unwrap_or(0).to_string()\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "10",
+        "run --backend wasm parses int from special string returned from call",
     );
 }
 

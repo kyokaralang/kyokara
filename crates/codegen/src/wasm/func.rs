@@ -145,6 +145,7 @@ pub struct FuncCodegen<'a> {
     scratch_i32_82: u32,
     string_concat_lhs_ptr: u32,
     string_concat_rhs_ptr: u32,
+    string_parse_ptr: u32,
     string_compare_lhs_ptr: u32,
     string_compare_rhs_ptr: u32,
     string_compare_lhs_len: u32,
@@ -288,6 +289,7 @@ impl<'a> FuncCodegen<'a> {
             scratch_i32_82: 0,
             string_concat_lhs_ptr: 0,
             string_concat_rhs_ptr: 0,
+            string_parse_ptr: 0,
             string_compare_lhs_ptr: 0,
             string_compare_rhs_ptr: 0,
             string_compare_lhs_len: 0,
@@ -764,6 +766,10 @@ impl<'a> FuncCodegen<'a> {
         self.local_types.push(ValType::I32);
 
         self.string_concat_rhs_ptr = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.string_parse_ptr = self.next_local;
         self.next_local += 1;
         self.local_types.push(ValType::I32);
 
@@ -23035,9 +23041,12 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalSet(self.scratch_i32)); // parse buffer
 
         self.emit_get(func, value);
+        func.instruction(&Instruction::LocalSet(self.string_parse_ptr));
+        self.emit_string_flatten_from_local(func, self.string_parse_ptr, self.string_parse_ptr);
+        func.instruction(&Instruction::LocalGet(self.string_parse_ptr));
         func.instruction(&Instruction::I32Const(8));
         func.instruction(&Instruction::I32Add);
-        self.emit_get(func, value);
+        func.instruction(&Instruction::LocalGet(self.string_parse_ptr));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 0,
             align: 2,
