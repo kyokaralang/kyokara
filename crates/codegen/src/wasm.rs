@@ -10,8 +10,8 @@ use kyokara_hir_def::item_tree::{ItemTree, TypeItemIdx};
 use kyokara_hir_def::name::Name;
 use kyokara_hir_ty::ty::Ty;
 use kyokara_intern::Interner;
-use kyokara_kir::KirModule;
 use kyokara_kir::function::KirFunction;
+use kyokara_kir::{FnId, KirModule};
 use rustc_hash::FxHashMap;
 use wasm_encoder::{
     CodeSection, ElementSection, Elements, EntityType, ExportKind, ExportSection, Function,
@@ -50,8 +50,11 @@ impl FnTypeKey {
 
 /// Shared state during module codegen.
 pub struct ModuleCtx<'a> {
+    pub kir: &'a KirModule,
     pub item_tree: &'a ItemTree,
     pub interner: &'a Interner,
+    /// KIR function name -> KIR function id.
+    pub kir_fn_map: FxHashMap<Name, FnId>,
     /// KIR FnId (name) → WASM function index.
     pub fn_name_map: FxHashMap<Name, u32>,
     /// KIR function name -> table slot for first-class function references.
@@ -412,9 +415,17 @@ pub fn compile_module(
         );
     }
 
+    let kir_fn_map = kir
+        .functions
+        .iter()
+        .map(|(fn_id, func)| (func.name, fn_id))
+        .collect();
+
     let ctx = ModuleCtx {
+        kir,
         item_tree,
         interner,
+        kir_fn_map,
         fn_name_map,
         fn_table_map,
         fn_type_map,

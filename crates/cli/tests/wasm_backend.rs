@@ -169,6 +169,43 @@ fn run_backend_wasm_supports_direct_imported_fs_read_file() {
 }
 
 #[test]
+fn run_backend_wasm_handles_repeated_large_char_fold_to_string() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         from io import println\n\
+         type Grid = { cells: MutableList<Char> }\n\
+         fn grid_key(grid: Grid) -> String {\n\
+           grid.cells.to_list().fold(\"\", fn(acc: String, ch: Char) => acc.concat(ch.to_string()))\n\
+         }\n\
+         fn main() -> Unit {\n\
+           let cells = MutableList.new()\n\
+           for (i in 0 ..< 10000) {\n\
+             let ch = if (i % 13 == 0) { 'O' } else if (i % 17 == 0) { '#' } else { '.' }\n\
+             let _c = cells.push(ch)\n\
+           }\n\
+           let grid = Grid { cells: cells }\n\
+           let total = MutableList.new().push(0)\n\
+           for (_i in 0 ..< 2000) {\n\
+             let key = grid_key(grid)\n\
+             let _t = total.set(0, total[0] + key.len())\n\
+           }\n\
+           println(total[0].to_string())\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "20000000",
+        "run --backend wasm with repeated large char fold to string",
+    );
+}
+
+#[test]
 fn run_backend_wasm_supports_short_circuit_while_conditions() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
