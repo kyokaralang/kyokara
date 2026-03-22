@@ -10698,23 +10698,12 @@ impl<'a> FuncCodegen<'a> {
             )));
         }
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32));
-        func.instruction(&Instruction::I32Load(MemArg {
-            offset: 0,
-            align: 2,
-            memory_index: 0,
-        }));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
-
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
-        func.instruction(&Instruction::I32Const(SEQ_KIND_MATERIALIZED_LIST));
-        func.instruction(&Instruction::I32Eq);
-        func.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
-        self.emit_seq_load_materialized_list_source_from_local(
+        self.emit_seq_materialize_core_to_list_from_local(
             func,
             self.scratch_i32,
+            input_ty,
             self.scratch_i32_10,
-        );
+        )?;
         self.emit_alloc_empty_list_to_local(func, self.scratch_i32_11);
         self.emit_seq_filter_list_from_local(
             func,
@@ -10725,10 +10714,6 @@ impl<'a> FuncCodegen<'a> {
         )?;
         self.emit_seq_wrap_list_from_local(func, self.scratch_i32_11, self.scratch_i32_10);
         func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
-        func.instruction(&Instruction::Else);
-        func.instruction(&Instruction::Unreachable);
-        func.instruction(&Instruction::I32Const(0));
-        func.instruction(&Instruction::End);
         Ok(())
     }
 

@@ -1862,6 +1862,46 @@ fn test_seq_map_filter_fold_matches_interpreter_semantics() {
 }
 
 #[test]
+fn test_range_filter_to_list_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int {
+  (0..<5).filter(fn(n: Int) => n % 2 == 0).to_list().len()
+}"#
+        ),
+        3
+    );
+}
+
+#[test]
+fn test_split_filter_to_list_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int {
+  "10  19"
+    .split(" ")
+    .filter(fn(tok: String) => tok.len() > 0)
+    .to_list()
+    .len()
+}"#
+        ),
+        2
+    );
+}
+
+#[test]
+fn test_chars_filter_to_list_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int {
+  "abc".chars().filter(fn(ch: Char) => ch != 'b').to_list().len()
+}"#
+        ),
+        2
+    );
+}
+
+#[test]
 fn test_list_map_filter_and_materialized_seq_terminals_match_interpreter_semantics() {
     assert_eq!(
         run_main_i64(
