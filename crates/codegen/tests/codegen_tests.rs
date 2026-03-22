@@ -1220,6 +1220,437 @@ fn main() -> String {
 }
 
 #[test]
+fn test_builtin_trait_qualified_show_on_derived_record_with_deque_fields_matches_interpreter_semantics()
+ {
+    assert_eq!(
+        run_main_string(
+            r#"from collections import Deque
+type Pair derive(Show) = { left: Deque<Int>, right: Deque<Int> }
+
+fn main() -> String {
+  let left = Deque.new().appended(1).appended(2)
+  let right = Deque.new().appended(3).appended(4)
+  Show.show(Pair { left: left, right: right })
+}"#
+        ),
+        "{ left: Deque([1, 2]), right: Deque([3, 4]) }"
+    );
+}
+
+#[test]
+fn test_record_field_access_preserves_deque_fields_in_wasm() {
+    assert_eq!(
+        run_main_string(
+            r#"from collections import Deque
+type Pair = { left: Deque<Int>, right: Deque<Int> }
+
+fn main() -> String {
+  let left = Deque.new().appended(1).appended(2)
+  let right = Deque.new().appended(3).appended(4)
+  let pair = Pair { left: left, right: right }
+  Show.show(pair.left).concat("|").concat(Show.show(pair.right))
+}"#
+        ),
+        "Deque([1, 2])|Deque([3, 4])"
+    );
+}
+
+#[test]
+fn test_record_mixed_int_and_deque_fields_roundtrip_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"from collections import Deque
+type Mixed = { x: Int, d: Deque<Int> }
+
+fn main() -> Int {
+  let mixed = Mixed { x: 9, d: Deque.new().appended(3).appended(4) }
+  mixed.x
+}"#
+        ),
+        9
+    );
+}
+
+#[test]
+fn test_mutable_set_contains_derived_record_with_deque_fields_in_wasm() {
+    assert!(run_main_bool(
+        r#"from collections import Deque, MutableSet
+type RoundState derive(Eq, Hash) = { d1: Deque<Int>, d2: Deque<Int> }
+
+fn main() -> Bool {
+  let left = Deque.new().appended(1).appended(2)
+  let right = Deque.new().appended(3).appended(4)
+  let state = RoundState { d1: left, d2: right }
+  let history: MutableSet<RoundState> = MutableSet.new()
+  let _h = history.insert(state)
+  history.contains(state)
+}"#
+    ));
+}
+
+#[test]
+fn test_mutable_set_contains_fresh_derived_record_with_deque_fields_in_wasm() {
+    assert!(run_main_bool(
+        r#"from collections import Deque, MutableSet
+type RoundState derive(Eq, Hash) = { d1: Deque<Int>, d2: Deque<Int> }
+
+fn mk() -> RoundState {
+  RoundState {
+    d1: Deque.new().appended(1).appended(2),
+    d2: Deque.new().appended(3).appended(4),
+  }
+}
+
+fn main() -> Bool {
+  let history: MutableSet<RoundState> = MutableSet.new()
+  let _h = history.insert(mk())
+  history.contains(mk())
+}"#
+    ));
+}
+
+#[test]
+fn test_structural_equality_on_distinct_record_deque_values_in_wasm() {
+    assert!(!run_main_bool(
+        r#"from collections import Deque
+type RoundState derive(Eq) = { d1: Deque<Int>, d2: Deque<Int> }
+
+fn mk(seed: Int) -> RoundState {
+  RoundState {
+    d1: Deque.new().appended(seed).appended(seed + 1),
+    d2: Deque.new().appended(seed + 2).appended(seed + 3),
+  }
+}
+
+fn main() -> Bool {
+  Eq.eq(mk(0), mk(1))
+}"#
+    ));
+}
+
+#[test]
+fn test_structural_hash_on_distinct_record_deque_values_is_stable_in_wasm() {
+    assert!(run_main_bool(
+        r#"from collections import Deque
+type RoundState derive(Hash) = { d1: Deque<Int>, d2: Deque<Int> }
+
+fn mk(seed: Int) -> RoundState {
+  RoundState {
+    d1: Deque.new().appended(seed).appended(seed + 1),
+    d2: Deque.new().appended(seed + 2).appended(seed + 3),
+  }
+}
+
+fn main() -> Bool {
+  Hash.hash(mk(0)) != Hash.hash(mk(1)) && Hash.hash(mk(7)) == Hash.hash(mk(7))
+}"#
+    ));
+}
+
+#[test]
+fn test_mutable_set_growth_with_fresh_derived_record_deque_keys_in_wasm() {
+    assert!(run_main_bool(
+        r#"from collections import Deque, MutableSet
+type RoundState derive(Eq, Hash) = { d1: Deque<Int>, d2: Deque<Int> }
+
+fn mk(seed: Int) -> RoundState {
+  RoundState {
+    d1: Deque.new().appended(seed).appended(seed + 1),
+    d2: Deque.new().appended(seed + 2).appended(seed + 3),
+  }
+}
+
+fn main() -> Bool {
+  let history: MutableSet<RoundState> = MutableSet.new()
+  for (i in 0..<64) {
+    let _h = history.insert(mk(i))
+  }
+  history.contains(mk(7)) && history.contains(mk(31)) && history.contains(mk(63)) && !history.contains(mk(128))
+}"#
+    ));
+}
+
+#[test]
+fn test_mutable_set_insert_growth_with_fresh_derived_record_deque_keys_in_wasm() {
+    assert!(run_main_bool(
+        r#"from collections import Deque, MutableSet
+type RoundState derive(Eq, Hash) = { d1: Deque<Int>, d2: Deque<Int> }
+
+fn mk(seed: Int) -> RoundState {
+  RoundState {
+    d1: Deque.new().appended(seed).appended(seed + 1),
+    d2: Deque.new().appended(seed + 2).appended(seed + 3),
+  }
+}
+
+fn main() -> Bool {
+  let history: MutableSet<RoundState> = MutableSet.new()
+  for (i in 0..<64) {
+    let _h = history.insert(mk(i))
+  }
+  history.len() == 64
+}"#
+    ));
+}
+
+#[test]
+fn test_mutable_set_insert_growth_reports_expected_len_for_small_record_deque_keys_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"from collections import Deque, MutableSet
+type RoundState derive(Eq, Hash) = { d1: Deque<Int>, d2: Deque<Int> }
+
+fn mk(seed: Int) -> RoundState {
+  RoundState {
+    d1: Deque.new().appended(seed).appended(seed + 1),
+    d2: Deque.new().appended(seed + 2).appended(seed + 3),
+  }
+}
+
+fn main() -> Int {
+  let history: MutableSet<RoundState> = MutableSet.new()
+  for (i in 0..<4) {
+    let _h = history.insert(mk(i))
+  }
+  history.len()
+}"#
+        ),
+        4
+    );
+}
+
+#[test]
+fn test_mutable_list_growth_with_fresh_record_deque_values_in_wasm() {
+    assert!(run_main_bool(
+        r#"from collections import Deque, MutableList
+type RoundState = { d1: Deque<Int>, d2: Deque<Int> }
+
+fn mk(seed: Int) -> RoundState {
+  RoundState {
+    d1: Deque.new().appended(seed).appended(seed + 1),
+    d2: Deque.new().appended(seed + 2).appended(seed + 3),
+  }
+}
+
+fn main() -> Bool {
+  let states: MutableList<RoundState> = MutableList.new()
+  for (i in 0..<64) {
+    let _s = states.push(mk(i))
+  }
+  states.len() == 64
+}"#
+    ));
+}
+
+#[test]
+fn test_mutable_list_grown_record_deque_values_preserve_contents_in_wasm() {
+    assert_eq!(
+        run_main_string(
+            r#"from collections import Deque, MutableList
+type RoundState = { d1: Deque<Int>, d2: Deque<Int> }
+
+fn mk(seed: Int) -> RoundState {
+  RoundState {
+    d1: Deque.new().appended(seed).appended(seed + 1),
+    d2: Deque.new().appended(seed + 2).appended(seed + 3),
+  }
+}
+
+fn main() -> String {
+  let states: MutableList<RoundState> = MutableList.new()
+  for (i in 0..<64) {
+    let _s = states.push(mk(i))
+  }
+  Show.show(states[31].d1).concat("|").concat(Show.show(states[31].d2))
+}"#
+        ),
+        "Deque([31, 32])|Deque([33, 34])"
+    );
+}
+
+#[test]
+fn test_list_contains_after_growth_with_record_deque_values_in_wasm() {
+    assert!(run_main_bool(
+        r#"from collections import Deque, MutableList
+type RoundState derive(Eq) = { d1: Deque<Int>, d2: Deque<Int> }
+
+fn mk(seed: Int) -> RoundState {
+  RoundState {
+    d1: Deque.new().appended(seed).appended(seed + 1),
+    d2: Deque.new().appended(seed + 2).appended(seed + 3),
+  }
+}
+
+fn main() -> Bool {
+  let states: MutableList<RoundState> = MutableList.new()
+  for (i in 0..<64) {
+    let _s = states.push(mk(i))
+  }
+  states.to_list().contains(mk(31))
+}"#
+    ));
+}
+
+#[test]
+fn test_mutable_list_contains_after_growth_with_record_deque_values_in_wasm() {
+    assert!(run_main_bool(
+        r#"from collections import Deque, MutableList
+type RoundState derive(Eq) = { d1: Deque<Int>, d2: Deque<Int> }
+
+fn mk(seed: Int) -> RoundState {
+  RoundState {
+    d1: Deque.new().appended(seed).appended(seed + 1),
+    d2: Deque.new().appended(seed + 2).appended(seed + 3),
+  }
+}
+
+fn main() -> Bool {
+  let states: MutableList<RoundState> = MutableList.new()
+  for (i in 0..<64) {
+    let _s = states.push(mk(i))
+  }
+  states.contains(mk(31))
+}"#
+    ));
+}
+
+#[test]
+fn test_mutable_list_contains_after_growth_with_hashed_record_deque_values_in_wasm() {
+    assert!(run_main_bool(
+        r#"from collections import Deque, MutableList
+type RoundState derive(Eq, Hash) = { d1: Deque<Int>, d2: Deque<Int> }
+
+fn mk(seed: Int) -> RoundState {
+  RoundState {
+    d1: Deque.new().appended(seed).appended(seed + 1),
+    d2: Deque.new().appended(seed + 2).appended(seed + 3),
+  }
+}
+
+fn main() -> Bool {
+  let states: MutableList<RoundState> = MutableList.new()
+  for (i in 0..<4) {
+    let _s = states.push(mk(i))
+  }
+  states.contains(mk(3)) && !states.contains(mk(9))
+}"#
+    ));
+}
+
+#[test]
+fn test_mutable_list_contains_then_push_hashed_record_deque_values_in_wasm() {
+    assert!(run_main_bool(
+        r#"from collections import Deque, MutableList
+type RoundState derive(Eq, Hash) = { d1: Deque<Int>, d2: Deque<Int> }
+
+fn mk(seed: Int) -> RoundState {
+  RoundState {
+    d1: Deque.new().appended(seed).appended(seed + 1),
+    d2: Deque.new().appended(seed + 2).appended(seed + 3),
+  }
+}
+
+fn main() -> Bool {
+  let states: MutableList<RoundState> = MutableList.new()
+  for (i in 0..<4) {
+    let candidate = mk(i)
+    if (!states.contains(candidate)) {
+      let _s = states.push(candidate)
+    }
+  }
+  states.len() == 4
+}"#
+    ));
+}
+
+#[test]
+fn test_mutable_set_contains_after_record_deque_growth_in_wasm() {
+    assert!(run_main_bool(
+        r#"from collections import Deque, MutableSet
+type RoundState derive(Eq, Hash) = { d1: Deque<Int>, d2: Deque<Int> }
+
+fn mk(seed: Int) -> RoundState {
+  RoundState {
+    d1: Deque.new().appended(seed).appended(seed + 1),
+    d2: Deque.new().appended(seed + 2).appended(seed + 3),
+  }
+}
+
+fn main() -> Bool {
+  let history: MutableSet<RoundState> = MutableSet.new()
+  for (i in 0..<64) {
+    let _h = history.insert(mk(i))
+  }
+  history.contains(mk(31))
+}"#
+    ));
+}
+
+#[test]
+fn test_record_with_multiple_mutable_list_fields_roundtrips_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"from collections import MutableList
+type Blueprint = {
+  start: Int,
+  steps: Int,
+  has: MutableList<Bool>,
+  write: MutableList<Int>,
+  move: MutableList<Int>,
+  next: MutableList<Int>,
+}
+
+fn make_bool_array(size: Int, value: Bool) -> MutableList<Bool> {
+  MutableList.from_list((0..<size).map(fn(_i: Int) => value).to_list())
+}
+
+fn make_int_array(size: Int, value: Int) -> MutableList<Int> {
+  MutableList.from_list((0..<size).map(fn(_i: Int) => value).to_list())
+}
+
+fn main() -> Int {
+  let bp = Blueprint {
+    start: 2,
+    steps: 5,
+    has: make_bool_array(4, false),
+    write: make_int_array(4, 0),
+    move: make_int_array(4, -1),
+    next: make_int_array(4, 3),
+  }
+  let _w = bp.write.set(0, 11)
+  let _n = bp.next.set(1, 7)
+  bp.start + bp.steps + bp.write[0] + bp.next[1]
+}"#
+        ),
+        25
+    );
+}
+
+#[test]
+fn test_nested_record_with_mutable_list_payload_roundtrips_in_wasm() {
+    assert_eq!(
+        run_main_i64(
+            r#"from collections import MutableList
+type VM = { mem: MutableList<Int>, ip: Int, rb: Int, halted: Bool }
+type Step = { vm: VM, has_output: Bool, output: Int }
+
+fn main() -> Int {
+  let vm = VM {
+    mem: MutableList.from_list((0..<3).to_list()),
+    ip: 4,
+    rb: 5,
+    halted: false,
+  }
+  let step = Step { vm: vm, has_output: true, output: 7 }
+  let _m = step.vm.mem.set(1, 9)
+  step.vm.mem[1] + step.vm.ip + step.vm.rb + step.output
+}"#
+        ),
+        25
+    );
+}
+
+#[test]
 fn test_builtin_trait_qualified_hash_is_stable_for_primitives_in_wasm() {
     assert!(run_main_bool(
         r#"fn main() -> Bool {
@@ -1898,6 +2329,61 @@ fn test_chars_filter_to_list_matches_interpreter_semantics() {
 }"#
         ),
         2
+    );
+}
+
+#[test]
+fn test_record_filter_to_list_repeatedly_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+type IndexedInt = { index: Int, value: Int }
+
+fn keep(entry: IndexedInt) -> Bool { entry.index % 2 == 0 }
+
+fn main() -> Int {
+  let xs = (0..<1000)
+    .map(fn(n: Int) => IndexedInt { index: n, value: n })
+    .to_list()
+  (0..<500).fold(0, fn(acc: Int, _round: Int) => acc + xs.filter(keep).to_list().len())
+}"#
+        ),
+        250000
+    );
+}
+
+#[test]
+fn test_enumerate_to_list_repeatedly_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+type IndexedInt = { index: Int, value: Int }
+
+fn main() -> Int {
+  let cur = collections.MutableList.from_list((0..<1000).to_list())
+  (0..<5000).fold(0, fn(acc: Int, _n: Int) => acc + cur.to_list().enumerate().to_list().len())
+}"#
+        ),
+        5000000
+    );
+}
+
+#[test]
+fn test_enumerate_filter_to_list_repeatedly_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"import collections
+type IndexedInt = { index: Int, value: Int }
+
+fn main() -> Int {
+  let cur = collections.MutableList.from_list((0..<1000).to_list())
+  (0..<5000).fold(
+    0,
+    fn(acc: Int, _n: Int) => acc + cur.to_list().enumerate().filter(fn(e: IndexedInt) => e.index < 1000).to_list().len(),
+  )
+}"#
+        ),
+        5000000
     );
 }
 

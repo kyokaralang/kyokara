@@ -513,7 +513,9 @@ impl<'a> LoweringCtx<'a> {
                     self.collect_expr_outer_local_captures(*value, lambda_scope, seen, out);
                 }
             }
-            Expr::Lambda { .. } => {}
+            Expr::Lambda { body, .. } => {
+                self.collect_expr_outer_local_captures(*body, lambda_scope, seen, out);
+            }
         }
     }
 
@@ -612,7 +614,8 @@ impl<'a> LoweringCtx<'a> {
                 .iter()
                 .any(|(_, value)| self.expr_uses_outer_local_capture(*value, lambda_scope)),
             Expr::Old(inner) => self.expr_uses_outer_local_capture(*inner, lambda_scope),
-            Expr::Lambda { .. } | Expr::Missing | Expr::Hole | Expr::Literal(_) => false,
+            Expr::Lambda { body, .. } => self.expr_uses_outer_local_capture(*body, lambda_scope),
+            Expr::Missing | Expr::Hole | Expr::Literal(_) => false,
             Expr::Path(_) => false,
         }
     }

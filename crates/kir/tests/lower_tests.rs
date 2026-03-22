@@ -1833,6 +1833,35 @@ fn test_capturing_lambda_does_not_lower_to_placeholder_hole() {
 }
 
 #[test]
+fn test_nested_fold_lambda_block_with_sort_lowers_without_placeholder_holes() {
+    let out = lower_and_display(
+        "from collections import MutableList\n\
+         fn f() -> Int {\n\
+           let limit = 5\n\
+           let final_out = (0..<10).fold(\n\
+             MutableList.new(),\n\
+             fn(out_i: MutableList<Int>, i: Int) => {\n\
+               let jdx = (i + 1)..<10\n\
+               jdx.fold(out_i, fn(out: MutableList<Int>, j: Int) => {\n\
+                 if (out.len() < limit) {\n\
+                   let _p = out.push(10 - j)\n\
+                   if (out.len() == limit) {\n\
+                     let _s = out.sort()\n\
+                   }\n\
+                   out\n\
+                 } else {\n\
+                   out\n\
+                 }\n\
+               })\n\
+             },\n\
+           )\n\
+           final_out.len()\n\
+         }",
+    );
+    assert!(!out.contains("hole #"), "output:\n{out}");
+}
+
+#[test]
 fn test_fn_ref_guard_hole_stays_hole() {
     // Guard: typed holes should still emit hole instructions, not fn_ref.
     let out = lower_and_display("fn f(x: Int) -> Int { x + _ }");

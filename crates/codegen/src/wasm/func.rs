@@ -122,6 +122,22 @@ pub struct FuncCodegen<'a> {
     scratch_i32_64: u32,
     scratch_i32_65: u32,
     scratch_i32_66: u32,
+    scratch_i32_67: u32,
+    scratch_i32_68: u32,
+    scratch_i32_69: u32,
+    scratch_i32_70: u32,
+    scratch_i32_71: u32,
+    scratch_i32_72: u32,
+    scratch_i32_73: u32,
+    scratch_i32_74: u32,
+    scratch_i32_75: u32,
+    scratch_i32_76: u32,
+    scratch_i32_77: u32,
+    scratch_i32_78: u32,
+    scratch_i32_79: u32,
+    scratch_i32_80: u32,
+    scratch_i32_81: u32,
+    scratch_i32_82: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -237,6 +253,22 @@ impl<'a> FuncCodegen<'a> {
             scratch_i32_64: 0,
             scratch_i32_65: 0,
             scratch_i32_66: 0,
+            scratch_i32_67: 0,
+            scratch_i32_68: 0,
+            scratch_i32_69: 0,
+            scratch_i32_70: 0,
+            scratch_i32_71: 0,
+            scratch_i32_72: 0,
+            scratch_i32_73: 0,
+            scratch_i32_74: 0,
+            scratch_i32_75: 0,
+            scratch_i32_76: 0,
+            scratch_i32_77: 0,
+            scratch_i32_78: 0,
+            scratch_i32_79: 0,
+            scratch_i32_80: 0,
+            scratch_i32_81: 0,
+            scratch_i32_82: 0,
         }
     }
 
@@ -613,6 +645,70 @@ impl<'a> FuncCodegen<'a> {
         self.local_types.push(ValType::I32);
 
         self.scratch_i32_66 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_67 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_68 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_69 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_70 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_71 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_72 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_73 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_74 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_75 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_76 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_77 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_78 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_79 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_80 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_81 = self.next_local;
+        self.next_local += 1;
+        self.local_types.push(ValType::I32);
+
+        self.scratch_i32_82 = self.next_local;
         self.next_local += 1;
         self.local_types.push(ValType::I32);
 
@@ -6452,17 +6548,17 @@ impl<'a> FuncCodegen<'a> {
         })?;
         self.emit_get(func, set);
         func.instruction(&Instruction::LocalSet(self.scratch_i32_12));
-        self.emit_seq_contains_linear_collection_from_local(
+        let value_local = self.stable_compare_local(elem_ty);
+        self.emit_get(func, value);
+        func.instruction(&Instruction::LocalSet(value_local));
+        self.emit_seq_contains_linear_collection_with_needle_local(
             func,
             self.scratch_i32_12,
             elem_ty,
-            value,
+            value_local,
         )?;
         func.instruction(&Instruction::I32Eqz);
         func.instruction(&Instruction::If(BlockType::Empty));
-        let value_local = self.temp_local_for_ty(elem_ty);
-        self.emit_get(func, value);
-        func.instruction(&Instruction::LocalSet(value_local));
         self.emit_mutable_list_like_push_back_local_typed(
             func,
             self.scratch_i32_12,
@@ -11191,31 +11287,29 @@ impl<'a> FuncCodegen<'a> {
         out_list_local: u32,
     ) -> Result<(), CodegenError> {
         let input_local = self.temp_local_for_ty(input_ty);
-        let output_local = self.scratch_i32_8;
-        func.instruction(&Instruction::I32Const(0));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_9));
-
-        func.instruction(&Instruction::Block(BlockType::Empty));
-        func.instruction(&Instruction::Loop(BlockType::Empty));
+        let [len_local, data_local, index_local, slot_ptr_local] =
+            self.range_list_builder_i32_locals(out_list_local);
+        let output_local = self.range_list_builder_output_i32_local(out_list_local);
         self.emit_load_list_len_and_data_from_local(
             func,
             list_local,
-            self.scratch_i32_3,
+            len_local,
             self.scratch_i32_4,
         );
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_9));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        self.emit_alloc_list_data_for_len(func, len_local, data_local);
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(index_local));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(index_local));
+        func.instruction(&Instruction::LocalGet(len_local));
         func.instruction(&Instruction::I32GeU);
         func.instruction(&Instruction::BrIf(1));
 
-        self.emit_load_list_slot_from_locals(
-            func,
-            self.scratch_i32_4,
-            self.scratch_i32_9,
-            input_ty,
-        );
+        self.emit_load_list_slot_from_locals(func, self.scratch_i32_4, index_local, input_ty);
         func.instruction(&Instruction::LocalSet(input_local));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_9));
+        func.instruction(&Instruction::LocalGet(index_local));
         func.instruction(&Instruction::I64ExtendI32U);
         func.instruction(&Instruction::LocalSet(self.scratch_i64_3));
         self.emit_record_from_locals(
@@ -11227,15 +11321,19 @@ impl<'a> FuncCodegen<'a> {
             ],
             output_local,
         )?;
-        self.emit_list_like_push_back_local_typed(func, out_list_local, output_local, output_ty);
+        self.emit_list_slot_ptr_from_locals(func, data_local, index_local, slot_ptr_local);
+        func.instruction(&Instruction::LocalGet(slot_ptr_local));
+        func.instruction(&Instruction::LocalGet(output_local));
+        self.emit_typed_store_stack(func, output_ty, 0);
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_9));
+        func.instruction(&Instruction::LocalGet(index_local));
         func.instruction(&Instruction::I32Const(1));
         func.instruction(&Instruction::I32Add);
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_9));
+        func.instruction(&Instruction::LocalSet(index_local));
         func.instruction(&Instruction::Br(0));
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
+        self.emit_update_list_header_from_locals(func, out_list_local, len_local, data_local);
         Ok(())
     }
 
@@ -11702,19 +11800,25 @@ impl<'a> FuncCodegen<'a> {
         output_ty: &Ty,
         out_list_local: u32,
     ) -> Result<(), CodegenError> {
-        let output_local = self.scratch_i32_8;
+        let [len_local, data_local, index_local, slot_ptr_local] =
+            self.range_list_builder_i32_locals(out_list_local);
+        let output_local = self.range_list_builder_output_i32_local(out_list_local);
 
         self.emit_seq_load_range_bounds_from_local(func, seq_local)?;
+        self.emit_seq_compute_loaded_range_len_to_local(func, len_local);
+        self.emit_alloc_list_data_for_len(func, len_local, data_local);
         func.instruction(&Instruction::LocalGet(self.scratch_i64));
         func.instruction(&Instruction::LocalSet(self.scratch_i64_3)); // current value
         func.instruction(&Instruction::I64Const(0));
         func.instruction(&Instruction::LocalSet(self.scratch_i64_4)); // current index
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(index_local));
 
         func.instruction(&Instruction::Block(BlockType::Empty));
         func.instruction(&Instruction::Loop(BlockType::Empty));
-        func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
-        func.instruction(&Instruction::LocalGet(self.scratch_i64_2));
-        func.instruction(&Instruction::I64GeS);
+        func.instruction(&Instruction::LocalGet(index_local));
+        func.instruction(&Instruction::LocalGet(len_local));
+        func.instruction(&Instruction::I32GeU);
         func.instruction(&Instruction::BrIf(1));
 
         self.emit_record_from_locals(
@@ -11726,7 +11830,10 @@ impl<'a> FuncCodegen<'a> {
             ],
             output_local,
         )?;
-        self.emit_list_like_push_back_local_typed(func, out_list_local, output_local, output_ty);
+        self.emit_list_slot_ptr_from_locals(func, data_local, index_local, slot_ptr_local);
+        func.instruction(&Instruction::LocalGet(slot_ptr_local));
+        func.instruction(&Instruction::LocalGet(output_local));
+        self.emit_typed_store_stack(func, output_ty, 0);
 
         func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
         func.instruction(&Instruction::I64Const(1));
@@ -11736,9 +11843,14 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::I64Const(1));
         func.instruction(&Instruction::I64Add);
         func.instruction(&Instruction::LocalSet(self.scratch_i64_4));
+        func.instruction(&Instruction::LocalGet(index_local));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(index_local));
         func.instruction(&Instruction::Br(0));
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
+        self.emit_update_list_header_from_locals(func, out_list_local, len_local, data_local);
         Ok(())
     }
 
@@ -12219,44 +12331,75 @@ impl<'a> FuncCodegen<'a> {
         predicate: ValueId,
         out_list_local: u32,
     ) -> Result<(), CodegenError> {
-        let elem_local = match elem_ty {
-            Ty::Float => self.scratch_f64_2,
-            Ty::Int => self.scratch_i64_2,
-            _ => self.scratch_i32_12,
-        };
-        func.instruction(&Instruction::LocalGet(list_local));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_8));
+        let elem_local = self.stable_compare_local(elem_ty);
+        let input_len_local = self.scratch_i32_16;
+        let input_data_local = self.scratch_i32_17;
+        let index_local = self.scratch_i32_18;
+        let output_data_local = self.scratch_i32_19;
+        let output_len_local = self.scratch_i32_20;
+
+        self.emit_load_list_len_and_data_from_local(
+            func,
+            list_local,
+            input_len_local,
+            input_data_local,
+        );
+        self.emit_alloc_empty_list_to_local(func, out_list_local);
+        func.instruction(&Instruction::LocalGet(input_len_local));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_alloc_list_data_for_len(func, input_len_local, output_data_local);
         func.instruction(&Instruction::I32Const(0));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_9));
+        func.instruction(&Instruction::LocalSet(output_len_local));
+        self.emit_update_mutable_list_header_from_locals(
+            func,
+            out_list_local,
+            output_len_local,
+            input_len_local,
+            output_data_local,
+        );
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(index_local));
 
         func.instruction(&Instruction::Block(BlockType::Empty));
         func.instruction(&Instruction::Loop(BlockType::Empty));
-        self.emit_load_list_len_and_data_from_local(
-            func,
-            self.scratch_i32_8,
-            self.scratch_i32_3,
-            self.scratch_i32_4,
-        );
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_9));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::LocalGet(index_local));
+        func.instruction(&Instruction::LocalGet(input_len_local));
         func.instruction(&Instruction::I32GeU);
         func.instruction(&Instruction::BrIf(1));
 
-        self.emit_load_list_slot_from_locals(func, self.scratch_i32_4, self.scratch_i32_9, elem_ty);
+        self.emit_load_list_slot_from_locals(func, input_data_local, index_local, elem_ty);
         func.instruction(&Instruction::LocalSet(elem_local));
         func.instruction(&Instruction::LocalGet(elem_local));
         self.emit_indirect_call_single_arg(func, predicate)?;
         func.instruction(&Instruction::If(BlockType::Empty));
-        self.emit_list_like_push_back_local_typed(func, out_list_local, elem_local, elem_ty);
+        self.emit_mutable_list_like_push_back_local_typed(
+            func,
+            out_list_local,
+            elem_local,
+            elem_ty,
+        );
         func.instruction(&Instruction::End);
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_9));
+        func.instruction(&Instruction::LocalGet(index_local));
         func.instruction(&Instruction::I32Const(1));
         func.instruction(&Instruction::I32Add);
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_9));
+        func.instruction(&Instruction::LocalSet(index_local));
         func.instruction(&Instruction::Br(0));
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
+        self.emit_load_list_len_and_data_from_local(
+            func,
+            out_list_local,
+            output_len_local,
+            output_data_local,
+        );
+        self.emit_update_list_header_from_locals(
+            func,
+            out_list_local,
+            output_len_local,
+            output_data_local,
+        );
         Ok(())
     }
 
@@ -14514,6 +14657,30 @@ impl<'a> FuncCodegen<'a> {
         }
     }
 
+    fn stable_compare_local(&self, ty: &Ty) -> u32 {
+        match ty {
+            Ty::Int => self.scratch_i64_13,
+            Ty::Float => self.scratch_f64_4,
+            _ => self.scratch_i32_65,
+        }
+    }
+
+    fn structural_base_locals(&self, depth: u32) -> Result<(u32, u32), CodegenError> {
+        match depth {
+            0 => Ok((self.scratch_i32_67, self.scratch_i32_68)),
+            1 => Ok((self.scratch_i32_69, self.scratch_i32_70)),
+            2 => Ok((self.scratch_i32_71, self.scratch_i32_72)),
+            3 => Ok((self.scratch_i32_73, self.scratch_i32_74)),
+            4 => Ok((self.scratch_i32_75, self.scratch_i32_76)),
+            5 => Ok((self.scratch_i32_77, self.scratch_i32_78)),
+            6 => Ok((self.scratch_i32_79, self.scratch_i32_80)),
+            7 => Ok((self.scratch_i32_81, self.scratch_i32_82)),
+            _ => Err(CodegenError::UnsupportedInstruction(
+                "Wasm structural recursion over deeply nested pointer values (deferred)".into(),
+            )),
+        }
+    }
+
     fn equality_linear_state_locals(
         &self,
         depth: u32,
@@ -14695,8 +14862,13 @@ impl<'a> FuncCodegen<'a> {
                         "Wasm structural equality over {ty:?} (deferred)"
                     ))
                 })?;
+                let (base_lhs_local, base_rhs_local) = self.structural_base_locals(depth)?;
 
                 func.instruction(&Instruction::LocalGet(lhs_local));
+                func.instruction(&Instruction::LocalSet(base_lhs_local));
+                func.instruction(&Instruction::LocalGet(rhs_local));
+                func.instruction(&Instruction::LocalSet(base_rhs_local));
+                func.instruction(&Instruction::LocalGet(base_lhs_local));
                 func.instruction(&Instruction::LocalGet(rhs_local));
                 func.instruction(&Instruction::I32Eq);
                 func.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
@@ -14709,11 +14881,11 @@ impl<'a> FuncCodegen<'a> {
                     let offset = u64::from(layout::record_field_offset(i as u32));
                     let (field_lhs_local, field_rhs_local) = self.equality_temp_locals(field_ty);
 
-                    func.instruction(&Instruction::LocalGet(lhs_local));
+                    func.instruction(&Instruction::LocalGet(base_lhs_local));
                     self.emit_typed_load(func, field_ty, offset);
                     func.instruction(&Instruction::LocalSet(field_lhs_local));
 
-                    func.instruction(&Instruction::LocalGet(rhs_local));
+                    func.instruction(&Instruction::LocalGet(base_rhs_local));
                     self.emit_typed_load(func, field_ty, offset);
                     func.instruction(&Instruction::LocalSet(field_rhs_local));
 
@@ -14781,6 +14953,47 @@ impl<'a> FuncCodegen<'a> {
             _ => Err(CodegenError::UnsupportedInstruction(
                 "Wasm builtin Show.show over deeply nested structural values (deferred)".into(),
             )),
+        }
+    }
+
+    fn trait_show_value_local(&self, depth: u32, ty: &Ty) -> Result<u32, CodegenError> {
+        match ty {
+            Ty::Float => match depth {
+                0 => Ok(self.scratch_f64_3),
+                1 => Ok(self.scratch_f64_4),
+                _ => Err(CodegenError::UnsupportedInstruction(
+                    "Wasm builtin Show.show over deeply nested float values (deferred)".into(),
+                )),
+            },
+            Ty::Int => match depth {
+                0 => Ok(self.scratch_i64_5),
+                1 => Ok(self.scratch_i64_6),
+                2 => Ok(self.scratch_i64_7),
+                3 => Ok(self.scratch_i64_8),
+                4 => Ok(self.scratch_i64_9),
+                5 => Ok(self.scratch_i64_10),
+                6 => Ok(self.scratch_i64_11),
+                7 => Ok(self.scratch_i64_12),
+                8 => Ok(self.scratch_i64_13),
+                _ => Err(CodegenError::UnsupportedInstruction(
+                    "Wasm builtin Show.show over deeply nested int values (deferred)".into(),
+                )),
+            },
+            _ => match depth {
+                0 => Ok(self.scratch_i32_17),
+                1 => Ok(self.scratch_i32_18),
+                2 => Ok(self.scratch_i32_19),
+                3 => Ok(self.scratch_i32_20),
+                4 => Ok(self.scratch_i32_21),
+                5 => Ok(self.scratch_i32_22),
+                6 => Ok(self.scratch_i32_23),
+                7 => Ok(self.scratch_i32_24),
+                8 => Ok(self.scratch_i32_25),
+                9 => Ok(self.scratch_i32_26),
+                _ => Err(CodegenError::UnsupportedInstruction(
+                    "Wasm builtin Show.show over deeply nested structural values (deferred)".into(),
+                )),
+            },
         }
     }
 
@@ -15431,6 +15644,9 @@ impl<'a> FuncCodegen<'a> {
                     func.instruction(&Instruction::End);
                     Ok(())
                 } else {
+                    let (base_local, _unused_pair) = self.structural_base_locals(depth)?;
+                    func.instruction(&Instruction::LocalGet(value_local));
+                    func.instruction(&Instruction::LocalSet(base_local));
                     if let Ty::Adt { def, .. } = ty {
                         let type_item = &self.ctx.item_tree.types[*def];
                         match &type_item.kind {
@@ -15447,7 +15663,7 @@ impl<'a> FuncCodegen<'a> {
                                     out_local,
                                     type_item.name.resolve(self.ctx.interner),
                                 );
-                                func.instruction(&Instruction::LocalGet(value_local));
+                                func.instruction(&Instruction::LocalGet(base_local));
                                 func.instruction(&Instruction::I32Load(MemArg {
                                     offset: 0,
                                     align: 2,
@@ -15475,7 +15691,7 @@ impl<'a> FuncCodegen<'a> {
                                             continue;
                                         }
                                         let field_local = self.temp_local_for_ty(field_ty);
-                                        func.instruction(&Instruction::LocalGet(value_local));
+                                        func.instruction(&Instruction::LocalGet(base_local));
                                         self.emit_typed_load(
                                             func,
                                             field_ty,
@@ -15517,7 +15733,7 @@ impl<'a> FuncCodegen<'a> {
                                         field_name.resolve(self.ctx.interner),
                                     );
                                     let field_local = self.temp_local_for_ty(field_ty);
-                                    func.instruction(&Instruction::LocalGet(value_local));
+                                    func.instruction(&Instruction::LocalGet(base_local));
                                     self.emit_typed_load(
                                         func,
                                         field_ty,
@@ -15555,7 +15771,7 @@ impl<'a> FuncCodegen<'a> {
                                 field_name.resolve(self.ctx.interner),
                             );
                             let field_local = self.temp_local_for_ty(field_ty);
-                            func.instruction(&Instruction::LocalGet(value_local));
+                            func.instruction(&Instruction::LocalGet(base_local));
                             self.emit_typed_load(
                                 func,
                                 field_ty,
@@ -15588,7 +15804,7 @@ impl<'a> FuncCodegen<'a> {
         value: ValueId,
     ) -> Result<(), CodegenError> {
         let ty = self.best_effort_value_ty(value);
-        let value_local = self.temp_local_for_ty(&ty);
+        let value_local = self.trait_show_value_local(0, &ty)?;
         self.emit_get(func, value);
         func.instruction(&Instruction::LocalSet(value_local));
         self.emit_trait_show_builtin_from_local(func, value_local, &ty, self.scratch_i32_14, 0)?;
@@ -15629,7 +15845,7 @@ impl<'a> FuncCodegen<'a> {
         self.emit_string_concat_from_locals(func, out_local, child_local, out_local);
         func.instruction(&Instruction::End);
 
-        let elem_local = self.temp_local_for_ty(elem_ty);
+        let elem_local = self.trait_show_value_local(depth + 1, elem_ty)?;
         self.emit_load_list_slot_from_locals(
             func,
             self.scratch_i32_11,
@@ -16099,7 +16315,8 @@ impl<'a> FuncCodegen<'a> {
                                                 out_local,
                                             );
                                         }
-                                        let field_local = self.temp_local_for_ty(field_ty);
+                                        let field_local =
+                                            self.trait_show_value_local(depth + 1, field_ty)?;
                                         func.instruction(&Instruction::LocalGet(value_local));
                                         self.emit_typed_load(
                                             func,
@@ -16164,7 +16381,7 @@ impl<'a> FuncCodegen<'a> {
                             out_local,
                         );
 
-                        let field_local = self.temp_local_for_ty(field_ty);
+                        let field_local = self.trait_show_value_local(depth + 1, field_ty)?;
                         func.instruction(&Instruction::LocalGet(value_local));
                         self.emit_typed_load(
                             func,
@@ -16783,7 +17000,8 @@ impl<'a> FuncCodegen<'a> {
             )));
         }
 
-        let (needle_local, elem_local) = self.equality_temp_locals(elem_ty);
+        let needle_local = self.stable_compare_local(elem_ty);
+        let (elem_local, _unused_rhs_local) = self.equality_temp_locals(elem_ty);
 
         self.emit_get(func, needle);
         func.instruction(&Instruction::LocalSet(needle_local));
@@ -18993,17 +19211,31 @@ impl<'a> FuncCodegen<'a> {
             )));
         }
 
-        let elem_local = self.temp_local_for_ty(elem_ty);
-        let needle_local = self.equality_temp_locals(elem_ty).0;
+        let needle_local = self.stable_compare_local(elem_ty);
+        self.emit_get(func, needle);
+        func.instruction(&Instruction::LocalSet(needle_local));
+        self.emit_seq_contains_linear_collection_with_needle_local(
+            func,
+            list_local,
+            elem_ty,
+            needle_local,
+        )
+    }
+
+    fn emit_seq_contains_linear_collection_with_needle_local(
+        &self,
+        func: &mut Function,
+        list_local: u32,
+        elem_ty: &Ty,
+        needle_local: u32,
+    ) -> Result<(), CodegenError> {
+        let (elem_local, _unused_rhs_local) = self.equality_temp_locals(elem_ty);
         self.emit_load_list_len_and_data_from_local(
             func,
             list_local,
             self.scratch_i32_3,
             self.scratch_i32_4,
         );
-
-        self.emit_get(func, needle);
-        func.instruction(&Instruction::LocalSet(needle_local));
 
         func.instruction(&Instruction::I32Const(0));
         func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
