@@ -382,6 +382,131 @@ fn run_backend_wasm_handles_mutable_map_string_keys_after_growth() {
 }
 
 #[test]
+fn run_backend_wasm_handles_range_mapped_mutable_list_from_list() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn build_occ(width: Int, height: Int) -> MutableList<Int> {\n\
+           MutableList.from_list((0 ..< (width * height)).map(fn(_i: Int) => -1).to_list())\n\
+         }\n\
+         fn main() -> Int {\n\
+           let occ = build_occ(32, 32)\n\
+           var total = 0\n\
+           var i = 0\n\
+           while (i < occ.len()) {\n\
+             total = total + occ[i]\n\
+             i = i + 1\n\
+           }\n\
+           total\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "-1024",
+        "run --backend wasm with range-mapped MutableList.from_list",
+    );
+}
+
+#[test]
+fn run_backend_wasm_handles_day15_build_occ_shape() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn build_occ(width: Int, height: Int, alive: MutableList<Int>, ux: MutableList<Int>, uy: MutableList<Int>) -> MutableList<Int> {\n\
+           let occ = MutableList.from_list((0 ..< (width * height)).map(fn(_i: Int) => -1).to_list())\n\
+           var i = 0\n\
+           while (i < alive.len()) {\n\
+             if (alive[i] == 1) {\n\
+               let _o = occ.set(uy[i] * width + ux[i], i)\n\
+             }\n\
+             i = i + 1\n\
+           }\n\
+           occ\n\
+         }\n\
+         fn main() -> Int {\n\
+           let alive = MutableList.from_list((0 ..< 512).map(fn(_i: Int) => 1).to_list())\n\
+           let ux = MutableList.from_list((0 ..< 512).map(fn(i: Int) => i % 32).to_list())\n\
+           let uy = MutableList.from_list((0 ..< 512).map(fn(i: Int) => i / 32).to_list())\n\
+           let occ = build_occ(32, 32, alive, ux, uy)\n\
+           occ[0] + occ[31] + occ[32] + occ[511] + occ[900]\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "573",
+        "run --backend wasm with day15 build_occ shape",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_mutable_list_record_set_and_get() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         type Point = { row: Int, col: Int }\n\
+         fn main() -> String {\n\
+           let points = MutableList.from_list((0 ..< 3).map(fn(_i: Int) => Point { row: 0, col: 0 }).to_list())\n\
+           let _a = points.set(1, Point { row: 23, col: 141 })\n\
+           let _b = points.set(2, Point { row: 35, col: 133 })\n\
+           points[1].row.to_string().concat(\",\").concat(points[1].col.to_string()).concat(\";\")\n\
+             .concat(points[2].row.to_string()).concat(\",\").concat(points[2].col.to_string())\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "23,141;35,133",
+        "run --backend wasm with MutableList record set/get",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_loop_progress_with_nested_never_taken_return() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn main() -> Int {\n\
+           let xs = MutableList.new().push(0).push(1).push(2).push(3)\n\
+           var i = 0\n\
+           while (i < xs.len()) {\n\
+             let x = xs[i]\n\
+             if (x > 10) {\n\
+               if (x == 99) {\n\
+                 return 99\n\
+               }\n\
+             }\n\
+             i = i + 1\n\
+           }\n\
+           i\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "4",
+        "run --backend wasm preserves loop progress with nested never-taken return",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_mutable_loop_locals_across_if_merges() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");

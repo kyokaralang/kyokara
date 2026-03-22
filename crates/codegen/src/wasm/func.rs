@@ -1316,6 +1316,10 @@ impl<'a> FuncCodegen<'a> {
             &mut else_emitted,
         )?;
         func.instruction(&Instruction::End);
+        if let Some(merge_id) = merge_id {
+            then_emitted.remove(&merge_id);
+            else_emitted.remove(&merge_id);
+        }
         emitted.extend(then_emitted);
         emitted.extend(else_emitted);
 
@@ -1631,6 +1635,10 @@ impl<'a> FuncCodegen<'a> {
         self.emit_branch_arm(func, else_target, merge_id, &mut else_emitted)?;
 
         func.instruction(&Instruction::End);
+        if let Some(merge_id) = merge_id {
+            then_emitted.remove(&merge_id);
+            else_emitted.remove(&merge_id);
+        }
         emitted.extend(then_emitted);
         emitted.extend(else_emitted);
 
@@ -1766,9 +1774,7 @@ impl<'a> FuncCodegen<'a> {
                 break;
             }
             let block = &self.kir_func.blocks[current];
-            if !block.params.is_empty() {
-                chain.push(current);
-            }
+            chain.push(current);
             match &block.terminator {
                 Some(Terminator::Jump(target)) => {
                     current = target.block;
