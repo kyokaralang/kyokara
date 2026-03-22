@@ -8401,7 +8401,25 @@ impl<'a> FuncCodegen<'a> {
         value_local: u32,
         value_ty: &Ty,
     ) {
-        func.instruction(&Instruction::LocalGet(list_local));
+        let stable_list_local = if list_local == self.scratch_i32_10
+            || list_local == self.scratch_i32_11
+        {
+            let preserved_local =
+                if list_local != self.scratch_i32_12 && value_local != self.scratch_i32_12 {
+                    self.scratch_i32_12
+                } else if list_local != self.scratch_i32_16 && value_local != self.scratch_i32_16 {
+                    self.scratch_i32_16
+                } else {
+                    self.scratch_i32_7
+                };
+            func.instruction(&Instruction::LocalGet(list_local));
+            func.instruction(&Instruction::LocalSet(preserved_local));
+            preserved_local
+        } else {
+            list_local
+        };
+
+        func.instruction(&Instruction::LocalGet(stable_list_local));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 0,
             align: 2,
@@ -8409,7 +8427,7 @@ impl<'a> FuncCodegen<'a> {
         }));
         func.instruction(&Instruction::LocalSet(self.scratch_i32_2)); // len
 
-        func.instruction(&Instruction::LocalGet(list_local));
+        func.instruction(&Instruction::LocalGet(stable_list_local));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 4,
             align: 2,
@@ -8417,7 +8435,7 @@ impl<'a> FuncCodegen<'a> {
         }));
         func.instruction(&Instruction::LocalSet(self.scratch_i32_3)); // capacity
 
-        func.instruction(&Instruction::LocalGet(list_local));
+        func.instruction(&Instruction::LocalGet(stable_list_local));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 8,
             align: 2,
@@ -8509,7 +8527,7 @@ impl<'a> FuncCodegen<'a> {
 
         self.emit_update_mutable_list_header_from_locals(
             func,
-            list_local,
+            stable_list_local,
             self.scratch_i32_5,
             self.scratch_i32_3,
             self.scratch_i32_4,

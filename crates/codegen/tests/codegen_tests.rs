@@ -2388,6 +2388,21 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_split_filter_to_list_repeatedly_matches_interpreter_semantics() {
+    assert_eq!(
+        run_main_i64(
+            r#"fn main() -> Int {
+  (0..<5000).fold(
+    0,
+    fn(acc: Int, _n: Int) => acc + "  If the current value is 0:".trim().split(" ").filter(fn(word: String) => word.len() > 0).to_list().len(),
+  )
+}"#
+        ),
+        30000
+    );
+}
+
+#[test]
 fn test_list_map_filter_and_materialized_seq_terminals_match_interpreter_semantics() {
     assert_eq!(
         run_main_i64(
