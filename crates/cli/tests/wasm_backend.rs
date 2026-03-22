@@ -1656,6 +1656,30 @@ fn run_backend_wasm_executes_aoc_2024_day09_sample() {
 }
 
 #[test]
+fn run_backend_wasm_executes_day21_grid17_constant_repl_shape() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let input = dir.path().join("day21.txt");
+    fs::write(
+        &file,
+        include_str!("fixtures/day21_grid17_constant_repl.ky"),
+    )
+    .expect("write source");
+    fs::copy(
+        "/Users/alpha/CodexProjects/polyglot-bench/corpus/advent-of-code/2017/day21.txt",
+        &input,
+    )
+    .expect("copy day21 input");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "2187",
+        "run --backend wasm with reduced AoC 2017 day21 grid17 constant repl shape",
+    );
+}
+
+#[test]
 fn run_backend_wasm_executes_aoc_2024_day09_reduced_prefix() {
     let dir = tempfile::tempdir().expect("tempdir");
     let input = dir.path().join("day09.txt");

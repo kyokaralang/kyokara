@@ -1,0 +1,120 @@
+from collections import List, MutableList, MutableMap
+from fs import read_file
+from io import println
+
+fn pattern_key(grid: List<String>) -> String {
+  grid.enumerate().fold("", fn(acc: String, item: { index: Int, value: String }) => if (item.index == 0) {
+        item.value
+      } else {
+        acc.concat("/").concat(item.value)
+      })
+}
+
+fn rotate(grid: List<String>) -> List<String> {
+  let n = grid.len()
+  let out = MutableList.new()
+  for (r in 0..<n) {
+    var row = ""
+    for (c in 0..<n) {
+      row = row.concat(grid.get(n - 1 - c).unwrap_or("").substring(r, r + 1))
+    }
+    let _o = out.push(row)
+  }
+  out.to_list()
+}
+
+fn flip(grid: List<String>) -> List<String> {
+  let n = grid.len()
+  let out = MutableList.new()
+  for (r in 0..<n) {
+    var row = ""
+    var c = n - 1
+    while (c >= 0) {
+      row = row.concat(grid.get(r).unwrap_or("").substring(c, c + 1))
+      if (c == 0) {
+        break
+      }
+      c = c - 1
+    }
+    let _o = out.push(row)
+  }
+  out.to_list()
+}
+
+fn build_rules(input: String) -> MutableMap<String, List<String>> {
+  let rules = MutableMap.new()
+  for (line in input.lines().map(fn(line: String) => line.trim()).filter(fn(line: String) => line.len() > 0)) {
+    let parts = line.split(" => ").to_list()
+    let lhs = parts.get(0).unwrap_or("").split("/").to_list()
+    let rhs = parts.get(1).unwrap_or("").split("/").to_list()
+    var grid = lhs
+    for (_i in 0..<4) {
+      let _r1 = rules.insert(pattern_key(grid), rhs)
+      let _r2 = rules.insert(pattern_key(flip(grid)), rhs)
+      grid = rotate(grid)
+    }
+  }
+  rules
+}
+
+fn enhance_once(grid: List<String>) -> List<String> {
+  let n = grid.len()
+  let block = if ((n % 2) == 0) { 2 } else { 3 }
+  let out_block = block + 1
+  let parts = n / block
+  let out = MutableList.from_list((0..<(parts * out_block)).map(fn(_i: Int) => "").to_list())
+  let repl = MutableList.new().push("###").push("###").push("###").to_list()
+
+  for (br in 0..<parts) {
+    for (bc in 0..<parts) {
+      for (r in 0..<block) {
+        let src = grid.get(br * block + r).unwrap_or("")
+        let _c = src.substring(bc * block, bc * block + block)
+      }
+      for (r in 0..<out_block) {
+        let idx = br * out_block + r
+        let _o = out.set(idx, out[idx].concat(repl.get(r).unwrap_or("")))
+      }
+    }
+  }
+
+  out.to_list()
+}
+
+fn run_grid(rules: MutableMap<String, List<String>>, iters: Int) -> List<String> {
+  var grid = MutableList.new().push(".#.").push("..#").push("###").to_list()
+  var i = 0
+  while (i < iters) {
+    let n = grid.len()
+    let block = if ((n % 2) == 0) { 2 } else { 3 }
+    let out_block = block + 1
+    let parts = n / block
+    let out = MutableList.from_list((0..<(parts * out_block)).map(fn(_i: Int) => "").to_list())
+
+    for (br in 0..<parts) {
+      for (bc in 0..<parts) {
+        let chunk = MutableList.new()
+        for (r in 0..<block) {
+          let src = grid.get(br * block + r).unwrap_or("")
+          let _c = chunk.push(src.substring(bc * block, bc * block + block))
+        }
+        let repl = rules.get(pattern_key(chunk.to_list())).unwrap_or(chunk.to_list())
+        for (r in 0..<out_block) {
+          let idx = br * out_block + r
+          let _o = out.set(idx, out[idx].concat(repl.get(r).unwrap_or("")))
+        }
+      }
+    }
+
+    grid = out.to_list()
+    i = i + 1
+  }
+  grid
+}
+
+fn main() -> Unit {
+  let rules = build_rules(read_file("day21.txt"))
+  let grid17 = run_grid(rules, 17)
+  let next = enhance_once(grid17)
+  println(next.len().to_string())
+}

@@ -4,6 +4,7 @@ pub mod alloc;
 pub mod control;
 pub mod func;
 pub mod layout;
+pub mod string;
 pub mod ty;
 
 use kyokara_hir_def::item_tree::{ItemTree, TypeItemIdx};
@@ -22,6 +23,7 @@ use wasm_encoder::{
 use crate::error::CodegenError;
 use crate::wasm::func::FuncCodegen;
 use crate::wasm::layout::AdtLayout;
+use crate::wasm::string::{emit_flatten_function, emit_flatten_into_function};
 use crate::wasm::ty::ty_to_valtype;
 use std::borrow::Cow;
 
@@ -65,6 +67,8 @@ pub struct ModuleCtx<'a> {
     pub adt_layouts: FxHashMap<TypeItemIdx, AdtLayout>,
     /// WASM function index of the $alloc builtin.
     pub alloc_fn_index: u32,
+    pub string_flatten_fn_index: u32,
+    pub string_flatten_into_fn_index: u32,
     pub string_to_upper_fn_index: Option<u32>,
     pub string_to_lower_fn_index: Option<u32>,
     pub string_md5_fn_index: Option<u32>,
@@ -323,7 +327,9 @@ pub fn compile_module(
         None
     };
     let alloc_fn_index = next_fn_index;
-    next_fn_index += 1;
+    let string_flatten_fn_index = next_fn_index + 1;
+    let string_flatten_into_fn_index = next_fn_index + 2;
+    next_fn_index += 3;
 
     // Build function name → index map.
     let mut fn_name_map = FxHashMap::default();
@@ -431,6 +437,8 @@ pub fn compile_module(
         fn_type_map,
         adt_layouts,
         alloc_fn_index,
+        string_flatten_fn_index,
+        string_flatten_into_fn_index,
         string_to_upper_fn_index,
         string_to_lower_fn_index,
         string_md5_fn_index,
@@ -473,8 +481,10 @@ pub fn compile_module(
 
     let mut functions = FunctionSection::new();
 
-    // Function 0: alloc (type 0)
+    // Internal helpers: alloc + string flattening.
     functions.function(0);
+    functions.function(0);
+    functions.function(1);
 
     // User functions
     for &type_idx in &fn_type_indices {
@@ -561,6 +571,11 @@ pub fn compile_module(
 
     // Function 0: $alloc
     code.function(&alloc::emit_alloc_function());
+    code.function(&emit_flatten_function(
+        alloc_fn_index,
+        string_flatten_into_fn_index,
+    ));
+    code.function(&emit_flatten_into_function(string_flatten_into_fn_index));
 
     // User functions
     for (fn_id, _wasm_idx) in &fn_order {
