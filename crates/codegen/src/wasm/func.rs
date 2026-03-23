@@ -1129,14 +1129,34 @@ impl<'a> FuncCodegen<'a> {
         &'b kyokara_kir::block::BranchTarget,
         &'b kyokara_kir::block::BranchTarget,
     )> {
+        // A real loop header must have both an entry edge and a backedge.
+        if self.predecessor_blocks(header).len() < 2 {
+            return None;
+        }
+
+        let mut loop_stops = FxHashSet::default();
+        loop_stops.insert(header);
+        if let Some(block) = enclosing_header
+            && block != header
+        {
+            loop_stops.insert(block);
+        }
+        if let Some(block) = enclosing_exit
+            && block != header
+        {
+            loop_stops.insert(block);
+        }
+
         let header_params = &self.kir_func.blocks[header].params;
         let param_count = header_params.len();
         if param_count == 0 {
-            if self.predecessor_blocks(header).len() < 2 {
-                return None;
-            }
+            let starts = [then_target.block, else_target.block];
+            let reachable_sets = [
+                self.reachable_block_distances_until(then_target.block, &loop_stops),
+                self.reachable_block_distances_until(else_target.block, &loop_stops),
+            ];
             if self
-                .find_branch_merge_deep(then_target, else_target)
+                .find_common_reachable_merge(&starts, &reachable_sets, &loop_stops, &loop_stops)
                 .is_some()
             {
                 return None;
@@ -1499,9 +1519,7 @@ impl<'a> FuncCodegen<'a> {
         emitted: &mut FxHashMap<BlockId, ()>,
     ) -> Result<(), CodegenError> {
         let merge_id = self
-            .find_branch_merge_deep(then_target, else_target)
-            .filter(|merge_id| *merge_id != header && *merge_id != exit);
-        let merge_id = merge_id
+            .find_loop_branch_merge(then_target, else_target, header, exit)
             .or_else(|| {
                 outer_stop
                     .filter(|stop| *stop != header && *stop != exit)
@@ -1518,7 +1536,10 @@ impl<'a> FuncCodegen<'a> {
                         (then_reaches_stop || else_reaches_stop).then_some(stop)
                     })
             })
-            .or_else(|| self.find_loop_branch_merge(then_target, else_target, header, exit));
+            .or_else(|| {
+                self.find_branch_merge_deep(then_target, else_target)
+                    .filter(|merge_id| *merge_id != header && *merge_id != exit)
+            });
 
         self.emit_get(func, condition);
         func.instruction(&Instruction::If(BlockType::Empty));
@@ -1584,29 +1605,15 @@ impl<'a> FuncCodegen<'a> {
         let mut stops = FxHashSet::default();
         stops.insert(header);
         stops.insert(exit);
-        let then_reachable = self.reachable_block_distances_until(then_target.block, &stops);
-        let else_reachable = self.reachable_block_distances_until(else_target.block, &stops);
-
-        then_reachable
-            .iter()
-            .filter_map(|(block, then_dist)| {
-                if *block == header
-                    || *block == exit
-                    || *block == then_target.block
-                    || *block == else_target.block
-                {
-                    return None;
-                }
-                else_reachable.get(block).map(|else_dist| {
-                    (
-                        *block,
-                        *then_dist + *else_dist,
-                        (*then_dist).max(*else_dist),
-                    )
-                })
-            })
-            .min_by_key(|(block, total, max_side)| (*total, *max_side, block.into_raw().into_u32()))
-            .map(|(block, _, _)| block)
+        let mut excluded = stops.clone();
+        excluded.insert(then_target.block);
+        excluded.insert(else_target.block);
+        let starts = [then_target.block, else_target.block];
+        let reachable_sets = [
+            self.reachable_block_distances_until(then_target.block, &stops),
+            self.reachable_block_distances_until(else_target.block, &stops),
+        ];
+        self.find_common_reachable_merge(&starts, &reachable_sets, &stops, &excluded)
     }
 
     fn find_loop_switch_merge(
@@ -1644,25 +1651,14 @@ impl<'a> FuncCodegen<'a> {
                     .push(self.reachable_block_distances_until(default.block, &stop_blocks));
             }
         }
+        for case in cases {
+            if !self.loop_switch_target_exits_directly(case.target.block, header, exit) {}
+        }
+        if let Some(default) = default
+            && !self.loop_switch_target_exits_directly(default.block, header, exit)
+        {}
 
-        let first = reachable_sets.first()?;
-        first
-            .iter()
-            .filter_map(|(block, first_dist)| {
-                if excluded.contains(block) {
-                    return None;
-                }
-                let mut total = *first_dist;
-                let mut max_side = *first_dist;
-                for reachable in reachable_sets.iter().skip(1) {
-                    let dist = *reachable.get(block)?;
-                    total += dist;
-                    max_side = max_side.max(dist);
-                }
-                Some((*block, total, max_side))
-            })
-            .min_by_key(|(block, total, max_side)| (*total, *max_side, block.into_raw().into_u32()))
-            .map(|(block, _, _)| block)
+        self.find_common_reachable_intersection_merge(&reachable_sets, &excluded)
     }
 
     fn loop_switch_target_exits_directly(
@@ -1734,8 +1730,29 @@ impl<'a> FuncCodegen<'a> {
             _ => return Err(CodegenError::UnsupportedType("switch on non-ADT".into())),
         };
 
-        let merge_block_id =
-            self.find_loop_switch_merge(cases, default, current_block, header, exit);
+        let merge_block_id = self
+            .find_loop_switch_merge(cases, default, current_block, header, exit)
+            .or_else(|| {
+                outer_stop
+                    .filter(|stop| *stop != current_block && *stop != header && *stop != exit)
+                    .and_then(|stop| {
+                        let mut stops = FxHashSet::default();
+                        stops.insert(current_block);
+                        stops.insert(header);
+                        stops.insert(exit);
+
+                        let case_reaches_stop = cases.iter().any(|case| {
+                            self.reachable_block_distances_until(case.target.block, &stops)
+                                .contains_key(&stop)
+                        });
+                        let default_reaches_stop = default.is_some_and(|default| {
+                            self.reachable_block_distances_until(default.block, &stops)
+                                .contains_key(&stop)
+                        });
+
+                        (case_reaches_stop || default_reaches_stop).then_some(stop)
+                    })
+            });
         let max_tag = adt_layout.tag_map.values().copied().max().unwrap_or(0);
         let num_cases = cases.len();
         let has_default = default.is_some();
@@ -1787,6 +1804,7 @@ impl<'a> FuncCodegen<'a> {
                 self.emit_loop_switch_arm_terminator(
                     func,
                     term,
+                    case.target.block,
                     depth_to_merge,
                     merge_block_id,
                     header,
@@ -1812,6 +1830,7 @@ impl<'a> FuncCodegen<'a> {
                 self.emit_loop_switch_arm_terminator(
                     func,
                     term,
+                    def_target.block,
                     0,
                     merge_block_id,
                     header,
@@ -1955,7 +1974,120 @@ impl<'a> FuncCodegen<'a> {
         Ok(())
     }
 
-    /// Find the merge block for a branch by following jump chains.
+    fn find_common_reachable_merge(
+        &self,
+        starts: &[BlockId],
+        reachable_sets: &[FxHashMap<BlockId, usize>],
+        stops: &FxHashSet<BlockId>,
+        excluded: &FxHashSet<BlockId>,
+    ) -> Option<BlockId> {
+        let first = reachable_sets.first()?;
+        first
+            .iter()
+            .filter_map(|(block, first_dist)| {
+                if excluded.contains(block) {
+                    return None;
+                }
+                if !starts
+                    .iter()
+                    .all(|start| self.postdominates_within(*start, *block, stops))
+                {
+                    return None;
+                }
+                let mut total = *first_dist;
+                let mut max_side = *first_dist;
+                for reachable in reachable_sets.iter().skip(1) {
+                    let dist = *reachable.get(block)?;
+                    total += dist;
+                    max_side = max_side.max(dist);
+                }
+                Some((*block, total, max_side))
+            })
+            .min_by_key(|(block, total, max_side)| (*total, *max_side, block.into_raw().into_u32()))
+            .map(|(block, _, _)| block)
+    }
+
+    fn find_common_reachable_intersection_merge(
+        &self,
+        reachable_sets: &[FxHashMap<BlockId, usize>],
+        excluded: &FxHashSet<BlockId>,
+    ) -> Option<BlockId> {
+        let first = reachable_sets.first()?;
+        first
+            .iter()
+            .filter_map(|(block, first_dist)| {
+                if excluded.contains(block) {
+                    return None;
+                }
+                let mut total = *first_dist;
+                let mut max_side = *first_dist;
+                for reachable in reachable_sets.iter().skip(1) {
+                    let dist = *reachable.get(block)?;
+                    total += dist;
+                    max_side = max_side.max(dist);
+                }
+                Some((*block, total, max_side))
+            })
+            .min_by_key(|(block, total, max_side)| (*total, *max_side, block.into_raw().into_u32()))
+            .map(|(block, _, _)| block)
+    }
+
+    fn postdominates_within(
+        &self,
+        start: BlockId,
+        candidate: BlockId,
+        stops: &FxHashSet<BlockId>,
+    ) -> bool {
+        if start == candidate {
+            return true;
+        }
+
+        !self.can_reach_boundary_without_passing(start, candidate, stops)
+    }
+
+    fn can_reach_boundary_without_passing(
+        &self,
+        start: BlockId,
+        forbidden: BlockId,
+        stops: &FxHashSet<BlockId>,
+    ) -> bool {
+        if start == forbidden {
+            return false;
+        }
+
+        let mut seen = FxHashSet::default();
+        let mut queue = VecDeque::new();
+        seen.insert(start);
+        queue.push_back(start);
+
+        while let Some(block_id) = queue.pop_front() {
+            if stops.contains(&block_id) {
+                return true;
+            }
+
+            let Some(term) = self.kir_func.blocks[block_id].terminator.as_ref() else {
+                continue;
+            };
+            if matches!(term, Terminator::Return(_) | Terminator::Unreachable) {
+                return true;
+            }
+
+            for succ in self.successor_blocks(block_id) {
+                if succ == forbidden {
+                    continue;
+                }
+                if seen.insert(succ) {
+                    queue.push_back(succ);
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Find the merge block for a branch without recursively following nested
+    /// branch chains. The older recursive walk could overflow the Rust stack on
+    /// large CFGs like AoC 2019 day18 during Wasm compilation.
     fn find_branch_merge_deep(
         &self,
         then_target: &kyokara_kir::block::BranchTarget,
@@ -1965,10 +2097,13 @@ impl<'a> FuncCodegen<'a> {
             return Some(then_target.block);
         }
 
-        let then_chain = self.follow_chain(then_target.block);
-        let else_chain = self.follow_chain(else_target.block);
-
-        then_chain.iter().find(|t| else_chain.contains(t)).copied()
+        let reachable_sets = [
+            self.reachable_block_distances(then_target.block),
+            self.reachable_block_distances(else_target.block),
+        ];
+        let starts = [then_target.block, else_target.block];
+        let empty = FxHashSet::default();
+        self.find_common_reachable_merge(&starts, &reachable_sets, &empty, &empty)
     }
 
     fn reachable_block_distances(&self, start: BlockId) -> FxHashMap<BlockId, usize> {
@@ -1991,70 +2126,14 @@ impl<'a> FuncCodegen<'a> {
             }
             let distance = distances[&block_id];
             for succ in self.successor_blocks(block_id) {
-                if distances.insert(succ, distance + 1).is_none() {
+                if !distances.contains_key(&succ) {
+                    distances.insert(succ, distance + 1);
                     queue.push_back(succ);
                 }
             }
         }
 
         distances
-    }
-
-    fn follow_chain(&self, start: BlockId) -> Vec<BlockId> {
-        let mut chain = Vec::new();
-        let mut current = start;
-        let mut visited = FxHashSet::default();
-        loop {
-            if !visited.insert(current) {
-                break;
-            }
-            let block = &self.kir_func.blocks[current];
-            chain.push(current);
-            match &block.terminator {
-                Some(Terminator::Jump(target)) => {
-                    current = target.block;
-                }
-                Some(Terminator::Branch {
-                    then_target,
-                    else_target,
-                    ..
-                }) => {
-                    let then_reaches_current = self
-                        .reachable_block_distances(then_target.block)
-                        .contains_key(&current);
-                    let else_reaches_current = self
-                        .reachable_block_distances(else_target.block)
-                        .contains_key(&current);
-                    if then_reaches_current || else_reaches_current {
-                        break;
-                    }
-                    if let Some(merge) = self.find_branch_merge_deep(then_target, else_target) {
-                        current = merge;
-                        continue;
-                    }
-                    break;
-                }
-                Some(Terminator::Switch { cases, default, .. }) => {
-                    let switch_reaches_current = cases.iter().any(|case| {
-                        self.reachable_block_distances(case.target.block)
-                            .contains_key(&current)
-                    }) || default.as_ref().is_some_and(|default| {
-                        self.reachable_block_distances(default.block)
-                            .contains_key(&current)
-                    });
-                    if switch_reaches_current {
-                        break;
-                    }
-                    if let Some(merge) = self.find_switch_merge(cases, default.as_ref()) {
-                        current = merge;
-                        continue;
-                    }
-                    break;
-                }
-                _ => break,
-            }
-        }
-        chain
     }
 
     fn successor_blocks(&self, block_id: BlockId) -> Vec<BlockId> {
@@ -2294,6 +2373,7 @@ impl<'a> FuncCodegen<'a> {
         &self,
         func: &mut Function,
         term: &Terminator,
+        current_block: BlockId,
         depth_to_merge: u32,
         switch_merge: Option<BlockId>,
         header: BlockId,
@@ -2328,11 +2408,15 @@ impl<'a> FuncCodegen<'a> {
                 then_target,
                 else_target,
             } => {
-                self.emit_branch(
+                self.emit_loop_branch(
                     func,
                     *condition,
                     then_target,
                     else_target,
+                    header,
+                    exit,
+                    continue_depth,
+                    break_depth,
                     switch_merge,
                     emitted,
                 )?;
@@ -2343,11 +2427,16 @@ impl<'a> FuncCodegen<'a> {
                 cases,
                 default,
             } => {
-                self.emit_switch(
+                self.emit_loop_switch(
                     func,
                     *scrutinee,
                     cases,
                     default.as_ref(),
+                    current_block,
+                    header,
+                    exit,
+                    continue_depth,
+                    break_depth,
                     switch_merge,
                     emitted,
                 )?;
@@ -2360,30 +2449,22 @@ impl<'a> FuncCodegen<'a> {
     }
 
     /// Find the merge block for a switch: the block that all cases converge to.
-    /// Follows full chains (through nested Branch/Switch) to find the common
-    /// merge point, similar to `find_branch_merge_deep`.
     fn find_switch_merge(
         &self,
         cases: &[kyokara_kir::block::SwitchCase],
         default: Option<&kyokara_kir::block::BranchTarget>,
     ) -> Option<BlockId> {
-        let mut chains: Vec<Vec<BlockId>> = Vec::new();
-
+        let mut reachable_sets = Vec::with_capacity(cases.len() + usize::from(default.is_some()));
+        let mut excluded = FxHashSet::default();
         for case in cases {
-            chains.push(self.follow_chain(case.target.block));
+            reachable_sets.push(self.reachable_block_distances(case.target.block));
+            excluded.insert(case.target.block);
         }
         if let Some(def) = default {
-            chains.push(self.follow_chain(def.block));
+            reachable_sets.push(self.reachable_block_distances(def.block));
+            excluded.insert(def.block);
         }
-
-        let first_chain = chains.first()?;
-        for block in first_chain {
-            if chains[1..].iter().all(|c| c.contains(block)) {
-                return Some(*block);
-            }
-        }
-
-        None
+        self.find_common_reachable_intersection_merge(&reachable_sets, &excluded)
     }
 
     // ── Block param stores ────────────────────────────────────────
@@ -16921,7 +17002,9 @@ impl<'a> FuncCodegen<'a> {
         acc_local: u32,
         string_local: u32,
     ) {
-        func.instruction(&Instruction::LocalGet(string_local));
+        self.emit_string_flatten_from_local(func, string_local, self.scratch_i32_13);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_13));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 0,
             align: 2,
@@ -16939,7 +17022,7 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::I32GeU);
         func.instruction(&Instruction::BrIf(1));
 
-        func.instruction(&Instruction::LocalGet(string_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_13));
         func.instruction(&Instruction::I32Const(8));
         func.instruction(&Instruction::I32Add);
         func.instruction(&Instruction::LocalGet(self.scratch_i32_11));

@@ -156,6 +156,53 @@ fn build_target_wasm_validates_aoc_2018_day24_module() {
 }
 
 #[test]
+fn build_target_wasm_validates_loop_match_string_fallthrough() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let out = dir.path().join("out.wasm");
+    fs::write(
+        &file,
+        "from io import println\n\
+         from Option import Some, None\n\
+         fn main() -> Unit {\n\
+           var i = 0\n\
+           while (i < 1) {\n\
+             let key = \"abc\"\n\
+             let found: Option<Int> = None\n\
+             match (found) {\n\
+               Some(prev) => { println(prev.to_string()); return },\n\
+               None => { println(key) },\n\
+             }\n\
+             i = i + 1\n\
+           }\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "build",
+            "main.ky",
+            "--target",
+            "wasm",
+            "--out",
+            out.to_str().expect("utf-8 output path"),
+        ],
+    );
+    assert_success(&output, "build --target wasm loop match string fallthrough");
+
+    let bytes = fs::read(&out).expect("read wasm artifact");
+    Module::new(&Engine::default(), &bytes).unwrap_or_else(|err| {
+        panic!(
+            "loop match string fallthrough module should validate under wasmtime: {err}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+}
+
+#[test]
 fn build_target_wasm_validates_nested_loop_exit_stack_cleanup() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");

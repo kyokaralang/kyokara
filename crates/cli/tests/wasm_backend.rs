@@ -206,6 +206,77 @@ fn run_backend_wasm_handles_repeated_large_char_fold_to_string() {
 }
 
 #[test]
+fn run_backend_wasm_hashes_folded_large_string_map_keys() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList, MutableMap\n\
+         fn grid_key(cells: MutableList<Char>) -> String {\n\
+           cells.to_list().fold(\"\", fn(acc: String, ch: Char) => acc.concat(ch.to_string()))\n\
+         }\n\
+         fn build_cells() -> MutableList<Char> {\n\
+           let cells = MutableList.new()\n\
+           for (i in 0 ..< 12000) {\n\
+             let ch = if (i % 13 == 0) { 'O' } else if (i % 17 == 0) { '#' } else { '.' }\n\
+             let _c = cells.push(ch)\n\
+           }\n\
+           cells\n\
+         }\n\
+         fn main() -> Int {\n\
+           let seen = MutableMap.new()\n\
+           let key1 = grid_key(build_cells())\n\
+           let key2 = grid_key(build_cells())\n\
+           let _s = seen.insert(key1, 41)\n\
+           seen.get(key2).unwrap_or(-1)\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "41",
+        "run --backend wasm with folded large string map keys",
+    );
+}
+
+#[test]
+fn run_backend_wasm_handles_loop_match_continue_with_none_fallthrough() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from Option import Some, None\n\
+         fn main() -> Int {\n\
+           var i = 0\n\
+           while (i < 3) {\n\
+             let x = if (i < 2) { Some(i) } else { None }\n\
+             match (x) {\n\
+               Some(v) => {\n\
+                 if (v == 0) {\n\
+                   i = i + 1\n\
+                   continue\n\
+                 }\n\
+               }\n\
+               None => {}\n\
+             }\n\
+             i = i + 1\n\
+           }\n\
+           i\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "3",
+        "run --backend wasm loop match continue with none fallthrough",
+    );
+}
+
+#[test]
 fn run_backend_wasm_supports_short_circuit_while_conditions() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
@@ -1806,6 +1877,32 @@ fn run_backend_wasm_executes_aoc_2019_day11() {
         &output,
         "Part 1: 2184\nPart 2: AHCHZEPK",
         "run --backend wasm AoC 2019 day11",
+    );
+}
+
+#[test]
+fn run_backend_wasm_executes_aoc_2023_day14() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("day14.txt");
+    fs::copy(
+        "/Users/alpha/CodexProjects/polyglot-bench/corpus/advent-of-code/2023/day14.txt",
+        &input,
+    )
+    .expect("copy day14 input");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "run",
+            "/Users/alpha/CodexProjects/polyglot-bench/adapters/kyokara/solutions/advent-of-code/2023/day14.ky",
+            "--backend",
+            "wasm",
+        ],
+    );
+    assert_stdout_trimmed(
+        &output,
+        "Part 1: 108840\nPart 2: 103445",
+        "run --backend wasm AoC 2023 day14",
     );
 }
 
