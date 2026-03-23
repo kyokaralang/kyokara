@@ -1279,6 +1279,7 @@ impl<'a> FuncCodegen<'a> {
             None,
             &mut loop_emitted,
         )?;
+        func.instruction(&Instruction::Unreachable);
         func.instruction(&Instruction::Else);
         self.emit_block_param_stores(func, exit_target)?;
         func.instruction(&Instruction::Br(2));
@@ -1329,6 +1330,7 @@ impl<'a> FuncCodegen<'a> {
             None,
             &mut loop_emitted,
         )?;
+        func.instruction(&Instruction::Unreachable);
         func.instruction(&Instruction::Else);
         self.emit_block_param_stores(func, exit_target)?;
         func.instruction(&Instruction::Br(2));
@@ -1562,6 +1564,11 @@ impl<'a> FuncCodegen<'a> {
                 outer_stop,
                 emitted,
             )?;
+        } else {
+            // Both arms diverge (for example, one returns and the other
+            // continues/breaks the loop), so structured fallthrough is
+            // impossible here.
+            func.instruction(&Instruction::Unreachable);
         }
 
         Ok(())

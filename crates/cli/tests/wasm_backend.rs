@@ -1758,6 +1758,32 @@ fn run_backend_wasm_executes_aoc_2018_day04() {
 }
 
 #[test]
+fn run_backend_wasm_executes_aoc_2018_day24() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("day24.txt");
+    fs::copy(
+        "/Users/alpha/CodexProjects/polyglot-bench/corpus/advent-of-code/2018/day24.txt",
+        &input,
+    )
+    .expect("copy day24 input");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "run",
+            "/Users/alpha/CodexProjects/polyglot-bench/adapters/kyokara/solutions/advent-of-code/2018/day24.ky",
+            "--backend",
+            "wasm",
+        ],
+    );
+    assert_stdout_trimmed(
+        &output,
+        "Part 1: 24009\nPart 2: 379",
+        "run --backend wasm AoC 2018 day24",
+    );
+}
+
+#[test]
 fn run_backend_wasm_executes_aoc_2019_day11() {
     let dir = tempfile::tempdir().expect("tempdir");
     let input = dir.path().join("day11.txt");
