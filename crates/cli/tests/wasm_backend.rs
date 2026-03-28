@@ -427,6 +427,40 @@ fn run_backend_wasm_handles_mutable_list_growth_and_set_loops() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_chars_filter_to_list_builders() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "fn keep(_ch: Char) -> Bool { true }\n\
+         fn row_types(line: String) -> Int {\n\
+           line\n\
+             .chars()\n\
+             .filter(keep)\n\
+             .map(fn(ch: Char) => if (ch == '#') { '.' } else { ch })\n\
+             .filter(fn(ch: Char) => ch != '.')\n\
+             .to_list()\n\
+             .len()\n\
+         }\n\
+         fn main() -> String {\n\
+           let line = \"###B#A#D#C###\"\n\
+           row_types(line)\n\
+             .to_string()\n\
+             .concat(\",\")\n\
+             .concat(line.chars().filter(keep).to_list().len().to_string())\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "4,13",
+        "run --backend wasm preserves chars().filter(...).to_list() builders",
+    );
+}
+
+#[test]
 fn run_backend_wasm_handles_mutable_map_capacity_churn() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");

@@ -156,6 +156,40 @@ fn build_target_wasm_validates_aoc_2018_day24_module() {
 }
 
 #[test]
+fn build_target_wasm_validates_aoc_2021_day23_module() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let out = dir.path().join("out.wasm");
+    fs::copy(
+        "/Users/alpha/CodexProjects/polyglot-bench/adapters/kyokara/solutions/advent-of-code/2021/day23.ky",
+        &file,
+    )
+    .expect("copy source");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "build",
+            "main.ky",
+            "--target",
+            "wasm",
+            "--out",
+            out.to_str().expect("utf-8 output path"),
+        ],
+    );
+    assert_success(&output, "build --target wasm AoC 2021 day23");
+
+    let bytes = fs::read(&out).expect("read wasm artifact");
+    Module::new(&Engine::default(), &bytes).unwrap_or_else(|err| {
+        panic!(
+            "AoC 2021 day23 module should validate under wasmtime: {err}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+}
+
+#[test]
 fn build_target_wasm_validates_loop_match_string_fallthrough() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");

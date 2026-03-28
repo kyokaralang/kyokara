@@ -1640,25 +1640,32 @@ impl<'a> FuncCodegen<'a> {
         stop_blocks.insert(header);
         stop_blocks.insert(exit);
 
-        let mut reachable_sets: Vec<FxHashMap<BlockId, usize>> = cases
-            .iter()
-            .filter(|case| !self.loop_switch_target_exits_directly(case.target.block, header, exit))
-            .map(|case| self.reachable_block_distances_until(case.target.block, &stop_blocks))
-            .collect();
-        if let Some(default) = default {
-            if !self.loop_switch_target_exits_directly(default.block, header, exit) {
+        let mut starts = Vec::new();
+        let mut reachable_sets = Vec::new();
+        for case in cases {
+            if !self.loop_switch_target_exits_directly(case.target.block, header, exit) {
+                starts.push(case.target.block);
                 reachable_sets
-                    .push(self.reachable_block_distances_until(default.block, &stop_blocks));
+                    .push(self.reachable_block_distances_until(case.target.block, &stop_blocks));
             }
         }
-        for case in cases {
-            if !self.loop_switch_target_exits_directly(case.target.block, header, exit) {}
+        if let Some(default) = default {
+            if !self.loop_switch_target_exits_directly(default.block, header, exit) {
+                starts.push(default.block);
+                reachable_sets.push(self.reachable_block_distances_until(default.block, &stop_blocks));
+            }
         }
-        if let Some(default) = default
-            && !self.loop_switch_target_exits_directly(default.block, header, exit)
-        {}
-
         self.find_common_reachable_intersection_merge(&reachable_sets, &excluded)
+            .filter(|merge| {
+                let merge_reachable =
+                    self.reachable_block_distances_until(*merge, &stop_blocks);
+                starts
+                    .iter()
+                    .all(|start| *start == *merge || !merge_reachable.contains_key(start))
+            })
+            .or_else(|| {
+                self.find_common_reachable_merge(&starts, &reachable_sets, &stop_blocks, &excluded)
+            })
     }
 
     fn loop_switch_target_exits_directly(
@@ -2408,6 +2415,8 @@ impl<'a> FuncCodegen<'a> {
                 then_target,
                 else_target,
             } => {
+                let nested_continue_depth = continue_depth + depth_to_merge + 1;
+                let nested_break_depth = break_depth + depth_to_merge + 1;
                 self.emit_loop_branch(
                     func,
                     *condition,
@@ -2415,8 +2424,8 @@ impl<'a> FuncCodegen<'a> {
                     else_target,
                     header,
                     exit,
-                    continue_depth,
-                    break_depth,
+                    nested_continue_depth,
+                    nested_break_depth,
                     switch_merge,
                     emitted,
                 )?;
@@ -2435,8 +2444,8 @@ impl<'a> FuncCodegen<'a> {
                     current_block,
                     header,
                     exit,
-                    continue_depth,
-                    break_depth,
+                    continue_depth + depth_to_merge + 1,
+                    break_depth + depth_to_merge + 1,
                     switch_merge,
                     emitted,
                 )?;
@@ -14315,7 +14324,13 @@ impl<'a> FuncCodegen<'a> {
         let byte_idx_local = self.scratch_i32_18;
         let char_width_local = self.scratch_i32_19;
         let codepoint_local = self.scratch_i32_20;
-        let builder_local = self.scratch_i32_21;
+        let builder_local = if out_local != self.scratch_i32_21 {
+            self.scratch_i32_21
+        } else if out_local != self.scratch_i32_22 {
+            self.scratch_i32_22
+        } else {
+            self.scratch_i32_23
+        };
 
         func.instruction(&Instruction::LocalGet(string_local));
         func.instruction(&Instruction::I32Load(MemArg {
