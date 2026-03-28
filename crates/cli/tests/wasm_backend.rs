@@ -1612,6 +1612,58 @@ fn run_backend_wasm_preserves_mutable_priority_queue_max_heap_pop_order_after_pr
 }
 
 #[test]
+fn run_backend_wasm_preserves_mutable_priority_queue_min_heap_order_with_list_payloads() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import List, MutableList, MutablePriorityQueue\n\
+         from io import println\n\
+         from Option import Some, None\n\
+         fn build_payload(seed: Int) -> List<Int> {\n\
+           let xs = MutableList.new()\n\
+           for (i in 0 ..< 15) {\n\
+             let _ = xs.push(seed * 100 + i)\n\
+           }\n\
+           xs.to_list()\n\
+         }\n\
+         fn main() -> Unit {\n\
+           let pq: MutablePriorityQueue<Int, List<Int>> = MutablePriorityQueue.new_min()\n\
+           let _ = pq.push(900, build_payload(9))\n\
+           let _ = pq.push(20, build_payload(1))\n\
+           let _ = pq.push(20, build_payload(2))\n\
+           let _ = pq.push(30, build_payload(3))\n\
+           let _ = pq.push(40, build_payload(4))\n\
+           let _ = pq.push(50, build_payload(5))\n\
+           let _ = pq.push(60, build_payload(6))\n\
+           let _ = pq.push(60, build_payload(7))\n\
+           let _ = pq.push(60, build_payload(8))\n\
+           let _ = pq.push(70, build_payload(10))\n\
+           let _ = pq.push(70, build_payload(11))\n\
+           let _ = pq.push(80, build_payload(12))\n\
+           let _ = pq.push(80, build_payload(13))\n\
+           let _ = pq.push(90, build_payload(14))\n\
+           let _ = pq.push(90, build_payload(15))\n\
+           let _ = pq.push(90, build_payload(16))\n\
+           while (pq.is_empty() == false) {\n\
+             match (pq.pop()) {\n\
+               Some(item) => println(item.priority.to_string().concat(\":\").concat(item.value[0].to_string())),\n\
+               None => println(\"none\"),\n\
+             }\n\
+           }\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "20:100\n20:200\n30:300\n40:400\n50:500\n60:600\n60:700\n60:800\n70:1000\n70:1100\n80:1200\n80:1300\n90:1400\n90:1500\n90:1600\n900:900",
+        "run --backend wasm preserves min-heap order with list payloads",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_chars_materialization_inside_range_mapped_string_loops() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");

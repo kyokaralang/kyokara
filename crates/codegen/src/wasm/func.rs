@@ -7217,6 +7217,7 @@ impl<'a> FuncCodegen<'a> {
         let preserved_value_local = match (priority_ty, value_ty) {
             (Ty::Int, Ty::Int) => Some(self.scratch_i64_6),
             (Ty::Float, Ty::Float) => Some(self.scratch_f64_4),
+            _ if is_i32_type(value_ty) => Some(self.scratch_i32_19),
             _ => None,
         };
         let insert_value_local = preserved_value_local.unwrap_or(value_local);
