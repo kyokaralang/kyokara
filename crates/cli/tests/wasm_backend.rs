@@ -2363,6 +2363,154 @@ fn run_backend_wasm_parses_int_from_special_string_returned_from_call() {
 }
 
 #[test]
+fn run_backend_wasm_parses_int_from_substring_built_special_string() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn build() -> String {\n\
+           let src = \" 12 \"\n\
+           let digits = MutableList.new().push(\"\")\n\
+           var i = 0\n\
+           while (i < src.len()) {\n\
+             let _ = digits.set(0, digits[0].concat(src.substring(i, i + 1)))\n\
+             i = i + 1\n\
+           }\n\
+           digits[0]\n\
+         }\n\
+         fn main() -> String {\n\
+           build().trim().parse_int().unwrap_or(0).to_string()\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "12",
+        "run --backend wasm parses int from substring-built special string",
+    );
+}
+
+#[test]
+fn run_backend_wasm_trims_substring_built_special_string() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn build() -> String {\n\
+           let src = \" 12 \"\n\
+           let digits = MutableList.new().push(\"\")\n\
+           var i = 0\n\
+           while (i < src.len()) {\n\
+             let _ = digits.set(0, digits[0].concat(src.substring(i, i + 1)))\n\
+             i = i + 1\n\
+           }\n\
+           digits[0]\n\
+         }\n\
+         fn main() -> String {\n\
+           build().trim()\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "12",
+        "run --backend wasm trims substring-built special string",
+    );
+}
+
+#[test]
+fn run_backend_wasm_parses_single_digit_substrings_inside_loop() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn main() -> Int {\n\
+           let text = \"10110\"\n\
+           let value = MutableList.new().push(0)\n\
+           for (i in 0 ..< text.len()) {\n\
+             let _ = value.set(0, value[0] * 2 + text.substring(i, i + 1).parse_int().unwrap_or(0))\n\
+           }\n\
+           value[0]\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "22",
+        "run --backend wasm parses single-digit substrings inside loop",
+    );
+}
+
+#[test]
+fn run_backend_wasm_parses_int_from_chars_built_special_string() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn build() -> String {\n\
+           let src = \" 12 \"\n\
+           let digits = MutableList.new().push(\"\")\n\
+           for (ch in src.chars()) {\n\
+             let _ = digits.set(0, digits[0].concat(ch.to_string()))\n\
+           }\n\
+           digits[0]\n\
+         }\n\
+         fn main() -> String {\n\
+           build().trim().parse_int().unwrap_or(0).to_string()\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "12",
+        "run --backend wasm parses int from chars-built special string",
+    );
+}
+
+#[test]
+fn run_backend_wasm_slices_concat_built_special_string() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn build() -> String {\n\
+           let src = \"10110\"\n\
+           let digits = MutableList.new().push(\"\")\n\
+           var i = 0\n\
+           while (i < src.len()) {\n\
+             let _ = digits.set(0, digits[0].concat(src.substring(i, i + 1)))\n\
+             i = i + 1\n\
+           }\n\
+           digits[0]\n\
+         }\n\
+         fn main() -> String {\n\
+           build().substring(1, 4)\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "011",
+        "run --backend wasm slices concat-built special string",
+    );
+}
+
+#[test]
 fn run_backend_wasm_executes_aoc_2024_day09_reduced_prefix() {
     let dir = tempfile::tempdir().expect("tempdir");
     let input = dir.path().join("day09.txt");
