@@ -7135,7 +7135,7 @@ impl<'a> FuncCodegen<'a> {
         let insert_value_local = preserved_value_local.unwrap_or(value_local);
 
         self.emit_get(func, pq);
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_12)); // pq ptr
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_17)); // stable pq ptr
         self.emit_get(func, priority);
         func.instruction(&Instruction::LocalSet(priority_local));
         self.emit_get(func, value);
@@ -7145,15 +7145,15 @@ impl<'a> FuncCodegen<'a> {
             func.instruction(&Instruction::LocalSet(preserved_value_local));
         }
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_12));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_17));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 0,
             align: 2,
             memory_index: 0,
         }));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_6)); // direction
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_13)); // direction
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_12));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_17));
         func.instruction(&Instruction::I64Load(MemArg {
             offset: 8,
             align: 3,
@@ -7161,63 +7161,26 @@ impl<'a> FuncCodegen<'a> {
         }));
         func.instruction(&Instruction::LocalSet(self.scratch_i64_3)); // insertion order
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_12));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_17));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 16,
             align: 2,
             memory_index: 0,
         }));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_10)); // items list
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_18)); // stable items list
 
         self.emit_load_list_len_and_data_from_local(
             func,
-            self.scratch_i32_10,
+            self.scratch_i32_18,
             self.scratch_i32_2,
-            self.scratch_i32_3,
-        );
-        func.instruction(&Instruction::I32Const(0));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_4)); // scan idx
-
-        func.instruction(&Instruction::Block(BlockType::Empty));
-        func.instruction(&Instruction::Loop(BlockType::Empty));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
-        func.instruction(&Instruction::I32GeU);
-        func.instruction(&Instruction::BrIf(1));
-
-        self.emit_priority_queue_item_slot_ptr_from_locals(
-            func,
-            self.scratch_i32_3,
             self.scratch_i32_4,
-            self.scratch_i32_5,
         );
-
-        self.emit_priority_queue_should_insert_before_from_locals(
-            func,
-            self.scratch_i32_6,
-            priority_local,
-            self.scratch_i64_3,
-            self.scratch_i32_5,
-            priority_ty,
-        )?;
-        func.instruction(&Instruction::If(BlockType::Empty));
-        func.instruction(&Instruction::Br(2));
-        func.instruction(&Instruction::End);
-
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
-        func.instruction(&Instruction::I32Const(1));
-        func.instruction(&Instruction::I32Add);
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_4));
-        func.instruction(&Instruction::Br(0));
-        func.instruction(&Instruction::End);
-        func.instruction(&Instruction::End);
-
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_3)); // final insert idx
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_15)); // inserted/current index
         self.emit_insert_mutable_priority_queue_item_in_place_from_locals(
             func,
-            self.scratch_i32_10,
-            self.scratch_i32_3,
+            self.scratch_i32_18,
+            self.scratch_i32_15,
             priority_local,
             priority_ty,
             insert_value_local,
@@ -7225,9 +7188,61 @@ impl<'a> FuncCodegen<'a> {
             self.scratch_i64_3,
         );
 
-        self.emit_get(func, pq);
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_7)); // pq ptr reload
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_15));
+        func.instruction(&Instruction::I32Eqz);
+        func.instruction(&Instruction::BrIf(1));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_15));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Sub);
+        func.instruction(&Instruction::I32Const(2));
+        func.instruction(&Instruction::I32DivU);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_5)); // parent index
+
+        self.emit_load_list_len_and_data_from_local(
+            func,
+            self.scratch_i32_18,
+            self.scratch_i32_2,
+            self.scratch_i32_4,
+        );
+        self.emit_priority_queue_item_slot_ptr_from_locals(
+            func,
+            self.scratch_i32_4,
+            self.scratch_i32_15,
+            self.scratch_i32_8,
+        );
+        self.emit_priority_queue_item_slot_ptr_from_locals(
+            func,
+            self.scratch_i32_4,
+            self.scratch_i32_5,
+            self.scratch_i32_9,
+        );
+        self.emit_priority_queue_item_should_precede_item_from_locals(
+            func,
+            self.scratch_i32_13,
+            self.scratch_i32_8,
+            self.scratch_i32_9,
+            priority_ty,
+        )?;
+        func.instruction(&Instruction::I32Eqz);
+        func.instruction(&Instruction::BrIf(1));
+
+        self.emit_priority_queue_swap_items_from_locals(
+            func,
+            self.scratch_i32_8,
+            self.scratch_i32_9,
+            priority_ty,
+            value_ty,
+        );
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_15));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_17));
         func.instruction(&Instruction::LocalGet(self.scratch_i64_3));
         func.instruction(&Instruction::I64Const(1));
         func.instruction(&Instruction::I64Add);
@@ -7237,7 +7252,7 @@ impl<'a> FuncCodegen<'a> {
             memory_index: 0,
         }));
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_17));
         Ok(())
     }
 
@@ -7284,21 +7299,32 @@ impl<'a> FuncCodegen<'a> {
         )?;
         let priority_local = self.map_key_local(priority_ty);
         let value_local = self.map_value_local(value_ty);
-        let result_local = self.temp_local_for_ty(result_ty);
+        let result_local = if pop && !matches!(result_ty, Ty::Int | Ty::Float) {
+            self.scratch_i32_17
+        } else {
+            self.temp_local_for_ty(result_ty)
+        };
 
         self.emit_get(func, pq);
         func.instruction(&Instruction::LocalSet(self.scratch_i32_12)); // pq ptr
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_12));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_18)); // stable direction
         func.instruction(&Instruction::LocalGet(self.scratch_i32_12));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 16,
             align: 2,
             memory_index: 0,
         }));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_10)); // items list
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_16)); // stable items list
 
         self.emit_load_list_len_and_data_from_local(
             func,
-            self.scratch_i32_10,
+            self.scratch_i32_16,
             self.scratch_i32_2,
             self.scratch_i32_3,
         );
@@ -7345,11 +7371,165 @@ impl<'a> FuncCodegen<'a> {
         )?;
 
         if pop {
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+            func.instruction(&Instruction::I32Const(1));
+            func.instruction(&Instruction::I32Eq);
+            func.instruction(&Instruction::If(BlockType::Empty));
             self.emit_remove_mutable_priority_queue_item_from_local(
                 func,
-                self.scratch_i32_10,
+                self.scratch_i32_16,
                 self.scratch_i32_6,
             );
+            func.instruction(&Instruction::Else);
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+            func.instruction(&Instruction::I32Const(1));
+            func.instruction(&Instruction::I32Sub);
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_5)); // last index
+            self.emit_priority_queue_item_slot_ptr_from_locals(
+                func,
+                self.scratch_i32_3,
+                self.scratch_i32_5,
+                self.scratch_i32_8,
+            );
+            self.emit_priority_queue_item_load_priority_from_local(
+                func,
+                self.scratch_i32_8,
+                priority_ty,
+                priority_local,
+            );
+            self.emit_priority_queue_item_load_value_from_local(
+                func,
+                self.scratch_i32_8,
+                value_ty,
+                value_local,
+            );
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+            func.instruction(&Instruction::I64Load(MemArg {
+                offset: 16,
+                align: 3,
+                memory_index: 0,
+            }));
+            func.instruction(&Instruction::LocalSet(self.scratch_i64_3)); // last order
+
+            self.emit_load_list_len_and_data_from_local(
+                func,
+                self.scratch_i32_16,
+                self.scratch_i32_2,
+                self.scratch_i32_3,
+            );
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_6)); // root index
+            self.emit_priority_queue_item_slot_ptr_from_locals(
+                func,
+                self.scratch_i32_3,
+                self.scratch_i32_6,
+                self.scratch_i32_9,
+            );
+            self.emit_priority_queue_item_store_from_locals(
+                func,
+                self.scratch_i32_9,
+                priority_local,
+                priority_ty,
+                value_local,
+                value_ty,
+                self.scratch_i64_3,
+            );
+            self.emit_remove_mutable_priority_queue_item_from_local(
+                func,
+                self.scratch_i32_16,
+                self.scratch_i32_5,
+            );
+
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_4)); // current index
+            func.instruction(&Instruction::Block(BlockType::Empty));
+            func.instruction(&Instruction::Loop(BlockType::Empty));
+            self.emit_load_list_len_and_data_from_local(
+                func,
+                self.scratch_i32_16,
+                self.scratch_i32_2,
+                self.scratch_i32_3,
+            );
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+            func.instruction(&Instruction::I32Const(2));
+            func.instruction(&Instruction::I32Mul);
+            func.instruction(&Instruction::I32Const(1));
+            func.instruction(&Instruction::I32Add);
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_5)); // left index
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+            func.instruction(&Instruction::I32GeU);
+            func.instruction(&Instruction::BrIf(1));
+
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_8)); // best index
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+            func.instruction(&Instruction::I32Const(1));
+            func.instruction(&Instruction::I32Add);
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_15)); // right index
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_15));
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
+            func.instruction(&Instruction::I32LtU);
+            func.instruction(&Instruction::If(BlockType::Empty));
+            self.emit_priority_queue_item_slot_ptr_from_locals(
+                func,
+                self.scratch_i32_3,
+                self.scratch_i32_15,
+                self.scratch_i32_9,
+            );
+            self.emit_priority_queue_item_slot_ptr_from_locals(
+                func,
+                self.scratch_i32_3,
+                self.scratch_i32_5,
+                self.scratch_i32_11,
+            );
+            self.emit_priority_queue_item_should_precede_item_from_locals(
+                func,
+                self.scratch_i32_18,
+                self.scratch_i32_9,
+                self.scratch_i32_11,
+                priority_ty,
+            )?;
+            func.instruction(&Instruction::If(BlockType::Empty));
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_15));
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_8));
+            func.instruction(&Instruction::End);
+            func.instruction(&Instruction::End);
+
+            self.emit_priority_queue_item_slot_ptr_from_locals(
+                func,
+                self.scratch_i32_3,
+                self.scratch_i32_4,
+                self.scratch_i32_11,
+            );
+            self.emit_priority_queue_item_slot_ptr_from_locals(
+                func,
+                self.scratch_i32_3,
+                self.scratch_i32_8,
+                self.scratch_i32_9,
+            );
+            self.emit_priority_queue_item_should_precede_item_from_locals(
+                func,
+                self.scratch_i32_18,
+                self.scratch_i32_9,
+                self.scratch_i32_11,
+                priority_ty,
+            )?;
+            func.instruction(&Instruction::I32Eqz);
+            func.instruction(&Instruction::BrIf(1));
+            self.emit_priority_queue_swap_items_from_locals(
+                func,
+                self.scratch_i32_11,
+                self.scratch_i32_9,
+                priority_ty,
+                value_ty,
+            );
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_4));
+            func.instruction(&Instruction::Br(0));
+            func.instruction(&Instruction::End);
+            func.instruction(&Instruction::End);
+            func.instruction(&Instruction::End);
         }
 
         func.instruction(&Instruction::Else);
@@ -18006,6 +18186,144 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalGet(item_local));
         self.emit_typed_load(func, value_ty, 8);
         func.instruction(&Instruction::LocalSet(out_local));
+    }
+
+    fn emit_priority_queue_item_store_from_locals(
+        &self,
+        func: &mut Function,
+        item_local: u32,
+        priority_local: u32,
+        priority_ty: &Ty,
+        value_local: u32,
+        value_ty: &Ty,
+        order_local: u32,
+    ) {
+        func.instruction(&Instruction::LocalGet(item_local));
+        func.instruction(&Instruction::LocalGet(priority_local));
+        self.emit_typed_store_stack(func, priority_ty, 0);
+
+        func.instruction(&Instruction::LocalGet(item_local));
+        func.instruction(&Instruction::LocalGet(value_local));
+        self.emit_typed_store_stack(func, value_ty, 8);
+
+        func.instruction(&Instruction::LocalGet(item_local));
+        func.instruction(&Instruction::LocalGet(order_local));
+        func.instruction(&Instruction::I64Store(MemArg {
+            offset: 16,
+            align: 3,
+            memory_index: 0,
+        }));
+    }
+
+    fn emit_priority_queue_item_should_precede_item_from_locals(
+        &self,
+        func: &mut Function,
+        direction_local: u32,
+        candidate_item_local: u32,
+        existing_item_local: u32,
+        priority_ty: &Ty,
+    ) -> Result<(), CodegenError> {
+        let candidate_priority_local = match priority_ty {
+            Ty::Int => self.scratch_i64_7,
+            Ty::Float => self.scratch_f64_4,
+            _ => self.scratch_i32_14,
+        };
+        self.emit_priority_queue_item_load_priority_from_local(
+            func,
+            candidate_item_local,
+            priority_ty,
+            candidate_priority_local,
+        );
+
+        func.instruction(&Instruction::LocalGet(candidate_item_local));
+        func.instruction(&Instruction::I64Load(MemArg {
+            offset: 16,
+            align: 3,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_6)); // candidate order
+
+        self.emit_priority_queue_should_insert_before_from_locals(
+            func,
+            direction_local,
+            candidate_priority_local,
+            self.scratch_i64_6,
+            existing_item_local,
+            priority_ty,
+        )
+    }
+
+    fn emit_priority_queue_swap_items_from_locals(
+        &self,
+        func: &mut Function,
+        first_item_local: u32,
+        second_item_local: u32,
+        priority_ty: &Ty,
+        value_ty: &Ty,
+    ) {
+        let priority_local = match priority_ty {
+            Ty::Int => self.scratch_i64_5,
+            Ty::Float => self.scratch_f64_3,
+            _ => self.scratch_i32_13,
+        };
+        let value_local = match value_ty {
+            Ty::Int => self.scratch_i64_7,
+            Ty::Float => self.scratch_f64_4,
+            _ => self.scratch_i32_14,
+        };
+
+        self.emit_priority_queue_item_load_priority_from_local(
+            func,
+            first_item_local,
+            priority_ty,
+            priority_local,
+        );
+        self.emit_priority_queue_item_load_value_from_local(
+            func,
+            first_item_local,
+            value_ty,
+            value_local,
+        );
+        func.instruction(&Instruction::LocalGet(first_item_local));
+        func.instruction(&Instruction::I64Load(MemArg {
+            offset: 16,
+            align: 3,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_6)); // first order
+
+        func.instruction(&Instruction::LocalGet(first_item_local));
+        func.instruction(&Instruction::LocalGet(second_item_local));
+        self.emit_typed_load(func, priority_ty, 0);
+        self.emit_typed_store_stack(func, priority_ty, 0);
+
+        func.instruction(&Instruction::LocalGet(first_item_local));
+        func.instruction(&Instruction::LocalGet(second_item_local));
+        self.emit_typed_load(func, value_ty, 8);
+        self.emit_typed_store_stack(func, value_ty, 8);
+
+        func.instruction(&Instruction::LocalGet(first_item_local));
+        func.instruction(&Instruction::LocalGet(second_item_local));
+        func.instruction(&Instruction::I64Load(MemArg {
+            offset: 16,
+            align: 3,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::I64Store(MemArg {
+            offset: 16,
+            align: 3,
+            memory_index: 0,
+        }));
+
+        self.emit_priority_queue_item_store_from_locals(
+            func,
+            second_item_local,
+            priority_local,
+            priority_ty,
+            value_local,
+            value_ty,
+            self.scratch_i64_6,
+        );
     }
 
     fn emit_priority_queue_should_insert_before_from_locals(

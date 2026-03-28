@@ -1460,6 +1460,49 @@ fn run_backend_wasm_preserves_large_mutable_priority_queue_pushes() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_mutable_priority_queue_max_heap_pop_order_after_prior_min_heap_pop() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutablePriorityQueue\n\
+         from io import println\n\
+         from Option import Some, None\n\
+         fn main() -> Unit {\n\
+           let minq: MutablePriorityQueue<Int, Int> = MutablePriorityQueue.new_min()\n\
+           let _ = minq.push(5, 50).push(1, 10).push(1, 11).push(3, 30)\n\
+           let _ = minq.pop()\n\
+           let maxq: MutablePriorityQueue<Int, Int> = MutablePriorityQueue.new_max()\n\
+           let _ = maxq.push(5, 50).push(7, 70).push(7, 71).push(1, 10)\n\
+           match (maxq.pop()) {\n\
+             Some(item) => println((item.priority * 100 + item.value).to_string())\n\
+             None => println(\"none\")\n\
+           }\n\
+           match (maxq.pop()) {\n\
+             Some(item) => println((item.priority * 100 + item.value).to_string())\n\
+             None => println(\"none\")\n\
+           }\n\
+           match (maxq.pop()) {\n\
+             Some(item) => println((item.priority * 100 + item.value).to_string())\n\
+             None => println(\"none\")\n\
+           }\n\
+           match (maxq.pop()) {\n\
+             Some(item) => println((item.priority * 100 + item.value).to_string())\n\
+             None => println(\"none\")\n\
+           }\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "770\n771\n550\n110",
+        "run --backend wasm preserves max-heap pop order after prior min-heap pop",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_chars_materialization_inside_range_mapped_string_loops() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
