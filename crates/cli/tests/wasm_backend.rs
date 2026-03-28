@@ -490,6 +490,81 @@ fn run_backend_wasm_handles_mutable_map_string_keys_after_growth() {
 }
 
 #[test]
+fn run_backend_wasm_handles_mutable_map_int_keys_after_growth() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableMap\n\
+         fn main() -> Int {\n\
+           let m = MutableMap.new()\n\
+           for (i in 0 ..< 6000) {\n\
+             let _ = m.insert(i, i * 2)\n\
+           }\n\
+           m.keys().to_list().len()\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "6000",
+        "run --backend wasm with mutable map int keys after growth",
+    );
+}
+
+#[test]
+fn run_backend_wasm_handles_mutable_map_int_values_after_growth() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableMap\n\
+         fn main() -> Int {\n\
+           let m = MutableMap.new()\n\
+           for (i in 0 ..< 6000) {\n\
+             let _ = m.insert(i, i * 2)\n\
+           }\n\
+           m.values().filter(fn(value: Int) => value >= 0).count()\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "6000",
+        "run --backend wasm with mutable map int values after growth",
+    );
+}
+
+#[test]
+fn run_backend_wasm_handles_mutable_set_values_after_growth() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableSet\n\
+         fn main() -> Int {\n\
+           let s = MutableSet.new()\n\
+           for (i in 0 ..< 6000) {\n\
+             let _ = s.insert(i)\n\
+           }\n\
+           s.values().to_list().len()\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "6000",
+        "run --backend wasm with mutable set values after growth",
+    );
+}
+
+#[test]
 fn run_backend_wasm_handles_range_mapped_mutable_list_from_list() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
@@ -1868,6 +1943,32 @@ fn run_backend_wasm_executes_aoc_2018_day04() {
         &output,
         "Part 1: 19830\nPart 2: 43695",
         "run --backend wasm AoC 2018 day04",
+    );
+}
+
+#[test]
+fn run_backend_wasm_executes_aoc_2018_day05() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("day05.txt");
+    fs::copy(
+        "/Users/alpha/CodexProjects/polyglot-bench/corpus/advent-of-code/2018/day05.txt",
+        &input,
+    )
+    .expect("copy day05 input");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "run",
+            "/Users/alpha/CodexProjects/polyglot-bench/adapters/kyokara/solutions/advent-of-code/2018/day05.ky",
+            "--backend",
+            "wasm",
+        ],
+    );
+    assert_stdout_trimmed(
+        &output,
+        "Part 1: 9808\nPart 2: 6484",
+        "run --backend wasm AoC 2018 day05",
     );
 }
 
