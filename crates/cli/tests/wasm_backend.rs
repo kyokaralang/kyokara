@@ -1951,6 +1951,40 @@ fn run_backend_wasm_handles_unused_mutating_loop_helpers() {
 }
 
 #[test]
+fn run_backend_wasm_handles_loop_match_with_nested_if() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from Option import Some, None\n\
+         fn main() -> Int {\n\
+           let x = Some(7)\n\
+           while (true) {\n\
+             match (x) {\n\
+               Some(n) => {\n\
+                 let cond = true\n\
+                 if (cond) {\n\
+                   return 1\n\
+                 }\n\
+                 return n\n\
+               }\n\
+               None => {}\n\
+             }\n\
+           }\n\
+           -1\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "1",
+        "run --backend wasm handles looped match with nested if",
+    );
+}
+
+#[test]
 fn run_backend_wasm_executes_aoc_2024_day09_sample() {
     let dir = tempfile::tempdir().expect("tempdir");
     let input = dir.path().join("day09.txt");

@@ -2406,7 +2406,16 @@ impl<'a> FuncCodegen<'a> {
                 } else if target.block == exit {
                     func.instruction(&Instruction::Br(break_depth + depth_to_merge + 1));
                 } else {
-                    self.emit_block_chain(func, target.block, switch_merge, emitted)?;
+                    self.emit_loop_block_chain(
+                        func,
+                        target.block,
+                        header,
+                        exit,
+                        continue_depth + depth_to_merge + 1,
+                        break_depth + depth_to_merge + 1,
+                        switch_merge,
+                        emitted,
+                    )?;
                     func.instruction(&Instruction::Br(depth_to_merge));
                 }
             }
