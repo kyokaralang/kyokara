@@ -291,6 +291,13 @@ pub fn compile_module(
     } else {
         None
     };
+    let string_md5_materialize_fn_index = if needs_string_md5 {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
     let parse_int_fn_index = if needs_parse_int {
         let idx = next_fn_index;
         next_fn_index += 1;
@@ -459,7 +466,14 @@ pub fn compile_module(
         imports.import(HOST_MODULE, "string_to_lower", EntityType::Function(1));
     }
     if string_md5_fn_index.is_some() {
-        imports.import(HOST_MODULE, "string_md5", EntityType::Function(1));
+        imports.import(HOST_MODULE, "string_md5", EntityType::Function(0));
+    }
+    if string_md5_materialize_fn_index.is_some() {
+        imports.import(
+            HOST_MODULE,
+            "string_md5_materialize",
+            EntityType::Function(1),
+        );
     }
     if parse_int_fn_index.is_some() {
         imports.import(HOST_MODULE, "parse_int", EntityType::Function(2));
@@ -574,8 +588,12 @@ pub fn compile_module(
     code.function(&emit_flatten_function(
         alloc_fn_index,
         string_flatten_into_fn_index,
+        string_md5_materialize_fn_index,
     ));
-    code.function(&emit_flatten_into_function(string_flatten_into_fn_index));
+    code.function(&emit_flatten_into_function(
+        string_flatten_into_fn_index,
+        string_md5_materialize_fn_index,
+    ));
 
     // User functions
     for (fn_id, _wasm_idx) in &fn_order {

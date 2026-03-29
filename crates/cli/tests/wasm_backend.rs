@@ -123,6 +123,48 @@ fn run_backend_wasm_supports_direct_imported_hash_md5() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_repeated_md5_special_strings() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r#"from collections import MutableList
+
+fn stretch(seed: String, rounds: Int) -> String {
+  var hash = seed
+  var i = 0
+  while (i < rounds) {
+    hash = hash.md5()
+    i = i + 1
+  }
+  hash
+}
+
+fn main() -> String {
+  let hashes = MutableList.new()
+  var i = 0
+  while (i < 2000) {
+    let _ = hashes.push(stretch("abc".concat(i.to_string()), 200))
+    i = i + 1
+  }
+  hashes.get(1999).unwrap_or("")
+}"#,
+    )
+    .expect("write source");
+
+    let native = run_cli(dir.path(), &["run", "main.ky"]);
+    assert_success(&native, "run native with repeated md5 special strings");
+    let expected = String::from_utf8_lossy(&native.stdout).trim().to_string();
+
+    let wasm = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &wasm,
+        &expected,
+        "run --backend wasm preserves repeated md5 special strings",
+    );
+}
+
+#[test]
 fn run_backend_wasm_supports_fs_read_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");

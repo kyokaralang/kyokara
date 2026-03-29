@@ -67,14 +67,9 @@ fn run_main_bool(source: &str) -> bool {
 fn run_main_string(source: &str) -> String {
     let mut program = instantiate_main(source);
     let ptr = program.call_main_i32().expect("main trapped") as u32;
-    let header = program
-        .read_memory(ptr, 8)
-        .expect("string header should be readable");
-    let byte_len = u32::from_le_bytes(header[0..4].try_into().expect("4-byte len header"));
-    let bytes = program
-        .read_memory(ptr + 8, byte_len)
-        .expect("string bytes should be readable");
-    String::from_utf8(bytes).expect("guest string should be valid UTF-8")
+    program
+        .read_string(ptr)
+        .expect("guest string should be readable")
 }
 
 fn with_imports(header: &str, src: &str) -> String {

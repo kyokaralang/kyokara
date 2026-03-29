@@ -9,6 +9,9 @@ use thiserror::Error;
 
 const HOST_MODULE: &str = "kyokara_host";
 const MAX_WASM_STACK_BYTES: usize = 64 * 1024 * 1024;
+const STRING_SPECIAL_TAG_MASK: i32 = i32::MIN;
+const STRING_FORWARD_SENTINEL: i32 = -1;
+const STRING_MD5_SENTINEL: i32 = -2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
@@ -157,6 +160,10 @@ impl WasmProgram {
         Ok(buf)
     }
 
+    pub fn read_string(&mut self, ptr: u32) -> Result<String, WasmRuntimeError> {
+        read_program_string(self, ptr)
+    }
+
     pub fn last_host_error(&self) -> Option<&str> {
         self.store.data().last_host_error.as_deref()
     }
@@ -237,10 +244,20 @@ fn build_host_linker(
         .func_wrap(
             HOST_MODULE,
             "string_md5",
-            |mut caller: wasmtime::Caller<'_, StoreState>, text_ptr: i32, text_len: i32| -> i32 {
-                call_string_host_helper(&mut caller, text_ptr, text_len, |text| {
-                    format!("{:x}", md5::Md5::digest(text.as_bytes()))
-                })
+            |mut caller: wasmtime::Caller<'_, StoreState>, text_object_ptr: i32| -> i32 {
+                call_string_md5_host_helper(&mut caller, text_object_ptr)
+            },
+        )
+        .map_err(WasmRuntimeError::HostLinker)?;
+    linker
+        .func_wrap(
+            HOST_MODULE,
+            "string_md5_materialize",
+            |mut caller: wasmtime::Caller<'_, StoreState>,
+             text_object_ptr: i32,
+             dst_ptr: i32|
+             -> i32 {
+                call_string_md5_materialize(&mut caller, text_object_ptr, dst_ptr)
             },
         )
         .map_err(WasmRuntimeError::HostLinker)?;
@@ -468,6 +485,32 @@ fn call_string_host_helper(
     }
 }
 
+fn call_string_md5_host_helper(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    text_object_ptr: i32,
+) -> i32 {
+    match alloc_guest_md5_string(caller, text_object_ptr) {
+        Ok(ptr) => ptr,
+        Err(status) => status.code(),
+    }
+}
+
+fn call_string_md5_materialize(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    text_object_ptr: i32,
+    dst_ptr: i32,
+) -> i32 {
+    let text = match read_guest_string_object(caller, text_object_ptr) {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    let digest = format!("{:x}", md5::Md5::digest(text.as_bytes()));
+    match write_guest_bytes(caller, dst_ptr, digest.as_bytes()) {
+        Ok(()) => HostStatus::Ok.code(),
+        Err(status) => status.code(),
+    }
+}
+
 fn call_parse_int_helper(
     caller: &mut wasmtime::Caller<'_, StoreState>,
     text_ptr: i32,
@@ -688,6 +731,50 @@ fn read_guest_string(
     String::from_utf8(bytes).map_err(|_| HostStatus::InvalidUtf8)
 }
 
+fn read_guest_string_object(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    ptr: i32,
+) -> Result<String, HostStatus> {
+    let header = read_guest_bytes(caller, ptr, 16)?;
+    let raw_len = i32::from_le_bytes(
+        header[0..4]
+            .try_into()
+            .map_err(|_| HostStatus::BadGuestMemory)?,
+    );
+    if raw_len >= 0 {
+        let text_ptr = ptr.checked_add(8).ok_or(HostStatus::BadGuestMemory)?;
+        return read_guest_string(caller, text_ptr, raw_len);
+    }
+
+    let source_ptr = i32::from_le_bytes(
+        header[8..12]
+            .try_into()
+            .map_err(|_| HostStatus::BadGuestMemory)?,
+    );
+    let rhs_or_sentinel = i32::from_le_bytes(
+        header[12..16]
+            .try_into()
+            .map_err(|_| HostStatus::BadGuestMemory)?,
+    );
+    if source_ptr < 0 {
+        return Err(HostStatus::BadGuestMemory);
+    }
+    if rhs_or_sentinel == STRING_FORWARD_SENTINEL {
+        return read_guest_string_object(caller, source_ptr);
+    }
+    if rhs_or_sentinel == STRING_MD5_SENTINEL {
+        let text = read_guest_string_object(caller, source_ptr)?;
+        return Ok(format!("{:x}", md5::Md5::digest(text.as_bytes())));
+    }
+    if rhs_or_sentinel < 0 {
+        return Err(HostStatus::BadGuestMemory);
+    }
+
+    let mut text = read_guest_string_object(caller, source_ptr)?;
+    text.push_str(&read_guest_string_object(caller, rhs_or_sentinel)?);
+    Ok(text)
+}
+
 fn read_guest_bytes(
     caller: &mut wasmtime::Caller<'_, StoreState>,
     ptr: i32,
@@ -736,6 +823,28 @@ fn alloc_guest_string(
     Ok(ptr)
 }
 
+fn alloc_guest_md5_string(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    source_ptr: i32,
+) -> Result<i32, HostStatus> {
+    let alloc = caller
+        .get_export("__kyokara_alloc")
+        .and_then(|export| export.into_func())
+        .ok_or(HostStatus::BadGuestMemory)?;
+    let alloc = alloc
+        .typed::<i32, i32>(&mut *caller)
+        .map_err(|_| HostStatus::BadGuestMemory)?;
+    let ptr = alloc
+        .call(&mut *caller, 16)
+        .map_err(|_| HostStatus::BadGuestMemory)?;
+
+    write_guest_i32(caller, ptr, STRING_SPECIAL_TAG_MASK | 32)?;
+    write_guest_i32(caller, ptr + 4, 32)?;
+    write_guest_i32(caller, ptr + 8, source_ptr)?;
+    write_guest_i32(caller, ptr + 12, STRING_MD5_SENTINEL)?;
+    Ok(ptr)
+}
+
 fn write_guest_bytes(
     caller: &mut wasmtime::Caller<'_, StoreState>,
     ptr: i32,
@@ -781,4 +890,41 @@ fn write_guest_f64(
 
 fn store_host_error(caller: &mut wasmtime::Caller<'_, StoreState>, message: String) {
     caller.data_mut().last_host_error = Some(message);
+}
+
+fn read_program_string(program: &mut WasmProgram, ptr: u32) -> Result<String, WasmRuntimeError> {
+    let header = program.read_memory(ptr, 16)?;
+    let raw_len = i32::from_le_bytes(header[0..4].try_into().map_err(|_| {
+        WasmRuntimeError::GuestMemory("guest string header missing byte length".to_string())
+    })?);
+    if raw_len >= 0 {
+        let bytes = program.read_memory(ptr + 8, raw_len as u32)?;
+        return String::from_utf8(bytes)
+            .map_err(|err| WasmRuntimeError::GuestMemory(err.to_string()));
+    }
+
+    let source_ptr = u32::from_le_bytes(header[8..12].try_into().map_err(|_| {
+        WasmRuntimeError::GuestMemory(
+            "guest special string header missing source pointer".to_string(),
+        )
+    })?);
+    let rhs_or_sentinel = i32::from_le_bytes(header[12..16].try_into().map_err(|_| {
+        WasmRuntimeError::GuestMemory("guest special string header missing rhs pointer".to_string())
+    })?);
+    if rhs_or_sentinel == STRING_FORWARD_SENTINEL {
+        return read_program_string(program, source_ptr);
+    }
+    if rhs_or_sentinel == STRING_MD5_SENTINEL {
+        let text = read_program_string(program, source_ptr)?;
+        return Ok(format!("{:x}", md5::Md5::digest(text.as_bytes())));
+    }
+    if rhs_or_sentinel < 0 {
+        return Err(WasmRuntimeError::GuestMemory(
+            "guest special string uses invalid sentinel".to_string(),
+        ));
+    }
+
+    let mut text = read_program_string(program, source_ptr)?;
+    text.push_str(&read_program_string(program, rhs_or_sentinel as u32)?);
+    Ok(text)
 }

@@ -1652,13 +1652,13 @@ impl<'a> FuncCodegen<'a> {
         if let Some(default) = default {
             if !self.loop_switch_target_exits_directly(default.block, header, exit) {
                 starts.push(default.block);
-                reachable_sets.push(self.reachable_block_distances_until(default.block, &stop_blocks));
+                reachable_sets
+                    .push(self.reachable_block_distances_until(default.block, &stop_blocks));
             }
         }
         self.find_common_reachable_intersection_merge(&reachable_sets, &excluded)
             .filter(|merge| {
-                let merge_reachable =
-                    self.reachable_block_distances_until(*merge, &stop_blocks);
+                let merge_reachable = self.reachable_block_distances_until(*merge, &stop_blocks);
                 starts
                     .iter()
                     .all(|start| *start == *merge || !merge_reachable.contains_key(start))
@@ -2954,6 +2954,9 @@ impl<'a> FuncCodegen<'a> {
 
     fn emit_string_contains(&self, func: &mut Function, haystack: ValueId, needle: ValueId) {
         self.emit_get(func, haystack);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_10));
+        self.emit_string_flatten_from_local(func, self.scratch_i32_10, self.scratch_i32_10);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 0,
             align: 2,
@@ -2962,6 +2965,9 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
         self.emit_get(func, needle);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_11));
+        self.emit_string_flatten_from_local(func, self.scratch_i32_11, self.scratch_i32_11);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_11));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 0,
             align: 2,
@@ -3009,7 +3015,7 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::I32GeU);
         func.instruction(&Instruction::BrIf(1));
 
-        self.emit_get(func, haystack);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
         func.instruction(&Instruction::I32Const(8));
         func.instruction(&Instruction::I32Add);
         func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
@@ -3024,7 +3030,7 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalSet(self.scratch_i32_8));
 
         func.instruction(&Instruction::LocalGet(self.scratch_i32_8));
-        self.emit_get(func, needle);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_11));
         func.instruction(&Instruction::I32Const(8));
         func.instruction(&Instruction::I32Add);
         func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
@@ -5362,7 +5368,7 @@ impl<'a> FuncCodegen<'a> {
                     Ok(())
                 }
                 "string_md5" => {
-                    self.emit_string_host_helper_call(
+                    self.emit_string_md5_host_helper_call(
                         func,
                         args[0],
                         self.ctx
@@ -5447,6 +5453,16 @@ impl<'a> FuncCodegen<'a> {
             align: 2,
             memory_index: 0,
         }));
+        func.instruction(&Instruction::Call(helper_fn_index));
+    }
+
+    fn emit_string_md5_host_helper_call(
+        &self,
+        func: &mut Function,
+        value: ValueId,
+        helper_fn_index: u32,
+    ) {
+        self.emit_get(func, value);
         func.instruction(&Instruction::Call(helper_fn_index));
     }
 
@@ -14332,6 +14348,8 @@ impl<'a> FuncCodegen<'a> {
         } else {
             self.scratch_i32_23
         };
+
+        self.emit_string_flatten_from_local(func, string_local, string_local);
 
         func.instruction(&Instruction::LocalGet(string_local));
         func.instruction(&Instruction::I32Load(MemArg {
