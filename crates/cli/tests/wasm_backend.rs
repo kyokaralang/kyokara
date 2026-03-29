@@ -2213,6 +2213,32 @@ fn run_backend_wasm_executes_aoc_2019_day11() {
 }
 
 #[test]
+fn run_backend_wasm_executes_aoc_2019_day17() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("day17.txt");
+    fs::copy(
+        "/Users/alpha/CodexProjects/polyglot-bench/corpus/advent-of-code/2019/day17.txt",
+        &input,
+    )
+    .expect("copy day17 input");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "run",
+            "/Users/alpha/CodexProjects/polyglot-bench/adapters/kyokara/solutions/advent-of-code/2019/day17.ky",
+            "--backend",
+            "wasm",
+        ],
+    );
+    assert_stdout_trimmed(
+        &output,
+        "Part 1: 5972\nPart 2: 933214",
+        "run --backend wasm AoC 2019 day17",
+    );
+}
+
+#[test]
 fn run_backend_wasm_executes_aoc_2023_day14() {
     let dir = tempfile::tempdir().expect("tempdir");
     let input = dir.path().join("day14.txt");
@@ -2635,6 +2661,40 @@ fn run_backend_wasm_parses_single_digit_substrings_inside_loop() {
         &output,
         "22",
         "run --backend wasm parses single-digit substrings inside loop",
+    );
+}
+
+#[test]
+fn run_backend_wasm_prefers_user_defined_fn_over_intrinsic_name() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableList\n\
+         fn char_code(ch: String) -> Int {\n\
+           if (ch == \"A\") {\n\
+             65\n\
+           } else if (ch == \",\") {\n\
+             44\n\
+           } else {\n\
+             32\n\
+           }\n\
+         }\n\
+         fn main() -> String {\n\
+           let out = MutableList.new().push(\"\")\n\
+           let _ = out.set(0, out[0].concat(char_code(\"A\").to_string()))\n\
+           let _ = out.set(0, out[0].concat(\",\"))\n\
+           let _ = out.set(0, out[0].concat(char_code(\",\").to_string()))\n\
+           out[0]\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "65,44",
+        "run --backend wasm prefers user-defined fn over intrinsic name",
     );
 }
 

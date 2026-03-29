@@ -6,7 +6,7 @@ use kyokara_hir_def::call_family::{
     CallFamilySelection, bind_call_args_to_params, select_call_family_candidate,
 };
 use kyokara_hir_def::expr::{BinaryOp, CallArg, Expr, ExprIdx, Literal, MatchArm, Stmt};
-use kyokara_hir_def::item_tree::{TypeDefKind, TypeItemIdx, TypeParamDef};
+use kyokara_hir_def::item_tree::{FnItemIdx, TypeDefKind, TypeItemIdx, TypeParamDef};
 use kyokara_hir_def::name::Name;
 use kyokara_hir_def::pat::Pat;
 use kyokara_hir_def::path::Path;
@@ -28,6 +28,18 @@ use crate::value::ValueId;
 use super::{CallableParamSpec, HiddenNames, Labels, LoweringCtx};
 
 impl<'a> LoweringCtx<'a> {
+    fn call_target_for_fn_idx(&self, fn_idx: FnItemIdx) -> CallTarget {
+        let fn_item = &self.item_tree.functions[fn_idx];
+        if self.intrinsics.contains(&fn_item.name)
+            && !fn_item.has_body
+            && fn_item.source_range.is_none()
+        {
+            CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
+        } else {
+            CallTarget::Direct(fn_item.name)
+        }
+    }
+
     /// Lower an HIR expression to a KIR value.
     pub(crate) fn lower_expr(&mut self, expr_idx: ExprIdx) -> ValueId {
         let expr = self.body.exprs[expr_idx].clone();
@@ -1196,12 +1208,7 @@ impl<'a> LoweringCtx<'a> {
                         &param_names,
                         Some(&param_named_only),
                     );
-                    let fn_item = &self.item_tree.functions[fn_idx];
-                    let target = if self.intrinsics.contains(&fn_item.name) {
-                        CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
-                    } else {
-                        CallTarget::Direct(fn_item.name)
-                    };
+                    let target = self.call_target_for_fn_idx(fn_idx);
                     return self.builder.push_call(target, arg_vals, ty);
                 }
             }
@@ -1255,12 +1262,7 @@ impl<'a> LoweringCtx<'a> {
                 {
                     let param_names = self.param_names_for_fn_idx(fn_idx);
                     let arg_vals = self.lower_call_args_for_param_names(&args, &param_names);
-                    let fn_item = &self.item_tree.functions[fn_idx];
-                    let target = if self.intrinsics.contains(&fn_item.name) {
-                        CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
-                    } else {
-                        CallTarget::Direct(fn_item.name)
-                    };
+                    let target = self.call_target_for_fn_idx(fn_idx);
                     return self.builder.push_call(target, arg_vals, ty);
                 }
             }
@@ -1284,12 +1286,7 @@ impl<'a> LoweringCtx<'a> {
                             &param_names,
                             Some(&param_named_only),
                         );
-                        let fn_item = &self.item_tree.functions[fn_idx];
-                        let target = if self.intrinsics.contains(&fn_item.name) {
-                            CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
-                        } else {
-                            CallTarget::Direct(fn_item.name)
-                        };
+                        let target = self.call_target_for_fn_idx(fn_idx);
                         return self.builder.push_call(target, arg_vals, ty);
                     }
 
@@ -1313,12 +1310,7 @@ impl<'a> LoweringCtx<'a> {
                 {
                     let param_names = self.param_names_for_fn_idx(fn_idx);
                     let arg_vals = self.lower_call_args_for_param_names(&args, &param_names);
-                    let fn_item = &self.item_tree.functions[fn_idx];
-                    let target = if self.intrinsics.contains(&fn_item.name) {
-                        CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
-                    } else {
-                        CallTarget::Direct(fn_item.name)
-                    };
+                    let target = self.call_target_for_fn_idx(fn_idx);
                     return self.builder.push_call(target, arg_vals, ty);
                 }
 
@@ -1341,12 +1333,7 @@ impl<'a> LoweringCtx<'a> {
                 {
                     let param_names = self.param_names_for_fn_idx(fn_idx);
                     let arg_vals = self.lower_call_args_for_param_names(&args, &param_names);
-                    let fn_item = &self.item_tree.functions[fn_idx];
-                    let target = if self.intrinsics.contains(&fn_item.name) {
-                        CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
-                    } else {
-                        CallTarget::Direct(fn_item.name)
-                    };
+                    let target = self.call_target_for_fn_idx(fn_idx);
                     return self.builder.push_call(target, arg_vals, ty);
                 }
 
@@ -1370,12 +1357,7 @@ impl<'a> LoweringCtx<'a> {
                             &param_names,
                             Some(&param_named_only),
                         );
-                        let fn_item = &self.item_tree.functions[fn_idx];
-                        let target = if self.intrinsics.contains(&fn_item.name) {
-                            CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
-                        } else {
-                            CallTarget::Direct(fn_item.name)
-                        };
+                        let target = self.call_target_for_fn_idx(fn_idx);
                         return self.builder.push_call(target, arg_vals, ty);
                     }
                 }
@@ -1387,12 +1369,7 @@ impl<'a> LoweringCtx<'a> {
                     {
                         let param_names = self.param_names_for_fn_idx(fn_idx);
                         let arg_vals = self.lower_call_args_for_param_names(&args, &param_names);
-                        let fn_item = &self.item_tree.functions[fn_idx];
-                        let target = if self.intrinsics.contains(&fn_item.name) {
-                            CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
-                        } else {
-                            CallTarget::Direct(fn_item.name)
-                        };
+                        let target = self.call_target_for_fn_idx(fn_idx);
                         return self.builder.push_call(target, arg_vals, ty);
                     }
                 }
@@ -1446,12 +1423,7 @@ impl<'a> LoweringCtx<'a> {
                 );
                 arg_vals.append(&mut lowered_method_args);
 
-                let fn_item = &self.item_tree.functions[fn_idx];
-                let target = if self.intrinsics.contains(&fn_item.name) {
-                    CallTarget::Intrinsic(fn_item.name.resolve(self.interner).to_string())
-                } else {
-                    CallTarget::Direct(fn_item.name)
-                };
+                let target = self.call_target_for_fn_idx(fn_idx);
                 return self.builder.push_call(target, arg_vals, ty);
             }
         }
