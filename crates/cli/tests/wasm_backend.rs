@@ -165,6 +165,51 @@ fn main() -> String {
 }
 
 #[test]
+fn run_backend_wasm_supports_starts_with_on_md5_special_string() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r#"fn main() -> String {
+  if ("abc".md5().starts_with("900150")) {
+    "yes"
+  } else {
+    "no"
+  }
+}"#,
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "yes",
+        "run --backend wasm supports starts_with on md5 special string",
+    );
+}
+
+#[test]
+fn run_backend_wasm_supports_indexing_md5_special_string() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r#"fn main() -> String {
+  let hash = "abc".md5()
+  hash[0].to_string().concat(hash[1].to_string()).concat(hash[2].to_string()).concat(hash[6].to_string())
+}"#,
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "9009",
+        "run --backend wasm supports indexing md5 special string",
+    );
+}
+
+#[test]
 fn run_backend_wasm_supports_fs_read_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");

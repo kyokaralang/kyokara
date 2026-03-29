@@ -3093,6 +3093,14 @@ impl<'a> FuncCodegen<'a> {
 
     fn emit_string_starts_with(&self, func: &mut Function, s: ValueId, prefix: ValueId) {
         self.emit_get(func, s);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_10));
+        self.emit_string_flatten_from_local(func, self.scratch_i32_10, self.scratch_i32_10);
+
+        self.emit_get(func, prefix);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_11));
+        self.emit_string_flatten_from_local(func, self.scratch_i32_11, self.scratch_i32_11);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 0,
             align: 2,
@@ -3100,7 +3108,7 @@ impl<'a> FuncCodegen<'a> {
         }));
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
-        self.emit_get(func, prefix);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_11));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 0,
             align: 2,
@@ -3127,7 +3135,7 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::I32GeU);
         func.instruction(&Instruction::BrIf(1));
 
-        self.emit_get(func, s);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
         func.instruction(&Instruction::I32Const(8));
         func.instruction(&Instruction::I32Add);
         func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
@@ -3140,7 +3148,7 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
 
         func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
-        self.emit_get(func, prefix);
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_11));
         func.instruction(&Instruction::I32Const(8));
         func.instruction(&Instruction::I32Add);
         func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
@@ -3498,6 +3506,7 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::End);
     }
 
+    #[allow(dead_code)]
     fn emit_utf8_char_width(
         &self,
         func: &mut Function,
@@ -3616,6 +3625,7 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::End);
     }
 
+    #[allow(dead_code)]
     fn emit_utf8_codepoint(
         &self,
         func: &mut Function,
@@ -4425,6 +4435,10 @@ impl<'a> FuncCodegen<'a> {
 
     fn emit_string_index(&self, func: &mut Function, s: ValueId, index: ValueId) {
         self.emit_get(func, s);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_10));
+        self.emit_string_flatten_from_local(func, self.scratch_i32_10, self.scratch_i32_10);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_10));
         func.instruction(&Instruction::I32Load(MemArg {
             offset: 4,
             align: 2,
@@ -4462,7 +4476,12 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::I32GeU);
         func.instruction(&Instruction::BrIf(1));
 
-        self.emit_utf8_char_width(func, s, self.scratch_i32_4, self.scratch_i32_5);
+        self.emit_utf8_char_width_from_local(
+            func,
+            self.scratch_i32_10,
+            self.scratch_i32_4,
+            self.scratch_i32_5,
+        );
         func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
         func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
         func.instruction(&Instruction::I32Add);
@@ -4476,10 +4495,15 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
 
-        self.emit_utf8_char_width(func, s, self.scratch_i32_4, self.scratch_i32_5);
-        self.emit_utf8_codepoint(
+        self.emit_utf8_char_width_from_local(
             func,
-            s,
+            self.scratch_i32_10,
+            self.scratch_i32_4,
+            self.scratch_i32_5,
+        );
+        self.emit_utf8_codepoint_from_local(
+            func,
+            self.scratch_i32_10,
             self.scratch_i32_4,
             self.scratch_i32_5,
             self.scratch_i32_6,
