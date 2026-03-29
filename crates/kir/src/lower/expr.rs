@@ -1642,7 +1642,13 @@ impl<'a> LoweringCtx<'a> {
         }
 
         // Merge block.
-        let result = self.builder.add_block_param(merge_blk, None, ty);
+        let merge_ty = match (then_term, else_term) {
+            (false, false) => self.merge_result_ty(&ty, &[then_val, else_val]),
+            (false, true) => self.merge_result_ty(&ty, &[then_val]),
+            (true, false) => self.merge_result_ty(&ty, &[else_val]),
+            (true, true) => ty,
+        };
+        let result = self.builder.add_block_param(merge_blk, None, merge_ty);
         let carried_params: Vec<_> = carried
             .iter()
             .map(|(name, ty)| {
@@ -2044,6 +2050,30 @@ impl<'a> LoweringCtx<'a> {
     /// Get the type of an already-allocated value.
     fn builder_value_ty(&self, vid: ValueId) -> Ty {
         self.builder.value_ty(vid).clone()
+    }
+
+    fn merge_result_ty(&self, fallback: &Ty, branch_values: &[ValueId]) -> Ty {
+        if !fallback.is_poison() {
+            return fallback.clone();
+        }
+
+        let mut resolved: Option<Ty> = None;
+        for value in branch_values {
+            let branch_ty = self.builder_value_ty(*value);
+            if branch_ty.is_poison() {
+                continue;
+            }
+            if let Some(existing) = &resolved {
+                debug_assert_eq!(
+                    existing, &branch_ty,
+                    "branch merge types diverged after type checking"
+                );
+            } else {
+                resolved = Some(branch_ty);
+            }
+        }
+
+        resolved.unwrap_or_else(|| fallback.clone())
     }
 
     fn assignment_target_name(&self, expr_idx: ExprIdx) -> Option<Name> {
