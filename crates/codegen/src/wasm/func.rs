@@ -5320,11 +5320,11 @@ impl<'a> FuncCodegen<'a> {
                     Ok(())
                 }
                 "mutable_map_new" => {
-                    self.emit_mutable_map_new(func);
+                    self.emit_mutable_map_new(func, result_ty);
                     Ok(())
                 }
                 "mutable_map_with_capacity" => {
-                    self.emit_mutable_map_with_capacity(func, args[0]);
+                    self.emit_mutable_map_with_capacity(func, args[0], result_ty);
                     Ok(())
                 }
                 "mutable_map_from_map" => {
@@ -6704,11 +6704,18 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalGet(self.scratch_i32));
     }
 
-    fn emit_mutable_map_new(&self, func: &mut Function) {
-        self.emit_map_new(func);
+    fn emit_mutable_map_new(&self, func: &mut Function, result_ty: &Ty) {
+        self.emit_alloc_empty_mutable_map_to_local(
+            func,
+            self.map_key_ty_is_int_from_ty(result_ty),
+            self.scratch_i32,
+        );
+        func.instruction(&Instruction::LocalGet(self.scratch_i32));
     }
 
-    fn emit_mutable_map_with_capacity(&self, func: &mut Function, capacity: ValueId) {
+    fn emit_mutable_map_with_capacity(&self, func: &mut Function, capacity: ValueId, result_ty: &Ty) {
+        let int_key_fast_path = self.map_key_ty_is_int_from_ty(result_ty);
+
         self.emit_get(func, capacity);
         func.instruction(&Instruction::LocalSet(self.scratch_i64));
         func.instruction(&Instruction::LocalGet(self.scratch_i64));
@@ -6719,19 +6726,38 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::I32WrapI64);
         func.instruction(&Instruction::LocalSet(self.scratch_i32_2));
 
-        self.emit_alloc_empty_list_to_local(func, self.scratch_i32);
+        self.emit_alloc_empty_mutable_map_to_local(
+            func,
+            int_key_fast_path,
+            self.scratch_i32,
+        );
 
         func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
         func.instruction(&Instruction::If(BlockType::Empty));
         self.emit_alloc_mutable_map_data_for_capacity(func, self.scratch_i32_2, self.scratch_i32_4);
+        if int_key_fast_path {
+            self.emit_alloc_mutable_map_index_for_capacity(
+                func,
+                self.scratch_i32_2,
+                self.scratch_i32_6,
+                self.scratch_i32_7,
+            );
+        } else {
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_6));
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_7));
+        }
         func.instruction(&Instruction::I32Const(0));
         func.instruction(&Instruction::LocalSet(self.scratch_i32_5));
-        self.emit_update_mutable_list_header_from_locals(
+        self.emit_update_mutable_map_header_from_locals(
             func,
             self.scratch_i32,
             self.scratch_i32_5,
             self.scratch_i32_2,
             self.scratch_i32_4,
+            self.scratch_i32_6,
+            self.scratch_i32_7,
         );
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::LocalGet(self.scratch_i32));
@@ -6751,7 +6777,7 @@ impl<'a> FuncCodegen<'a> {
         let index_local = self.scratch_i32_64;
         let slot_local = self.scratch_i32_65;
 
-        self.emit_mutable_map_new(func);
+        self.emit_mutable_map_new(func, self.value_ty(map));
         func.instruction(&Instruction::LocalSet(out_local));
         self.emit_get(func, map);
         func.instruction(&Instruction::LocalSet(map_local));
@@ -7081,6 +7107,9 @@ impl<'a> FuncCodegen<'a> {
                 map_local,
                 self.scratch_i32_5,
             );
+            if matches!(key_ty, Ty::Int) {
+                self.emit_rebuild_int_key_mutable_map_index_from_local(func, map_local);
+            }
         } else {
             self.emit_remove_mutable_list_slot_in_place_from_local(
                 func,
@@ -11047,6 +11076,59 @@ impl<'a> FuncCodegen<'a> {
         }));
     }
 
+    fn emit_alloc_empty_mutable_map_to_local(
+        &self,
+        func: &mut Function,
+        int_key_fast_path: bool,
+        out_local: u32,
+    ) {
+        func.instruction(&Instruction::I32Const(20));
+        func.instruction(&Instruction::Call(self.ctx.alloc_fn_index));
+        func.instruction(&Instruction::Drop);
+        func.instruction(&Instruction::GlobalGet(0));
+        func.instruction(&Instruction::I32Const(20));
+        func.instruction(&Instruction::I32Sub);
+        func.instruction(&Instruction::LocalSet(out_local));
+
+        func.instruction(&Instruction::LocalGet(out_local));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(out_local));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 4,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(out_local));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(out_local));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: self.mutable_map_index_ptr_offset(),
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(out_local));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: self.mutable_map_index_capacity_offset(),
+            align: 2,
+            memory_index: 0,
+        }));
+
+        let _ = int_key_fast_path;
+    }
+
     fn emit_alloc_mutable_list_with_capacity_to_local(
         &self,
         func: &mut Function,
@@ -11181,6 +11263,54 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalGet(data_local));
         func.instruction(&Instruction::I32Store(MemArg {
             offset: 8,
+            align: 2,
+            memory_index: 0,
+        }));
+    }
+
+    fn emit_update_mutable_map_header_from_locals(
+        &self,
+        func: &mut Function,
+        map_local: u32,
+        len_local: u32,
+        capacity_local: u32,
+        data_local: u32,
+        index_ptr_local: u32,
+        index_capacity_local: u32,
+    ) {
+        self.emit_update_mutable_list_header_from_locals(
+            func,
+            map_local,
+            len_local,
+            capacity_local,
+            data_local,
+        );
+        self.emit_store_mutable_map_index_metadata_from_locals(
+            func,
+            map_local,
+            index_ptr_local,
+            index_capacity_local,
+        );
+    }
+
+    fn emit_store_mutable_map_index_metadata_from_locals(
+        &self,
+        func: &mut Function,
+        map_local: u32,
+        index_ptr_local: u32,
+        index_capacity_local: u32,
+    ) {
+        func.instruction(&Instruction::LocalGet(map_local));
+        func.instruction(&Instruction::LocalGet(index_ptr_local));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: self.mutable_map_index_ptr_offset(),
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(map_local));
+        func.instruction(&Instruction::LocalGet(index_capacity_local));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: self.mutable_map_index_capacity_offset(),
             align: 2,
             memory_index: 0,
         }));
@@ -16219,6 +16349,12 @@ impl<'a> FuncCodegen<'a> {
         }
     }
 
+    fn map_key_ty_is_int_from_ty(&self, ty: &Ty) -> bool {
+        self.map_key_value_tys_from_ty(ty)
+            .map(|(key_ty, _value_ty)| matches!(key_ty, Ty::Int))
+            .unwrap_or(false)
+    }
+
     fn priority_queue_priority_value_tys_from_ty<'b>(
         &'b self,
         ty: &'b Ty,
@@ -16246,6 +16382,14 @@ impl<'a> FuncCodegen<'a> {
 
     fn map_entry_value_offset(&self) -> u64 {
         8
+    }
+
+    fn mutable_map_index_ptr_offset(&self) -> u64 {
+        12
+    }
+
+    fn mutable_map_index_capacity_offset(&self) -> u64 {
+        16
     }
 
     fn equality_temp_locals(&self, ty: &Ty) -> (u32, u32) {
@@ -18662,6 +18806,311 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::End);
     }
 
+    fn emit_load_mutable_map_index_metadata_from_local(
+        &self,
+        func: &mut Function,
+        map_local: u32,
+        index_ptr_local: u32,
+        index_capacity_local: u32,
+    ) {
+        func.instruction(&Instruction::LocalGet(map_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: self.mutable_map_index_ptr_offset(),
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(index_ptr_local));
+        func.instruction(&Instruction::LocalGet(map_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: self.mutable_map_index_capacity_offset(),
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(index_capacity_local));
+    }
+
+    fn emit_alloc_mutable_map_index_for_capacity(
+        &self,
+        func: &mut Function,
+        capacity_local: u32,
+        index_ptr_local: u32,
+        index_capacity_local: u32,
+    ) {
+        func.instruction(&Instruction::LocalGet(capacity_local));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(capacity_local));
+        func.instruction(&Instruction::I32Const(4));
+        func.instruction(&Instruction::I32LtU);
+        func.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        func.instruction(&Instruction::I32Const(8));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(capacity_local));
+        func.instruction(&Instruction::LocalGet(capacity_local));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::LocalSet(index_capacity_local));
+        func.instruction(&Instruction::LocalGet(index_capacity_local));
+        func.instruction(&Instruction::I32Const(4));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_8));
+        self.emit_alloc_dynamic_bytes_to_local(func, self.scratch_i32_8, index_ptr_local);
+        self.emit_zero_mutable_map_index_from_locals(func, index_ptr_local, index_capacity_local);
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(index_ptr_local));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(index_capacity_local));
+        func.instruction(&Instruction::End);
+    }
+
+    fn emit_zero_mutable_map_index_from_locals(
+        &self,
+        func: &mut Function,
+        index_ptr_local: u32,
+        index_capacity_local: u32,
+    ) {
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_20));
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_20));
+        func.instruction(&Instruction::LocalGet(index_capacity_local));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+        self.emit_mutable_map_index_slot_ptr_from_locals(
+            func,
+            index_ptr_local,
+            self.scratch_i32_20,
+            self.scratch_i32_21,
+        );
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_21));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_20));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_20));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+    }
+
+    fn emit_mutable_map_index_slot_ptr_from_locals(
+        &self,
+        func: &mut Function,
+        index_ptr_local: u32,
+        bucket_local: u32,
+        out_local: u32,
+    ) {
+        func.instruction(&Instruction::LocalGet(index_ptr_local));
+        func.instruction(&Instruction::LocalGet(bucket_local));
+        func.instruction(&Instruction::I32Const(4));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(out_local));
+    }
+
+    fn emit_mutable_map_hash_int_key_from_local(
+        &self,
+        func: &mut Function,
+        key_local: u32,
+        index_capacity_local: u32,
+        out_bucket_local: u32,
+    ) {
+        func.instruction(&Instruction::LocalGet(key_local));
+        func.instruction(&Instruction::LocalGet(key_local));
+        func.instruction(&Instruction::I64Const(33));
+        func.instruction(&Instruction::I64ShrU);
+        func.instruction(&Instruction::I64Xor);
+        func.instruction(&Instruction::I32WrapI64);
+        func.instruction(&Instruction::I32Const(-1_640_531_535));
+        func.instruction(&Instruction::I32Mul);
+        func.instruction(&Instruction::LocalGet(index_capacity_local));
+        func.instruction(&Instruction::I32RemU);
+        func.instruction(&Instruction::LocalSet(out_bucket_local));
+    }
+
+    fn emit_insert_int_key_mutable_map_index_from_locals(
+        &self,
+        func: &mut Function,
+        index_ptr_local: u32,
+        index_capacity_local: u32,
+        key_local: u32,
+        slot_index_local: u32,
+    ) {
+        self.emit_mutable_map_hash_int_key_from_local(
+            func,
+            key_local,
+            index_capacity_local,
+            self.scratch_i32_20,
+        );
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        self.emit_mutable_map_index_slot_ptr_from_locals(
+            func,
+            index_ptr_local,
+            self.scratch_i32_20,
+            self.scratch_i32_21,
+        );
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_21));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_22));
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_22));
+        func.instruction(&Instruction::I32Eqz);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_21));
+        func.instruction(&Instruction::LocalGet(slot_index_local));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::Br(2));
+        func.instruction(&Instruction::End);
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_20));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_20));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_20));
+        func.instruction(&Instruction::LocalGet(index_capacity_local));
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_20));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+    }
+
+    fn emit_rebuild_int_key_mutable_map_index_from_state(
+        &self,
+        func: &mut Function,
+        len_local: u32,
+        capacity_local: u32,
+        data_local: u32,
+        index_ptr_local: u32,
+        index_capacity_local: u32,
+    ) {
+        func.instruction(&Instruction::LocalGet(len_local));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(index_ptr_local));
+        func.instruction(&Instruction::I32Eqz);
+        func.instruction(&Instruction::LocalGet(index_capacity_local));
+        func.instruction(&Instruction::LocalGet(len_local));
+        func.instruction(&Instruction::I32LeU);
+        func.instruction(&Instruction::I32Or);
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_alloc_mutable_map_index_for_capacity(
+            func,
+            capacity_local,
+            index_ptr_local,
+            index_capacity_local,
+        );
+        func.instruction(&Instruction::Else);
+        self.emit_zero_mutable_map_index_from_locals(
+            func,
+            index_ptr_local,
+            index_capacity_local,
+        );
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_20));
+
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_20));
+        func.instruction(&Instruction::LocalGet(len_local));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        self.emit_mutable_map_slot_ptr_from_locals(
+            func,
+            data_local,
+            self.scratch_i32_20,
+            self.scratch_i32_21,
+        );
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_21));
+        self.emit_typed_load(func, &Ty::Int, self.map_entry_key_offset());
+        func.instruction(&Instruction::LocalSet(self.scratch_i64_5));
+        self.emit_insert_int_key_mutable_map_index_from_locals(
+            func,
+            index_ptr_local,
+            index_capacity_local,
+            self.scratch_i64_5,
+            self.scratch_i32_20,
+        );
+
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_20));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Add);
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_20));
+        func.instruction(&Instruction::Br(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(index_ptr_local));
+        func.instruction(&Instruction::If(BlockType::Empty));
+        self.emit_zero_mutable_map_index_from_locals(func, index_ptr_local, index_capacity_local);
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::End);
+    }
+
+    fn emit_rebuild_int_key_mutable_map_index_from_local(
+        &self,
+        func: &mut Function,
+        map_local: u32,
+    ) {
+        self.emit_load_list_len_and_data_from_local(
+            func,
+            map_local,
+            self.scratch_i32_15,
+            self.scratch_i32_16,
+        );
+        func.instruction(&Instruction::LocalGet(map_local));
+        func.instruction(&Instruction::I32Load(MemArg {
+            offset: 4,
+            align: 2,
+            memory_index: 0,
+        }));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_17)); // capacity
+        self.emit_load_mutable_map_index_metadata_from_local(
+            func,
+            map_local,
+            self.scratch_i32_18,
+            self.scratch_i32_19,
+        );
+
+        self.emit_rebuild_int_key_mutable_map_index_from_state(
+            func,
+            self.scratch_i32_15,
+            self.scratch_i32_17,
+            self.scratch_i32_16,
+            self.scratch_i32_18,
+            self.scratch_i32_19,
+        );
+
+        self.emit_store_mutable_map_index_metadata_from_locals(
+            func,
+            map_local,
+            self.scratch_i32_18,
+            self.scratch_i32_19,
+        );
+    }
+
     fn emit_append_mutable_map_entry_from_locals(
         &self,
         func: &mut Function,
@@ -18671,6 +19120,7 @@ impl<'a> FuncCodegen<'a> {
         value_local: u32,
         value_ty: &Ty,
     ) {
+        let int_key_fast_path = matches!(key_ty, Ty::Int);
         let stored_key_local = if is_i32_type(key_ty) {
             self.scratch_i32_13
         } else {
@@ -18682,6 +19132,9 @@ impl<'a> FuncCodegen<'a> {
             value_local
         };
         let slot_ptr_local = self.scratch_i32_15;
+        let index_ptr_local = self.scratch_i32_16;
+        let index_capacity_local = self.scratch_i32_17;
+        let needs_index_rebuild_local = self.scratch_i32_18;
 
         if stored_key_local != key_local {
             func.instruction(&Instruction::LocalGet(key_local));
@@ -18690,6 +19143,20 @@ impl<'a> FuncCodegen<'a> {
         if stored_value_local != value_local {
             func.instruction(&Instruction::LocalGet(value_local));
             func.instruction(&Instruction::LocalSet(stored_value_local));
+        }
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(index_ptr_local));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(index_capacity_local));
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::LocalSet(needs_index_rebuild_local));
+        if int_key_fast_path {
+            self.emit_load_mutable_map_index_metadata_from_local(
+                func,
+                map_local,
+                index_ptr_local,
+                index_capacity_local,
+            );
         }
 
         func.instruction(&Instruction::LocalGet(map_local));
@@ -18720,6 +19187,18 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::I32Const(1));
         func.instruction(&Instruction::I32Add);
         func.instruction(&Instruction::LocalSet(self.scratch_i32_5)); // new len
+        if int_key_fast_path {
+            func.instruction(&Instruction::LocalGet(index_ptr_local));
+            func.instruction(&Instruction::I32Eqz);
+            func.instruction(&Instruction::LocalGet(index_capacity_local));
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_5));
+            func.instruction(&Instruction::I32LeU);
+            func.instruction(&Instruction::I32Or);
+            func.instruction(&Instruction::If(BlockType::Empty));
+            func.instruction(&Instruction::I32Const(1));
+            func.instruction(&Instruction::LocalSet(needs_index_rebuild_local));
+            func.instruction(&Instruction::End);
+        }
 
         func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
         func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
@@ -18781,6 +19260,10 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalGet(self.scratch_i32_6));
         func.instruction(&Instruction::LocalSet(self.scratch_i32_3));
         func.instruction(&Instruction::End);
+        if int_key_fast_path {
+            func.instruction(&Instruction::I32Const(1));
+            func.instruction(&Instruction::LocalSet(needs_index_rebuild_local));
+        }
         func.instruction(&Instruction::End);
 
         self.emit_mutable_map_slot_ptr_from_locals(
@@ -18796,13 +19279,30 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalGet(stored_value_local));
         self.emit_typed_store_stack(func, value_ty, self.map_entry_value_offset());
 
-        self.emit_update_mutable_list_header_from_locals(
+        self.emit_update_mutable_map_header_from_locals(
             func,
             map_local,
             self.scratch_i32_5,
             self.scratch_i32_3,
             self.scratch_i32_4,
+            index_ptr_local,
+            index_capacity_local,
         );
+
+        if int_key_fast_path {
+            func.instruction(&Instruction::LocalGet(needs_index_rebuild_local));
+            func.instruction(&Instruction::If(BlockType::Empty));
+            self.emit_rebuild_int_key_mutable_map_index_from_local(func, map_local);
+            func.instruction(&Instruction::Else);
+            self.emit_insert_int_key_mutable_map_index_from_locals(
+                func,
+                index_ptr_local,
+                index_capacity_local,
+                key_local,
+                self.scratch_i32_2,
+            );
+            func.instruction(&Instruction::End);
+        }
     }
 
     fn emit_remove_mutable_map_slot_in_place_from_local(
@@ -18915,11 +19415,21 @@ impl<'a> FuncCodegen<'a> {
                 self.scratch_i32_15,
                 self.scratch_i32_16,
             );
-        }
+            self.emit_load_mutable_map_index_metadata_from_local(
+                func,
+                map_local,
+                self.scratch_i32_17,
+                self.scratch_i32_18,
+            );
 
-        func.instruction(&Instruction::Block(BlockType::Empty));
-        func.instruction(&Instruction::Loop(BlockType::Empty));
-        if int_key_fast_path {
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_17));
+            func.instruction(&Instruction::I32Eqz);
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_18));
+            func.instruction(&Instruction::I32Eqz);
+            func.instruction(&Instruction::I32Or);
+            func.instruction(&Instruction::If(BlockType::Empty));
+            func.instruction(&Instruction::Block(BlockType::Empty));
+            func.instruction(&Instruction::Loop(BlockType::Empty));
             func.instruction(&Instruction::LocalGet(index_local));
             func.instruction(&Instruction::LocalGet(self.scratch_i32_15));
             func.instruction(&Instruction::I32GeU);
@@ -18935,26 +19445,113 @@ impl<'a> FuncCodegen<'a> {
             self.emit_typed_load(func, key_ty, self.map_entry_key_offset());
             func.instruction(&Instruction::LocalGet(key_local));
             func.instruction(&Instruction::I64Eq);
-        } else {
-            self.emit_load_list_len_and_data_from_local(
-                func,
-                map_local,
-                self.scratch_i32_3,
-                self.scratch_i32_4,
-            );
+            func.instruction(&Instruction::If(BlockType::Empty));
+            func.instruction(&Instruction::I32Const(1));
+            func.instruction(&Instruction::LocalSet(found_local));
+            func.instruction(&Instruction::Br(2));
+            func.instruction(&Instruction::End);
+
             func.instruction(&Instruction::LocalGet(index_local));
-            func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+            func.instruction(&Instruction::I32Const(1));
+            func.instruction(&Instruction::I32Add);
+            func.instruction(&Instruction::LocalSet(index_local));
+            func.instruction(&Instruction::Br(0));
+            func.instruction(&Instruction::End);
+            func.instruction(&Instruction::End);
+            func.instruction(&Instruction::Else);
+            self.emit_mutable_map_hash_int_key_from_local(
+                func,
+                key_local,
+                self.scratch_i32_18,
+                self.scratch_i32_20,
+            );
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_23));
+            func.instruction(&Instruction::Block(BlockType::Empty));
+            func.instruction(&Instruction::Loop(BlockType::Empty));
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_23));
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_18));
             func.instruction(&Instruction::I32GeU);
             func.instruction(&Instruction::BrIf(1));
 
+            self.emit_mutable_map_index_slot_ptr_from_locals(
+                func,
+                self.scratch_i32_17,
+                self.scratch_i32_20,
+                self.scratch_i32_21,
+            );
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_21));
+            func.instruction(&Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }));
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_22));
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_22));
+            func.instruction(&Instruction::I32Eqz);
+            func.instruction(&Instruction::BrIf(1));
+
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_22));
+            func.instruction(&Instruction::I32Const(1));
+            func.instruction(&Instruction::I32Sub);
+            func.instruction(&Instruction::LocalSet(index_local));
             self.emit_mutable_map_slot_ptr_from_locals(
                 func,
-                self.scratch_i32_4,
+                self.scratch_i32_16,
                 index_local,
                 slot_local,
             );
-            self.emit_mutable_map_key_equals_from_slot(func, key_local, slot_local, key_ty)?;
+            func.instruction(&Instruction::LocalGet(slot_local));
+            self.emit_typed_load(func, key_ty, self.map_entry_key_offset());
+            func.instruction(&Instruction::LocalGet(key_local));
+            func.instruction(&Instruction::I64Eq);
+            func.instruction(&Instruction::If(BlockType::Empty));
+            func.instruction(&Instruction::I32Const(1));
+            func.instruction(&Instruction::LocalSet(found_local));
+            func.instruction(&Instruction::Br(2));
+            func.instruction(&Instruction::End);
+
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_20));
+            func.instruction(&Instruction::I32Const(1));
+            func.instruction(&Instruction::I32Add);
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_20));
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_20));
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_18));
+            func.instruction(&Instruction::I32Eq);
+            func.instruction(&Instruction::If(BlockType::Empty));
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_20));
+            func.instruction(&Instruction::End);
+            func.instruction(&Instruction::LocalGet(self.scratch_i32_23));
+            func.instruction(&Instruction::I32Const(1));
+            func.instruction(&Instruction::I32Add);
+            func.instruction(&Instruction::LocalSet(self.scratch_i32_23));
+            func.instruction(&Instruction::Br(0));
+            func.instruction(&Instruction::End);
+            func.instruction(&Instruction::End);
+            func.instruction(&Instruction::End);
+            return Ok(());
         }
+        func.instruction(&Instruction::Block(BlockType::Empty));
+        func.instruction(&Instruction::Loop(BlockType::Empty));
+        self.emit_load_list_len_and_data_from_local(
+            func,
+            map_local,
+            self.scratch_i32_3,
+            self.scratch_i32_4,
+        );
+        func.instruction(&Instruction::LocalGet(index_local));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_3));
+        func.instruction(&Instruction::I32GeU);
+        func.instruction(&Instruction::BrIf(1));
+
+        self.emit_mutable_map_slot_ptr_from_locals(
+            func,
+            self.scratch_i32_4,
+            index_local,
+            slot_local,
+        );
+        self.emit_mutable_map_key_equals_from_slot(func, key_local, slot_local, key_ty)?;
         func.instruction(&Instruction::If(BlockType::Empty));
         func.instruction(&Instruction::I32Const(1));
         func.instruction(&Instruction::LocalSet(found_local));
