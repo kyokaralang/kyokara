@@ -19028,11 +19028,11 @@ impl<'a> FuncCodegen<'a> {
         );
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::I32Const(0));
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_20));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_24));
 
         func.instruction(&Instruction::Block(BlockType::Empty));
         func.instruction(&Instruction::Loop(BlockType::Empty));
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_20));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_24));
         func.instruction(&Instruction::LocalGet(len_local));
         func.instruction(&Instruction::I32GeU);
         func.instruction(&Instruction::BrIf(1));
@@ -19040,24 +19040,26 @@ impl<'a> FuncCodegen<'a> {
         self.emit_mutable_map_slot_ptr_from_locals(
             func,
             data_local,
-            self.scratch_i32_20,
+            self.scratch_i32_24,
             self.scratch_i32_21,
         );
         func.instruction(&Instruction::LocalGet(self.scratch_i32_21));
         self.emit_typed_load(func, &Ty::Int, self.map_entry_key_offset());
         func.instruction(&Instruction::LocalSet(self.scratch_i64_5));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_24));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_23));
         self.emit_insert_int_key_mutable_map_index_from_locals(
             func,
             index_ptr_local,
             index_capacity_local,
             self.scratch_i64_5,
-            self.scratch_i32_20,
+            self.scratch_i32_23,
         );
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32_20));
+        func.instruction(&Instruction::LocalGet(self.scratch_i32_24));
         func.instruction(&Instruction::I32Const(1));
         func.instruction(&Instruction::I32Add);
-        func.instruction(&Instruction::LocalSet(self.scratch_i32_20));
+        func.instruction(&Instruction::LocalSet(self.scratch_i32_24));
         func.instruction(&Instruction::Br(0));
         func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);

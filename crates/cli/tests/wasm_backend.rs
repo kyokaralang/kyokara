@@ -687,6 +687,37 @@ fn run_backend_wasm_handles_mutable_map_int_values_after_growth() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_sparse_mutable_map_int_key_lookups_after_rebuild() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableMap\n\
+         fn main() -> Int {\n\
+           let m = MutableMap.new()\n\
+           for (i in 0 ..< 256) {\n\
+             let key = (i + 1) * 40001\n\
+             let _ = m.insert(key, i + 1)\n\
+           }\n\
+           var sum = 0\n\
+           for (i in 0 ..< 256) {\n\
+             let key = (i + 1) * 40001\n\
+             sum = sum + m.get(key).unwrap_or(-1000000)\n\
+           }\n\
+           sum\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "32896",
+        "run --backend wasm preserves sparse mutable map int key lookups after rebuild",
+    );
+}
+
+#[test]
 fn run_backend_wasm_handles_mutable_set_values_after_growth() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
