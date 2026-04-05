@@ -224,6 +224,40 @@ fn build_target_wasm_validates_aoc_2022_day13_module() {
 }
 
 #[test]
+fn build_target_wasm_validates_aoc_2025_day08_module() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let out = dir.path().join("out.wasm");
+    fs::copy(
+        "/Users/alpha/CodexProjects/polyglot-bench/adapters/kyokara/solutions/advent-of-code/2025/day08.ky",
+        &file,
+    )
+    .expect("copy source");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "build",
+            "main.ky",
+            "--target",
+            "wasm",
+            "--out",
+            out.to_str().expect("utf-8 output path"),
+        ],
+    );
+    assert_success(&output, "build --target wasm AoC 2025 day08");
+
+    let bytes = fs::read(&out).expect("read wasm artifact");
+    Module::new(&Engine::default(), &bytes).unwrap_or_else(|err| {
+        panic!(
+            "AoC 2025 day08 module should validate under wasmtime: {err}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+}
+
+#[test]
 fn build_target_wasm_validates_loop_match_string_fallthrough() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
@@ -264,6 +298,48 @@ fn build_target_wasm_validates_loop_match_string_fallthrough() {
     Module::new(&Engine::default(), &bytes).unwrap_or_else(|err| {
         panic!(
             "loop match string fallthrough module should validate under wasmtime: {err}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+}
+
+#[test]
+fn build_target_wasm_validates_branch_range_map_to_bool_to_list() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let out = dir.path().join("out.wasm");
+    fs::write(
+        &file,
+        "fn main() -> Int {\n\
+           let n = 3\n\
+           if (n <= 1) {\n\
+             0\n\
+           } else {\n\
+             let xs = (0..<n).map(fn(_i: Int) => false).to_list()\n\
+             xs.len()\n\
+           }\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "build",
+            "main.ky",
+            "--target",
+            "wasm",
+            "--out",
+            out.to_str().expect("utf-8 output path"),
+        ],
+    );
+    assert_success(&output, "build --target wasm branch range map to bool to_list");
+
+    let bytes = fs::read(&out).expect("read wasm artifact");
+    Module::new(&Engine::default(), &bytes).unwrap_or_else(|err| {
+        panic!(
+            "branch range map to bool to_list module should validate under wasmtime: {err}\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         )

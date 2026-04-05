@@ -12135,7 +12135,6 @@ impl<'a> FuncCodegen<'a> {
         match input_ty {
             Ty::Int => {
                 func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
-                func.instruction(&Instruction::LocalGet(self.scratch_i32_2));
                 func.instruction(&Instruction::I32Const(SEQ_KIND_RANGE));
                 func.instruction(&Instruction::I32Eq);
                 func.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
