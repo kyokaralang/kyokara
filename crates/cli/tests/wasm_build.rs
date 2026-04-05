@@ -334,7 +334,10 @@ fn build_target_wasm_validates_branch_range_map_to_bool_to_list() {
             out.to_str().expect("utf-8 output path"),
         ],
     );
-    assert_success(&output, "build --target wasm branch range map to bool to_list");
+    assert_success(
+        &output,
+        "build --target wasm branch range map to bool to_list",
+    );
 
     let bytes = fs::read(&out).expect("read wasm artifact");
     Module::new(&Engine::default(), &bytes).unwrap_or_else(|err| {

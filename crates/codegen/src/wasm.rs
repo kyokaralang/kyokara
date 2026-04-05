@@ -72,6 +72,7 @@ pub struct ModuleCtx<'a> {
     pub string_to_upper_fn_index: Option<u32>,
     pub string_to_lower_fn_index: Option<u32>,
     pub string_md5_fn_index: Option<u32>,
+    pub string_md5_char_code_fn_index: Option<u32>,
     pub parse_int_fn_index: Option<u32>,
     pub parse_float_fn_index: Option<u32>,
     pub fs_read_file_fn_index: Option<u32>,
@@ -298,6 +299,13 @@ pub fn compile_module(
     } else {
         None
     };
+    let string_md5_char_code_fn_index = if needs_string_md5 {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
     let parse_int_fn_index = if needs_parse_int {
         let idx = next_fn_index;
         next_fn_index += 1;
@@ -365,7 +373,7 @@ pub fn compile_module(
 
     // Type 0: alloc(i32) -> i32
     types.ty().function([ValType::I32], [ValType::I32]);
-    // Type 1: string helper(i32 ptr, i32 len) -> i32 ptr
+    // Type 1: host helper(i32, i32) -> i32
     types
         .ty()
         .function([ValType::I32, ValType::I32], [ValType::I32]);
@@ -449,6 +457,7 @@ pub fn compile_module(
         string_to_upper_fn_index,
         string_to_lower_fn_index,
         string_md5_fn_index,
+        string_md5_char_code_fn_index,
         parse_int_fn_index,
         parse_float_fn_index,
         fs_read_file_fn_index,
@@ -474,6 +483,9 @@ pub fn compile_module(
             "string_md5_materialize",
             EntityType::Function(1),
         );
+    }
+    if string_md5_char_code_fn_index.is_some() {
+        imports.import(HOST_MODULE, "string_md5_char_code", EntityType::Function(1));
     }
     if parse_int_fn_index.is_some() {
         imports.import(HOST_MODULE, "parse_int", EntityType::Function(2));

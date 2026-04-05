@@ -210,6 +210,32 @@ fn run_backend_wasm_supports_indexing_md5_special_string() {
 }
 
 #[test]
+fn run_backend_wasm_executes_aoc_2016_day05() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("day05.txt");
+    fs::copy(
+        "/Users/alpha/CodexProjects/polyglot-bench/corpus/advent-of-code/2016/day05.txt",
+        &input,
+    )
+    .expect("copy day05 input");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "run",
+            "/Users/alpha/CodexProjects/polyglot-bench/adapters/kyokara/solutions/advent-of-code/2016/day05.ky",
+            "--backend",
+            "wasm",
+        ],
+    );
+    assert_stdout_trimmed(
+        &output,
+        "Part 1: d4cd2ee1\nPart 2: f2c730e5",
+        "run --backend wasm AoC 2016 day05",
+    );
+}
+
+#[test]
 fn run_backend_wasm_supports_fs_read_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");

@@ -71,6 +71,8 @@ pub enum WasmRuntimeError {
 struct StoreState {
     runtime: Option<Box<dyn RuntimeService>>,
     last_host_error: Option<String>,
+    last_md5_object_ptr: Option<i32>,
+    last_md5_digest: Option<[u8; 16]>,
 }
 
 /// Instantiated WASM program ready to invoke exports.
@@ -89,6 +91,8 @@ impl WasmProgram {
             StoreState {
                 runtime: None,
                 last_host_error: None,
+                last_md5_object_ptr: None,
+                last_md5_digest: None,
             },
         );
         let linker = build_host_linker(&engine)?;
@@ -110,6 +114,8 @@ impl WasmProgram {
             StoreState {
                 runtime: Some(runtime),
                 last_host_error: None,
+                last_md5_object_ptr: None,
+                last_md5_digest: None,
             },
         );
         let linker = build_host_linker(&engine)?;
@@ -259,6 +265,16 @@ fn build_host_linker(
              -> i32 {
                 call_string_md5_materialize(&mut caller, text_object_ptr, dst_ptr)
             },
+        )
+        .map_err(WasmRuntimeError::HostLinker)?;
+    linker
+        .func_wrap(
+            HOST_MODULE,
+            "string_md5_char_code",
+            |mut caller: wasmtime::Caller<'_, StoreState>,
+             md5_object_ptr: i32,
+             index: i32|
+             -> i32 { call_string_md5_char_code(&mut caller, md5_object_ptr, index) },
         )
         .map_err(WasmRuntimeError::HostLinker)?;
     linker
@@ -509,6 +525,22 @@ fn call_string_md5_materialize(
         Ok(()) => HostStatus::Ok.code(),
         Err(status) => status.code(),
     }
+}
+
+fn call_string_md5_char_code(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    md5_object_ptr: i32,
+    index: i32,
+) -> i32 {
+    if !(0..32).contains(&index) {
+        return HostStatus::BadGuestMemory.code();
+    }
+
+    let digest = match read_or_compute_md5_digest(caller, md5_object_ptr) {
+        Ok(digest) => digest,
+        Err(status) => return status.code(),
+    };
+    md5_hex_char_code(digest, index as usize) as i32
 }
 
 fn call_parse_int_helper(
@@ -773,6 +805,52 @@ fn read_guest_string_object(
     let mut text = read_guest_string_object(caller, source_ptr)?;
     text.push_str(&read_guest_string_object(caller, rhs_or_sentinel)?);
     Ok(text)
+}
+
+fn read_or_compute_md5_digest(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    md5_object_ptr: i32,
+) -> Result<[u8; 16], HostStatus> {
+    if caller.data().last_md5_object_ptr == Some(md5_object_ptr) {
+        if let Some(digest) = caller.data().last_md5_digest {
+            return Ok(digest);
+        }
+    }
+
+    let header = read_guest_bytes(caller, md5_object_ptr, 16)?;
+    let source_ptr = i32::from_le_bytes(
+        header[8..12]
+            .try_into()
+            .map_err(|_| HostStatus::BadGuestMemory)?,
+    );
+    let rhs_or_sentinel = i32::from_le_bytes(
+        header[12..16]
+            .try_into()
+            .map_err(|_| HostStatus::BadGuestMemory)?,
+    );
+    if source_ptr < 0 || rhs_or_sentinel != STRING_MD5_SENTINEL {
+        return Err(HostStatus::BadGuestMemory);
+    }
+
+    let text = read_guest_string_object(caller, source_ptr)?;
+    let digest: [u8; 16] = md5::Md5::digest(text.as_bytes()).into();
+    let data = caller.data_mut();
+    data.last_md5_object_ptr = Some(md5_object_ptr);
+    data.last_md5_digest = Some(digest);
+    Ok(digest)
+}
+
+fn md5_hex_char_code(digest: [u8; 16], index: usize) -> u8 {
+    let byte = digest[index / 2];
+    let nibble = if index % 2 == 0 {
+        byte >> 4
+    } else {
+        byte & 0x0f
+    };
+    match nibble {
+        0..=9 => b'0' + nibble,
+        _ => b'a' + (nibble - 10),
+    }
 }
 
 fn read_guest_bytes(
