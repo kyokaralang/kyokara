@@ -515,12 +515,12 @@ fn call_string_md5_materialize(
     text_object_ptr: i32,
     dst_ptr: i32,
 ) -> i32 {
-    let text = match read_guest_string_object(caller, text_object_ptr) {
-        Ok(value) => value,
+    let digest = match compute_guest_string_object_md5_digest(caller, text_object_ptr) {
+        Ok(digest) => digest,
         Err(status) => return status.code(),
     };
-    let digest = format!("{:x}", md5::Md5::digest(text.as_bytes()));
-    match write_guest_bytes(caller, dst_ptr, digest.as_bytes()) {
+    let digest_bytes = md5_hex_bytes(digest);
+    match write_guest_bytes(caller, dst_ptr, &digest_bytes) {
         Ok(()) => HostStatus::Ok.code(),
         Err(status) => status.code(),
     }
@@ -762,50 +762,6 @@ fn read_guest_string(
     String::from_utf8(bytes).map_err(|_| HostStatus::InvalidUtf8)
 }
 
-fn read_guest_string_object(
-    caller: &mut wasmtime::Caller<'_, StoreState>,
-    ptr: i32,
-) -> Result<String, HostStatus> {
-    let header = read_guest_bytes(caller, ptr, 16)?;
-    let raw_len = i32::from_le_bytes(
-        header[0..4]
-            .try_into()
-            .map_err(|_| HostStatus::BadGuestMemory)?,
-    );
-    if raw_len >= 0 {
-        let text_ptr = ptr.checked_add(8).ok_or(HostStatus::BadGuestMemory)?;
-        return read_guest_string(caller, text_ptr, raw_len);
-    }
-
-    let source_ptr = i32::from_le_bytes(
-        header[8..12]
-            .try_into()
-            .map_err(|_| HostStatus::BadGuestMemory)?,
-    );
-    let rhs_or_sentinel = i32::from_le_bytes(
-        header[12..16]
-            .try_into()
-            .map_err(|_| HostStatus::BadGuestMemory)?,
-    );
-    if source_ptr < 0 {
-        return Err(HostStatus::BadGuestMemory);
-    }
-    if rhs_or_sentinel == STRING_FORWARD_SENTINEL {
-        return read_guest_string_object(caller, source_ptr);
-    }
-    if rhs_or_sentinel == STRING_MD5_SENTINEL {
-        let digest = read_or_compute_md5_digest(caller, ptr)?;
-        return Ok(md5_hex_string(digest));
-    }
-    if rhs_or_sentinel < 0 {
-        return Err(HostStatus::BadGuestMemory);
-    }
-
-    let mut text = read_guest_string_object(caller, source_ptr)?;
-    text.push_str(&read_guest_string_object(caller, rhs_or_sentinel)?);
-    Ok(text)
-}
-
 fn read_or_compute_md5_digest(
     caller: &mut wasmtime::Caller<'_, StoreState>,
     md5_object_ptr: i32,
@@ -858,13 +814,77 @@ fn read_or_compute_md5_digest(
         return Err(HostStatus::BadGuestMemory);
     }
 
-    let text = read_guest_string_object(caller, current_ptr)?;
-    let digest = compute_md5_rounds(&text, remaining_rounds);
+    let digest = compute_guest_string_object_md5_digest(caller, current_ptr)?;
+    let digest = apply_md5_hex_rounds(digest, remaining_rounds.saturating_sub(1));
     caller
         .data_mut()
         .md5_digest_cache
         .insert(md5_object_ptr, digest);
     Ok(digest)
+}
+
+fn compute_guest_string_object_md5_digest(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    ptr: i32,
+) -> Result<[u8; 16], HostStatus> {
+    let mut hasher = md5::Md5::new();
+    update_md5_from_guest_string_object(caller, ptr, &mut hasher)?;
+    Ok(hasher.finalize().into())
+}
+
+fn update_md5_from_guest_string_object(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    ptr: i32,
+    hasher: &mut md5::Md5,
+) -> Result<(), HostStatus> {
+    let mut stack = vec![ptr];
+    while let Some(current_ptr) = stack.pop() {
+        let header = read_guest_bytes(caller, current_ptr, 16)?;
+        let raw_len = i32::from_le_bytes(
+            header[0..4]
+                .try_into()
+                .map_err(|_| HostStatus::BadGuestMemory)?,
+        );
+        if raw_len >= 0 {
+            let text_ptr = current_ptr
+                .checked_add(8)
+                .ok_or(HostStatus::BadGuestMemory)?;
+            let bytes = read_guest_bytes(caller, text_ptr, raw_len)?;
+            hasher.update(&bytes);
+            continue;
+        }
+
+        let source_ptr = i32::from_le_bytes(
+            header[8..12]
+                .try_into()
+                .map_err(|_| HostStatus::BadGuestMemory)?,
+        );
+        let rhs_or_sentinel = i32::from_le_bytes(
+            header[12..16]
+                .try_into()
+                .map_err(|_| HostStatus::BadGuestMemory)?,
+        );
+        if source_ptr < 0 {
+            return Err(HostStatus::BadGuestMemory);
+        }
+        if rhs_or_sentinel == STRING_FORWARD_SENTINEL {
+            stack.push(source_ptr);
+            continue;
+        }
+        if rhs_or_sentinel == STRING_MD5_SENTINEL {
+            let digest = read_or_compute_md5_digest(caller, current_ptr)?;
+            let hex_bytes = md5_hex_bytes(digest);
+            hasher.update(&hex_bytes);
+            continue;
+        }
+        if rhs_or_sentinel < 0 {
+            return Err(HostStatus::BadGuestMemory);
+        }
+
+        stack.push(rhs_or_sentinel);
+        stack.push(source_ptr);
+    }
+    Ok(())
 }
 
 fn md5_hex_char_code(digest: [u8; 16], index: usize) -> u8 {
@@ -890,10 +910,6 @@ fn md5_hex_bytes(digest: [u8; 16]) -> [u8; 32] {
     bytes
 }
 
-fn md5_hex_string(digest: [u8; 16]) -> String {
-    String::from_utf8(md5_hex_bytes(digest).to_vec()).expect("md5 hex bytes should be valid utf8")
-}
-
 fn md5_hex_digest(digest: [u8; 16]) -> [u8; 16] {
     md5::Md5::digest(md5_hex_bytes(digest)).into()
 }
@@ -905,11 +921,6 @@ fn apply_md5_hex_rounds(mut digest: [u8; 16], rounds: usize) -> [u8; 16] {
         remaining += 1;
     }
     digest
-}
-
-fn compute_md5_rounds(text: &str, rounds: usize) -> [u8; 16] {
-    let digest: [u8; 16] = md5::Md5::digest(text.as_bytes()).into();
-    apply_md5_hex_rounds(digest, rounds.saturating_sub(1))
 }
 
 fn read_guest_bytes(

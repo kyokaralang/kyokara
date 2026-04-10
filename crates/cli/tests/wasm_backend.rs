@@ -210,6 +210,33 @@ fn run_backend_wasm_supports_indexing_md5_special_string() {
 }
 
 #[test]
+fn run_backend_wasm_materializes_md5_of_concat_special_string_source() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r#"fn main() -> String {
+  let left = "ab"
+  let right = "c123"
+  let hash = left.concat(right).md5()
+  hash.concat(":").concat(hash[0].to_string()).concat(hash[5].to_string())
+}"#,
+    )
+    .expect("write source");
+
+    let native = run_cli(dir.path(), &["run", "main.ky"]);
+    assert_success(&native, "run native with md5 over concat special string source");
+    let expected = String::from_utf8_lossy(&native.stdout).trim().to_string();
+
+    let wasm = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &wasm,
+        &expected,
+        "run --backend wasm materializes md5 over concat special string source",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_md5_window_scan_over_cached_hashes() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
