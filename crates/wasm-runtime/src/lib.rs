@@ -758,8 +758,10 @@ fn read_guest_string(
     ptr: i32,
     len: i32,
 ) -> Result<String, HostStatus> {
-    let bytes = read_guest_bytes(caller, ptr, len)?;
-    String::from_utf8(bytes).map_err(|_| HostStatus::InvalidUtf8)
+    let bytes = read_guest_slice(caller, ptr, len)?;
+    std::str::from_utf8(bytes)
+        .map(str::to_owned)
+        .map_err(|_| HostStatus::InvalidUtf8)
 }
 
 fn read_or_compute_md5_digest(
@@ -782,7 +784,7 @@ fn read_or_compute_md5_digest(
             return Ok(digest);
         }
 
-        let header = read_guest_bytes(caller, current_ptr, 16)?;
+        let header = read_guest_header(caller, current_ptr)?;
         let raw_len = i32::from_le_bytes(
             header[0..4]
                 .try_into()
@@ -839,7 +841,7 @@ fn update_md5_from_guest_string_object(
 ) -> Result<(), HostStatus> {
     let mut stack = vec![ptr];
     while let Some(current_ptr) = stack.pop() {
-        let header = read_guest_bytes(caller, current_ptr, 16)?;
+        let header = read_guest_header(caller, current_ptr)?;
         let raw_len = i32::from_le_bytes(
             header[0..4]
                 .try_into()
@@ -849,8 +851,8 @@ fn update_md5_from_guest_string_object(
             let text_ptr = current_ptr
                 .checked_add(8)
                 .ok_or(HostStatus::BadGuestMemory)?;
-            let bytes = read_guest_bytes(caller, text_ptr, raw_len)?;
-            hasher.update(&bytes);
+            let bytes = read_guest_slice(caller, text_ptr, raw_len)?;
+            hasher.update(bytes);
             continue;
         }
 
@@ -923,11 +925,21 @@ fn apply_md5_hex_rounds(mut digest: [u8; 16], rounds: usize) -> [u8; 16] {
     digest
 }
 
-fn read_guest_bytes(
+fn read_guest_header(
     caller: &mut wasmtime::Caller<'_, StoreState>,
     ptr: i32,
+) -> Result<[u8; 16], HostStatus> {
+    let bytes = read_guest_slice(caller, ptr, 16)?;
+    let mut header = [0_u8; 16];
+    header.copy_from_slice(bytes);
+    Ok(header)
+}
+
+fn read_guest_slice<'a>(
+    caller: &'a mut wasmtime::Caller<'_, StoreState>,
+    ptr: i32,
     len: i32,
-) -> Result<Vec<u8>, HostStatus> {
+) -> Result<&'a [u8], HostStatus> {
     if ptr < 0 || len < 0 {
         return Err(HostStatus::BadGuestMemory);
     }
@@ -937,11 +949,11 @@ fn read_guest_bytes(
     else {
         return Err(HostStatus::BadGuestMemory);
     };
-    let mut buf = vec![0; len as usize];
     memory
-        .read(caller, ptr as usize, &mut buf)
-        .map_err(|_| HostStatus::BadGuestMemory)?;
-    Ok(buf)
+        .data(&*caller)
+        .get(ptr as usize..)
+        .and_then(|slice| slice.get(..len as usize))
+        .ok_or(HostStatus::BadGuestMemory)
 }
 
 fn alloc_guest_string(
