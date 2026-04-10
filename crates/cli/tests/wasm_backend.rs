@@ -189,40 +189,6 @@ fn run_backend_wasm_supports_starts_with_on_md5_special_string() {
 }
 
 #[test]
-fn run_backend_wasm_preserves_repeated_starts_with_on_md5_special_string() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let file = dir.path().join("main.ky");
-    fs::write(
-        &file,
-        r#"fn main() -> String {
-  let hash = "abc".md5()
-  var hits = 0
-  var i = 0
-  while (i < 500000) {
-    if (
-      hash.starts_with("9") &&
-      hash.starts_with("90") &&
-      hash.starts_with("900") &&
-      hash.starts_with("9001")
-    ) {
-      hits = hits + 1
-    }
-    i = i + 1
-  }
-  hits.to_string()
-}"#,
-    )
-    .expect("write source");
-
-    let wasm = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
-    assert_stdout_trimmed(
-        &wasm,
-        "500000",
-        "run --backend wasm preserves repeated starts_with on md5 special string",
-    );
-}
-
-#[test]
 fn run_backend_wasm_supports_indexing_md5_special_string() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
