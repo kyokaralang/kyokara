@@ -210,6 +210,81 @@ fn run_backend_wasm_supports_indexing_md5_special_string() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_md5_window_scan_over_cached_hashes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r#"from collections import MutableList
+
+fn find_triple(hash: String) -> String {
+  let chars = hash.chars().to_list()
+  var i = 0
+  while (i + 2 < chars.len()) {
+    if (chars[i] == chars[i + 1] && chars[i] == chars[i + 2]) {
+      return chars[i].to_string()
+    }
+    i = i + 1
+  }
+  ""
+}
+
+fn stretch(seed: String, rounds: Int) -> String {
+  var hash = seed
+  var i = 0
+  while (i < rounds) {
+    hash = hash.md5()
+    i = i + 1
+  }
+  hash
+}
+
+fn main() -> String {
+  let hashes = MutableList.new()
+  var i = 0
+  while (i < 1400) {
+    let _ = hashes.push(stretch("abc".concat(i.to_string()), 60))
+    i = i + 1
+  }
+
+  var hits = 0
+  var index = 0
+  while (index < 300) {
+    let triple = find_triple(hashes[index])
+    if (triple.len() > 0) {
+      let target = triple.concat(triple).concat(triple).concat(triple).concat(triple)
+      var j = 1
+      var matched = false
+      while (j <= 80 && !matched) {
+        if (hashes[index + j].contains(target)) {
+          matched = true
+        }
+        j = j + 1
+      }
+      if (matched) {
+        hits = hits + 1
+      }
+    }
+    index = index + 1
+  }
+  hits.to_string().concat(":").concat(hashes[777][0].to_string()).concat(hashes[777][31].to_string())
+}"#,
+    )
+    .expect("write source");
+
+    let native = run_cli(dir.path(), &["run", "main.ky"]);
+    assert_success(&native, "run native with repeated md5 window scan");
+    let expected = String::from_utf8_lossy(&native.stdout).trim().to_string();
+
+    let wasm = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &wasm,
+        &expected,
+        "run --backend wasm preserves md5 window scan over cached hashes",
+    );
+}
+
+#[test]
 fn run_backend_wasm_executes_aoc_2016_day05() {
     let dir = tempfile::tempdir().expect("tempdir");
     let input = dir.path().join("day05.txt");
