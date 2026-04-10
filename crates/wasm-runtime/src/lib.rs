@@ -279,6 +279,16 @@ fn build_host_linker(
     linker
         .func_wrap(
             HOST_MODULE,
+            "string_md5_starts_with",
+            |mut caller: wasmtime::Caller<'_, StoreState>,
+             md5_object_ptr: i32,
+             prefix_object_ptr: i32|
+             -> i32 { call_string_md5_starts_with(&mut caller, md5_object_ptr, prefix_object_ptr) },
+        )
+        .map_err(WasmRuntimeError::HostLinker)?;
+    linker
+        .func_wrap(
+            HOST_MODULE,
             "parse_int",
             |mut caller: wasmtime::Caller<'_, StoreState>,
              text_ptr: i32,
@@ -540,6 +550,49 @@ fn call_string_md5_char_code(
         Err(status) => return status.code(),
     };
     md5_hex_char_code(digest, index as usize) as i32
+}
+
+fn call_string_md5_starts_with(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    md5_object_ptr: i32,
+    prefix_object_ptr: i32,
+) -> i32 {
+    let header = match read_guest_header(caller, prefix_object_ptr) {
+        Ok(header) => header,
+        Err(status) => return status.code(),
+    };
+    let raw_len = match header[0..4].try_into() {
+        Ok(bytes) => i32::from_le_bytes(bytes),
+        Err(_) => return HostStatus::BadGuestMemory.code(),
+    };
+    if raw_len < 0 {
+        return HostStatus::BadGuestMemory.code();
+    }
+    if raw_len > 32 {
+        return 0;
+    }
+
+    let prefix_ptr = match prefix_object_ptr.checked_add(8) {
+        Some(ptr) => ptr,
+        None => return HostStatus::BadGuestMemory.code(),
+    };
+    let prefix = match read_guest_slice(caller, prefix_ptr, raw_len) {
+        Ok(prefix) => prefix.to_vec(),
+        Err(status) => return status.code(),
+    };
+    let digest = match read_or_compute_md5_digest(caller, md5_object_ptr) {
+        Ok(digest) => digest,
+        Err(status) => return status.code(),
+    };
+
+    let mut index = 0usize;
+    while index < prefix.len() {
+        if md5_hex_char_code(digest, index) != prefix[index] {
+            return 0;
+        }
+        index += 1;
+    }
+    1
 }
 
 fn call_parse_int_helper(
