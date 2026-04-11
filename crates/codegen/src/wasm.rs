@@ -4,6 +4,8 @@ pub mod alloc;
 pub mod control;
 pub mod func;
 pub mod layout;
+pub mod list;
+pub mod seq;
 pub mod string;
 pub mod ty;
 
@@ -23,7 +25,12 @@ use wasm_encoder::{
 use crate::error::CodegenError;
 use crate::wasm::func::FuncCodegen;
 use crate::wasm::layout::AdtLayout;
-use crate::wasm::string::{emit_flatten_function, emit_flatten_into_function};
+use crate::wasm::list::{
+    emit_list_get_i64_function, emit_list_index_i64_function, emit_mutable_list_pop_i64_function,
+    emit_mutable_list_push_i64_function, emit_mutable_list_set_i64_function,
+};
+use crate::wasm::seq::{emit_lines_to_list_function, emit_split_to_list_function};
+use crate::wasm::string::{emit_flatten_function, emit_flatten_into_function, emit_trim_function};
 use crate::wasm::ty::ty_to_valtype;
 use std::borrow::Cow;
 
@@ -69,6 +76,14 @@ pub struct ModuleCtx<'a> {
     pub alloc_fn_index: u32,
     pub string_flatten_fn_index: u32,
     pub string_flatten_into_fn_index: u32,
+    pub string_trim_fn_index: Option<u32>,
+    pub mutable_list_push_i64_fn_index: Option<u32>,
+    pub mutable_list_set_i64_fn_index: Option<u32>,
+    pub list_index_i64_fn_index: Option<u32>,
+    pub list_get_i64_fn_index: Option<u32>,
+    pub mutable_list_pop_i64_fn_index: Option<u32>,
+    pub seq_lines_to_list_fn_index: Option<u32>,
+    pub seq_split_to_list_fn_index: Option<u32>,
     pub string_to_upper_fn_index: Option<u32>,
     pub string_to_lower_fn_index: Option<u32>,
     pub string_md5_fn_index: Option<u32>,
@@ -215,6 +230,94 @@ pub fn compile_module(
             )
         })
     });
+    let needs_string_trim = kir.functions.iter().any(|(_, func)| {
+        func.values.iter().any(|(_, value)| {
+            matches!(
+                &value.inst,
+                kyokara_kir::inst::Inst::Call {
+                    target: kyokara_kir::inst::CallTarget::Intrinsic(name),
+                    ..
+                } if name == "string_trim"
+            )
+        })
+    });
+    let needs_seq_lines = kir.functions.iter().any(|(_, func)| {
+        func.values.iter().any(|(_, value)| {
+            matches!(
+                &value.inst,
+                kyokara_kir::inst::Inst::Call {
+                    target: kyokara_kir::inst::CallTarget::Intrinsic(name),
+                    ..
+                } if name == "string_lines"
+            )
+        })
+    });
+    let needs_seq_split = kir.functions.iter().any(|(_, func)| {
+        func.values.iter().any(|(_, value)| {
+            matches!(
+                &value.inst,
+                kyokara_kir::inst::Inst::Call {
+                    target: kyokara_kir::inst::CallTarget::Intrinsic(name),
+                    ..
+                } if name == "string_split"
+            )
+        })
+    });
+    let needs_mutable_list_push = kir.functions.iter().any(|(_, func)| {
+        func.values.iter().any(|(_, value)| {
+            matches!(
+                &value.inst,
+                kyokara_kir::inst::Inst::Call {
+                    target: kyokara_kir::inst::CallTarget::Intrinsic(name),
+                    ..
+                } if name == "mutable_list_push"
+            )
+        })
+    });
+    let needs_mutable_list_set = kir.functions.iter().any(|(_, func)| {
+        func.values.iter().any(|(_, value)| {
+            matches!(
+                &value.inst,
+                kyokara_kir::inst::Inst::Call {
+                    target: kyokara_kir::inst::CallTarget::Intrinsic(name),
+                    ..
+                } if name == "mutable_list_set"
+            )
+        })
+    });
+    let needs_list_index = kir.functions.iter().any(|(_, func)| {
+        func.values.iter().any(|(_, value)| {
+            matches!(
+                &value.inst,
+                kyokara_kir::inst::Inst::Call {
+                    target: kyokara_kir::inst::CallTarget::Intrinsic(name),
+                    ..
+                } if name == "list_index" || name == "mutable_list_index"
+            )
+        })
+    });
+    let needs_list_get = kir.functions.iter().any(|(_, func)| {
+        func.values.iter().any(|(_, value)| {
+            matches!(
+                &value.inst,
+                kyokara_kir::inst::Inst::Call {
+                    target: kyokara_kir::inst::CallTarget::Intrinsic(name),
+                    ..
+                } if name == "list_get" || name == "mutable_list_get"
+            )
+        })
+    });
+    let needs_mutable_list_pop = kir.functions.iter().any(|(_, func)| {
+        func.values.iter().any(|(_, value)| {
+            matches!(
+                &value.inst,
+                kyokara_kir::inst::Inst::Call {
+                    target: kyokara_kir::inst::CallTarget::Intrinsic(name),
+                    ..
+                } if name == "mutable_list_pop"
+            )
+        })
+    });
     let needs_parse_int = kir.functions.iter().any(|(_, func)| {
         func.values.iter().any(|(_, value)| {
             matches!(
@@ -353,6 +456,60 @@ pub fn compile_module(
     let string_flatten_fn_index = next_fn_index + 1;
     let string_flatten_into_fn_index = next_fn_index + 2;
     next_fn_index += 3;
+    let string_trim_fn_index = if needs_string_trim {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
+    let mutable_list_push_i64_fn_index = if needs_mutable_list_push {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
+    let mutable_list_set_i64_fn_index = if needs_mutable_list_set {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
+    let list_index_i64_fn_index = if needs_list_index {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
+    let list_get_i64_fn_index = if needs_list_get {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
+    let mutable_list_pop_i64_fn_index = if needs_mutable_list_pop {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
+    let _ = needs_seq_lines;
+    let _ = needs_seq_split;
+    let seq_lines_to_list_fn_index = {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    };
+    let seq_split_to_list_fn_index = {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    };
 
     // Build function name → index map.
     let mut fn_name_map = FxHashMap::default();
@@ -403,6 +560,24 @@ pub fn compile_module(
         ],
         [ValType::I32],
     );
+    // Type 4: mutable list push helper(list ptr, value bits) -> list ptr
+    types
+        .ty()
+        .function([ValType::I32, ValType::I64], [ValType::I32]);
+    // Type 5: mutable list set helper(list ptr, raw index, value bits) -> list ptr
+    types
+        .ty()
+        .function([ValType::I32, ValType::I64, ValType::I64], [ValType::I32]);
+    // Type 6: list index helper(list ptr, raw index) -> value bits
+    types
+        .ty()
+        .function([ValType::I32, ValType::I64], [ValType::I64]);
+    // Type 7: list get helper(list ptr, raw index) -> found flag, value bits
+    types
+        .ty()
+        .function([ValType::I32, ValType::I64], [ValType::I32, ValType::I64]);
+    // Type 8: mutable list pop helper(list ptr) -> found flag, value bits
+    types.ty().function([ValType::I32], [ValType::I32, ValType::I64]);
 
     // Build type index for each KIR function, deduplicated by structural
     // signature so indirect calls can reuse the same type index.
@@ -462,6 +637,14 @@ pub fn compile_module(
         alloc_fn_index,
         string_flatten_fn_index,
         string_flatten_into_fn_index,
+        string_trim_fn_index,
+        mutable_list_push_i64_fn_index,
+        mutable_list_set_i64_fn_index,
+        list_index_i64_fn_index,
+        list_get_i64_fn_index,
+        mutable_list_pop_i64_fn_index,
+        seq_lines_to_list_fn_index,
+        seq_split_to_list_fn_index,
         string_to_upper_fn_index,
         string_to_lower_fn_index,
         string_md5_fn_index,
@@ -523,6 +706,30 @@ pub fn compile_module(
     functions.function(0);
     functions.function(0);
     functions.function(1);
+    if string_trim_fn_index.is_some() {
+        functions.function(0);
+    }
+    if mutable_list_push_i64_fn_index.is_some() {
+        functions.function(4);
+    }
+    if mutable_list_set_i64_fn_index.is_some() {
+        functions.function(5);
+    }
+    if list_index_i64_fn_index.is_some() {
+        functions.function(6);
+    }
+    if list_get_i64_fn_index.is_some() {
+        functions.function(7);
+    }
+    if mutable_list_pop_i64_fn_index.is_some() {
+        functions.function(8);
+    }
+    if seq_lines_to_list_fn_index.is_some() {
+        functions.function(0);
+    }
+    if seq_split_to_list_fn_index.is_some() {
+        functions.function(0);
+    }
 
     // User functions
     for &type_idx in &fn_type_indices {
@@ -618,6 +825,39 @@ pub fn compile_module(
         string_flatten_into_fn_index,
         string_md5_materialize_fn_index,
     ));
+    if string_trim_fn_index.is_some() {
+        code.function(&emit_trim_function(
+            alloc_fn_index,
+            string_flatten_fn_index,
+        ));
+    }
+    if mutable_list_push_i64_fn_index.is_some() {
+        code.function(&emit_mutable_list_push_i64_function(alloc_fn_index));
+    }
+    if mutable_list_set_i64_fn_index.is_some() {
+        code.function(&emit_mutable_list_set_i64_function());
+    }
+    if list_index_i64_fn_index.is_some() {
+        code.function(&emit_list_index_i64_function());
+    }
+    if list_get_i64_fn_index.is_some() {
+        code.function(&emit_list_get_i64_function());
+    }
+    if mutable_list_pop_i64_fn_index.is_some() {
+        code.function(&emit_mutable_list_pop_i64_function());
+    }
+    if seq_lines_to_list_fn_index.is_some() {
+        code.function(&emit_lines_to_list_function(
+            alloc_fn_index,
+            string_flatten_fn_index,
+        ));
+    }
+    if seq_split_to_list_fn_index.is_some() {
+        code.function(&emit_split_to_list_function(
+            alloc_fn_index,
+            string_flatten_fn_index,
+        ));
+    }
 
     // User functions
     for (fn_id, _wasm_idx) in &fn_order {

@@ -103,8 +103,7 @@ impl WasmProgram {
                 guest_alloc: None,
             },
         );
-        let linker = shared_host_linker()?.clone();
-        let instance = linker
+        let instance = shared_host_linker()?
             .instantiate(&mut store, &wasm_module)
             .map_err(WasmRuntimeError::Instantiation)?;
         cache_guest_exports(&mut store, &instance)?;
@@ -128,8 +127,7 @@ impl WasmProgram {
                 guest_alloc: None,
             },
         );
-        let linker = shared_host_linker()?.clone();
-        let instance = linker
+        let instance = shared_host_linker()?
             .instantiate(&mut store, &wasm_module)
             .map_err(WasmRuntimeError::Instantiation)?;
         cache_guest_exports(&mut store, &instance)?;
@@ -251,6 +249,7 @@ fn cache_guest_exports(
 fn build_engine() -> Result<wasmtime::Engine, WasmRuntimeError> {
     let mut config = wasmtime::Config::new();
     config.max_wasm_stack(MAX_WASM_STACK_BYTES);
+    config.cranelift_opt_level(wasmtime::OptLevel::SpeedAndSize);
     wasmtime::Engine::new(&config).map_err(WasmRuntimeError::Engine)
 }
 

@@ -2829,6 +2829,53 @@ fn run_backend_wasm_preserves_concat_of_special_string_returned_from_call() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_list_get_and_pop_unwrap_or_paths() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r#"from collections import MutableList
+
+fn main() -> String {
+  let words = "aa bb".split(" ").to_list()
+  let stack = MutableList.new().push("x").push("y")
+  words.get(0).unwrap_or("?").concat(words.get(2).unwrap_or("?")).concat(stack.pop().unwrap_or("!"))
+}"#,
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "aa?y",
+        "run --backend wasm preserves list_get/pop unwrap_or paths",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_mutable_list_get_unwrap_or_paths() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r#"from collections import MutableList
+
+fn main() -> Int {
+  let values = MutableList.from_list((0 ..< 3).map(fn(i: Int) => i + 1).to_list())
+  values.get(1).unwrap_or(-1) + values.get(9).unwrap_or(10)
+}"#,
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "12",
+        "run --backend wasm preserves mutable_list.get(...).unwrap_or(...)",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_string_loaded_from_mutable_list() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
