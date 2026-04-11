@@ -16,6 +16,13 @@ Check the current machine against its committed baseline:
 cargo run -p xtask -- perf check
 ```
 
+Pick an explicit timing discipline when you want cold-start semantics instead of the default warmed steady-state runs:
+
+```sh
+cargo run -p xtask -- perf record --timing cold_start
+cargo run -p xtask -- perf check --timing cold_start
+```
+
 During development, limit the run to one benchmark case:
 
 ```sh
@@ -28,6 +35,11 @@ Both commands:
 - run the release binary directly
 - print a human-readable summary table
 - write a machine-readable report to `target/perf/latest.json`
+
+Timing discipline:
+- `steady_state` is the default and preserves each case's `warmup_runs` before sampling
+- `cold_start` skips warmups and samples the first measured launches directly
+- the chosen timing discipline is recorded in the machine fingerprint and baseline filename, so cold-start and steady-state baselines never mix
 
 ## Corpus Layout
 
@@ -93,7 +105,8 @@ Each baseline file is fingerprint-specific and uses this schema:
     "arch": "aarch64",
     "cpu_model": "Apple ...",
     "rustc": "rustc 1.xx.x",
-    "profile": "release-lto-fat"
+    "profile": "release-lto-fat",
+    "timing_discipline": "steady_state"
   },
   "results": [
     {
@@ -114,6 +127,7 @@ The harness matches baselines by exact fingerprint:
 - `cpu_model`
 - `rustc`
 - release profile name
+- timing discipline (`steady_state` or `cold_start`)
 
 Behavior:
 - no matching baseline: `perf check` fails with a clear message telling you to run `perf record`
@@ -150,6 +164,7 @@ target/perf/latest.json
 This report includes:
 - command (`record` or `check`)
 - machine fingerprint
+- timing discipline inside the fingerprint
 - selected case results
 - baseline medians when applicable
 - pass/regression status per case

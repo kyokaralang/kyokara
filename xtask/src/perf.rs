@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -11,7 +11,7 @@ use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, PerfError>;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 const PROFILE_NAME: &str = "release-lto-fat";
 
 #[derive(Debug, Error)]
@@ -66,6 +66,29 @@ impl fmt::Display for BenchMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+#[clap(rename_all = "snake_case")]
+pub enum PerfTimingDiscipline {
+    SteadyState,
+    ColdStart,
+}
+
+impl Default for PerfTimingDiscipline {
+    fn default() -> Self {
+        Self::SteadyState
+    }
+}
+
+impl fmt::Display for PerfTimingDiscipline {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SteadyState => f.write_str("steady_state"),
+            Self::ColdStart => f.write_str("cold_start"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BenchManifest {
     pub id: String,
@@ -96,6 +119,8 @@ pub struct EnvironmentFingerprint {
     pub cpu_model: String,
     pub rustc: String,
     pub profile: String,
+    #[serde(default)]
+    pub timing_discipline: PerfTimingDiscipline,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -176,6 +201,7 @@ impl PerfPaths {
 pub struct PerfConfig {
     pub case_filter: Option<String>,
     pub skip_build: bool,
+    pub timing_discipline: PerfTimingDiscipline,
 }
 
 #[derive(Debug, Parser)]
@@ -203,11 +229,15 @@ enum PerfCommand {
     Record {
         #[arg(long)]
         case: Option<String>,
+        #[arg(long, value_enum, default_value_t = PerfTimingDiscipline::SteadyState)]
+        timing: PerfTimingDiscipline,
     },
     /// Check current performance against the committed baseline for this machine fingerprint.
     Check {
         #[arg(long)]
         case: Option<String>,
+        #[arg(long, value_enum, default_value_t = PerfTimingDiscipline::SteadyState)]
+        timing: PerfTimingDiscipline,
     },
 }
 
@@ -217,22 +247,24 @@ pub fn dispatch(args: impl IntoIterator<Item = OsString>) -> Result<()> {
     let paths = PerfPaths::from_workspace_root(workspace_root);
     match cli.command {
         XtCommand::Perf(PerfArgs { command }) => match command {
-            PerfCommand::Record { case } => {
+            PerfCommand::Record { case, timing } => {
                 let _report = record(
                     &paths,
                     &PerfConfig {
                         case_filter: case,
                         skip_build: false,
+                        timing_discipline: timing,
                     },
                 )?;
                 Ok(())
             }
-            PerfCommand::Check { case } => {
+            PerfCommand::Check { case, timing } => {
                 let _report = check(
                     &paths,
                     &PerfConfig {
                         case_filter: case,
                         skip_build: false,
+                        timing_discipline: timing,
                     },
                 )?;
                 Ok(())
@@ -292,12 +324,18 @@ pub fn compare_against_baseline(
 
 pub fn record(paths: &PerfPaths, config: &PerfConfig) -> Result<LatestReport> {
     let binary_path = resolve_binary_path(paths, config.skip_build)?;
-    let fingerprint = resolve_fingerprint(paths)?;
+    let fingerprint = resolve_fingerprint(paths, config.timing_discipline)?;
     let cases = select_cases(
         discover_cases(&paths.cases_root)?,
         config.case_filter.as_deref(),
     )?;
-    let current = run_cases(paths, &binary_path, &cases, &fingerprint)?;
+    let current = run_cases(
+        paths,
+        &binary_path,
+        &cases,
+        &fingerprint,
+        config.timing_discipline,
+    )?;
 
     let baseline_path = expected_baseline_path(paths, &fingerprint);
     let baseline = if config.case_filter.is_some() {
@@ -336,12 +374,18 @@ pub fn record(paths: &PerfPaths, config: &PerfConfig) -> Result<LatestReport> {
 
 pub fn check(paths: &PerfPaths, config: &PerfConfig) -> Result<LatestReport> {
     let binary_path = resolve_binary_path(paths, config.skip_build)?;
-    let fingerprint = resolve_fingerprint(paths)?;
+    let fingerprint = resolve_fingerprint(paths, config.timing_discipline)?;
     let cases = select_cases(
         discover_cases(&paths.cases_root)?,
         config.case_filter.as_deref(),
     )?;
-    let current = run_cases(paths, &binary_path, &cases, &fingerprint)?;
+    let current = run_cases(
+        paths,
+        &binary_path,
+        &cases,
+        &fingerprint,
+        config.timing_discipline,
+    )?;
     let strict_case_set = config.case_filter.is_none();
 
     let Some((baseline_path, baseline)) = find_matching_baseline(paths, &fingerprint)? else {
@@ -402,6 +446,7 @@ fn expected_baseline_path(paths: &PerfPaths, fingerprint: &EnvironmentFingerprin
         sanitize_baseline_component(&fingerprint.cpu_model),
         sanitize_baseline_component(&fingerprint.rustc),
         sanitize_baseline_component(&fingerprint.profile),
+        sanitize_baseline_component(&fingerprint.timing_discipline.to_string()),
     ]
     .join("__");
     paths.baselines_root.join(format!("{slug}.json"))
@@ -548,7 +593,10 @@ fn resolve_binary_path(paths: &PerfPaths, skip_build: bool) -> Result<PathBuf> {
         }))
 }
 
-fn resolve_fingerprint(paths: &PerfPaths) -> Result<EnvironmentFingerprint> {
+fn resolve_fingerprint(
+    paths: &PerfPaths,
+    timing_discipline: PerfTimingDiscipline,
+) -> Result<EnvironmentFingerprint> {
     if let Some(fingerprint) = &paths.fingerprint_override {
         return Ok(fingerprint.clone());
     }
@@ -560,6 +608,7 @@ fn resolve_fingerprint(paths: &PerfPaths) -> Result<EnvironmentFingerprint> {
         cpu_model: detect_cpu_model(),
         rustc,
         profile: PROFILE_NAME.into(),
+        timing_discipline,
     })
 }
 
@@ -610,11 +659,14 @@ fn run_cases(
     binary_path: &Path,
     cases: &[BenchCase],
     fingerprint: &EnvironmentFingerprint,
+    timing_discipline: PerfTimingDiscipline,
 ) -> Result<BaselineFile> {
     let mut results = Vec::with_capacity(cases.len());
     for case in cases {
-        for _ in 0..case.manifest.warmup_runs {
-            let _ = run_case_once(paths, binary_path, case)?;
+        if timing_discipline == PerfTimingDiscipline::SteadyState {
+            for _ in 0..case.manifest.warmup_runs {
+                let _ = run_case_once(paths, binary_path, case)?;
+            }
         }
         let mut samples_ms = Vec::with_capacity(case.manifest.measured_runs);
         for _ in 0..case.manifest.measured_runs {
@@ -748,7 +800,7 @@ fn find_matching_baseline(
             continue;
         }
         let baseline = load_baseline(&path)?;
-        if baseline.fingerprint == *fingerprint {
+        if baseline.schema_version == SCHEMA_VERSION && baseline.fingerprint == *fingerprint {
             matches.push((path, baseline));
         }
     }
@@ -913,6 +965,13 @@ fn write_latest_report(paths: &PerfPaths, report: &LatestReport) -> Result<()> {
 }
 
 fn print_report(report: &LatestReport) {
+    println!(
+        "command={} timing={} success={}",
+        report.command, report.fingerprint.timing_discipline, report.success
+    );
+    if let Some(baseline_file) = &report.baseline_file {
+        println!("baseline_file={baseline_file}");
+    }
     println!(
         "{:<30} {:<8} {:>12} {:>12} {:<12}",
         "case", "mode", "median_ms", "baseline", "status"
@@ -1319,6 +1378,7 @@ mod tests {
             &PerfConfig {
                 case_filter: None,
                 skip_build: true,
+                timing_discipline: PerfTimingDiscipline::SteadyState,
             },
         )?;
 
@@ -1389,6 +1449,7 @@ mod tests {
             &PerfConfig {
                 case_filter: None,
                 skip_build: true,
+                timing_discipline: PerfTimingDiscipline::SteadyState,
             },
         )?;
 
@@ -1451,6 +1512,7 @@ mod tests {
             &PerfConfig {
                 case_filter: None,
                 skip_build: true,
+                timing_discipline: PerfTimingDiscipline::SteadyState,
             },
         ));
 
@@ -1490,10 +1552,164 @@ mod tests {
             &PerfConfig {
                 case_filter: None,
                 skip_build: true,
+                timing_discipline: PerfTimingDiscipline::SteadyState,
             },
         ));
 
         assert!(err.contains("missing matching baseline"));
+        Ok(())
+    }
+
+    #[test]
+    fn expected_baseline_path_changes_with_timing_discipline() -> Result<()> {
+        let temp = TempDir::new()?;
+        let workspace_root = temp.path().join("workspace");
+        fs::create_dir_all(&workspace_root)?;
+        let paths = test_paths(&workspace_root)?;
+
+        let steady = expected_baseline_path(&paths, &test_fingerprint("rustc test"));
+        let cold = expected_baseline_path(
+            &paths,
+            &test_fingerprint_with_timing("rustc test", PerfTimingDiscipline::ColdStart),
+        );
+
+        assert_ne!(steady, cold);
+        assert!(steady.to_string_lossy().contains("steady_state"));
+        assert!(cold.to_string_lossy().contains("cold_start"));
+        Ok(())
+    }
+
+    #[test]
+    fn find_matching_baseline_ignores_legacy_schema_files() -> Result<()> {
+        let temp = TempDir::new()?;
+        let workspace_root = temp.path().join("workspace");
+        fs::create_dir_all(&workspace_root)?;
+        let paths = test_paths(&workspace_root)?;
+        let fingerprint = test_fingerprint("rustc test");
+
+        fs::write(
+            paths.baselines_root.join("legacy.json"),
+            r#"{
+  "schema_version": 1,
+  "fingerprint": {
+    "os": "macos",
+    "arch": "aarch64",
+    "cpu_model": "Apple Test CPU",
+    "rustc": "rustc test",
+    "profile": "release-lto-fat"
+  },
+  "results": []
+}"#,
+        )?;
+
+        assert!(find_matching_baseline(&paths, &fingerprint)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn perf_cli_defaults_to_steady_state_timing() {
+        let cli = XtCli::parse_from(["xtask", "perf", "record"]);
+        match cli.command {
+            XtCommand::Perf(PerfArgs {
+                command: PerfCommand::Record { timing, .. },
+            }) => assert_eq!(timing, PerfTimingDiscipline::SteadyState),
+            _ => panic!("expected perf record command"),
+        }
+    }
+
+    #[test]
+    fn perf_cli_accepts_explicit_cold_start_timing() {
+        let cli = XtCli::parse_from(["xtask", "perf", "check", "--timing", "cold_start"]);
+        match cli.command {
+            XtCommand::Perf(PerfArgs {
+                command: PerfCommand::Check { timing, .. },
+            }) => assert_eq!(timing, PerfTimingDiscipline::ColdStart),
+            _ => panic!("expected perf check command"),
+        }
+    }
+
+    #[test]
+    fn steady_state_timing_runs_configured_warmups() -> Result<()> {
+        let temp = TempDir::new()?;
+        let workspace_root = temp.path().join("workspace");
+        fs::create_dir_all(&workspace_root)?;
+        let mut paths = test_paths(&workspace_root)?;
+        paths.fingerprint_override = Some(test_fingerprint("rustc test"));
+        paths.binary_path = Some(write_fake_binary(temp.path())?);
+
+        write_case_with_entry(
+            &paths.cases_root,
+            "wordfreq_map_set_run",
+            r#"{
+  "id": "wordfreq_map_set_run",
+  "mode": "run",
+  "entry": "main.ky",
+  "project": false,
+  "expected_stdout": "123\n",
+  "warmup_runs": 2,
+  "measured_runs": 3,
+  "max_regression_pct": 20.0,
+  "max_regression_ms": 15.0
+}"#,
+        )?;
+        let case_dir = paths.cases_root.join("wordfreq_map_set_run");
+        fs::write(case_dir.join("run.stdout"), "123\n")?;
+        fs::write(case_dir.join("track_invocations"), "1\n")?;
+
+        let _ = record(
+            &paths,
+            &PerfConfig {
+                case_filter: None,
+                skip_build: true,
+                timing_discipline: PerfTimingDiscipline::SteadyState,
+            },
+        )?;
+
+        assert_eq!(tracked_invocation_count(&case_dir)?, 5);
+        Ok(())
+    }
+
+    #[test]
+    fn cold_start_timing_skips_warmups() -> Result<()> {
+        let temp = TempDir::new()?;
+        let workspace_root = temp.path().join("workspace");
+        fs::create_dir_all(&workspace_root)?;
+        let mut paths = test_paths(&workspace_root)?;
+        paths.fingerprint_override = Some(test_fingerprint_with_timing(
+            "rustc test",
+            PerfTimingDiscipline::ColdStart,
+        ));
+        paths.binary_path = Some(write_fake_binary(temp.path())?);
+
+        write_case_with_entry(
+            &paths.cases_root,
+            "wordfreq_map_set_run",
+            r#"{
+  "id": "wordfreq_map_set_run",
+  "mode": "run",
+  "entry": "main.ky",
+  "project": false,
+  "expected_stdout": "123\n",
+  "warmup_runs": 2,
+  "measured_runs": 3,
+  "max_regression_pct": 20.0,
+  "max_regression_ms": 15.0
+}"#,
+        )?;
+        let case_dir = paths.cases_root.join("wordfreq_map_set_run");
+        fs::write(case_dir.join("run.stdout"), "123\n")?;
+        fs::write(case_dir.join("track_invocations"), "1\n")?;
+
+        let _ = record(
+            &paths,
+            &PerfConfig {
+                case_filter: None,
+                skip_build: true,
+                timing_discipline: PerfTimingDiscipline::ColdStart,
+            },
+        )?;
+
+        assert_eq!(tracked_invocation_count(&case_dir)?, 3);
         Ok(())
     }
 
@@ -1536,12 +1752,20 @@ mod tests {
     }
 
     fn test_fingerprint(rustc: &str) -> EnvironmentFingerprint {
+        test_fingerprint_with_timing(rustc, PerfTimingDiscipline::SteadyState)
+    }
+
+    fn test_fingerprint_with_timing(
+        rustc: &str,
+        timing_discipline: PerfTimingDiscipline,
+    ) -> EnvironmentFingerprint {
         EnvironmentFingerprint {
             os: "macos".into(),
             arch: "aarch64".into(),
             cpu_model: "Apple Test CPU".into(),
             rustc: rustc.into(),
             profile: PROFILE_NAME.into(),
+            timing_discipline,
         }
     }
 
@@ -1566,12 +1790,12 @@ mod tests {
         if cfg!(windows) {
             fs::write(
                 &path,
-                "@echo off\r\nsetlocal enabledelayedexpansion\r\nset mode=%1\r\nshift\r\nif \"%mode%\"==\"check\" (\r\n  if \"%1\"==\"--format\" shift\r\n  if \"%1\"==\"json\" shift\r\n)\r\nif \"%1\"==\"--project\" shift\r\nset entry=%1\r\nfor %%I in (\"%entry%\") do set case_dir=%%~dpI\r\nif exist \"%case_dir%delay_secs.txt\" (\r\n  >nul ping -n 2 127.0.0.1\r\n)\r\nif \"%mode%\"==\"run\" (\r\n  if exist \"%case_dir%run.stdout\" type \"%case_dir%run.stdout\"\r\n  exit /b 0\r\n)\r\nif exist \"%case_dir%check.stdout\" type \"%case_dir%check.stdout\"\r\nexit /b 0\r\n",
+                "@echo off\r\nsetlocal enabledelayedexpansion\r\nset mode=%1\r\nshift\r\nif \"%mode%\"==\"check\" (\r\n  if \"%1\"==\"--format\" shift\r\n  if \"%1\"==\"json\" shift\r\n)\r\nif \"%1\"==\"--project\" shift\r\nset entry=%1\r\nfor %%I in (\"%entry%\") do set case_dir=%%~dpI\r\nif exist \"%case_dir%track_invocations\" echo 1>>\"%case_dir%invocations.txt\"\r\nif exist \"%case_dir%delay_secs.txt\" (\r\n  >nul ping -n 2 127.0.0.1\r\n)\r\nif \"%mode%\"==\"run\" (\r\n  if exist \"%case_dir%run.stdout\" type \"%case_dir%run.stdout\"\r\n  exit /b 0\r\n)\r\nif exist \"%case_dir%check.stdout\" type \"%case_dir%check.stdout\"\r\nexit /b 0\r\n",
             )?;
         } else {
             fs::write(
                 &path,
-                "#!/bin/sh\nmode=\"$1\"\nshift\nif [ \"$mode\" = \"check\" ] && [ \"$1\" = \"--format\" ]; then\n  shift 2\nfi\nif [ \"$1\" = \"--project\" ]; then\n  shift\nfi\nentry=\"$1\"\ncase_dir=$(dirname \"$entry\")\nif [ -f \"$case_dir/delay_secs.txt\" ]; then\n  sleep \"$(tr -d '\\n' < \"$case_dir/delay_secs.txt\")\"\nfi\nif [ \"$mode\" = \"run\" ]; then\n  if [ -f \"$case_dir/run.stdout\" ]; then\n    cat \"$case_dir/run.stdout\"\n  fi\n  exit 0\nfi\nif [ -f \"$case_dir/check.stdout\" ]; then\n  cat \"$case_dir/check.stdout\"\nfi\nexit 0\n",
+                "#!/bin/sh\nmode=\"$1\"\nshift\nif [ \"$mode\" = \"check\" ] && [ \"$1\" = \"--format\" ]; then\n  shift 2\nfi\nif [ \"$1\" = \"--project\" ]; then\n  shift\nfi\nentry=\"$1\"\ncase_dir=$(dirname \"$entry\")\nif [ -f \"$case_dir/track_invocations\" ]; then\n  printf '1\\n' >> \"$case_dir/invocations.txt\"\nfi\nif [ -f \"$case_dir/delay_secs.txt\" ]; then\n  sleep \"$(tr -d '\\n' < \"$case_dir/delay_secs.txt\")\"\nfi\nif [ \"$mode\" = \"run\" ]; then\n  if [ -f \"$case_dir/run.stdout\" ]; then\n    cat \"$case_dir/run.stdout\"\n  fi\n  exit 0\nfi\nif [ -f \"$case_dir/check.stdout\" ]; then\n  cat \"$case_dir/check.stdout\"\nfi\nexit 0\n",
             )?;
             #[cfg(unix)]
             {
@@ -1588,6 +1812,12 @@ mod tests {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos())
+    }
+
+    fn tracked_invocation_count(case_dir: &Path) -> Result<usize> {
+        let path = case_dir.join("invocations.txt");
+        let content = fs::read_to_string(path)?;
+        Ok(content.lines().count())
     }
 
     fn expect_err_text<T>(result: Result<T>) -> String {

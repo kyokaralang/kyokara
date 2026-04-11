@@ -1,11 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "fingerprint": {
     "os": "macos",
     "arch": "aarch64",
     "cpu_model": "Apple M3",
     "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
-    "profile": "release-lto-fat"
+    "profile": "release-lto-fat",
+    "timing_discipline": "steady_state"
   },
   "results": [
     {
