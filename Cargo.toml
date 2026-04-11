@@ -78,6 +78,7 @@ md5 = { package = "md-5", version = "0.10" }
 sha2 = "0.10"
 toml = "0.8"
 semver = "1"
+once_cell = "1"
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

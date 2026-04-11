@@ -7,6 +7,7 @@ use kyokara_runtime::service::{
     CapabilityCheck, EffectRequest, ReplayMode, ReplayRuntime, RuntimeEffectError, RuntimeService,
 };
 use md5::Digest;
+use once_cell::sync::OnceCell;
 use thiserror::Error;
 
 const HOST_MODULE: &str = "kyokara_host";
@@ -14,6 +15,9 @@ const MAX_WASM_STACK_BYTES: usize = 64 * 1024 * 1024;
 const STRING_SPECIAL_TAG_MASK: i32 = i32::MIN;
 const STRING_FORWARD_SENTINEL: i32 = -1;
 const STRING_MD5_SENTINEL: i32 = -2;
+
+static WASM_ENGINE: OnceCell<wasmtime::Engine> = OnceCell::new();
+static HOST_LINKER: OnceCell<wasmtime::Linker<StoreState>> = OnceCell::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
@@ -86,11 +90,11 @@ pub struct WasmProgram {
 
 impl WasmProgram {
     pub fn instantiate(bytes: &[u8]) -> Result<Self, WasmRuntimeError> {
-        let engine = build_engine()?;
+        let engine = shared_engine()?;
         let wasm_module =
-            wasmtime::Module::new(&engine, bytes).map_err(WasmRuntimeError::InvalidModule)?;
+            wasmtime::Module::new(engine, bytes).map_err(WasmRuntimeError::InvalidModule)?;
         let mut store = wasmtime::Store::new(
-            &engine,
+            engine,
             StoreState {
                 runtime: None,
                 last_host_error: None,
@@ -99,7 +103,7 @@ impl WasmProgram {
                 guest_alloc: None,
             },
         );
-        let linker = build_host_linker(&engine)?;
+        let linker = shared_host_linker()?.clone();
         let instance = linker
             .instantiate(&mut store, &wasm_module)
             .map_err(WasmRuntimeError::Instantiation)?;
@@ -111,11 +115,11 @@ impl WasmProgram {
         bytes: &[u8],
         runtime: Box<dyn RuntimeService>,
     ) -> Result<Self, WasmRuntimeError> {
-        let engine = build_engine()?;
+        let engine = shared_engine()?;
         let wasm_module =
-            wasmtime::Module::new(&engine, bytes).map_err(WasmRuntimeError::InvalidModule)?;
+            wasmtime::Module::new(engine, bytes).map_err(WasmRuntimeError::InvalidModule)?;
         let mut store = wasmtime::Store::new(
-            &engine,
+            engine,
             StoreState {
                 runtime: Some(runtime),
                 last_host_error: None,
@@ -124,7 +128,7 @@ impl WasmProgram {
                 guest_alloc: None,
             },
         );
-        let linker = build_host_linker(&engine)?;
+        let linker = shared_host_linker()?.clone();
         let instance = linker
             .instantiate(&mut store, &wasm_module)
             .map_err(WasmRuntimeError::Instantiation)?;
@@ -248,6 +252,14 @@ fn build_engine() -> Result<wasmtime::Engine, WasmRuntimeError> {
     let mut config = wasmtime::Config::new();
     config.max_wasm_stack(MAX_WASM_STACK_BYTES);
     wasmtime::Engine::new(&config).map_err(WasmRuntimeError::Engine)
+}
+
+fn shared_engine() -> Result<&'static wasmtime::Engine, WasmRuntimeError> {
+    WASM_ENGINE.get_or_try_init(build_engine)
+}
+
+fn shared_host_linker() -> Result<&'static wasmtime::Linker<StoreState>, WasmRuntimeError> {
+    HOST_LINKER.get_or_try_init(|| build_host_linker(shared_engine()?))
 }
 
 fn build_host_linker(

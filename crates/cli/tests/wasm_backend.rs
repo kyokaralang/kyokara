@@ -882,6 +882,40 @@ fn run_backend_wasm_handles_mutable_set_values_after_growth() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_mutable_int_set_contains_after_removal_and_reinsert() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableSet\n\
+         fn main() -> Int {\n\
+           let s = MutableSet.new()\n\
+           for (i in 0 ..< 6000) {\n\
+             let _ = s.insert(i)\n\
+           }\n\
+           let _ = s.remove(1234)\n\
+           let _ = s.remove(4321)\n\
+           let _ = s.insert(4321)\n\
+           var count = 0\n\
+           for (i in 0 ..< 6000) {\n\
+             if (s.contains(i)) {\n\
+               count = count + 1\n\
+             }\n\
+           }\n\
+           count * 10 + if (s.contains(1234)) { 1 } else { 0 } + if (s.contains(4321)) { 2 } else { 0 }\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "59992",
+        "run --backend wasm preserves mutable int set contains after removal and reinsert",
+    );
+}
+
+#[test]
 fn run_backend_wasm_handles_range_mapped_mutable_list_from_list() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
