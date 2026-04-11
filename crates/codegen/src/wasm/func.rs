@@ -2658,36 +2658,37 @@ impl<'a> FuncCodegen<'a> {
         let bytes = s.as_bytes();
         let byte_len = bytes.len() as i32;
         let char_len = s.chars().count() as i32;
+        let padded_byte_len = byte_len
+            .checked_add(7)
+            .map(|len| len & !7)
+            .expect("string constant padded size should fit in i32");
         let total_size = 8_i32
-            .checked_add(byte_len)
+            .checked_add(padded_byte_len)
             .expect("string constant size should fit in i32");
 
         func.instruction(&Instruction::I32Const(total_size));
         func.instruction(&Instruction::Call(self.ctx.alloc_fn_index));
         func.instruction(&Instruction::LocalSet(self.scratch_i32));
 
+        let header = ((char_len as u32 as u64) << 32) | (byte_len as u32 as u64);
         func.instruction(&Instruction::LocalGet(self.scratch_i32));
-        func.instruction(&Instruction::I32Const(byte_len));
-        func.instruction(&Instruction::I32Store(MemArg {
+        func.instruction(&Instruction::I64Const(header as i64));
+        func.instruction(&Instruction::I64Store(MemArg {
             offset: 0,
-            align: 2,
+            align: 3,
             memory_index: 0,
         }));
 
-        func.instruction(&Instruction::LocalGet(self.scratch_i32));
-        func.instruction(&Instruction::I32Const(char_len));
-        func.instruction(&Instruction::I32Store(MemArg {
-            offset: 4,
-            align: 2,
-            memory_index: 0,
-        }));
-
-        for (idx, byte) in bytes.iter().enumerate() {
+        for (idx, chunk) in bytes.chunks(8).enumerate() {
+            let mut packed = 0_u64;
+            for (shift, byte) in chunk.iter().enumerate() {
+                packed |= u64::from(*byte) << (shift * 8);
+            }
             func.instruction(&Instruction::LocalGet(self.scratch_i32));
-            func.instruction(&Instruction::I32Const(i32::from(*byte)));
-            func.instruction(&Instruction::I32Store8(MemArg {
-                offset: 8 + idx as u64,
-                align: 0,
+            func.instruction(&Instruction::I64Const(packed as i64));
+            func.instruction(&Instruction::I64Store(MemArg {
+                offset: 8 + (idx as u64 * 8),
+                align: 3,
                 memory_index: 0,
             }));
         }
