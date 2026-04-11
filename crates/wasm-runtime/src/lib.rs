@@ -321,7 +321,9 @@ fn build_host_linker(
             |mut caller: wasmtime::Caller<'_, StoreState>,
              md5_object_ptr: i32,
              prefix_object_ptr: i32|
-             -> i32 { call_string_md5_starts_with(&mut caller, md5_object_ptr, prefix_object_ptr) },
+             -> i32 {
+                call_string_md5_starts_with(&mut caller, md5_object_ptr, prefix_object_ptr)
+            },
         )
         .map_err(WasmRuntimeError::HostLinker)?;
     linker
@@ -930,8 +932,16 @@ fn update_md5_from_guest_string_object(
     ptr: i32,
     hasher: &mut md5::Md5,
 ) -> Result<(), HostStatus> {
-    let mut stack = vec![ptr];
-    while let Some(current_ptr) = stack.pop() {
+    const INLINE_STACK_CAPACITY: usize = 8;
+
+    let mut inline_stack = [0_i32; INLINE_STACK_CAPACITY];
+    let mut inline_len = 1usize;
+    let mut overflow_stack: Option<Vec<i32>> = None;
+    inline_stack[0] = ptr;
+
+    while let Some(current_ptr) =
+        pop_i32_stack(&mut inline_stack, &mut inline_len, &mut overflow_stack)
+    {
         let header = read_guest_header(caller, current_ptr)?;
         let raw_len = i32::from_le_bytes(
             header[0..4]
@@ -961,7 +971,12 @@ fn update_md5_from_guest_string_object(
             return Err(HostStatus::BadGuestMemory);
         }
         if rhs_or_sentinel == STRING_FORWARD_SENTINEL {
-            stack.push(source_ptr);
+            push_i32_stack(
+                &mut inline_stack,
+                &mut inline_len,
+                &mut overflow_stack,
+                source_ptr,
+            );
             continue;
         }
         if rhs_or_sentinel == STRING_MD5_SENTINEL {
@@ -974,10 +989,60 @@ fn update_md5_from_guest_string_object(
             return Err(HostStatus::BadGuestMemory);
         }
 
-        stack.push(rhs_or_sentinel);
-        stack.push(source_ptr);
+        push_i32_stack(
+            &mut inline_stack,
+            &mut inline_len,
+            &mut overflow_stack,
+            rhs_or_sentinel,
+        );
+        push_i32_stack(
+            &mut inline_stack,
+            &mut inline_len,
+            &mut overflow_stack,
+            source_ptr,
+        );
     }
     Ok(())
+}
+
+fn pop_i32_stack(
+    inline_stack: &mut [i32; 8],
+    inline_len: &mut usize,
+    overflow_stack: &mut Option<Vec<i32>>,
+) -> Option<i32> {
+    if let Some(stack) = overflow_stack.as_mut() {
+        return stack.pop();
+    }
+
+    if *inline_len == 0 {
+        None
+    } else {
+        *inline_len -= 1;
+        Some(inline_stack[*inline_len])
+    }
+}
+
+fn push_i32_stack(
+    inline_stack: &mut [i32; 8],
+    inline_len: &mut usize,
+    overflow_stack: &mut Option<Vec<i32>>,
+    value: i32,
+) {
+    if let Some(stack) = overflow_stack.as_mut() {
+        stack.push(value);
+        return;
+    }
+
+    if *inline_len < inline_stack.len() {
+        inline_stack[*inline_len] = value;
+        *inline_len += 1;
+        return;
+    }
+
+    let mut stack = Vec::with_capacity(inline_stack.len() * 2);
+    stack.extend_from_slice(&inline_stack[..*inline_len]);
+    stack.push(value);
+    *overflow_stack = Some(stack);
 }
 
 fn md5_hex_char_code(digest: [u8; 16], index: usize) -> u8 {
