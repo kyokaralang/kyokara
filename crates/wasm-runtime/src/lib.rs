@@ -74,6 +74,8 @@ struct StoreState {
     runtime: Option<Box<dyn RuntimeService>>,
     last_host_error: Option<String>,
     md5_digest_cache: HashMap<i32, [u8; 16]>,
+    guest_memory: Option<wasmtime::Memory>,
+    guest_alloc: Option<wasmtime::TypedFunc<i32, i32>>,
 }
 
 /// Instantiated WASM program ready to invoke exports.
@@ -93,12 +95,15 @@ impl WasmProgram {
                 runtime: None,
                 last_host_error: None,
                 md5_digest_cache: HashMap::new(),
+                guest_memory: None,
+                guest_alloc: None,
             },
         );
         let linker = build_host_linker(&engine)?;
         let instance = linker
             .instantiate(&mut store, &wasm_module)
             .map_err(WasmRuntimeError::Instantiation)?;
+        cache_guest_exports(&mut store, &instance)?;
         Ok(Self { store, instance })
     }
 
@@ -115,12 +120,15 @@ impl WasmProgram {
                 runtime: Some(runtime),
                 last_host_error: None,
                 md5_digest_cache: HashMap::new(),
+                guest_memory: None,
+                guest_alloc: None,
             },
         );
         let linker = build_host_linker(&engine)?;
         let instance = linker
             .instantiate(&mut store, &wasm_module)
             .map_err(WasmRuntimeError::Instantiation)?;
+        cache_guest_exports(&mut store, &instance)?;
         Ok(Self { store, instance })
     }
 
@@ -215,6 +223,25 @@ impl WasmProgram {
         }
         Ok(())
     }
+}
+
+fn cache_guest_exports(
+    store: &mut wasmtime::Store<StoreState>,
+    instance: &wasmtime::Instance,
+) -> Result<(), WasmRuntimeError> {
+    let memory = instance
+        .get_memory(&mut *store, "memory")
+        .ok_or_else(|| WasmRuntimeError::GuestMemory("missing exported memory".to_string()))?;
+    let alloc = instance
+        .get_typed_func::<i32, i32>(&mut *store, "__kyokara_alloc")
+        .map_err(|source| WasmRuntimeError::MissingExport {
+            export: "__kyokara_alloc",
+            source,
+        })?;
+    let data = store.data_mut();
+    data.guest_memory = Some(memory);
+    data.guest_alloc = Some(alloc);
+    Ok(())
 }
 
 fn build_engine() -> Result<wasmtime::Engine, WasmRuntimeError> {
@@ -996,12 +1023,11 @@ fn read_guest_slice<'a>(
     if ptr < 0 || len < 0 {
         return Err(HostStatus::BadGuestMemory);
     }
-    let Some(memory) = caller
-        .get_export("memory")
-        .and_then(|export| export.into_memory())
-    else {
-        return Err(HostStatus::BadGuestMemory);
-    };
+    let memory = caller
+        .data()
+        .guest_memory
+        .clone()
+        .ok_or(HostStatus::BadGuestMemory)?;
     memory
         .data(&*caller)
         .get(ptr as usize..)
@@ -1020,12 +1046,10 @@ fn alloc_guest_string(
         .ok_or(HostStatus::BadGuestMemory)?;
 
     let alloc = caller
-        .get_export("__kyokara_alloc")
-        .and_then(|export| export.into_func())
+        .data()
+        .guest_alloc
+        .clone()
         .ok_or(HostStatus::BadGuestMemory)?;
-    let alloc = alloc
-        .typed::<i32, i32>(&mut *caller)
-        .map_err(|_| HostStatus::BadGuestMemory)?;
     let ptr = alloc
         .call(&mut *caller, total_size)
         .map_err(|_| HostStatus::BadGuestMemory)?;
@@ -1041,12 +1065,10 @@ fn alloc_guest_md5_string(
     source_ptr: i32,
 ) -> Result<i32, HostStatus> {
     let alloc = caller
-        .get_export("__kyokara_alloc")
-        .and_then(|export| export.into_func())
+        .data()
+        .guest_alloc
+        .clone()
         .ok_or(HostStatus::BadGuestMemory)?;
-    let alloc = alloc
-        .typed::<i32, i32>(&mut *caller)
-        .map_err(|_| HostStatus::BadGuestMemory)?;
     let ptr = alloc
         .call(&mut *caller, 16)
         .map_err(|_| HostStatus::BadGuestMemory)?;
@@ -1066,12 +1088,11 @@ fn write_guest_bytes(
     if ptr < 0 {
         return Err(HostStatus::BadGuestMemory);
     }
-    let Some(memory) = caller
-        .get_export("memory")
-        .and_then(|export| export.into_memory())
-    else {
-        return Err(HostStatus::BadGuestMemory);
-    };
+    let memory = caller
+        .data()
+        .guest_memory
+        .clone()
+        .ok_or(HostStatus::BadGuestMemory)?;
     memory
         .write(caller, ptr as usize, bytes)
         .map_err(|_| HostStatus::BadGuestMemory)
