@@ -1650,23 +1650,12 @@ fn compile_single_file_to_wasm(
 ) -> Result<(Vec<u8>, kyokara_hir_ty::ty::Ty, bool), String> {
     let source = std::fs::read_to_string(entry_file)
         .map_err(|err| format!("cannot read `{}`: {err}", entry_file.display()))?;
-    let path_label = entry_file.display().to_string();
-    let check_output = kyokara_api::check_with_options(
-        &source,
-        &path_label,
-        &kyokara_api::CheckOptions::default(),
-    );
-    let errors = check_output
-        .diagnostics
-        .iter()
-        .filter(|diag| diag.severity == "error")
-        .map(|diag| format!("{}: {}", diag.code, diag.message))
-        .collect::<Vec<_>>();
+    let check = kyokara_hir::check_file(&source);
+    let errors = collect_single_file_compile_errors(&check);
     if !errors.is_empty() {
         return Err(format!("compile errors: {}", errors.join("; ")));
     }
 
-    let check = kyokara_hir::check_file(&source);
     let mut interner = check.interner;
     let mut module = kyokara_kir::lower::lower_module(
         &check.item_tree,
@@ -1682,6 +1671,50 @@ fn compile_single_file_to_wasm(
     let wasm_bytes = kyokara_codegen::compile(&module, &check.item_tree, &interner)
         .map_err(|err| err.to_string())?;
     Ok((wasm_bytes, ret_ty, has_show_wrapper))
+}
+
+fn collect_single_file_compile_errors(check: &kyokara_hir::CheckResult) -> Vec<String> {
+    let mut errors = Vec::new();
+
+    errors.extend(check.parse_errors.iter().map(|err| format!("E0100: {}", err.message)));
+    errors.extend(
+        check.lowering_diagnostics
+            .iter()
+            .filter(|diag| diag.severity == kyokara_diagnostics::Severity::Error)
+            .map(|diag| {
+                format!(
+                    "{}: {}",
+                    kyokara_hir::lowering_diagnostic_code(diag),
+                    diag.message
+                )
+            }),
+    );
+    errors.extend(
+        check.type_check
+            .body_lowering_diagnostics
+            .iter()
+            .filter(|diag| diag.severity == kyokara_diagnostics::Severity::Error)
+            .map(|diag| {
+                format!(
+                    "{}: {}",
+                    kyokara_hir::lowering_diagnostic_code(diag),
+                    diag.message
+                )
+            }),
+    );
+    errors.extend(
+        check.type_check
+            .raw_diagnostics
+            .iter()
+            .map(|(data, span)| {
+                let diag = data
+                    .clone()
+                    .into_diagnostic(*span, &check.interner, &check.item_tree);
+                format!("{}: {}", data.code(), diag.message)
+            }),
+    );
+
+    errors
 }
 
 struct ProjectWasmFunction {

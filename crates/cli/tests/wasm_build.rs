@@ -26,6 +26,22 @@ fn assert_success(output: &Output, context: &str) {
     );
 }
 
+fn assert_failure_stderr(output: &Output, expected: &str, context: &str) {
+    assert!(
+        !output.status.success(),
+        "{context} unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).trim(),
+        expected,
+        "{context} stderr mismatch\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn build_target_wasm_writes_single_file_module() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -52,6 +68,56 @@ fn build_target_wasm_writes_single_file_module() {
         "built file should be a wasm module\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn build_target_wasm_reports_single_file_type_errors() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let out = dir.path().join("out.wasm");
+    fs::write(&file, "fn main() -> Int { \"x\" }").expect("write source");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "build",
+            "main.ky",
+            "--target",
+            "wasm",
+            "--out",
+            out.to_str().expect("utf-8 output path"),
+        ],
+    );
+    assert_failure_stderr(
+        &output,
+        "error: compile errors: E0001: type mismatch: expected `Int`, found `String`",
+        "build --target wasm type error",
+    );
+}
+
+#[test]
+fn build_target_wasm_reports_single_file_unresolved_names_once() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    let out = dir.path().join("out.wasm");
+    fs::write(&file, "fn main() -> Int { missing() }").expect("write source");
+
+    let output = run_cli(
+        dir.path(),
+        &[
+            "build",
+            "main.ky",
+            "--target",
+            "wasm",
+            "--out",
+            out.to_str().expect("utf-8 output path"),
+        ],
+    );
+    assert_failure_stderr(
+        &output,
+        "error: compile errors: E0101: unresolved name `missing`",
+        "build --target wasm unresolved name",
     );
 }
 
