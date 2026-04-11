@@ -262,7 +262,10 @@ fn run_backend_wasm_materializes_md5_of_concat_special_string_source() {
     .expect("write source");
 
     let native = run_cli(dir.path(), &["run", "main.ky"]);
-    assert_success(&native, "run native with md5 over concat special string source");
+    assert_success(
+        &native,
+        "run native with md5 over concat special string source",
+    );
     let expected = String::from_utf8_lossy(&native.stdout).trim().to_string();
 
     let wasm = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
@@ -943,6 +946,42 @@ fn run_backend_wasm_preserves_mutable_int_set_contains_after_removal_and_reinser
         &output,
         "59992",
         "run --backend wasm preserves mutable int set contains after removal and reinsert",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_mutable_structural_set_contains_after_growth() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r#"from collections import MutableSet, Deque
+
+type RoundState derive(Eq, Hash) = { d1: Deque<Int>, d2: Deque<Int> }
+
+fn deck(a: Int, b: Int) -> Deque<Int> {
+  Deque.new().appended(a).appended(b)
+}
+
+fn state(i: Int) -> RoundState {
+  RoundState { d1: deck(i, i + 1), d2: deck(i + 2, i + 3) }
+}
+
+fn main() -> Int {
+  let seen: MutableSet<RoundState> = MutableSet.new()
+  for (i in 0 ..< 128) {
+    let _ = seen.insert(state(i))
+  }
+  if (seen.contains(state(63)) && !seen.contains(state(200))) { 1 } else { 0 }
+}"#,
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "1",
+        "run --backend wasm preserves mutable structural set contains after growth",
     );
 }
 
