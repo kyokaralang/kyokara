@@ -776,6 +776,37 @@ fn run_backend_wasm_handles_mutable_map_string_keys_after_growth() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_mutable_map_record_key_lookups_after_growth_and_remove() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableMap\n\
+         type Point derive(Eq, Hash) = { x: Int, y: Int }\n\
+         fn point(x: Int, y: Int) -> Point {\n\
+           Point { x: x, y: y }\n\
+         }\n\
+         fn main() -> Int {\n\
+           let m = MutableMap.new()\n\
+           for (i in 0 ..< 512) {\n\
+             let _ = m.insert(point(i, i + 1), i * 3)\n\
+           }\n\
+           let _ = m.remove(point(10, 11))\n\
+           let _ = m.insert(point(10, 11), 999)\n\
+           m.get(point(10, 11)).unwrap_or(-1) + m.get(point(511, 512)).unwrap_or(-1)\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "2532",
+        "run --backend wasm preserves mutable map record-key lookups after growth and remove",
+    );
+}
+
+#[test]
 fn run_backend_wasm_handles_mutable_map_int_keys_after_growth() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
