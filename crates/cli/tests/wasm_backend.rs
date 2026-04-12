@@ -51,6 +51,69 @@ fn run_backend_wasm_executes_single_file_program() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_ascii_substring_slice_character_scans() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r##"fn main() -> Int {
+  let row = ".#..##.#.#"
+  var total = 0
+  var i = 0
+  while (i < row.len()) {
+    if (row.substring(i, i + 1) == "#") {
+      total = total + 1
+    }
+    i = i + 1
+  }
+  total
+}"##,
+    )
+    .expect("write source");
+
+    let native = run_cli(dir.path(), &["run", "main.ky"]);
+    assert_success(&native, "run native with ascii substring scan");
+    let expected = String::from_utf8_lossy(&native.stdout).trim().to_string();
+
+    let wasm = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &wasm,
+        &expected,
+        "run --backend wasm preserves ascii substring slice character scans",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_slice_backed_concat_keys_in_mutable_map_lookups() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r##"from collections import MutableMap
+
+fn main() -> Int {
+  let rules = MutableMap.new()
+  let _ = rules.insert("../.#", 7)
+  let src = "xx../.#yy"
+  let key = src.substring(2, 4).concat(src.substring(4, 5)).concat(src.substring(5, 7))
+  rules.get(key).unwrap_or(-1)
+}"##,
+    )
+    .expect("write source");
+
+    let native = run_cli(dir.path(), &["run", "main.ky"]);
+    assert_success(&native, "run native with slice-backed concat map keys");
+    let expected = String::from_utf8_lossy(&native.stdout).trim().to_string();
+
+    let wasm = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &wasm,
+        &expected,
+        "run --backend wasm preserves slice-backed concat keys in mutable_map lookups",
+    );
+}
+
+#[test]
 fn run_backend_wasm_displays_structural_main_output() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");

@@ -6,6 +6,7 @@ pub const STRING_SPECIAL_TAG_MASK: i32 = i32::MIN;
 pub const STRING_SPECIAL_LEN_MASK: i32 = i32::MAX;
 pub const STRING_FORWARD_SENTINEL: i32 = -1;
 pub const STRING_MD5_SENTINEL: i32 = -2;
+pub const STRING_SLICE_SENTINEL: i32 = -3;
 
 fn emit_alloc_empty_string(func: &mut Function, alloc_fn_index: u32, out_local: u32) {
     func.instruction(&Instruction::I32Const(8));
@@ -323,12 +324,13 @@ pub fn emit_flatten_into_function(
     string_md5_materialize_fn_index: Option<u32>,
 ) -> Function {
     let materialize_fn_index = string_md5_materialize_fn_index.unwrap_or(flatten_into_fn_index);
-    let mut func = Function::new([(3, ValType::I32)]);
+    let mut func = Function::new([(4, ValType::I32)]);
     // local 0 = src ptr
     // local 1 = dst ptr
     // local 2 = raw len
     // local 3 = aux / rhs ptr / sentinel
-    // local 4 = mid / flat ptr
+    // local 4 = mid / flat ptr / aux ptr
+    // local 5 = slice source ptr / start byte
 
     func.instruction(&Instruction::LocalGet(0));
     func.instruction(&Instruction::I32Load(MemArg {
@@ -417,6 +419,52 @@ pub fn emit_flatten_into_function(
     func.instruction(&Instruction::I32Add);
     func.instruction(&Instruction::Else);
 
+    func.instruction(&Instruction::LocalGet(3));
+    func.instruction(&Instruction::I32Const(STRING_SLICE_SENTINEL));
+    func.instruction(&Instruction::I32Eq);
+    func.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    func.instruction(&Instruction::LocalGet(0));
+    func.instruction(&Instruction::I32Load(MemArg {
+        offset: 8,
+        align: 2,
+        memory_index: 0,
+    }));
+    func.instruction(&Instruction::LocalSet(4));
+    func.instruction(&Instruction::LocalGet(4));
+    func.instruction(&Instruction::I32Load(MemArg {
+        offset: 0,
+        align: 2,
+        memory_index: 0,
+    }));
+    func.instruction(&Instruction::LocalSet(5));
+    func.instruction(&Instruction::LocalGet(4));
+    func.instruction(&Instruction::I32Load(MemArg {
+        offset: 4,
+        align: 2,
+        memory_index: 0,
+    }));
+    func.instruction(&Instruction::LocalSet(3));
+
+    func.instruction(&Instruction::LocalGet(1));
+    func.instruction(&Instruction::LocalGet(5));
+    func.instruction(&Instruction::I32Const(8));
+    func.instruction(&Instruction::I32Add);
+    func.instruction(&Instruction::LocalGet(3));
+    func.instruction(&Instruction::I32Add);
+    func.instruction(&Instruction::LocalGet(2));
+    func.instruction(&Instruction::I32Const(STRING_SPECIAL_LEN_MASK));
+    func.instruction(&Instruction::I32And);
+    func.instruction(&Instruction::MemoryCopy {
+        src_mem: 0,
+        dst_mem: 0,
+    });
+    func.instruction(&Instruction::LocalGet(1));
+    func.instruction(&Instruction::LocalGet(2));
+    func.instruction(&Instruction::I32Const(STRING_SPECIAL_LEN_MASK));
+    func.instruction(&Instruction::I32And);
+    func.instruction(&Instruction::I32Add);
+    func.instruction(&Instruction::Else);
+
     func.instruction(&Instruction::LocalGet(0));
     func.instruction(&Instruction::I32Load(MemArg {
         offset: 8,
@@ -430,6 +478,7 @@ pub fn emit_flatten_into_function(
     func.instruction(&Instruction::LocalGet(3));
     func.instruction(&Instruction::LocalGet(4));
     func.instruction(&Instruction::Call(flatten_into_fn_index));
+    func.instruction(&Instruction::End);
     func.instruction(&Instruction::End);
     func.instruction(&Instruction::End);
     func.instruction(&Instruction::End);

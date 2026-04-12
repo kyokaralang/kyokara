@@ -13,6 +13,7 @@ const MAX_WASM_STACK_BYTES: usize = 64 * 1024 * 1024;
 const STRING_SPECIAL_TAG_MASK: i32 = i32::MIN;
 const STRING_FORWARD_SENTINEL: i32 = -1;
 const STRING_MD5_SENTINEL: i32 = -2;
+const STRING_SLICE_SENTINEL: i32 = -3;
 const MD5_INLINE_DIGEST_SOURCE_PTR: i32 = -1;
 const MD5_DIGEST_OFFSET: i32 = 16;
 const MD5_DIGEST_SIZE: i32 = 16;
@@ -1431,6 +1432,31 @@ fn read_program_string(program: &mut WasmProgram, ptr: u32) -> Result<String, Wa
         }
         let text = read_program_string(program, source_ptr as u32)?;
         return Ok(format!("{:x}", md5::Md5::digest(text.as_bytes())));
+    }
+    if rhs_or_sentinel == STRING_SLICE_SENTINEL {
+        if source_ptr < 0 {
+            return Err(WasmRuntimeError::GuestMemory(
+                "guest slice string uses invalid aux pointer".to_string(),
+            ));
+        }
+        let aux = program.read_memory(source_ptr as u32, 8)?;
+        let base_ptr = i32::from_le_bytes(aux[0..4].try_into().map_err(|_| {
+            WasmRuntimeError::GuestMemory(
+                "guest slice string missing source pointer".to_string(),
+            )
+        })?);
+        let start_byte = i32::from_le_bytes(aux[4..8].try_into().map_err(|_| {
+            WasmRuntimeError::GuestMemory("guest slice string missing start offset".to_string())
+        })?);
+        if base_ptr < 0 || start_byte < 0 {
+            return Err(WasmRuntimeError::GuestMemory(
+                "guest slice string uses invalid source range".to_string(),
+            ));
+        }
+        let len = (raw_len & !STRING_SPECIAL_TAG_MASK) as u32;
+        let bytes = program.read_memory(base_ptr as u32 + 8 + start_byte as u32, len)?;
+        return String::from_utf8(bytes)
+            .map_err(|err| WasmRuntimeError::GuestMemory(err.to_string()));
     }
     if rhs_or_sentinel < 0 {
         return Err(WasmRuntimeError::GuestMemory(
