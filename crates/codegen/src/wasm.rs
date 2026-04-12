@@ -30,7 +30,10 @@ use crate::wasm::list::{
     emit_mutable_list_push_i64_function, emit_mutable_list_set_i64_function,
 };
 use crate::wasm::seq::{emit_lines_to_list_function, emit_split_to_list_function};
-use crate::wasm::string::{emit_flatten_function, emit_flatten_into_function, emit_trim_function};
+use crate::wasm::string::{
+    emit_flatten_function, emit_flatten_into_function, emit_hash_mix_function,
+    emit_trim_function,
+};
 use crate::wasm::ty::ty_to_valtype;
 use std::borrow::Cow;
 
@@ -76,6 +79,7 @@ pub struct ModuleCtx<'a> {
     pub alloc_fn_index: u32,
     pub string_flatten_fn_index: u32,
     pub string_flatten_into_fn_index: u32,
+    pub string_hash_mix_fn_index: u32,
     pub string_trim_fn_index: Option<u32>,
     pub mutable_list_push_i64_fn_index: Option<u32>,
     pub mutable_list_set_i64_fn_index: Option<u32>,
@@ -471,7 +475,8 @@ pub fn compile_module(
     let alloc_fn_index = next_fn_index;
     let string_flatten_fn_index = next_fn_index + 1;
     let string_flatten_into_fn_index = next_fn_index + 2;
-    next_fn_index += 3;
+    let string_hash_mix_fn_index = next_fn_index + 3;
+    next_fn_index += 4;
     let string_trim_fn_index = if needs_string_trim {
         let idx = next_fn_index;
         next_fn_index += 1;
@@ -600,6 +605,10 @@ pub fn compile_module(
     types
         .ty()
         .function([ValType::I32, ValType::I64], [ValType::I32]);
+    // Type 10: string hash mix helper(string ptr, acc) -> acc
+    types
+        .ty()
+        .function([ValType::I32, ValType::I64], [ValType::I64]);
 
     // Build type index for each KIR function, deduplicated by structural
     // signature so indirect calls can reuse the same type index.
@@ -659,6 +668,7 @@ pub fn compile_module(
         alloc_fn_index,
         string_flatten_fn_index,
         string_flatten_into_fn_index,
+        string_hash_mix_fn_index,
         string_trim_fn_index,
         mutable_list_push_i64_fn_index,
         mutable_list_set_i64_fn_index,
@@ -744,6 +754,7 @@ pub fn compile_module(
     functions.function(0);
     functions.function(0);
     functions.function(1);
+    functions.function(10);
     if string_trim_fn_index.is_some() {
         functions.function(0);
     }
@@ -862,6 +873,10 @@ pub fn compile_module(
     code.function(&emit_flatten_into_function(
         string_flatten_into_fn_index,
         string_md5_materialize_fn_index,
+    ));
+    code.function(&emit_hash_mix_function(
+        string_hash_mix_fn_index,
+        string_flatten_fn_index,
     ));
     if string_trim_fn_index.is_some() {
         code.function(&emit_trim_function(alloc_fn_index, string_flatten_fn_index));

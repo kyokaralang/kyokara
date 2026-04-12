@@ -114,6 +114,36 @@ fn main() -> Int {
 }
 
 #[test]
+fn run_backend_wasm_preserves_slice_backed_concat_key_inserts_into_mutable_map() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r##"from collections import MutableMap
+
+fn main() -> Int {
+  let rules = MutableMap.new()
+  let src = "xx../.#yy"
+  let key = src.substring(2, 4).concat(src.substring(4, 5)).concat(src.substring(5, 7))
+  let _ = rules.insert(key, 7)
+  rules.get("../.#").unwrap_or(-1)
+}"##,
+    )
+    .expect("write source");
+
+    let native = run_cli(dir.path(), &["run", "main.ky"]);
+    assert_success(&native, "run native with slice-backed concat map inserts");
+    let expected = String::from_utf8_lossy(&native.stdout).trim().to_string();
+
+    let wasm = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &wasm,
+        &expected,
+        "run --backend wasm preserves slice-backed concat key inserts into mutable_map",
+    );
+}
+
+#[test]
 fn run_backend_wasm_displays_structural_main_output() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
@@ -970,6 +1000,34 @@ fn run_backend_wasm_preserves_mutable_map_int_key_collisions_across_remove_and_r
         &output,
         "484",
         "run --backend wasm preserves mutable map int-key collisions across remove and reinsert",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_observed_int_map_key_order_after_remove_and_reinsert() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableMap\n\
+         fn main() -> Int {\n\
+           let m: MutableMap<Int, Int> = MutableMap.new()\n\
+           let _ = m.insert(2, 20)\n\
+           let _ = m.insert(1, 10)\n\
+           let _ = m.insert(3, 30)\n\
+           let _ = m.remove(1)\n\
+           let _ = m.insert(1, 100)\n\
+           let ks = m.keys().to_list()\n\
+           if (ks[0] == 2 && ks[1] == 3 && ks[2] == 1) { 1 } else { 0 }\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "1",
+        "run --backend wasm preserves observed int map key order after remove and reinsert",
     );
 }
 
