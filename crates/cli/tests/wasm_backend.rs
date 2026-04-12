@@ -2946,6 +2946,32 @@ fn main() -> Int {
 }
 
 #[test]
+fn run_backend_wasm_preserves_mutable_map_get_unwrap_or_paths() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r#"from collections import MutableMap
+
+fn main() -> Int {
+  let values: MutableMap<Int, Int> = MutableMap.with_capacity(64)
+  for (i in 0 ..< 32) {
+    let _ = values.insert(i * 3, i + 10)
+  }
+  values.get(9).unwrap_or(-1) + values.get(10).unwrap_or(100)
+}"#,
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "113",
+        "run --backend wasm preserves mutable_map.get(...).unwrap_or(...)",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_string_loaded_from_mutable_list() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");

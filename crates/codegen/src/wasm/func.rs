@@ -442,6 +442,8 @@ impl<'a> FuncCodegen<'a> {
                         ..
                     } if name == "list_get"
                         || name == "mutable_list_get"
+                        || name == "map_get"
+                        || name == "mutable_map_get"
                         || name == "mutable_list_pop"
                 )
             })
@@ -23906,6 +23908,60 @@ impl<'a> FuncCodegen<'a> {
                         .mutable_list_pop_i64_fn_index
                         .expect("mutable_list_pop helper not emitted"),
                 ));
+            }
+            "map_get" | "mutable_map_get" => {
+                let (key_ty, value_ty) = self.map_key_value_tys(args[0]).ok_or_else(|| {
+                    CodegenError::UnsupportedInstruction(format!(
+                        "fused option_unwrap_or over non-map map_get producer in Wasm: {:?}",
+                        self.value_ty(args[0])
+                    ))
+                })?;
+                if value_ty != result_ty {
+                    return Ok(false);
+                }
+
+                let map_local = self.scratch_i32_12;
+                let key_local = self.map_key_local(key_ty);
+                let value_local = self.map_value_local(value_ty);
+
+                self.emit_get(func, args[0]);
+                func.instruction(&Instruction::LocalSet(map_local));
+                self.emit_get(func, args[1]);
+                func.instruction(&Instruction::LocalSet(key_local));
+
+                if self.is_core_mutable_map_value(args[0]) {
+                    self.emit_mutable_map_find_entry_from_local(
+                        func,
+                        map_local,
+                        key_local,
+                        key_ty,
+                        self.scratch_i32_7,
+                        self.scratch_i32_5,
+                        self.scratch_i32_4,
+                    )?;
+                } else {
+                    self.emit_map_find_entry_from_local(
+                        func,
+                        map_local,
+                        key_local,
+                        key_ty,
+                        self.scratch_i32_7,
+                        self.scratch_i32_5,
+                        self.scratch_i32_4,
+                    )?;
+                }
+
+                func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+                func.instruction(&Instruction::If(BlockType::Empty));
+                func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+                self.emit_typed_load(func, value_ty, self.map_entry_value_offset());
+                func.instruction(&Instruction::LocalSet(value_local));
+                func.instruction(&Instruction::Else);
+                self.emit_get(func, fallback);
+                func.instruction(&Instruction::LocalSet(value_local));
+                func.instruction(&Instruction::End);
+                func.instruction(&Instruction::LocalGet(value_local));
+                return Ok(true);
             }
             _ => return Ok(false),
         }
