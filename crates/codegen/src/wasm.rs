@@ -87,6 +87,7 @@ pub struct ModuleCtx<'a> {
     pub string_to_upper_fn_index: Option<u32>,
     pub string_to_lower_fn_index: Option<u32>,
     pub string_md5_fn_index: Option<u32>,
+    pub string_md5_concat_int_fn_index: Option<u32>,
     pub string_md5_char_code_fn_index: Option<u32>,
     pub string_md5_starts_with_fn_index: Option<u32>,
     pub parse_int_fn_index: Option<u32>,
@@ -396,6 +397,13 @@ pub fn compile_module(
     } else {
         None
     };
+    let string_md5_concat_int_fn_index = if needs_string_md5 {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
     let string_md5_materialize_fn_index = if needs_string_md5 {
         let idx = next_fn_index;
         next_fn_index += 1;
@@ -577,7 +585,13 @@ pub fn compile_module(
         .ty()
         .function([ValType::I32, ValType::I64], [ValType::I32, ValType::I64]);
     // Type 8: mutable list pop helper(list ptr) -> found flag, value bits
-    types.ty().function([ValType::I32], [ValType::I32, ValType::I64]);
+    types
+        .ty()
+        .function([ValType::I32], [ValType::I32, ValType::I64]);
+    // Type 9: md5 concat int helper(string ptr, value) -> string ptr
+    types
+        .ty()
+        .function([ValType::I32, ValType::I64], [ValType::I32]);
 
     // Build type index for each KIR function, deduplicated by structural
     // signature so indirect calls can reuse the same type index.
@@ -648,6 +662,7 @@ pub fn compile_module(
         string_to_upper_fn_index,
         string_to_lower_fn_index,
         string_md5_fn_index,
+        string_md5_concat_int_fn_index,
         string_md5_char_code_fn_index,
         string_md5_starts_with_fn_index,
         parse_int_fn_index,
@@ -669,6 +684,13 @@ pub fn compile_module(
     if string_md5_fn_index.is_some() {
         imports.import(HOST_MODULE, "string_md5", EntityType::Function(0));
     }
+    if string_md5_concat_int_fn_index.is_some() {
+        imports.import(
+            HOST_MODULE,
+            "string_md5_concat_int",
+            EntityType::Function(9),
+        );
+    }
     if string_md5_materialize_fn_index.is_some() {
         imports.import(
             HOST_MODULE,
@@ -680,7 +702,11 @@ pub fn compile_module(
         imports.import(HOST_MODULE, "string_md5_char_code", EntityType::Function(1));
     }
     if string_md5_starts_with_fn_index.is_some() {
-        imports.import(HOST_MODULE, "string_md5_starts_with", EntityType::Function(1));
+        imports.import(
+            HOST_MODULE,
+            "string_md5_starts_with",
+            EntityType::Function(1),
+        );
     }
     if parse_int_fn_index.is_some() {
         imports.import(HOST_MODULE, "parse_int", EntityType::Function(2));
@@ -826,10 +852,7 @@ pub fn compile_module(
         string_md5_materialize_fn_index,
     ));
     if string_trim_fn_index.is_some() {
-        code.function(&emit_trim_function(
-            alloc_fn_index,
-            string_flatten_fn_index,
-        ));
+        code.function(&emit_trim_function(alloc_fn_index, string_flatten_fn_index));
     }
     if mutable_list_push_i64_fn_index.is_some() {
         code.function(&emit_mutable_list_push_i64_function(alloc_fn_index));

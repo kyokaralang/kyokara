@@ -295,6 +295,18 @@ fn build_host_linker(
     linker
         .func_wrap(
             HOST_MODULE,
+            "string_md5_concat_int",
+            |mut caller: wasmtime::Caller<'_, StoreState>,
+             text_object_ptr: i32,
+             suffix: i64|
+             -> i32 {
+                call_string_md5_concat_int_host_helper(&mut caller, text_object_ptr, suffix)
+            },
+        )
+        .map_err(WasmRuntimeError::HostLinker)?;
+    linker
+        .func_wrap(
+            HOST_MODULE,
             "string_md5_materialize",
             |mut caller: wasmtime::Caller<'_, StoreState>,
              text_object_ptr: i32,
@@ -562,10 +574,10 @@ fn call_string_md5_host_helper(
 
 fn call_string_md5_materialize(
     caller: &mut wasmtime::Caller<'_, StoreState>,
-    text_object_ptr: i32,
+    md5_object_ptr: i32,
     dst_ptr: i32,
 ) -> i32 {
-    let digest = match compute_guest_string_object_md5_digest(caller, text_object_ptr) {
+    let digest = match read_or_compute_md5_digest(caller, md5_object_ptr) {
         Ok(digest) => digest,
         Err(status) => return status.code(),
     };
@@ -662,6 +674,37 @@ fn call_parse_int_helper(
                 return HostStatus::BadGuestMemory.code();
             }
             ParseHelperStatus::Err as i32
+        }
+    }
+}
+
+fn call_string_md5_concat_int_host_helper(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    text_object_ptr: i32,
+    suffix: i64,
+) -> i32 {
+    let mut hasher = md5::Md5::new();
+    match update_md5_from_guest_string_object(caller, text_object_ptr, &mut hasher) {
+        Ok(()) => {
+            update_md5_from_int_decimal(&mut hasher, suffix);
+            let digest: [u8; 16] = hasher.finalize().into();
+            match alloc_guest_cached_md5_string(caller, digest) {
+                Ok(ptr) => ptr,
+                Err(status) => {
+                    store_host_error(
+                        caller,
+                        format!("WASM string md5 concat int failed: {status:?}"),
+                    );
+                    0
+                }
+            }
+        }
+        Err(status) => {
+            store_host_error(
+                caller,
+                format!("WASM string md5 concat int failed: {status:?}"),
+            );
+            0
         }
     }
 }
@@ -1005,6 +1048,29 @@ fn update_md5_from_guest_string_object(
     Ok(())
 }
 
+fn update_md5_from_int_decimal(hasher: &mut md5::Md5, value: i64) {
+    let negative = value < 0;
+    let mut magnitude = value.unsigned_abs();
+    let mut buf = [0_u8; 20];
+    let mut index = buf.len();
+
+    loop {
+        index -= 1;
+        buf[index] = b'0' + (magnitude % 10) as u8;
+        magnitude /= 10;
+        if magnitude == 0 {
+            break;
+        }
+    }
+
+    if negative {
+        index -= 1;
+        buf[index] = b'-';
+    }
+
+    hasher.update(&buf[index..]);
+}
+
 fn pop_i32_stack(
     inline_stack: &mut [i32; 8],
     inline_len: &mut usize,
@@ -1156,6 +1222,15 @@ fn alloc_guest_md5_string(
     Ok(ptr)
 }
 
+fn alloc_guest_cached_md5_string(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    digest: [u8; 16],
+) -> Result<i32, HostStatus> {
+    let ptr = alloc_guest_md5_string(caller, -1)?;
+    caller.data_mut().md5_digest_cache.insert(ptr, digest);
+    Ok(ptr)
+}
+
 fn write_guest_bytes(
     caller: &mut wasmtime::Caller<'_, StoreState>,
     ptr: i32,
@@ -1225,6 +1300,17 @@ fn read_program_string(program: &mut WasmProgram, ptr: u32) -> Result<String, Wa
         return read_program_string(program, source_ptr);
     }
     if rhs_or_sentinel == STRING_MD5_SENTINEL {
+        if let Some(digest) = program
+            .store
+            .data()
+            .md5_digest_cache
+            .get(&(ptr as i32))
+            .copied()
+        {
+            let bytes = md5_hex_bytes(digest);
+            return String::from_utf8(bytes.to_vec())
+                .map_err(|err| WasmRuntimeError::GuestMemory(err.to_string()));
+        }
         let text = read_program_string(program, source_ptr)?;
         return Ok(format!("{:x}", md5::Md5::digest(text.as_bytes())));
     }

@@ -226,6 +226,59 @@ fn run_backend_wasm_preserves_repeated_starts_with_on_concat_md5_special_strings
 }
 
 #[test]
+fn run_backend_wasm_preserves_concat_int_md5_indexing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r#"fn main() -> String {
+  let hash = "abc".concat(3231929.to_string()).md5()
+  hash[0].to_string().concat(hash[1].to_string()).concat(hash[5].to_string()).concat(hash[6].to_string())
+}"#,
+    )
+    .expect("write source");
+
+    let native = run_cli(dir.path(), &["run", "main.ky"]);
+    assert_success(&native, "run native with concat-int md5 indexing");
+    let expected = String::from_utf8_lossy(&native.stdout).trim().to_string();
+
+    let wasm = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &wasm,
+        &expected,
+        "run --backend wasm preserves concat-int md5 indexing",
+    );
+}
+
+#[test]
+fn run_backend_wasm_preserves_concat_int_md5_materialization_paths() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r#"fn main() -> String {
+  let hash = "abc".concat(3231929.to_string()).md5()
+  hash.substring(0, 3).concat(":").concat(hash.chars().to_list().len().to_string()).concat(":").concat(if (hash.contains("aaa")) { "t" } else { "f" })
+}"#,
+    )
+    .expect("write source");
+
+    let native = run_cli(dir.path(), &["run", "main.ky"]);
+    assert_success(
+        &native,
+        "run native with concat-int md5 materialization paths",
+    );
+    let expected = String::from_utf8_lossy(&native.stdout).trim().to_string();
+
+    let wasm = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &wasm,
+        &expected,
+        "run --backend wasm preserves concat-int md5 materialization paths",
+    );
+}
+
+#[test]
 fn run_backend_wasm_supports_indexing_md5_special_string() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");

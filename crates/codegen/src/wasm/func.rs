@@ -34,6 +34,8 @@ pub struct FuncCodegen<'a> {
     local_map: FxHashMap<ValueId, u32>,
     /// Single-use option producers that are fused directly into `unwrap_or`.
     fused_option_unwrap_or_producers: FxHashSet<ValueId>,
+    /// Single-use concat/int-to-string producers that are fused directly into `md5`.
+    fused_string_md5_concat_int_producers: FxHashSet<ValueId>,
     /// Dedicated cache locals for repeated `string.chars().to_list()` call sites.
     string_chars_to_list_cache_locals: FxHashMap<ValueId, (u32, u32)>,
     /// Types of non-param locals (for WASM local declarations).
@@ -190,11 +192,14 @@ impl<'a> FuncCodegen<'a> {
     pub fn new(kir_func: &'a KirFunction, ctx: &'a ModuleCtx<'a>) -> Self {
         let fused_option_unwrap_or_producers =
             Self::collect_fused_option_unwrap_or_producers(kir_func);
+        let fused_string_md5_concat_int_producers =
+            Self::collect_fused_string_md5_concat_int_producers(kir_func);
         Self {
             kir_func,
             ctx,
             local_map: FxHashMap::default(),
             fused_option_unwrap_or_producers,
+            fused_string_md5_concat_int_producers,
             string_chars_to_list_cache_locals: FxHashMap::default(),
             local_types: Vec::new(),
             next_local: kir_func.params.len() as u32,
@@ -448,6 +453,174 @@ impl<'a> FuncCodegen<'a> {
                 )
             })
             .collect()
+    }
+
+    fn collect_fused_string_md5_concat_int_producers(kir_func: &KirFunction) -> FxHashSet<ValueId> {
+        let mut use_counts = FxHashMap::<ValueId, usize>::default();
+        let mut control_flow_uses = FxHashSet::default();
+        let mut md5_calls = Vec::new();
+
+        let mut count_use = |value: ValueId| {
+            *use_counts.entry(value).or_insert(0) += 1;
+        };
+
+        for (vid, value) in kir_func.values.iter() {
+            match &value.inst {
+                Inst::Binary { lhs, rhs, .. } => {
+                    count_use(*lhs);
+                    count_use(*rhs);
+                }
+                Inst::Unary { operand, .. } => {
+                    count_use(*operand);
+                }
+                Inst::RecordCreate { fields } => {
+                    for (_, value) in fields {
+                        count_use(*value);
+                    }
+                }
+                Inst::FieldGet { base, .. } => {
+                    count_use(*base);
+                }
+                Inst::RecordUpdate { base, updates } => {
+                    count_use(*base);
+                    for (_, value) in updates {
+                        count_use(*value);
+                    }
+                }
+                Inst::AdtConstruct { fields, .. } => {
+                    for value in fields {
+                        count_use(*value);
+                    }
+                }
+                Inst::Call { target, args } => {
+                    if let CallTarget::Indirect(callee) = target {
+                        count_use(*callee);
+                    }
+                    for arg in args {
+                        count_use(*arg);
+                    }
+                    if matches!(target, CallTarget::Intrinsic(name) if name == "string_md5")
+                        && let Some(input) = args.first()
+                    {
+                        md5_calls.push((vid, *input));
+                    }
+                }
+                Inst::Assert { condition, .. } => {
+                    count_use(*condition);
+                }
+                Inst::AdtFieldGet { base, .. } => {
+                    count_use(*base);
+                }
+                Inst::ClosureCreate { captures, .. } => {
+                    for capture in captures {
+                        count_use(*capture);
+                    }
+                }
+                Inst::Const(_)
+                | Inst::Hole { .. }
+                | Inst::BlockParam { .. }
+                | Inst::FnParam { .. }
+                | Inst::FnRef { .. } => {}
+            }
+        }
+
+        for (_, block) in kir_func.blocks.iter() {
+            if let Some(term) = &block.terminator {
+                match term {
+                    Terminator::Return(value) => {
+                        count_use(*value);
+                        control_flow_uses.insert(*value);
+                    }
+                    Terminator::Jump(target) => {
+                        for arg in &target.args {
+                            count_use(*arg);
+                            control_flow_uses.insert(*arg);
+                        }
+                    }
+                    Terminator::Branch {
+                        condition,
+                        then_target,
+                        else_target,
+                    } => {
+                        count_use(*condition);
+                        for arg in &then_target.args {
+                            count_use(*arg);
+                            control_flow_uses.insert(*arg);
+                        }
+                        for arg in &else_target.args {
+                            count_use(*arg);
+                            control_flow_uses.insert(*arg);
+                        }
+                    }
+                    Terminator::Switch {
+                        scrutinee,
+                        cases,
+                        default,
+                    } => {
+                        count_use(*scrutinee);
+                        for case in cases {
+                            for arg in &case.target.args {
+                                count_use(*arg);
+                                control_flow_uses.insert(*arg);
+                            }
+                        }
+                        if let Some(target) = default {
+                            for arg in &target.args {
+                                count_use(*arg);
+                                control_flow_uses.insert(*arg);
+                            }
+                        }
+                    }
+                    Terminator::Unreachable => {}
+                }
+            }
+        }
+
+        let mut fused = FxHashSet::default();
+        for (md5_value, concat) in md5_calls {
+            if control_flow_uses.contains(&md5_value) {
+                continue;
+            }
+            if use_counts.get(&concat) != Some(&1) {
+                continue;
+            }
+            let Inst::Call {
+                target: CallTarget::Intrinsic(name),
+                args,
+            } = &kir_func.values[concat].inst
+            else {
+                continue;
+            };
+            if name != "string_concat" || args.len() != 2 {
+                continue;
+            }
+            if matches!(
+                kir_func.values[args[0]].inst,
+                Inst::FnParam { .. } | Inst::BlockParam { .. }
+            ) {
+                continue;
+            }
+            let rhs = args[1];
+            if use_counts.get(&rhs) != Some(&1) {
+                continue;
+            }
+            let Inst::Call {
+                target: CallTarget::Intrinsic(rhs_name),
+                args: rhs_args,
+            } = &kir_func.values[rhs].inst
+            else {
+                continue;
+            };
+            if rhs_name != "int_to_string" || rhs_args.len() != 1 {
+                continue;
+            }
+            if !matches!(kir_func.values[rhs_args[0]].ty, Ty::Int) {
+                continue;
+            }
+            fused.insert(concat);
+            fused.insert(rhs);
+        }
+        fused
     }
 
     /// Allocate locals for all ValueIds and emit the function body.
@@ -1024,6 +1197,40 @@ impl<'a> FuncCodegen<'a> {
 
     fn is_fused_option_unwrap_or_producer(&self, vid: ValueId) -> bool {
         self.fused_option_unwrap_or_producers.contains(&vid)
+    }
+
+    fn is_fused_string_md5_concat_int_producer(&self, vid: ValueId) -> bool {
+        self.fused_string_md5_concat_int_producers.contains(&vid)
+    }
+
+    fn string_md5_concat_int_input(&self, vid: ValueId) -> Option<(ValueId, ValueId)> {
+        let Inst::Call {
+            target: CallTarget::Intrinsic(name),
+            args,
+        } = &self.kir_func.values[vid].inst
+        else {
+            return None;
+        };
+        if name != "string_concat" || args.len() != 2 {
+            return None;
+        }
+
+        let rhs = args[1];
+        let Inst::Call {
+            target: CallTarget::Intrinsic(rhs_name),
+            args: rhs_args,
+        } = &self.kir_func.values[rhs].inst
+        else {
+            return None;
+        };
+        if rhs_name != "int_to_string" || rhs_args.len() != 1 {
+            return None;
+        }
+        if !matches!(self.value_ty(rhs_args[0]), Ty::Int) {
+            return None;
+        }
+
+        Some((args[0], rhs_args[0]))
     }
 
     fn emit_restore_value_from_i64_bits(
@@ -2714,6 +2921,9 @@ impl<'a> FuncCodegen<'a> {
         let local_idx = self.local_for(vid);
 
         if self.is_fused_option_unwrap_or_producer(vid) {
+            return Ok(());
+        }
+        if self.is_fused_string_md5_concat_int_producer(vid) {
             return Ok(());
         }
 
@@ -5616,6 +5826,16 @@ impl<'a> FuncCodegen<'a> {
         value: ValueId,
         helper_fn_index: u32,
     ) {
+        if self.is_fused_string_md5_concat_int_producer(value)
+            && let Some((text, suffix)) = self.string_md5_concat_int_input(value)
+            && let Some(concat_int_helper_fn_index) = self.ctx.string_md5_concat_int_fn_index
+        {
+            self.emit_get(func, text);
+            self.emit_get(func, suffix);
+            func.instruction(&Instruction::Call(concat_int_helper_fn_index));
+            return;
+        }
+
         self.emit_get(func, value);
         func.instruction(&Instruction::Call(helper_fn_index));
     }

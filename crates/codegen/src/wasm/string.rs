@@ -253,7 +253,13 @@ fn emit_trim_whitespace_check_from_absolute_index(
     width_local: u32,
     dst_local: u32,
 ) {
-    emit_utf8_codepoint_from_absolute_index(func, string_local, byte_index_local, width_local, dst_local);
+    emit_utf8_codepoint_from_absolute_index(
+        func,
+        string_local,
+        byte_index_local,
+        width_local,
+        dst_local,
+    );
 
     func.instruction(&Instruction::LocalGet(dst_local));
     func.instruction(&Instruction::I32Const(0x09));
@@ -397,11 +403,6 @@ pub fn emit_flatten_into_function(
     func.instruction(&Instruction::I32Eq);
     func.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
     func.instruction(&Instruction::LocalGet(0));
-    func.instruction(&Instruction::I32Load(MemArg {
-        offset: 8,
-        align: 2,
-        memory_index: 0,
-    }));
     func.instruction(&Instruction::LocalGet(1));
     func.instruction(&Instruction::Call(materialize_fn_index));
     func.instruction(&Instruction::I32Const(0));
@@ -526,11 +527,6 @@ pub fn emit_flatten_function(
     func.instruction(&Instruction::I32Eq);
     func.instruction(&Instruction::If(BlockType::Empty));
     func.instruction(&Instruction::LocalGet(0));
-    func.instruction(&Instruction::I32Load(MemArg {
-        offset: 8,
-        align: 2,
-        memory_index: 0,
-    }));
     func.instruction(&Instruction::LocalGet(4));
     func.instruction(&Instruction::I32Const(8));
     func.instruction(&Instruction::I32Add);
