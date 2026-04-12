@@ -462,7 +462,6 @@ impl<'a> FuncCodegen<'a> {
 
     fn collect_fused_string_md5_concat_int_producers(kir_func: &KirFunction) -> FxHashSet<ValueId> {
         let mut use_counts = FxHashMap::<ValueId, usize>::default();
-        let mut control_flow_uses = FxHashSet::default();
         let mut md5_calls = Vec::new();
 
         let mut count_use = |value: ValueId| {
@@ -532,14 +531,10 @@ impl<'a> FuncCodegen<'a> {
         for (_, block) in kir_func.blocks.iter() {
             if let Some(term) = &block.terminator {
                 match term {
-                    Terminator::Return(value) => {
-                        count_use(*value);
-                        control_flow_uses.insert(*value);
-                    }
+                    Terminator::Return(value) => count_use(*value),
                     Terminator::Jump(target) => {
                         for arg in &target.args {
                             count_use(*arg);
-                            control_flow_uses.insert(*arg);
                         }
                     }
                     Terminator::Branch {
@@ -550,11 +545,9 @@ impl<'a> FuncCodegen<'a> {
                         count_use(*condition);
                         for arg in &then_target.args {
                             count_use(*arg);
-                            control_flow_uses.insert(*arg);
                         }
                         for arg in &else_target.args {
                             count_use(*arg);
-                            control_flow_uses.insert(*arg);
                         }
                     }
                     Terminator::Switch {
@@ -566,13 +559,11 @@ impl<'a> FuncCodegen<'a> {
                         for case in cases {
                             for arg in &case.target.args {
                                 count_use(*arg);
-                                control_flow_uses.insert(*arg);
                             }
                         }
                         if let Some(target) = default {
                             for arg in &target.args {
                                 count_use(*arg);
-                                control_flow_uses.insert(*arg);
                             }
                         }
                     }
@@ -582,10 +573,7 @@ impl<'a> FuncCodegen<'a> {
         }
 
         let mut fused = FxHashSet::default();
-        for (md5_value, concat) in md5_calls {
-            if control_flow_uses.contains(&md5_value) {
-                continue;
-            }
+        for (_md5_value, concat) in md5_calls {
             if use_counts.get(&concat) != Some(&1) {
                 continue;
             }
@@ -597,12 +585,6 @@ impl<'a> FuncCodegen<'a> {
                 continue;
             };
             if name != "string_concat" || args.len() != 2 {
-                continue;
-            }
-            if matches!(
-                kir_func.values[args[0]].inst,
-                Inst::FnParam { .. } | Inst::BlockParam { .. }
-            ) {
                 continue;
             }
             let rhs = args[1];

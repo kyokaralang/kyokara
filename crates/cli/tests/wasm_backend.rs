@@ -251,6 +251,47 @@ fn run_backend_wasm_preserves_repeated_starts_with_on_concat_md5_special_strings
 }
 
 #[test]
+fn run_backend_wasm_preserves_param_backed_concat_int_md5_paths() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r#"fn digest(salt: String, index: Int) -> String {
+  salt.concat(index.to_string()).md5()
+}
+
+fn main() -> String {
+  let salt = "abc"
+  var sum = 0
+  var i = 0
+  while (i < 2000) {
+    let hash = digest(salt, i)
+    if (hash.starts_with("000")) {
+      sum = sum + hash[3].to_decimal_digit().unwrap_or(0)
+    }
+    i = i + 1
+  }
+  sum.to_string()
+}"#,
+    )
+    .expect("write source");
+
+    let native = run_cli(dir.path(), &["run", "main.ky"]);
+    assert_success(
+        &native,
+        "run native with param-backed concat/int md5 special strings",
+    );
+    let expected = String::from_utf8_lossy(&native.stdout).trim().to_string();
+
+    let wasm = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &wasm,
+        &expected,
+        "run --backend wasm preserves param-backed concat/int md5 special strings",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_concat_int_md5_indexing() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
