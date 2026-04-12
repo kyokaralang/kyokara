@@ -6,7 +6,6 @@ use kyokara_runtime::service::{
 };
 use md5::Digest;
 use once_cell::sync::OnceCell;
-use rustc_hash::FxHashMap;
 use thiserror::Error;
 
 const HOST_MODULE: &str = "kyokara_host";
@@ -14,6 +13,10 @@ const MAX_WASM_STACK_BYTES: usize = 64 * 1024 * 1024;
 const STRING_SPECIAL_TAG_MASK: i32 = i32::MIN;
 const STRING_FORWARD_SENTINEL: i32 = -1;
 const STRING_MD5_SENTINEL: i32 = -2;
+const MD5_INLINE_DIGEST_SOURCE_PTR: i32 = -1;
+const MD5_DIGEST_OFFSET: i32 = 16;
+const MD5_DIGEST_SIZE: i32 = 16;
+const MD5_SPECIAL_STRING_SIZE: i32 = 32;
 
 static WASM_ENGINE: OnceCell<wasmtime::Engine> = OnceCell::new();
 static HOST_LINKER: OnceCell<wasmtime::Linker<StoreState>> = OnceCell::new();
@@ -76,7 +79,6 @@ pub enum WasmRuntimeError {
 struct StoreState {
     runtime: Option<Box<dyn RuntimeService>>,
     last_host_error: Option<String>,
-    md5_digest_cache: FxHashMap<i32, [u8; 16]>,
     last_md5_digest: Option<(i32, [u8; 16])>,
     guest_memory: Option<wasmtime::Memory>,
     guest_alloc: Option<wasmtime::TypedFunc<i32, i32>>,
@@ -98,7 +100,6 @@ impl WasmProgram {
             StoreState {
                 runtime: None,
                 last_host_error: None,
-                md5_digest_cache: FxHashMap::default(),
                 last_md5_digest: None,
                 guest_memory: None,
                 guest_alloc: None,
@@ -123,7 +124,6 @@ impl WasmProgram {
             StoreState {
                 runtime: Some(runtime),
                 last_host_error: None,
-                md5_digest_cache: FxHashMap::default(),
                 last_md5_digest: None,
                 guest_memory: None,
                 guest_alloc: None,
@@ -911,11 +911,20 @@ fn lookup_cached_md5_digest(
     {
         return Some(digest);
     }
-    let digest = caller
-        .data()
-        .md5_digest_cache
-        .get(&md5_object_ptr)
-        .copied()?;
+    let header = read_guest_header(caller, md5_object_ptr).ok()?;
+    let raw_len = i32::from_le_bytes(header[0..4].try_into().ok()?);
+    if raw_len >= 0 {
+        return None;
+    }
+    let source_ptr = i32::from_le_bytes(header[8..12].try_into().ok()?);
+    let rhs_or_sentinel = i32::from_le_bytes(header[12..16].try_into().ok()?);
+    if source_ptr != MD5_INLINE_DIGEST_SOURCE_PTR || rhs_or_sentinel != STRING_MD5_SENTINEL {
+        return None;
+    }
+    let digest_bytes = read_guest_slice(caller, md5_object_ptr + MD5_DIGEST_OFFSET, MD5_DIGEST_SIZE)
+        .ok()?;
+    let mut digest = [0_u8; 16];
+    digest.copy_from_slice(digest_bytes);
     caller.data_mut().last_md5_digest = Some((md5_object_ptr, digest));
     Some(digest)
 }
@@ -925,9 +934,9 @@ fn store_cached_md5_digest(
     md5_object_ptr: i32,
     digest: [u8; 16],
 ) {
-    let data = caller.data_mut();
-    data.last_md5_digest = Some((md5_object_ptr, digest));
-    data.md5_digest_cache.insert(md5_object_ptr, digest);
+    caller.data_mut().last_md5_digest = Some((md5_object_ptr, digest));
+    let _ = write_guest_i32(caller, md5_object_ptr + 8, MD5_INLINE_DIGEST_SOURCE_PTR);
+    let _ = write_guest_bytes(caller, md5_object_ptr + MD5_DIGEST_OFFSET, &digest);
 }
 
 fn read_or_compute_md5_digest(
@@ -967,7 +976,17 @@ fn read_or_compute_md5_digest(
                 .try_into()
                 .map_err(|_| HostStatus::BadGuestMemory)?,
         );
-        if source_ptr < 0 || rhs_or_sentinel != STRING_MD5_SENTINEL {
+        if rhs_or_sentinel != STRING_MD5_SENTINEL {
+            return Err(HostStatus::BadGuestMemory);
+        }
+        if source_ptr == MD5_INLINE_DIGEST_SOURCE_PTR {
+            let digest = lookup_cached_md5_digest(caller, current_ptr)
+                .ok_or(HostStatus::BadGuestMemory)?;
+            let digest = apply_md5_hex_rounds(digest, remaining_rounds);
+            store_cached_md5_digest(caller, md5_object_ptr, digest);
+            return Ok(digest);
+        }
+        if source_ptr < 0 {
             return Err(HostStatus::BadGuestMemory);
         }
 
@@ -1236,13 +1255,14 @@ fn alloc_guest_md5_string(
         .clone()
         .ok_or(HostStatus::BadGuestMemory)?;
     let ptr = alloc
-        .call(&mut *caller, 16)
+        .call(&mut *caller, MD5_SPECIAL_STRING_SIZE)
         .map_err(|_| HostStatus::BadGuestMemory)?;
 
     write_guest_i32(caller, ptr, STRING_SPECIAL_TAG_MASK | 32)?;
     write_guest_i32(caller, ptr + 4, 32)?;
     write_guest_i32(caller, ptr + 8, source_ptr)?;
     write_guest_i32(caller, ptr + 12, STRING_MD5_SENTINEL)?;
+    write_guest_bytes(caller, ptr + MD5_DIGEST_OFFSET, &[0_u8; 16])?;
     Ok(ptr)
 }
 
@@ -1250,7 +1270,7 @@ fn alloc_guest_cached_md5_string(
     caller: &mut wasmtime::Caller<'_, StoreState>,
     digest: [u8; 16],
 ) -> Result<i32, HostStatus> {
-    let ptr = alloc_guest_md5_string(caller, -1)?;
+    let ptr = alloc_guest_md5_string(caller, MD5_INLINE_DIGEST_SOURCE_PTR)?;
     store_cached_md5_digest(caller, ptr, digest);
     Ok(ptr)
 }
@@ -1312,7 +1332,7 @@ fn read_program_string(program: &mut WasmProgram, ptr: u32) -> Result<String, Wa
             .map_err(|err| WasmRuntimeError::GuestMemory(err.to_string()));
     }
 
-    let source_ptr = u32::from_le_bytes(header[8..12].try_into().map_err(|_| {
+    let source_ptr = i32::from_le_bytes(header[8..12].try_into().map_err(|_| {
         WasmRuntimeError::GuestMemory(
             "guest special string header missing source pointer".to_string(),
         )
@@ -1321,21 +1341,31 @@ fn read_program_string(program: &mut WasmProgram, ptr: u32) -> Result<String, Wa
         WasmRuntimeError::GuestMemory("guest special string header missing rhs pointer".to_string())
     })?);
     if rhs_or_sentinel == STRING_FORWARD_SENTINEL {
-        return read_program_string(program, source_ptr);
+        if source_ptr < 0 {
+            return Err(WasmRuntimeError::GuestMemory(
+                "guest forward string uses invalid source pointer".to_string(),
+            ));
+        }
+        return read_program_string(program, source_ptr as u32);
     }
     if rhs_or_sentinel == STRING_MD5_SENTINEL {
-        if let Some(digest) = program
-            .store
-            .data()
-            .md5_digest_cache
-            .get(&(ptr as i32))
-            .copied()
-        {
+        if source_ptr == MD5_INLINE_DIGEST_SOURCE_PTR {
+            let digest_bytes = program.read_memory(ptr + MD5_DIGEST_OFFSET as u32, 16)?;
+            let digest: [u8; 16] = digest_bytes.try_into().map_err(|_| {
+                WasmRuntimeError::GuestMemory(
+                    "guest md5 string missing inline digest bytes".to_string(),
+                )
+            })?;
             let bytes = md5_hex_bytes(digest);
             return String::from_utf8(bytes.to_vec())
                 .map_err(|err| WasmRuntimeError::GuestMemory(err.to_string()));
         }
-        let text = read_program_string(program, source_ptr)?;
+        if source_ptr < 0 {
+            return Err(WasmRuntimeError::GuestMemory(
+                "guest md5 string uses invalid source pointer".to_string(),
+            ));
+        }
+        let text = read_program_string(program, source_ptr as u32)?;
         return Ok(format!("{:x}", md5::Md5::digest(text.as_bytes())));
     }
     if rhs_or_sentinel < 0 {
@@ -1344,7 +1374,12 @@ fn read_program_string(program: &mut WasmProgram, ptr: u32) -> Result<String, Wa
         ));
     }
 
-    let mut text = read_program_string(program, source_ptr)?;
+    if source_ptr < 0 {
+        return Err(WasmRuntimeError::GuestMemory(
+            "guest concat string uses invalid source pointer".to_string(),
+        ));
+    }
+    let mut text = read_program_string(program, source_ptr as u32)?;
     text.push_str(&read_program_string(program, rhs_or_sentinel as u32)?);
     Ok(text)
 }
