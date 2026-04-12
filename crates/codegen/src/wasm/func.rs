@@ -36,6 +36,8 @@ pub struct FuncCodegen<'a> {
     fused_option_unwrap_or_producers: FxHashSet<ValueId>,
     /// Single-use concat/int-to-string producers that are fused directly into `md5`.
     fused_string_md5_concat_int_producers: FxHashSet<ValueId>,
+    /// Single-use `get(...).unwrap_or(...) +/- delta` producers fused into mutable map insert.
+    fused_mutable_map_int_upsert_producers: FxHashSet<ValueId>,
     /// Dedicated cache locals for repeated `string.chars().to_list()` call sites.
     string_chars_to_list_cache_locals: FxHashMap<ValueId, (u32, u32)>,
     /// Types of non-param locals (for WASM local declarations).
@@ -194,12 +196,15 @@ impl<'a> FuncCodegen<'a> {
             Self::collect_fused_option_unwrap_or_producers(kir_func);
         let fused_string_md5_concat_int_producers =
             Self::collect_fused_string_md5_concat_int_producers(kir_func);
+        let fused_mutable_map_int_upsert_producers =
+            Self::collect_fused_mutable_map_int_upsert_producers(kir_func);
         Self {
             kir_func,
             ctx,
             local_map: FxHashMap::default(),
             fused_option_unwrap_or_producers,
             fused_string_md5_concat_int_producers,
+            fused_mutable_map_int_upsert_producers,
             string_chars_to_list_cache_locals: FxHashMap::default(),
             local_types: Vec::new(),
             next_local: kir_func.params.len() as u32,
@@ -1201,6 +1206,77 @@ impl<'a> FuncCodegen<'a> {
 
     fn is_fused_string_md5_concat_int_producer(&self, vid: ValueId) -> bool {
         self.fused_string_md5_concat_int_producers.contains(&vid)
+    }
+
+    fn is_fused_mutable_map_int_upsert_producer(&self, vid: ValueId) -> bool {
+        self.fused_mutable_map_int_upsert_producers.contains(&vid)
+    }
+
+    fn mutable_map_int_upsert_unwrap_fallback(
+        &self,
+        map: ValueId,
+        key: ValueId,
+        unwrap_or_value: ValueId,
+    ) -> Option<ValueId> {
+        let Inst::Call {
+            target: CallTarget::Intrinsic(name),
+            args,
+        } = &self.kir_func.values[unwrap_or_value].inst
+        else {
+            return None;
+        };
+        if name != "option_unwrap_or" {
+            return None;
+        }
+        let [option_value, fallback] = args.as_slice() else {
+            return None;
+        };
+        let Inst::Call {
+            target: CallTarget::Intrinsic(option_name),
+            args: option_args,
+        } = &self.kir_func.values[*option_value].inst
+        else {
+            return None;
+        };
+        if !matches!(option_name.as_str(), "map_get" | "mutable_map_get") {
+            return None;
+        }
+        let [option_map, option_key] = option_args.as_slice() else {
+            return None;
+        };
+        if *option_map == map && *option_key == key {
+            Some(*fallback)
+        } else {
+            None
+        }
+    }
+
+    fn mutable_map_int_upsert_pattern(
+        &self,
+        map: ValueId,
+        key: ValueId,
+        inserted_value: ValueId,
+    ) -> Option<(ValueId, ValueId, BinaryOp)> {
+        if !self.is_fused_mutable_map_int_upsert_producer(inserted_value) {
+            return None;
+        }
+        let Inst::Binary { op, lhs, rhs } = &self.kir_func.values[inserted_value].inst else {
+            return None;
+        };
+
+        match op {
+            BinaryOp::Add => self
+                .mutable_map_int_upsert_unwrap_fallback(map, key, *lhs)
+                .map(|fallback| (fallback, *rhs, *op))
+                .or_else(|| {
+                    self.mutable_map_int_upsert_unwrap_fallback(map, key, *rhs)
+                        .map(|fallback| (fallback, *lhs, *op))
+                }),
+            BinaryOp::Sub => self
+                .mutable_map_int_upsert_unwrap_fallback(map, key, *lhs)
+                .map(|fallback| (fallback, *rhs, *op)),
+            _ => None,
+        }
     }
 
     fn string_md5_concat_int_input(&self, vid: ValueId) -> Option<(ValueId, ValueId)> {
@@ -2587,6 +2663,194 @@ impl<'a> FuncCodegen<'a> {
             .collect()
     }
 
+    fn collect_fused_mutable_map_int_upsert_producers(
+        kir_func: &KirFunction,
+    ) -> FxHashSet<ValueId> {
+        let mut use_counts = FxHashMap::<ValueId, usize>::default();
+
+        let mut count_use = |value: ValueId| {
+            *use_counts.entry(value).or_insert(0) += 1;
+        };
+
+        for (_, value) in kir_func.values.iter() {
+            match &value.inst {
+                Inst::Binary { lhs, rhs, .. } => {
+                    count_use(*lhs);
+                    count_use(*rhs);
+                }
+                Inst::Unary { operand, .. } => {
+                    count_use(*operand);
+                }
+                Inst::RecordCreate { fields } => {
+                    for (_, value) in fields {
+                        count_use(*value);
+                    }
+                }
+                Inst::FieldGet { base, .. } => {
+                    count_use(*base);
+                }
+                Inst::RecordUpdate { base, updates } => {
+                    count_use(*base);
+                    for (_, value) in updates {
+                        count_use(*value);
+                    }
+                }
+                Inst::AdtConstruct { fields, .. } => {
+                    for value in fields {
+                        count_use(*value);
+                    }
+                }
+                Inst::Call { target, args } => {
+                    if let CallTarget::Indirect(callee) = target {
+                        count_use(*callee);
+                    }
+                    for arg in args {
+                        count_use(*arg);
+                    }
+                }
+                Inst::Assert { condition, .. } => {
+                    count_use(*condition);
+                }
+                Inst::AdtFieldGet { base, .. } => {
+                    count_use(*base);
+                }
+                Inst::ClosureCreate { captures, .. } => {
+                    for capture in captures {
+                        count_use(*capture);
+                    }
+                }
+                Inst::Const(_)
+                | Inst::Hole { .. }
+                | Inst::BlockParam { .. }
+                | Inst::FnParam { .. }
+                | Inst::FnRef { .. } => {}
+            }
+        }
+
+        for (_, block) in kir_func.blocks.iter() {
+            if let Some(term) = &block.terminator {
+                match term {
+                    Terminator::Return(value) => count_use(*value),
+                    Terminator::Jump(target) => {
+                        for arg in &target.args {
+                            count_use(*arg);
+                        }
+                    }
+                    Terminator::Branch {
+                        condition,
+                        then_target,
+                        else_target,
+                    } => {
+                        count_use(*condition);
+                        for arg in &then_target.args {
+                            count_use(*arg);
+                        }
+                        for arg in &else_target.args {
+                            count_use(*arg);
+                        }
+                    }
+                    Terminator::Switch {
+                        scrutinee,
+                        cases,
+                        default,
+                    } => {
+                        count_use(*scrutinee);
+                        for case in cases {
+                            for arg in &case.target.args {
+                                count_use(*arg);
+                            }
+                        }
+                        if let Some(target) = default {
+                            for arg in &target.args {
+                                count_use(*arg);
+                            }
+                        }
+                    }
+                    Terminator::Unreachable => {}
+                }
+            }
+        }
+
+        let mut fused = FxHashSet::default();
+
+        for (_, value) in kir_func.values.iter() {
+            let Inst::Call {
+                target: CallTarget::Intrinsic(name),
+                args,
+            } = &value.inst
+            else {
+                continue;
+            };
+            if name != "mutable_map_insert" {
+                continue;
+            }
+            let [map, key, inserted_value] = args.as_slice() else {
+                continue;
+            };
+            if use_counts.get(inserted_value) != Some(&1) {
+                continue;
+            }
+
+            let Inst::Binary { op, lhs, rhs } = &kir_func.values[*inserted_value].inst else {
+                continue;
+            };
+
+            let mut matches_upsert = |unwrap_or_value: ValueId, other: ValueId, op: BinaryOp| {
+                if use_counts.get(&unwrap_or_value) != Some(&1) {
+                    return;
+                }
+                let Inst::Call {
+                    target: CallTarget::Intrinsic(unwrap_name),
+                    args: unwrap_args,
+                } = &kir_func.values[unwrap_or_value].inst
+                else {
+                    return;
+                };
+                if unwrap_name != "option_unwrap_or" {
+                    return;
+                }
+                let [option_value, _fallback] = unwrap_args.as_slice() else {
+                    return;
+                };
+                if use_counts.get(option_value) != Some(&1) {
+                    return;
+                }
+                let Inst::Call {
+                    target: CallTarget::Intrinsic(get_name),
+                    args: get_args,
+                } = &kir_func.values[*option_value].inst
+                else {
+                    return;
+                };
+                if !matches!(get_name.as_str(), "map_get" | "mutable_map_get") {
+                    return;
+                }
+                let [get_map, get_key] = get_args.as_slice() else {
+                    return;
+                };
+                if get_map == map
+                    && get_key == key
+                    && matches!(op, BinaryOp::Add | BinaryOp::Sub)
+                    && other != unwrap_or_value
+                {
+                    fused.insert(*inserted_value);
+                    fused.insert(unwrap_or_value);
+                }
+            };
+
+            match op {
+                BinaryOp::Add => {
+                    matches_upsert(*lhs, *rhs, *op);
+                    matches_upsert(*rhs, *lhs, *op);
+                }
+                BinaryOp::Sub => matches_upsert(*lhs, *rhs, *op),
+                _ => {}
+            }
+        }
+
+        fused
+    }
+
     fn emit_switch(
         &self,
         func: &mut Function,
@@ -2926,6 +3190,9 @@ impl<'a> FuncCodegen<'a> {
         if self.is_fused_string_md5_concat_int_producer(vid) {
             return Ok(());
         }
+        if self.is_fused_mutable_map_int_upsert_producer(vid) {
+            return Ok(());
+        }
 
         match &vdef.inst {
             Inst::FnParam { .. } | Inst::BlockParam { .. } => {
@@ -3139,6 +3406,31 @@ impl<'a> FuncCodegen<'a> {
         func.instruction(&Instruction::LocalGet(self.scratch_i64));
     }
 
+    fn emit_checked_int_add_from_locals(
+        &self,
+        func: &mut Function,
+        lhs_local: u32,
+        rhs_local: u32,
+        result_local: u32,
+    ) {
+        func.instruction(&Instruction::LocalGet(lhs_local));
+        func.instruction(&Instruction::LocalGet(rhs_local));
+        func.instruction(&Instruction::I64Add);
+        func.instruction(&Instruction::LocalSet(result_local));
+
+        // Overflow iff ((lhs ^ result) & (rhs ^ result)) < 0.
+        func.instruction(&Instruction::LocalGet(lhs_local));
+        func.instruction(&Instruction::LocalGet(result_local));
+        func.instruction(&Instruction::I64Xor);
+        func.instruction(&Instruction::LocalGet(rhs_local));
+        func.instruction(&Instruction::LocalGet(result_local));
+        func.instruction(&Instruction::I64Xor);
+        func.instruction(&Instruction::I64And);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        self.emit_trap_if_true(func);
+    }
+
     fn emit_checked_int_sub(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
         self.emit_get(func, lhs);
         self.emit_get(func, rhs);
@@ -3158,6 +3450,31 @@ impl<'a> FuncCodegen<'a> {
         self.emit_trap_if_true(func);
 
         func.instruction(&Instruction::LocalGet(self.scratch_i64));
+    }
+
+    fn emit_checked_int_sub_from_locals(
+        &self,
+        func: &mut Function,
+        lhs_local: u32,
+        rhs_local: u32,
+        result_local: u32,
+    ) {
+        func.instruction(&Instruction::LocalGet(lhs_local));
+        func.instruction(&Instruction::LocalGet(rhs_local));
+        func.instruction(&Instruction::I64Sub);
+        func.instruction(&Instruction::LocalSet(result_local));
+
+        // Overflow iff ((lhs ^ rhs) & (lhs ^ result)) < 0.
+        func.instruction(&Instruction::LocalGet(lhs_local));
+        func.instruction(&Instruction::LocalGet(rhs_local));
+        func.instruction(&Instruction::I64Xor);
+        func.instruction(&Instruction::LocalGet(lhs_local));
+        func.instruction(&Instruction::LocalGet(result_local));
+        func.instruction(&Instruction::I64Xor);
+        func.instruction(&Instruction::I64And);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        self.emit_trap_if_true(func);
     }
 
     fn emit_checked_int_mul(&self, func: &mut Function, lhs: ValueId, rhs: ValueId) {
@@ -7303,8 +7620,52 @@ impl<'a> FuncCodegen<'a> {
                 self.scratch_i32_4,
             )?;
         }
-        self.emit_get(func, value);
-        func.instruction(&Instruction::LocalSet(value_local));
+        if key_ty == &Ty::Int && value_ty == &Ty::Int {
+            if let Some((fallback, delta, op)) =
+                self.mutable_map_int_upsert_pattern(map, key, value)
+            {
+                let base_local = self.scratch_i64_3;
+                let delta_local = self.scratch_i64_4;
+
+                func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
+                func.instruction(&Instruction::If(BlockType::Empty));
+                func.instruction(&Instruction::LocalGet(self.scratch_i32_4));
+                self.emit_typed_load(func, value_ty, self.map_entry_value_offset());
+                func.instruction(&Instruction::LocalSet(base_local));
+                func.instruction(&Instruction::Else);
+                self.emit_get(func, fallback);
+                func.instruction(&Instruction::LocalSet(base_local));
+                func.instruction(&Instruction::End);
+
+                self.emit_get(func, delta);
+                func.instruction(&Instruction::LocalSet(delta_local));
+                match op {
+                    BinaryOp::Add => {
+                        self.emit_checked_int_add_from_locals(
+                            func,
+                            base_local,
+                            delta_local,
+                            value_local,
+                        );
+                    }
+                    BinaryOp::Sub => {
+                        self.emit_checked_int_sub_from_locals(
+                            func,
+                            base_local,
+                            delta_local,
+                            value_local,
+                        );
+                    }
+                    _ => unreachable!("filtered by mutable_map_int_upsert_pattern"),
+                }
+            } else {
+                self.emit_get(func, value);
+                func.instruction(&Instruction::LocalSet(value_local));
+            }
+        } else {
+            self.emit_get(func, value);
+            func.instruction(&Instruction::LocalSet(value_local));
+        }
 
         func.instruction(&Instruction::LocalGet(self.scratch_i32_7));
         func.instruction(&Instruction::If(BlockType::Empty));

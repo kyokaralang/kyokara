@@ -3085,6 +3085,56 @@ fn main() -> Int {
 }
 
 #[test]
+fn run_backend_wasm_preserves_mutable_map_get_unwrap_or_upsert_paths() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r#"from collections import MutableMap
+
+fn main() -> Int {
+  let counts: MutableMap<Int, Int> = MutableMap.with_capacity(64)
+  var i = 0
+  while (i < 4000) {
+    let key = (i * 17) % 23
+    let _ = counts.insert(key, counts.get(key).unwrap_or(0) + 1)
+    i = i + 1
+  }
+
+  var j = 0
+  while (j < 1000) {
+    let key = (j * 17) % 23
+    let _ = counts.insert(key, counts.get(key).unwrap_or(0) - 1)
+    j = j + 1
+  }
+
+  var sum = 0
+  var k = 0
+  while (k < 23) {
+    sum = sum + counts.get(k).unwrap_or(-1000)
+    k = k + 1
+  }
+  sum
+}"#,
+    )
+    .expect("write source");
+
+    let native = run_cli(dir.path(), &["run", "main.ky"]);
+    assert_success(
+        &native,
+        "run native mutable_map get(...).unwrap_or(...) upsert paths",
+    );
+    let expected = String::from_utf8_lossy(&native.stdout).trim().to_string();
+
+    let wasm = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &wasm,
+        &expected,
+        "run --backend wasm preserves mutable_map get(...).unwrap_or(...) upsert paths",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_string_loaded_from_mutable_list() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
