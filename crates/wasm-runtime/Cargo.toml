@@ -8,6 +8,7 @@ license.workspace = true
 kyokara-runtime.workspace = true
 md5.workspace = true
 once_cell.workspace = true
+rustc-hash.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 wasmtime.workspace = true

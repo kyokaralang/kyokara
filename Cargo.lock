@@ -1330,6 +1330,7 @@ dependencies = [
  "kyokara-runtime",
  "md-5",
  "once_cell",
+ "rustc-hash 2.1.1",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",

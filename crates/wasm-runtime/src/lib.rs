@@ -1,13 +1,12 @@
 //! WASM execution support for Kyokara.
 
-use std::collections::HashMap;
-
 use kyokara_runtime::replay::{EffectKind, RequiredByKind};
 use kyokara_runtime::service::{
     CapabilityCheck, EffectRequest, ReplayMode, ReplayRuntime, RuntimeEffectError, RuntimeService,
 };
 use md5::Digest;
 use once_cell::sync::OnceCell;
+use rustc_hash::FxHashMap;
 use thiserror::Error;
 
 const HOST_MODULE: &str = "kyokara_host";
@@ -77,7 +76,8 @@ pub enum WasmRuntimeError {
 struct StoreState {
     runtime: Option<Box<dyn RuntimeService>>,
     last_host_error: Option<String>,
-    md5_digest_cache: HashMap<i32, [u8; 16]>,
+    md5_digest_cache: FxHashMap<i32, [u8; 16]>,
+    last_md5_digest: Option<(i32, [u8; 16])>,
     guest_memory: Option<wasmtime::Memory>,
     guest_alloc: Option<wasmtime::TypedFunc<i32, i32>>,
 }
@@ -98,7 +98,8 @@ impl WasmProgram {
             StoreState {
                 runtime: None,
                 last_host_error: None,
-                md5_digest_cache: HashMap::new(),
+                md5_digest_cache: FxHashMap::default(),
+                last_md5_digest: None,
                 guest_memory: None,
                 guest_alloc: None,
             },
@@ -122,7 +123,8 @@ impl WasmProgram {
             StoreState {
                 runtime: Some(runtime),
                 last_host_error: None,
-                md5_digest_cache: HashMap::new(),
+                md5_digest_cache: FxHashMap::default(),
+                last_md5_digest: None,
                 guest_memory: None,
                 guest_alloc: None,
             },
@@ -900,23 +902,48 @@ fn read_guest_string(
         .map_err(|_| HostStatus::InvalidUtf8)
 }
 
+fn lookup_cached_md5_digest(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    md5_object_ptr: i32,
+) -> Option<[u8; 16]> {
+    if let Some((ptr, digest)) = caller.data().last_md5_digest
+        && ptr == md5_object_ptr
+    {
+        return Some(digest);
+    }
+    let digest = caller
+        .data()
+        .md5_digest_cache
+        .get(&md5_object_ptr)
+        .copied()?;
+    caller.data_mut().last_md5_digest = Some((md5_object_ptr, digest));
+    Some(digest)
+}
+
+fn store_cached_md5_digest(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    md5_object_ptr: i32,
+    digest: [u8; 16],
+) {
+    let data = caller.data_mut();
+    data.last_md5_digest = Some((md5_object_ptr, digest));
+    data.md5_digest_cache.insert(md5_object_ptr, digest);
+}
+
 fn read_or_compute_md5_digest(
     caller: &mut wasmtime::Caller<'_, StoreState>,
     md5_object_ptr: i32,
 ) -> Result<[u8; 16], HostStatus> {
-    if let Some(digest) = caller.data().md5_digest_cache.get(&md5_object_ptr).copied() {
+    if let Some(digest) = lookup_cached_md5_digest(caller, md5_object_ptr) {
         return Ok(digest);
     }
 
     let mut remaining_rounds = 0usize;
     let mut current_ptr = md5_object_ptr;
     loop {
-        if let Some(digest) = caller.data().md5_digest_cache.get(&current_ptr).copied() {
+        if let Some(digest) = lookup_cached_md5_digest(caller, current_ptr) {
             let digest = apply_md5_hex_rounds(digest, remaining_rounds);
-            caller
-                .data_mut()
-                .md5_digest_cache
-                .insert(md5_object_ptr, digest);
+            store_cached_md5_digest(caller, md5_object_ptr, digest);
             return Ok(digest);
         }
 
@@ -954,10 +981,7 @@ fn read_or_compute_md5_digest(
 
     let digest = compute_guest_string_object_md5_digest(caller, current_ptr)?;
     let digest = apply_md5_hex_rounds(digest, remaining_rounds.saturating_sub(1));
-    caller
-        .data_mut()
-        .md5_digest_cache
-        .insert(md5_object_ptr, digest);
+    store_cached_md5_digest(caller, md5_object_ptr, digest);
     Ok(digest)
 }
 
@@ -1227,7 +1251,7 @@ fn alloc_guest_cached_md5_string(
     digest: [u8; 16],
 ) -> Result<i32, HostStatus> {
     let ptr = alloc_guest_md5_string(caller, -1)?;
-    caller.data_mut().md5_digest_cache.insert(ptr, digest);
+    store_cached_md5_digest(caller, ptr, digest);
     Ok(ptr)
 }
 
