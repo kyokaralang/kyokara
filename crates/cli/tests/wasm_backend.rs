@@ -810,6 +810,41 @@ fn run_backend_wasm_handles_mutable_map_capacity_churn() {
 }
 
 #[test]
+fn run_backend_wasm_preserves_mutable_map_int_key_collisions_across_remove_and_reinsert() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        "from collections import MutableMap\n\
+         fn main() -> Int {\n\
+           let m: MutableMap<Int, Int> = MutableMap.with_capacity(4)\n\
+           let _ = m.insert(1, 101)\n\
+           let _ = m.insert(9, 109)\n\
+           let _ = m.insert(17, 117)\n\
+           let _ = m.remove(9)\n\
+           let a = m.get(17).unwrap_or(-1)\n\
+           let b = m.get(9).unwrap_or(-1)\n\
+           let _ = m.insert(25, 125)\n\
+           let c = m.get(25).unwrap_or(-1)\n\
+           let d = if (m.contains(1)) { 1 } else { 0 }\n\
+           let _ = m.remove(1)\n\
+           let e = m.get(17).unwrap_or(-1)\n\
+           let f = m.get(25).unwrap_or(-1)\n\
+           let g = if (m.contains(1)) { 1 } else { 0 }\n\
+           a + b + c + d + e + f + g * 1000\n\
+         }",
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "484",
+        "run --backend wasm preserves mutable map int-key collisions across remove and reinsert",
+    );
+}
+
+#[test]
 fn run_backend_wasm_handles_mutable_map_string_keys_after_growth() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
