@@ -89,6 +89,7 @@ pub struct ModuleCtx<'a> {
     pub string_md5_fn_index: Option<u32>,
     pub string_md5_concat_int_fn_index: Option<u32>,
     pub string_md5_char_code_fn_index: Option<u32>,
+    pub string_md5_contains_fn_index: Option<u32>,
     pub string_md5_starts_with_fn_index: Option<u32>,
     pub parse_int_fn_index: Option<u32>,
     pub parse_float_fn_index: Option<u32>,
@@ -418,6 +419,13 @@ pub fn compile_module(
     } else {
         None
     };
+    let string_md5_contains_fn_index = if needs_string_md5 {
+        let idx = next_fn_index;
+        next_fn_index += 1;
+        Some(idx)
+    } else {
+        None
+    };
     let string_md5_starts_with_fn_index = if needs_string_md5 {
         let idx = next_fn_index;
         next_fn_index += 1;
@@ -664,6 +672,7 @@ pub fn compile_module(
         string_md5_fn_index,
         string_md5_concat_int_fn_index,
         string_md5_char_code_fn_index,
+        string_md5_contains_fn_index,
         string_md5_starts_with_fn_index,
         parse_int_fn_index,
         parse_float_fn_index,
@@ -700,6 +709,9 @@ pub fn compile_module(
     }
     if string_md5_char_code_fn_index.is_some() {
         imports.import(HOST_MODULE, "string_md5_char_code", EntityType::Function(1));
+    }
+    if string_md5_contains_fn_index.is_some() {
+        imports.import(HOST_MODULE, "string_md5_contains", EntityType::Function(1));
     }
     if string_md5_starts_with_fn_index.is_some() {
         imports.import(

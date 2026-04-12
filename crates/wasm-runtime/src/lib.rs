@@ -331,6 +331,16 @@ fn build_host_linker(
     linker
         .func_wrap(
             HOST_MODULE,
+            "string_md5_contains",
+            |mut caller: wasmtime::Caller<'_, StoreState>,
+             md5_object_ptr: i32,
+             needle_object_ptr: i32|
+             -> i32 { call_string_md5_contains(&mut caller, md5_object_ptr, needle_object_ptr) },
+        )
+        .map_err(WasmRuntimeError::HostLinker)?;
+    linker
+        .func_wrap(
+            HOST_MODULE,
             "string_md5_starts_with",
             |mut caller: wasmtime::Caller<'_, StoreState>,
              md5_object_ptr: i32,
@@ -604,6 +614,60 @@ fn call_string_md5_char_code(
         Err(status) => return status.code(),
     };
     md5_hex_char_code(digest, index as usize) as i32
+}
+
+fn call_string_md5_contains(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
+    md5_object_ptr: i32,
+    needle_object_ptr: i32,
+) -> i32 {
+    let header = match read_guest_header(caller, needle_object_ptr) {
+        Ok(header) => header,
+        Err(_status) => return 0,
+    };
+    let raw_len = match header[0..4].try_into() {
+        Ok(bytes) => i32::from_le_bytes(bytes),
+        Err(_) => return 0,
+    };
+    if raw_len < 0 {
+        return 0;
+    }
+    if raw_len == 0 {
+        return 1;
+    }
+    if raw_len > 32 {
+        return 0;
+    }
+
+    let needle_ptr = match needle_object_ptr.checked_add(8) {
+        Some(ptr) => ptr,
+        None => return 0,
+    };
+    let needle = match read_guest_slice(caller, needle_ptr, raw_len) {
+        Ok(needle) => needle.to_vec(),
+        Err(_status) => return 0,
+    };
+    let digest = match read_or_compute_md5_digest(caller, md5_object_ptr) {
+        Ok(digest) => digest,
+        Err(_status) => return 0,
+    };
+
+    let max_start = 32usize.saturating_sub(needle.len());
+    let mut start = 0usize;
+    while start <= max_start {
+        let mut index = 0usize;
+        while index < needle.len() {
+            if md5_hex_char_code(digest, start + index) != needle[index] {
+                break;
+            }
+            index += 1;
+        }
+        if index == needle.len() {
+            return 1;
+        }
+        start += 1;
+    }
+    0
 }
 
 fn call_string_md5_starts_with(

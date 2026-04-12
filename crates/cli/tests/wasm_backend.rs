@@ -189,6 +189,31 @@ fn run_backend_wasm_supports_starts_with_on_md5_special_string() {
 }
 
 #[test]
+fn run_backend_wasm_supports_contains_on_md5_special_string() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("main.ky");
+    fs::write(
+        &file,
+        r#"fn main() -> String {
+  let hash = "abc".md5()
+  if (hash.contains("150983") && !hash.contains("zzzz")) {
+    "yes"
+  } else {
+    "no"
+  }
+}"#,
+    )
+    .expect("write source");
+
+    let output = run_cli(dir.path(), &["run", "main.ky", "--backend", "wasm"]);
+    assert_stdout_trimmed(
+        &output,
+        "yes",
+        "run --backend wasm supports contains on md5 special string",
+    );
+}
+
+#[test]
 fn run_backend_wasm_preserves_repeated_starts_with_on_concat_md5_special_strings() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("main.ky");
